@@ -164,6 +164,116 @@ func TestValidateDuplicateStepName(t *testing.T) {
 	}
 }
 
+// --- FarmConfig validation tests ---
+
+func TestValidateFarmConfig_Valid(t *testing.T) {
+	cfg := &FarmConfig{
+		Repos: []RepoConfig{
+			{Name: "ScaledTest", Workers: 2, Names: []string{"max", "furiosa"}, BdPrefix: "st-"},
+			{Name: "bullet_farm", Workers: 1, Names: []string{"immortan"}, BdPrefix: "bf-"},
+		},
+		MaxTotalWorkers: 3,
+	}
+	if err := ValidateFarmConfig(cfg); err != nil {
+		t.Fatalf("expected valid config, got: %v", err)
+	}
+}
+
+func TestValidateFarmConfig_NoRepos(t *testing.T) {
+	cfg := &FarmConfig{MaxTotalWorkers: 1}
+	err := ValidateFarmConfig(cfg)
+	if err == nil || !strings.Contains(err.Error(), "at least one repo") {
+		t.Errorf("expected at least one repo error, got %v", err)
+	}
+}
+
+func TestValidateFarmConfig_MaxTotalWorkersZero(t *testing.T) {
+	cfg := &FarmConfig{
+		Repos:           []RepoConfig{{Name: "r1", Workers: 1}},
+		MaxTotalWorkers: 0,
+	}
+	err := ValidateFarmConfig(cfg)
+	if err == nil || !strings.Contains(err.Error(), "max_total_workers") {
+		t.Errorf("expected max_total_workers error, got %v", err)
+	}
+}
+
+func TestValidateFarmConfig_DuplicateRepoName(t *testing.T) {
+	cfg := &FarmConfig{
+		Repos: []RepoConfig{
+			{Name: "dup", Workers: 1, BdPrefix: "a-"},
+			{Name: "dup", Workers: 1, BdPrefix: "b-"},
+		},
+		MaxTotalWorkers: 2,
+	}
+	err := ValidateFarmConfig(cfg)
+	if err == nil || !strings.Contains(err.Error(), "duplicate repo name") {
+		t.Errorf("expected duplicate repo name error, got %v", err)
+	}
+}
+
+func TestValidateFarmConfig_DuplicateBdPrefix(t *testing.T) {
+	cfg := &FarmConfig{
+		Repos: []RepoConfig{
+			{Name: "r1", Workers: 1, BdPrefix: "shared-"},
+			{Name: "r2", Workers: 1, BdPrefix: "shared-"},
+		},
+		MaxTotalWorkers: 2,
+	}
+	err := ValidateFarmConfig(cfg)
+	if err == nil || !strings.Contains(err.Error(), "share bd_prefix") {
+		t.Errorf("expected shared bd_prefix error, got %v", err)
+	}
+}
+
+func TestValidateFarmConfig_WorkersNamesMismatch(t *testing.T) {
+	cfg := &FarmConfig{
+		Repos: []RepoConfig{
+			{Name: "r1", Workers: 3, Names: []string{"a", "b"}},
+		},
+		MaxTotalWorkers: 3,
+	}
+	err := ValidateFarmConfig(cfg)
+	if err == nil || !strings.Contains(err.Error(), "workers=3 but names has 2") {
+		t.Errorf("expected workers/names mismatch error, got %v", err)
+	}
+}
+
+func TestValidateFarmConfig_ZeroWorkers(t *testing.T) {
+	cfg := &FarmConfig{
+		Repos:           []RepoConfig{{Name: "r1", Workers: 0}},
+		MaxTotalWorkers: 1,
+	}
+	err := ValidateFarmConfig(cfg)
+	if err == nil || !strings.Contains(err.Error(), "workers must be > 0") {
+		t.Errorf("expected workers > 0 error, got %v", err)
+	}
+}
+
+func TestValidateFarmConfig_NamesOnly(t *testing.T) {
+	// Names specified, workers omitted — should infer worker count from names.
+	cfg := &FarmConfig{
+		Repos: []RepoConfig{
+			{Name: "r1", Names: []string{"a", "b"}},
+		},
+		MaxTotalWorkers: 2,
+	}
+	if err := ValidateFarmConfig(cfg); err != nil {
+		t.Fatalf("names-only config should be valid, got: %v", err)
+	}
+}
+
+func TestValidateFarmConfig_MissingRepoName(t *testing.T) {
+	cfg := &FarmConfig{
+		Repos:           []RepoConfig{{Workers: 1}},
+		MaxTotalWorkers: 1,
+	}
+	err := ValidateFarmConfig(cfg)
+	if err == nil || !strings.Contains(err.Error(), "name is required") {
+		t.Errorf("expected name required error, got %v", err)
+	}
+}
+
 func TestTerminalRefsAreValid(t *testing.T) {
 	// "done", "blocked", "human", "escalate" should be accepted as targets.
 	yaml := `

@@ -577,6 +577,247 @@ func TestTick_NoWorkAvailable(t *testing.T) {
 	}
 }
 
+// --- Multi-repo tests matching spec: ScaledTest (max/furiosa) + bullet_farm (immortan) ---
+
+func multiRepoConfig() workflow.FarmConfig {
+	return workflow.FarmConfig{
+		Repos: []workflow.RepoConfig{
+			{Name: "ScaledTest", Workers: 2, Names: []string{"max", "furiosa"}, BdPrefix: "st-"},
+			{Name: "bullet_farm", Workers: 1, Names: []string{"immortan"}, BdPrefix: "bf-"},
+		},
+		MaxTotalWorkers: 3,
+	}
+}
+
+func multiRepoScheduler(clients map[string]BeadClient, runner StepRunner) *Scheduler {
+	config := multiRepoConfig()
+	wf := testWorkflow()
+	workflows := map[string]*workflow.Workflow{
+		"ScaledTest":  wf,
+		"bullet_farm": wf,
+	}
+	return NewFromParts(config, workflows, clients, runner)
+}
+
+func TestMultiRepo_BeadsGoToCorrectWorkers(t *testing.T) {
+	stClient := newMockClient()
+	stClient.readyBeads = []*bd.Bead{
+		{ID: "st-1", Title: "scaled test bead 1"},
+		{ID: "st-2", Title: "scaled test bead 2"},
+	}
+	bfClient := newMockClient()
+	bfClient.readyBeads = []*bd.Bead{
+		{ID: "bf-1", Title: "bullet farm bead 1"},
+	}
+
+	runner := newMockRunner()
+	clients := map[string]BeadClient{
+		"ScaledTest":  stClient,
+		"bullet_farm": bfClient,
+	}
+	sched := multiRepoScheduler(clients, runner)
+
+	// First tick: should pick up beads from both repos.
+	sched.Tick(context.Background())
+
+	// ScaledTest has 2 workers and 2 beads; bullet_farm has 1 worker and 1 bead.
+	// All 3 should be assigned (total 3 = MaxTotalWorkers).
+	if !runner.waitCalls(3, 2*time.Second) {
+		t.Fatal("timed out waiting for 3 runner calls")
+	}
+
+	runner.mu.Lock()
+	defer runner.mu.Unlock()
+
+	if len(runner.calls) != 3 {
+		t.Fatalf("expected 3 runner calls, got %d", len(runner.calls))
+	}
+
+	// Verify ScaledTest beads went to max/furiosa.
+	stWorkers := map[string]bool{}
+	for _, call := range runner.calls {
+		if call.RepoConfig.Name == "ScaledTest" {
+			stWorkers[call.WorkerName] = true
+			if call.WorkerName != "max" && call.WorkerName != "furiosa" {
+				t.Errorf("ScaledTest bead %s assigned to wrong worker: %s", call.Bead.ID, call.WorkerName)
+			}
+		}
+		if call.RepoConfig.Name == "bullet_farm" {
+			if call.WorkerName != "immortan" {
+				t.Errorf("bullet_farm bead %s assigned to wrong worker: %s (expected immortan)", call.Bead.ID, call.WorkerName)
+			}
+		}
+	}
+
+	if len(stWorkers) != 2 {
+		t.Errorf("expected 2 distinct ScaledTest workers, got %d: %v", len(stWorkers), stWorkers)
+	}
+}
+
+func TestMultiRepo_GlobalCapAcrossRepos(t *testing.T) {
+	stClient := newMockClient()
+	for i := range 5 {
+		stClient.readyBeads = append(stClient.readyBeads, &bd.Bead{ID: fmt.Sprintf("st-%d", i)})
+	}
+	bfClient := newMockClient()
+	for i := range 5 {
+		bfClient.readyBeads = append(bfClient.readyBeads, &bd.Bead{ID: fmt.Sprintf("bf-%d", i)})
+	}
+
+	blocker := newBlockingRunner()
+	clients := map[string]BeadClient{
+		"ScaledTest":  stClient,
+		"bullet_farm": bfClient,
+	}
+
+	config := multiRepoConfig()
+	config.MaxTotalWorkers = 2 // Cap below total pool capacity (3)
+	wf := testWorkflow()
+	workflows := map[string]*workflow.Workflow{
+		"ScaledTest":  wf,
+		"bullet_farm": wf,
+	}
+	sched := NewFromParts(config, workflows, clients, blocker)
+
+	// Multiple ticks should never exceed global cap.
+	for range 5 {
+		sched.Tick(context.Background())
+	}
+
+	total := sched.totalBusy()
+	if total > 2 {
+		t.Errorf("global cap violated: %d busy workers across repos (cap=2)", total)
+	}
+
+	close(blocker.ch)
+}
+
+func TestMultiRepo_WorkersNeverCrossRepoBoundaries(t *testing.T) {
+	stClient := newMockClient()
+	stClient.readyBeads = []*bd.Bead{{ID: "st-1"}}
+	bfClient := newMockClient()
+	bfClient.readyBeads = []*bd.Bead{{ID: "bf-1"}}
+
+	runner := newMockRunner()
+	clients := map[string]BeadClient{
+		"ScaledTest":  stClient,
+		"bullet_farm": bfClient,
+	}
+	sched := multiRepoScheduler(clients, runner)
+	sched.Tick(context.Background())
+
+	if !runner.waitCalls(2, time.Second) {
+		t.Fatal("timed out waiting for runner calls")
+	}
+
+	runner.mu.Lock()
+	defer runner.mu.Unlock()
+
+	for _, call := range runner.calls {
+		switch call.RepoConfig.Name {
+		case "ScaledTest":
+			if call.WorkerName != "max" && call.WorkerName != "furiosa" {
+				t.Errorf("ScaledTest bead used non-ScaledTest worker: %s", call.WorkerName)
+			}
+		case "bullet_farm":
+			if call.WorkerName != "immortan" {
+				t.Errorf("bullet_farm bead used non-bullet_farm worker: %s", call.WorkerName)
+			}
+		default:
+			t.Errorf("unexpected repo: %s", call.RepoConfig.Name)
+		}
+	}
+}
+
+func TestMultiRepo_RoundRobinPolling(t *testing.T) {
+	stClient := newMockClient()
+	bfClient := newMockClient()
+
+	runner := newMockRunner()
+	clients := map[string]BeadClient{
+		"ScaledTest":  stClient,
+		"bullet_farm": bfClient,
+	}
+	sched := multiRepoScheduler(clients, runner)
+
+	// Tick with no work — both repos should be polled.
+	sched.Tick(context.Background())
+
+	stClient.mu.Lock()
+	stCalls := stClient.readyCalls
+	stClient.mu.Unlock()
+
+	bfClient.mu.Lock()
+	bfCalls := bfClient.readyCalls
+	bfClient.mu.Unlock()
+
+	if stCalls != 1 {
+		t.Errorf("expected ScaledTest polled once, got %d", stCalls)
+	}
+	if bfCalls != 1 {
+		t.Errorf("expected bullet_farm polled once, got %d", bfCalls)
+	}
+}
+
+func TestMultiRepo_OneRepoEmptyOtherHasWork(t *testing.T) {
+	stClient := newMockClient() // No beads
+	bfClient := newMockClient()
+	bfClient.readyBeads = []*bd.Bead{{ID: "bf-1"}}
+
+	runner := newMockRunner()
+	clients := map[string]BeadClient{
+		"ScaledTest":  stClient,
+		"bullet_farm": bfClient,
+	}
+	sched := multiRepoScheduler(clients, runner)
+	sched.Tick(context.Background())
+
+	if !runner.waitCalls(1, time.Second) {
+		t.Fatal("timed out")
+	}
+
+	runner.mu.Lock()
+	defer runner.mu.Unlock()
+
+	if len(runner.calls) != 1 {
+		t.Fatalf("expected 1 call, got %d", len(runner.calls))
+	}
+	if runner.calls[0].Bead.ID != "bf-1" {
+		t.Errorf("expected bf-1, got %s", runner.calls[0].Bead.ID)
+	}
+	if runner.calls[0].WorkerName != "immortan" {
+		t.Errorf("expected immortan, got %s", runner.calls[0].WorkerName)
+	}
+}
+
+func TestMultiRepo_RepoWorkersExhausted(t *testing.T) {
+	// ScaledTest has 2 workers. Give it 3 beads. Only 2 should be assigned.
+	stClient := newMockClient()
+	stClient.readyBeads = []*bd.Bead{
+		{ID: "st-1"}, {ID: "st-2"}, {ID: "st-3"},
+	}
+	bfClient := newMockClient()
+
+	blocker := newBlockingRunner()
+	clients := map[string]BeadClient{
+		"ScaledTest":  stClient,
+		"bullet_farm": bfClient,
+	}
+	sched := multiRepoScheduler(clients, blocker)
+
+	// Multiple ticks. ScaledTest pool has 2 workers, so max 2 beads assigned.
+	for range 3 {
+		sched.Tick(context.Background())
+	}
+
+	pool := sched.pools["ScaledTest"]
+	if pool.BusyCount() > 2 {
+		t.Errorf("ScaledTest pool exceeded capacity: %d busy (max 2)", pool.BusyCount())
+	}
+
+	close(blocker.ch)
+}
+
 func TestTick_PerRepoIsolation(t *testing.T) {
 	client1 := newMockClient()
 	client1.readyBeads = []*bd.Bead{{ID: "r1-b1"}}

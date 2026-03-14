@@ -38,5 +38,8 @@ func ParseFarmConfig(path string) (*FarmConfig, error) {
 	if err := yaml.Unmarshal(data, &cfg); err != nil {
 		return nil, fmt.Errorf("parsing farm config YAML: %w", err)
 	}
+	if err := ValidateFarmConfig(&cfg); err != nil {
+		return nil, err
+	}
 	return &cfg, nil
 }

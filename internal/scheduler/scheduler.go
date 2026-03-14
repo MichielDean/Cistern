@@ -187,34 +187,37 @@ func (s *Scheduler) tick(ctx context.Context) {
 
 func (s *Scheduler) tickRepo(ctx context.Context, repo workflow.RepoConfig) {
 	pool := s.pools[repo.Name]
-	worker := pool.IdleWorker()
-	if worker == nil {
-		return
-	}
-
-	if s.totalBusy() >= s.config.MaxTotalWorkers {
-		return
-	}
-
 	client := s.clients[repo.Name]
-	bead, err := client.GetReady(repo.BdPrefix)
-	if err != nil {
-		s.logger.Error("poll failed", "repo", repo.Name, "error", err)
-		return
-	}
-	if bead == nil {
-		return
-	}
-
 	wf := s.workflows[repo.Name]
-	step := currentStep(bead, wf)
-	if step == nil {
-		s.logger.Error("no step found", "repo", repo.Name, "bead", bead.ID)
-		return
-	}
 
-	pool.Assign(worker, bead.ID, step.Name)
-	go s.runStep(ctx, worker, pool, bead, *step, repo)
+	for {
+		worker := pool.IdleWorker()
+		if worker == nil {
+			return
+		}
+
+		if s.totalBusy() >= s.config.MaxTotalWorkers {
+			return
+		}
+
+		bead, err := client.GetReady(repo.BdPrefix)
+		if err != nil {
+			s.logger.Error("poll failed", "repo", repo.Name, "error", err)
+			return
+		}
+		if bead == nil {
+			return
+		}
+
+		step := currentStep(bead, wf)
+		if step == nil {
+			s.logger.Error("no step found", "repo", repo.Name, "bead", bead.ID)
+			return
+		}
+
+		pool.Assign(worker, bead.ID, step.Name)
+		go s.runStep(ctx, worker, pool, bead, *step, repo)
+	}
 }
 
 func (s *Scheduler) totalBusy() int {

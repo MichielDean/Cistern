@@ -110,6 +110,51 @@ func isTerminal(name string) bool {
 	return false
 }
 
+// ValidateFarmConfig checks a FarmConfig for structural errors.
+func ValidateFarmConfig(cfg *FarmConfig) error {
+	if len(cfg.Repos) == 0 {
+		return fmt.Errorf("farm config: at least one repo is required")
+	}
+
+	if cfg.MaxTotalWorkers <= 0 {
+		return fmt.Errorf("farm config: max_total_workers must be > 0, got %d", cfg.MaxTotalWorkers)
+	}
+
+	repoNames := make(map[string]bool, len(cfg.Repos))
+	bdPrefixes := make(map[string]string, len(cfg.Repos))
+
+	for i, repo := range cfg.Repos {
+		if repo.Name == "" {
+			return fmt.Errorf("farm config: repo[%d] name is required", i)
+		}
+		if repoNames[repo.Name] {
+			return fmt.Errorf("farm config: duplicate repo name %q", repo.Name)
+		}
+		repoNames[repo.Name] = true
+
+		if repo.BdPrefix != "" {
+			if other, ok := bdPrefixes[repo.BdPrefix]; ok {
+				return fmt.Errorf("farm config: repos %q and %q share bd_prefix %q", other, repo.Name, repo.BdPrefix)
+			}
+			bdPrefixes[repo.BdPrefix] = repo.Name
+		}
+
+		// Determine effective worker count.
+		workers := repo.Workers
+		if len(repo.Names) > 0 {
+			if workers > 0 && workers != len(repo.Names) {
+				return fmt.Errorf("farm config: repo %q: workers=%d but names has %d entries", repo.Name, workers, len(repo.Names))
+			}
+			workers = len(repo.Names)
+		}
+		if workers <= 0 {
+			return fmt.Errorf("farm config: repo %q: workers must be > 0", repo.Name)
+		}
+	}
+
+	return nil
+}
+
 // checkCircularRoutes detects dead-end cycles: groups of steps where no step
 // has any route to a terminal state. Intentional loops (e.g., implement ->
 // review -> implement) are allowed as long as some path exits the cycle.

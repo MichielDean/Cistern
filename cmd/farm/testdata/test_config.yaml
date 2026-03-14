@@ -1,9 +1,20 @@
 repos:
-  - name: myrepo
-    url: https://github.com/example/myrepo
+  - name: ScaledTest
+    url: https://github.com/example/scaled-test
     workflow_path: workflow.yaml
     workers: 2
-    bd_prefix: mr-
+    names:
+      - max
+      - furiosa
+    bd_prefix: st-
 
-max_total_workers: 4
-handoff_token_threshold: 100000
+  - name: bullet_farm
+    url: https://github.com/example/bullet-farm
+    workflow_path: workflow.yaml
+    workers: 1
+    names:
+      - immortan
+    bd_prefix: bf-
+
+max_total_workers: 3
+handoff_token_threshold: 150000
