@@ -1,14 +1,17 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/signal"
 	"path/filepath"
 	"syscall"
 	"text/tabwriter"
-	"time"
 
+	"github.com/MichielDean/bullet-farm/internal/queue"
+	"github.com/MichielDean/bullet-farm/internal/runner"
+	"github.com/MichielDean/bullet-farm/internal/scheduler"
 	"github.com/MichielDean/bullet-farm/internal/workflow"
 	"github.com/spf13/cobra"
 )
@@ -49,6 +52,29 @@ var farmStartCmd = &cobra.Command{
 			workflows[repo.Name] = w
 		}
 
+		// Build per-repo queue clients for the adapter.
+		dbPath := resolveDBPath()
+		queueClients := make(map[string]*queue.Client, len(cfg.Repos))
+		for _, repo := range cfg.Repos {
+			c, err := queue.New(dbPath, repo.Prefix)
+			if err != nil {
+				return fmt.Errorf("queue for %q: %w", repo.Name, err)
+			}
+			queueClients[repo.Name] = c
+		}
+
+		// Build the runner adapter that implements scheduler.StepRunner.
+		adapter, err := runner.NewAdapter(cfg.Repos, workflows, queueClients)
+		if err != nil {
+			return fmt.Errorf("runner adapter: %w", err)
+		}
+
+		// Create the scheduler (it builds its own queue clients and workflow map internally).
+		sched, err := scheduler.New(*cfg, dbPath, adapter)
+		if err != nil {
+			return fmt.Errorf("scheduler: %w", err)
+		}
+
 		fmt.Printf("farm: loaded %d repo(s), max_total_workers=%d\n", len(cfg.Repos), cfg.MaxTotalWorkers)
 		for _, repo := range cfg.Repos {
 			w := workflows[repo.Name]
@@ -57,21 +83,9 @@ var farmStartCmd = &cobra.Command{
 		}
 
 		fmt.Println("farm: scheduler running (ctrl-c to stop)")
-		sig := make(chan os.Signal, 1)
-		signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
-
-		ticker := time.NewTicker(5 * time.Second)
-		defer ticker.Stop()
-
-		for {
-			select {
-			case <-sig:
-				fmt.Println("\nfarm: shutting down")
-				return nil
-			case <-ticker.C:
-				// Scheduler tick placeholder.
-			}
-		}
+		ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+		defer cancel()
+		return sched.Run(ctx)
 	},
 }
 

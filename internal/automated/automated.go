@@ -10,6 +10,7 @@ package automated
 
 import (
 	"context"
+	"fmt"
 	"os/exec"
 )
 
@@ -87,6 +88,27 @@ func DefaultExec(ctx context.Context, dir, name string, args ...string) ([]byte,
 	cmd := exec.CommandContext(ctx, name, args...)
 	cmd.Dir = dir
 	return cmd.CombinedOutput()
+}
+
+// Noop is a passthrough step that always returns pass.
+// Used for smoke testing the queue→scheduler→outcome→close loop.
+func (e *Executor) Noop(_ context.Context, bc BeadContext) *StepOutcome {
+	return &StepOutcome{
+		Result: ResultPass,
+		Notes:  fmt.Sprintf("noop: item %s passed through", bc.ID),
+	}
+}
+
+// RunStep dispatches an automated step by name.
+// Unknown step names are treated as noop (passthrough).
+func (e *Executor) RunStep(ctx context.Context, stepName string, bc BeadContext) *StepOutcome {
+	switch stepName {
+	case "noop":
+		return e.Noop(ctx, bc)
+	default:
+		// Automated steps with no explicit handler pass through.
+		return e.Noop(ctx, bc)
+	}
 }
 
 // metaString reads a string value from bead metadata.
