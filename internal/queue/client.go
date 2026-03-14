@@ -416,6 +416,38 @@ func (c *Client) Purge(olderThan time.Duration, dryRun bool) (int, error) {
 	return int(n), nil
 }
 
+// RecentEvent is a summary entry from the events or step_notes table.
+type RecentEvent struct {
+	Time  time.Time `json:"time"`
+	Drop  string    `json:"drop"`
+	Event string    `json:"event"`
+}
+
+// ListRecentEvents returns up to limit recent entries from the events and
+// step_notes tables, ordered newest-first.
+func (c *Client) ListRecentEvents(limit int) ([]RecentEvent, error) {
+	rows, err := c.db.Query(`
+		SELECT item_id, event_type, created_at FROM events
+		UNION ALL
+		SELECT item_id, step_name, created_at FROM step_notes
+		ORDER BY created_at DESC
+		LIMIT ?`, limit)
+	if err != nil {
+		return nil, fmt.Errorf("queue: list recent events: %w", err)
+	}
+	defer rows.Close()
+
+	var events []RecentEvent
+	for rows.Next() {
+		var e RecentEvent
+		if err := rows.Scan(&e.Drop, &e.Event, &e.Time); err != nil {
+			return nil, fmt.Errorf("queue: scan recent event: %w", err)
+		}
+		events = append(events, e)
+	}
+	return events, rows.Err()
+}
+
 func checkRowsAffected(res sql.Result, id string) error {
 	n, err := res.RowsAffected()
 	if err != nil {
