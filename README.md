@@ -17,7 +17,7 @@ Citadel is a Mad Max-themed agentic workflow orchestrator. Raw code enters the c
 | **Flows free** | A drop that made it: PR merged, delivered to the Wasteland. |
 | **Recirculated** | Sent back upstream for another pass — revision from reviewer or QA. |
 | **Poisoned** | A drop that can't flow without human intervention. |
-||
+|---|---|
 
 ![Citadel](Citadel.png)
 
