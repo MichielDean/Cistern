@@ -58,6 +58,14 @@ type RepoConfig struct {
 	Prefix       string   `yaml:"prefix"`
 }
 
+// IdleHook defines an action to run when the scheduler enters idle state.
+type IdleHook struct {
+	Name    string `yaml:"name"`
+	Action  string `yaml:"action"`            // built-in: "roles_generate", "worktree_prune", "db_vacuum" | "shell"
+	Command string `yaml:"command,omitempty"`  // only for action: shell
+	Timeout int    `yaml:"timeout_seconds,omitempty"` // default 30s
+}
+
 // FarmConfig is the top-level configuration for a Citadel instance.
 type FarmConfig struct {
 	Repos                 []RepoConfig `yaml:"repos"`
@@ -65,4 +73,5 @@ type FarmConfig struct {
 	HandoffTokenThreshold int          `yaml:"handoff_token_threshold"`
 	RetentionDays         int          `yaml:"retention_days"`
 	CleanupInterval       string       `yaml:"cleanup_interval"`
+	IdleHooks             []IdleHook   `yaml:"idle_hooks,omitempty"`
 }

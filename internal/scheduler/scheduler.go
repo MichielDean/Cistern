@@ -62,6 +62,8 @@ type Scheduler struct {
 	pollInterval    time.Duration
 	sandboxRoot     string
 	cleanupInterval time.Duration
+	dbPath          string
+	wasIdle         bool
 }
 
 // Option configures a Scheduler.
@@ -94,6 +96,7 @@ func New(config workflow.FarmConfig, dbPath string, runner StepRunner, opts ...O
 		runner:       runner,
 		logger:       slog.Default(),
 		pollInterval: 10 * time.Second,
+		dbPath:       dbPath,
 	}
 	for _, o := range opts {
 		o(s)
@@ -257,6 +260,17 @@ func (s *Scheduler) tick(ctx context.Context) {
 		}
 		s.tickRepo(ctx, repo)
 	}
+
+	// Idle edge detection: fire hooks on transition from busy → idle.
+	isIdle := s.totalBusy() == 0
+	if isIdle && !s.wasIdle {
+		// Entering idle state — run idle hooks.
+		if len(s.config.IdleHooks) > 0 {
+			s.logger.Info("scheduler entering idle — running idle hooks")
+			RunIdleHooks(s.config.IdleHooks, &s.config, s.dbPath, s.sandboxRoot, s.logger)
+		}
+	}
+	s.wasIdle = isIdle
 }
 
 func (s *Scheduler) tickRepo(ctx context.Context, repo workflow.RepoConfig) {

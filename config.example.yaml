@@ -19,3 +19,22 @@ repos:
 
 max_total_workers: 4
 handoff_token_threshold: 100000
+
+idle_hooks:
+  # Regenerate role CLAUDE.md files when workflow YAML is newer
+  - name: sync-roles
+    action: roles_generate
+
+  # Prune stale git worktree registrations
+  - name: prune-worktrees
+    action: worktree_prune
+
+  # Compact the SQLite queue database
+  # - name: vacuum-db
+  #   action: db_vacuum
+
+  # Custom shell hook example (uncomment to enable):
+  # - name: notify-idle
+  #   action: shell
+  #   command: "echo idle >> ~/.citadel/idle.log"
+  #   timeout_seconds: 5
