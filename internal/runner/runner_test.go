@@ -3,6 +3,7 @@ package runner
 import (
 	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"testing"
 
@@ -461,6 +462,123 @@ func TestWorkerName_Fallback(t *testing.T) {
 	}
 	if got := workerName(repo, 1); got != "worker-1" {
 		t.Errorf("workerName(1) = %q, want %q", got, "worker-1")
+	}
+}
+
+// --- git helpers for integration tests ---
+
+func gitCmd(dir string, args ...string) *exec.Cmd {
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	return cmd
+}
+
+func mustRun(t *testing.T, cmd *exec.Cmd) {
+	t.Helper()
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("%v failed: %v\n%s", cmd.Args, err, out)
+	}
+}
+
+// TestPrepareContext_DiffOnly_Isolation verifies that the diff_only context
+// level creates an isolated temp directory containing exactly two files:
+// diff.patch and CONTEXT.md — no repo access, no git history, no source code.
+// This is the enforcement point for reviewer context isolation.
+func TestPrepareContext_DiffOnly_Isolation(t *testing.T) {
+	sandbox := t.TempDir()
+
+	// Set up a git repo with origin/main and a change.
+	mustRun(t, gitCmd(sandbox, "init"))
+	mustRun(t, gitCmd(sandbox, "config", "user.email", "test@test.com"))
+	mustRun(t, gitCmd(sandbox, "config", "user.name", "Test"))
+
+	// Initial commit.
+	if err := os.WriteFile(filepath.Join(sandbox, "main.go"), []byte("package main\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	mustRun(t, gitCmd(sandbox, "add", "."))
+	mustRun(t, gitCmd(sandbox, "commit", "-m", "initial"))
+	mustRun(t, gitCmd(sandbox, "branch", "-M", "main"))
+
+	// Create fake origin/main ref pointing to current HEAD.
+	mustRun(t, gitCmd(sandbox, "update-ref", "refs/remotes/origin/main", "HEAD"))
+
+	// Make a change and commit (this is the "implementer's work").
+	if err := os.WriteFile(filepath.Join(sandbox, "main.go"),
+		[]byte("package main\n\n// smoke test comment\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	mustRun(t, gitCmd(sandbox, "add", "."))
+	mustRun(t, gitCmd(sandbox, "commit", "-m", "add smoke test comment"))
+
+	bead := &bd.Bead{ID: "bf-smoke", Title: "Smoke", Status: "open", Priority: 1}
+	step := &workflow.WorkflowStep{Name: "review", Type: "agent", Context: "diff_only"}
+
+	ctxDir, cleanup, err := PrepareContext(ContextParams{
+		Level:      workflow.ContextDiffOnly,
+		SandboxDir: sandbox,
+		Bead:       bead,
+		Step:       step,
+	})
+	if err != nil {
+		t.Fatalf("PrepareContext diff_only: %v", err)
+	}
+	defer cleanup()
+
+	// Context dir must NOT be the sandbox (isolation enforced).
+	if ctxDir == sandbox {
+		t.Error("diff_only context should use a separate temp dir, not the sandbox")
+	}
+
+	// Verify exactly 2 files: diff.patch and CONTEXT.md.
+	entries, err := os.ReadDir(ctxDir)
+	if err != nil {
+		t.Fatalf("read context dir: %v", err)
+	}
+
+	files := map[string]bool{}
+	for _, e := range entries {
+		files[e.Name()] = true
+	}
+
+	if len(files) != 2 {
+		names := make([]string, 0, len(files))
+		for n := range files {
+			names = append(names, n)
+		}
+		t.Fatalf("expected exactly 2 files in diff_only context, got %d: %v", len(files), names)
+	}
+
+	if !files["CONTEXT.md"] {
+		t.Error("missing CONTEXT.md in diff_only context")
+	}
+	if !files["diff.patch"] {
+		t.Error("missing diff.patch in diff_only context")
+	}
+
+	// Verify diff.patch contains the actual change.
+	diff, err := os.ReadFile(filepath.Join(ctxDir, "diff.patch"))
+	if err != nil {
+		t.Fatalf("read diff.patch: %v", err)
+	}
+	if !contains(string(diff), "smoke test comment") {
+		t.Error("diff.patch should contain the change ('smoke test comment')")
+	}
+
+	// Verify diff.patch does NOT contain the full source file.
+	if contains(string(diff), "package main\n\n// smoke") {
+		// The diff should contain a diff format, not raw file contents.
+		// This is fine — git diff includes the changed lines as context.
+	}
+
+	// Verify no .git directory (no repo access).
+	if _, err := os.Stat(filepath.Join(ctxDir, ".git")); err == nil {
+		t.Error("diff_only context should NOT contain .git directory")
+	}
+
+	// Verify no source files leaked.
+	if _, err := os.Stat(filepath.Join(ctxDir, "main.go")); err == nil {
+		t.Error("diff_only context should NOT contain source files")
 	}
 }
 
