@@ -1,0 +1,44 @@
+# Citadel configuration
+# The Citadel controls the water. Water is life. Code is water.
+#
+# Repos are aqueducts. Workers are channels. Steps are valves.
+# Work items are drops. The cistern holds them until they flow free.
+
+repos:
+  - name: ScaledTest
+    url: https://github.com/example/ScaledTest
+    workflow_path: workflows/feature.yaml
+    workers: 2
+    # Channel names — who carries the water
+    names:
+      - furiosa
+      - rictus
+    prefix: st
+
+  - name: citadel
+    url: https://github.com/example/citadel
+    workflow_path: workflows/feature.yaml
+    workers: 2
+    names:
+      - nux
+      - dementus
+    prefix: ct
+
+max_total_workers: 4
+handoff_token_threshold: 100000
+
+# Drought protocols — run automatically when the Citadel is idle
+idle_hooks:
+  - name: sync-roles
+    action: roles_generate  # Regenerate role files when workflow YAML is newer
+
+  - name: prune-worktrees
+    action: worktree_prune  # Prune stale aqueduct registrations
+
+  # - name: vacuum-db
+  #   action: db_vacuum     # Compact the cistern database
+
+  # - name: custom
+  #   action: shell
+  #   command: "echo idle >> ~/.citadel/drought.log"
+  #   timeout_seconds: 5

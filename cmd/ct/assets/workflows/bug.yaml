@@ -1,0 +1,28 @@
+name: bug
+steps:
+  - name: implement
+    type: agent
+    role: implementer
+    model: sonnet
+    context: full_codebase
+    max_iterations: 3
+    timeout_minutes: 30
+    on_pass: adversarial-review
+    on_fail: blocked
+    on_escalate: human
+
+  - name: adversarial-review
+    type: agent
+    role: reviewer
+    model: sonnet
+    context: diff_only
+    timeout_minutes: 15
+    on_pass: merge
+    on_revision: implement
+    on_escalate: human
+
+  - name: merge
+    type: automated
+    timeout_minutes: 5
+    on_pass: done
+    on_fail: human
