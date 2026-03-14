@@ -343,8 +343,8 @@ func TestCIGate_SkippingCountsAsPass(t *testing.T) {
 
 func TestMerge_Success(t *testing.T) {
 	rec := &recorder{responses: []response{
-		{out: []byte("Merged\n")},                // gh pr merge
-		{out: []byte(`{"state":"MERGED"}`)},       // gh pr view
+		{out: []byte(`{"state":"OPEN"}`)},          // gh pr view (pre-check)
+		{out: []byte("Merged\n")},                  // gh pr merge
 	}}
 
 	e := newExecutor(rec)
@@ -363,7 +363,9 @@ func TestMerge_Success(t *testing.T) {
 
 func TestMerge_MergeFails(t *testing.T) {
 	rec := &recorder{responses: []response{
-		{out: []byte("merge conflict"), err: errors.New("exit 1")},
+		{out: []byte(`{"state":"OPEN"}`)},               // pre-check: not yet merged
+		{out: []byte("merge conflict"), err: errors.New("exit 1")}, // gh pr merge fails
+		{out: []byte(`{"state":"OPEN"}`)},               // re-check: still open → fail
 	}}
 
 	e := newExecutor(rec)
@@ -380,10 +382,9 @@ func TestMerge_MergeFails(t *testing.T) {
 	}
 }
 
-func TestMerge_StateNotMerged(t *testing.T) {
+func TestMerge_AlreadyMerged(t *testing.T) {
 	rec := &recorder{responses: []response{
-		{out: []byte("OK\n")},                   // gh pr merge
-		{out: []byte(`{"state":"OPEN"}`)},        // gh pr view — still open
+		{out: []byte(`{"state":"MERGED"}`)}, // pre-check: already merged
 	}}
 
 	e := newExecutor(rec)
@@ -395,8 +396,8 @@ func TestMerge_StateNotMerged(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if out.Result != ResultFail {
-		t.Fatalf("want fail, got %s", out.Result)
+	if out.Result != ResultPass {
+		t.Fatalf("want pass (idempotent), got %s: %s", out.Result, out.Notes)
 	}
 }
 

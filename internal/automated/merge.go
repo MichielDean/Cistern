@@ -23,26 +23,35 @@ func (e *Executor) Merge(ctx context.Context, bc BeadContext) (*StepOutcome, err
 		}, nil
 	}
 
-	out, err := e.ExecFn(ctx, bc.WorkDir, "gh", "pr", "merge", prURL, "--squash", "--delete-branch")
-	if err != nil {
-		return &StepOutcome{
-			Result: ResultFail,
-			Notes:  fmt.Sprintf("gh pr merge failed: %s: %s", err, out),
-		}, nil
-	}
-
+	// Check current state first — treat already-merged as an idempotent success.
 	state, err := e.getPRState(ctx, bc.WorkDir, prURL)
 	if err != nil {
 		return &StepOutcome{
 			Result: ResultFail,
-			Notes:  fmt.Sprintf("verify merge state failed: %s", err),
+			Notes:  fmt.Sprintf("check PR state failed: %s", err),
+		}, nil
+	}
+	if strings.ToUpper(state) == "MERGED" {
+		return &StepOutcome{
+			Result: ResultPass,
+			Notes:  fmt.Sprintf("PR already merged: %s", prURL),
 		}, nil
 	}
 
-	if strings.ToUpper(state) != "MERGED" {
+	out, err := e.ExecFn(ctx, bc.WorkDir, "gh", "pr", "merge", prURL, "--squash", "--delete-branch")
+	if err != nil {
+		// Re-check state — gh pr merge can exit non-zero even on success if the
+		// branch was already deleted or the merge raced with another process.
+		state2, _ := e.getPRState(ctx, bc.WorkDir, prURL)
+		if strings.ToUpper(state2) == "MERGED" {
+			return &StepOutcome{
+				Result: ResultPass,
+				Notes:  fmt.Sprintf("PR merged (verified after non-zero exit): %s", prURL),
+			}, nil
+		}
 		return &StepOutcome{
 			Result: ResultFail,
-			Notes:  fmt.Sprintf("PR state is %q after merge, expected MERGED", state),
+			Notes:  fmt.Sprintf("gh pr merge failed: %s: %s", err, out),
 		}, nil
 	}
 

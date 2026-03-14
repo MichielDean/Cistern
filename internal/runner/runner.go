@@ -217,6 +217,11 @@ func (r *Runner) RunStep(w *Worker, item *queue.WorkItem, step *workflow.Workflo
 		return nil, fmt.Errorf("session: %w", err)
 	}
 
+	// Park the worktree back on main so no worktree holds the feature branch.
+	// This lets any worker pick up the item on the next step without a "branch
+	// already used by worktree X" conflict.
+	ParkWorktree(w.SandboxDir)
+
 	return outcome, nil
 }
 
