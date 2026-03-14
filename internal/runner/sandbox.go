@@ -26,18 +26,24 @@ func EnsureSharedClone(dir, repoURL string) error {
 // rooted in the shared clone at cloneDir. The worktree is created detached;
 // callers must call PrepareBranch to check out the correct branch.
 func EnsureWorktree(worktreeDir, cloneDir string) error {
+	// Prune stale worktree registrations (entries whose directories no longer exist).
+	pruneCmd := exec.Command("git", "worktree", "prune")
+	pruneCmd.Dir = cloneDir
+	_ = pruneCmd.Run() // best-effort; ignore errors
+
 	// A worktree has a .git file (not dir) pointing back to the main repo.
 	gitPath := filepath.Join(worktreeDir, ".git")
-	if info, err := os.Stat(gitPath); err == nil {
-		// Already exists (file or dir — both valid).
-		_ = info
-		return nil
+	if _, err := os.Stat(gitPath); err == nil {
+		return nil // Already exists and valid.
 	}
+
 	// Remove any stale non-git debris before adding the worktree.
 	if err := os.RemoveAll(worktreeDir); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("remove stale worktree dir: %w", err)
 	}
-	cmd := exec.Command("git", "worktree", "add", "--detach", worktreeDir, "HEAD")
+
+	// Use --force in case the path is still registered (prune may not always catch it).
+	cmd := exec.Command("git", "worktree", "add", "--detach", "--force", worktreeDir, "HEAD")
 	cmd.Dir = cloneDir
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("git worktree add %s: %w: %s", worktreeDir, err, out)
@@ -74,7 +80,8 @@ func PrepareBranch(dir, itemID string) error {
 
 	if exists {
 		// Resume existing work — check out the branch.
-		checkout := exec.Command("git", "checkout", branch)
+		// Use -f in case git thinks the branch is in use by a now-pruned worktree.
+		checkout := exec.Command("git", "checkout", "-f", branch)
 		checkout.Dir = dir
 		if out, err := checkout.CombinedOutput(); err != nil {
 			return fmt.Errorf("git checkout %s in %s: %w: %s", branch, dir, err, out)
