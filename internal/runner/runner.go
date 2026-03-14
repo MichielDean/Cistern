@@ -45,6 +45,7 @@ type Config struct {
 	QueueClient       *queue.Client
 	SandboxRoot       string // Override for sandbox root dir (default: ~/.bullet-farm/sandboxes)
 	HandoffThreshold  int    // Token threshold for session handoff (default: 150000)
+	SkipInitialClone  bool   // Skip the startup clone (for tests with fake repo URLs)
 }
 
 // New creates a Runner for the given repo, initializing named workers from the
@@ -77,6 +78,14 @@ func New(cfg Config) (*Runner, error) {
 	workers, err := initWorkers(cfg.Repo, repoSandboxDir)
 	if err != nil {
 		return nil, err
+	}
+
+	// Ensure the shared clone exists once at startup — workers share it via worktrees.
+	// SkipInitialClone is set in tests that use fake repo URLs.
+	if !cfg.SkipInitialClone {
+		if err := EnsureSharedClone(repoSandboxDir, cfg.Repo.URL); err != nil {
+			return nil, fmt.Errorf("runner: initial clone for %q: %w", cfg.Repo.Name, err)
+		}
 	}
 
 	return &Runner{
@@ -158,9 +167,9 @@ func (r *Runner) IdleCount() int {
 func (r *Runner) RunStep(w *Worker, item *queue.WorkItem, step *workflow.WorkflowStep) (*Outcome, error) {
 	log.Printf("runner: %s/%s: step %q for item %s", r.repo.Name, w.Name, step.Name, item.ID)
 
-	// 1. Ensure the shared clone is up to date, then ensure this worker's worktree.
-	if err := EnsureSharedClone(r.sharedCloneDir, r.repo.URL); err != nil {
-		return nil, fmt.Errorf("shared clone: %w", err)
+	// 1. Fetch latest from remote (shared clone already exists), then ensure this worker's worktree.
+	if err := fetchSandbox(r.sharedCloneDir); err != nil {
+		log.Printf("runner: warning: git fetch failed for %s: %v", r.repo.Name, err)
 	}
 	if err := EnsureWorktree(w.SandboxDir, r.sharedCloneDir); err != nil {
 		return nil, fmt.Errorf("worktree: %w", err)

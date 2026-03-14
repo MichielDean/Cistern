@@ -43,6 +43,7 @@ func testWorkflow() *workflow.Workflow {
 
 func TestNewRunner_NamedWorkers(t *testing.T) {
 	cfg := Config{
+		SkipInitialClone: true,
 		Repo:        testRepoConfig(),
 		Workflow:    testWorkflow(),
 		QueueClient: testQueueClient(t),
@@ -85,6 +86,7 @@ func TestNewRunner_NumberedWorkers(t *testing.T) {
 	repo.Names = nil // No namepool — use numbered names.
 
 	cfg := Config{
+		SkipInitialClone: true,
 		Repo:        repo,
 		Workflow:    testWorkflow(),
 		QueueClient: testQueueClient(t),
@@ -107,6 +109,7 @@ func TestNewRunner_NumberedWorkers(t *testing.T) {
 
 func TestNewRunner_NoWorkflow(t *testing.T) {
 	cfg := Config{
+		SkipInitialClone: true,
 		Repo:        testRepoConfig(),
 		QueueClient: testQueueClient(t),
 	}
@@ -118,6 +121,7 @@ func TestNewRunner_NoWorkflow(t *testing.T) {
 
 func TestNewRunner_NoQueueClient(t *testing.T) {
 	cfg := Config{
+		SkipInitialClone: true,
 		Repo:     testRepoConfig(),
 		Workflow: testWorkflow(),
 	}
@@ -129,6 +133,7 @@ func TestNewRunner_NoQueueClient(t *testing.T) {
 
 func TestClaimRelease(t *testing.T) {
 	cfg := Config{
+		SkipInitialClone: true,
 		Repo:        testRepoConfig(),
 		Workflow:    testWorkflow(),
 		QueueClient: testQueueClient(t),
@@ -180,6 +185,7 @@ func TestClaimRelease(t *testing.T) {
 
 func TestStepByName(t *testing.T) {
 	cfg := Config{
+		SkipInitialClone: true,
 		Repo:        testRepoConfig(),
 		Workflow:    testWorkflow(),
 		QueueClient: testQueueClient(t),
