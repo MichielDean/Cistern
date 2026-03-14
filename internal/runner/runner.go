@@ -13,11 +13,13 @@ import (
 	"github.com/MichielDean/bullet-farm/internal/workflow"
 )
 
-// Worker is a named execution slot bound to a persistent sandbox.
+// Worker is a named execution slot with a git worktree.
+// All workers for a repo share a single upstream clone; each worker has its
+// own worktree at SandboxDir so they can work on independent branches in parallel.
 type Worker struct {
 	Name       string
 	Repo       string
-	SandboxDir string // ~/.bullet-farm/sandboxes/<repo>/<worker>/
+	SandboxDir string // ~/.bullet-farm/sandboxes/<repo>/<worker>/ — git worktree
 	SessionID  string // tmux session name: <repo>-<worker>
 	Busy       bool
 }
@@ -29,7 +31,8 @@ type Runner struct {
 	queue    *queue.Client
 
 	workers          []*Worker
-	sandboxBase      string // ~/.bullet-farm/sandboxes/<repo>/
+	sharedCloneDir   string // ~/.bullet-farm/sandboxes/<repo>/ — single shared git clone
+	sandboxBase      string // kept for compat; same as sharedCloneDir
 	handoffThreshold int
 
 	mu sync.Mutex
@@ -81,6 +84,7 @@ func New(cfg Config) (*Runner, error) {
 		workflow:         cfg.Workflow,
 		queue:            cfg.QueueClient,
 		workers:          workers,
+		sharedCloneDir:   repoSandboxDir,
 		sandboxBase:      repoSandboxDir,
 		handoffThreshold: handoff,
 	}, nil
@@ -154,12 +158,15 @@ func (r *Runner) IdleCount() int {
 func (r *Runner) RunStep(w *Worker, item *queue.WorkItem, step *workflow.WorkflowStep) (*Outcome, error) {
 	log.Printf("runner: %s/%s: step %q for item %s", r.repo.Name, w.Name, step.Name, item.ID)
 
-	// 1. Ensure sandbox is ready (clone or fetch).
-	if err := EnsureSandbox(w.SandboxDir, r.repo.URL); err != nil {
-		return nil, fmt.Errorf("sandbox: %w", err)
+	// 1. Ensure the shared clone is up to date, then ensure this worker's worktree.
+	if err := EnsureSharedClone(r.sharedCloneDir, r.repo.URL); err != nil {
+		return nil, fmt.Errorf("shared clone: %w", err)
+	}
+	if err := EnsureWorktree(w.SandboxDir, r.sharedCloneDir); err != nil {
+		return nil, fmt.Errorf("worktree: %w", err)
 	}
 
-	// For full_codebase agent steps (implement), position the sandbox on the
+	// For full_codebase agent steps (implement), position the worktree on the
 	// item's persistent feature branch so revision cycles are incremental.
 	if step.Context == workflow.ContextFullCodebase || step.Context == "" {
 		if step.Type == workflow.StepTypeAgent {

@@ -8,21 +8,47 @@ import (
 	"strings"
 )
 
-// EnsureSandbox guarantees a persistent sandbox directory exists for a worker.
+// EnsureSharedClone guarantees a single shared clone of the repo exists at dir.
+// All workers share this clone's object store via git worktrees.
 // On first call it clones the repo; on subsequent calls it fetches updates.
-// The working tree is NOT reset — callers should call PrepareBranch to position
-// the sandbox on the correct branch for the item being worked on.
-func EnsureSandbox(dir, repoURL string) error {
+func EnsureSharedClone(dir, repoURL string) error {
 	gitDir := filepath.Join(dir, ".git")
 	if _, err := os.Stat(gitDir); os.IsNotExist(err) {
-		// Either dir doesn't exist, or it exists but isn't a git repo.
-		// Remove whatever is there and clone fresh.
 		if err := os.RemoveAll(dir); err != nil && !os.IsNotExist(err) {
-			return fmt.Errorf("remove stale sandbox: %w", err)
+			return fmt.Errorf("remove stale clone dir: %w", err)
 		}
 		return cloneSandbox(dir, repoURL)
 	}
 	return fetchSandbox(dir)
+}
+
+// EnsureWorktree guarantees a git worktree for a worker exists at worktreeDir,
+// rooted in the shared clone at cloneDir. The worktree is created detached;
+// callers must call PrepareBranch to check out the correct branch.
+func EnsureWorktree(worktreeDir, cloneDir string) error {
+	// A worktree has a .git file (not dir) pointing back to the main repo.
+	gitPath := filepath.Join(worktreeDir, ".git")
+	if info, err := os.Stat(gitPath); err == nil {
+		// Already exists (file or dir — both valid).
+		_ = info
+		return nil
+	}
+	// Remove any stale non-git debris before adding the worktree.
+	if err := os.RemoveAll(worktreeDir); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("remove stale worktree dir: %w", err)
+	}
+	cmd := exec.Command("git", "worktree", "add", "--detach", worktreeDir, "HEAD")
+	cmd.Dir = cloneDir
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("git worktree add %s: %w: %s", worktreeDir, err, out)
+	}
+	return nil
+}
+
+// EnsureSandbox is kept for backward compatibility with tests.
+// New code should call EnsureSharedClone + EnsureWorktree.
+func EnsureSandbox(dir, repoURL string) error {
+	return EnsureSharedClone(dir, repoURL)
 }
 
 // PrepareBranch positions the sandbox on a per-item feature branch.
