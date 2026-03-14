@@ -192,6 +192,7 @@ func (r *Runner) RunStep(w *Worker, item *queue.WorkItem, step *workflow.Workflo
 		ID:               w.SessionID,
 		WorkDir:          ctxDir,
 		Model:            step.Model,
+		Role:             step.Role,
 		TimeoutMinutes:   step.TimeoutMinutes,
 		HandoffThreshold: r.handoffThreshold,
 	}

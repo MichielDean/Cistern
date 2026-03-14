@@ -23,6 +23,10 @@ type Session struct {
 	// Empty means default.
 	Model string
 
+	// Role is the agent role (e.g., "implementer", "reviewer").
+	// Used to locate roles/<role>/CLAUDE.md in the working directory.
+	Role string
+
 	// TimeoutMinutes is the maximum runtime. 0 means 60 minutes.
 	TimeoutMinutes int
 
@@ -121,12 +125,20 @@ func (s *Session) spawn() error {
 	return nil
 }
 
-// buildPrompt constructs the initial prompt telling Claude to read CONTEXT.md.
+// buildPrompt constructs the directive prompt for Claude.
+// The prompt explicitly tells the agent to do real work before writing outcome.json.
 func (s *Session) buildPrompt() string {
-	return "Read CONTEXT.md in this directory for your assignment. " +
-		"When done, write your result to outcome.json. " +
-		"If you are running low on context, write a handoff.md summarizing your " +
-		"progress and remaining work, then exit."
+	roleInstr := ""
+	if s.Role != "" {
+		roleInstr = "Read roles/" + s.Role + "/CLAUDE.md for your detailed instructions and protocol. "
+	}
+	return "You are a Bullet Farm agent. " +
+		"Read CONTEXT.md in this directory — it contains your assignment. " +
+		roleInstr +
+		"Complete the work described in your assignment fully before writing outcome.json. " +
+		"Do NOT write outcome.json until the work is actually finished. " +
+		"If you are running low on context window, write handoff.md summarizing " +
+		"your progress and remaining work, then stop — do not write outcome.json."
 }
 
 // kill terminates the tmux session if it exists.
