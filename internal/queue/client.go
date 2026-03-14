@@ -28,7 +28,7 @@ type WorkItem struct {
 	Description  string    `json:"description"`
 	Priority     int       `json:"priority"`
 	Status       string    `json:"status"`
-	Assignee     string    `json:"assignee"`
+	Assignee     string    `json:"assignee"`      // empty string when unassigned
 	CurrentStep  string    `json:"current_step"`
 	AttemptCount int       `json:"attempt_count"`
 	CreatedAt    time.Time `json:"created_at"`
@@ -131,9 +131,10 @@ func (c *Client) GetReady(repo string) (*WorkItem, error) {
 	)
 
 	var item WorkItem
+	var assignee, currentStep sql.NullString
 	err = row.Scan(
 		&item.ID, &item.Repo, &item.Title, &item.Description,
-		&item.Priority, &item.Status, &item.Assignee, &item.CurrentStep,
+		&item.Priority, &item.Status, &assignee, &currentStep,
 		&item.AttemptCount, &item.CreatedAt, &item.UpdatedAt,
 	)
 	if err == sql.ErrNoRows {
@@ -142,6 +143,8 @@ func (c *Client) GetReady(repo string) (*WorkItem, error) {
 	if err != nil {
 		return nil, fmt.Errorf("queue: scan ready item: %w", err)
 	}
+	item.Assignee = assignee.String
+	item.CurrentStep = currentStep.String
 
 	now := time.Now().UTC()
 	if _, err := tx.Exec(
@@ -334,13 +337,16 @@ func (c *Client) List(repo, status string) ([]*WorkItem, error) {
 	var items []*WorkItem
 	for rows.Next() {
 		var item WorkItem
+		var assignee, currentStep sql.NullString
 		if err := rows.Scan(
 			&item.ID, &item.Repo, &item.Title, &item.Description,
-			&item.Priority, &item.Status, &item.Assignee, &item.CurrentStep,
+			&item.Priority, &item.Status, &assignee, &currentStep,
 			&item.AttemptCount, &item.CreatedAt, &item.UpdatedAt,
 		); err != nil {
 			return nil, fmt.Errorf("queue: scan item: %w", err)
 		}
+		item.Assignee = assignee.String
+		item.CurrentStep = currentStep.String
 		items = append(items, &item)
 	}
 	return items, rows.Err()
@@ -349,9 +355,10 @@ func (c *Client) List(repo, status string) ([]*WorkItem, error) {
 // scanWorkItem scans a single row into a WorkItem. Returns nil, nil for sql.ErrNoRows.
 func scanWorkItem(row *sql.Row) (*WorkItem, error) {
 	var item WorkItem
+	var assignee, currentStep sql.NullString
 	err := row.Scan(
 		&item.ID, &item.Repo, &item.Title, &item.Description,
-		&item.Priority, &item.Status, &item.Assignee, &item.CurrentStep,
+		&item.Priority, &item.Status, &assignee, &currentStep,
 		&item.AttemptCount, &item.CreatedAt, &item.UpdatedAt,
 	)
 	if err == sql.ErrNoRows {
@@ -360,6 +367,8 @@ func scanWorkItem(row *sql.Row) (*WorkItem, error) {
 	if err != nil {
 		return nil, err
 	}
+	item.Assignee = assignee.String
+	item.CurrentStep = currentStep.String
 	return &item, nil
 }
 
