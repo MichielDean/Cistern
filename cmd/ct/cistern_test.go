@@ -25,7 +25,7 @@ func TestCisternListOutputFlag(t *testing.T) {
 		t.Fatalf("expected default 'table', got %q", f.DefValue)
 	}
 
-	// Test json output with empty cistern.
+	// Test json output with empty queue.
 	t.Run("json empty", func(t *testing.T) {
 		old := os.Stdout
 		r, w, _ := os.Pipe()
@@ -56,13 +56,13 @@ func TestCisternListOutputFlag(t *testing.T) {
 		}
 	})
 
-	// Test json output with one drop.
+	// Test json output with one item.
 	t.Run("json with items", func(t *testing.T) {
 		c, err := queue.New(db, "ts")
 		if err != nil {
 			t.Fatal(err)
 		}
-		item, err := c.Add("github.com/test/repo", "Test item", "", 1)
+		item, err := c.Add("github.com/test/repo", "Test item", "", 1, 3)
 		c.Close()
 		if err != nil {
 			t.Fatal(err)
@@ -111,4 +111,61 @@ func TestCisternListOutputFlag(t *testing.T) {
 
 	// Reset flag.
 	listOutput = "table"
+}
+
+func TestParseComplexity(t *testing.T) {
+	tests := []struct {
+		input   string
+		want    int
+		wantErr bool
+	}{
+		{"1", 1, false},
+		{"2", 2, false},
+		{"3", 3, false},
+		{"4", 4, false},
+		{"trivial", 1, false},
+		{"standard", 2, false},
+		{"full", 3, false},
+		{"critical", 4, false},
+		{"", 3, false},
+		{"5", 0, true},
+		{"foo", 0, true},
+	}
+
+	for _, tt := range tests {
+		got, err := parseComplexity(tt.input)
+		if tt.wantErr {
+			if err == nil {
+				t.Errorf("parseComplexity(%q) = %d, want error", tt.input, got)
+			}
+			continue
+		}
+		if err != nil {
+			t.Errorf("parseComplexity(%q) error: %v", tt.input, err)
+			continue
+		}
+		if got != tt.want {
+			t.Errorf("parseComplexity(%q) = %d, want %d", tt.input, got, tt.want)
+		}
+	}
+}
+
+func TestComplexityName(t *testing.T) {
+	tests := []struct {
+		level int
+		want  string
+	}{
+		{1, "trivial"},
+		{2, "standard"},
+		{3, "full"},
+		{4, "critical"},
+		{0, "full"},
+		{99, "full"},
+	}
+	for _, tt := range tests {
+		got := complexityName(tt.level)
+		if got != tt.want {
+			t.Errorf("complexityName(%d) = %q, want %q", tt.level, got, tt.want)
+		}
+	}
 }

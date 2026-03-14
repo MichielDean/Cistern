@@ -3,6 +3,7 @@ package automated
 import (
 	"context"
 	"fmt"
+	"strings"
 )
 
 // Merge squash-merges the PR for this item. If gh pr merge exits 0, the item
@@ -18,6 +19,14 @@ func (e *Executor) Merge(ctx context.Context, bc BeadContext) (*StepOutcome, err
 
 	out, err := e.ExecFn(ctx, bc.WorkDir, "gh", "pr", "merge", prURL, "--squash", "--delete-branch")
 	if err != nil {
+		// Check if the PR was already merged (auto-merge fired before us).
+		stateOut, stateErr := e.ExecFn(ctx, bc.WorkDir, "gh", "pr", "view", prURL, "--json", "state", "--jq", ".state")
+		if stateErr == nil && strings.TrimSpace(string(stateOut)) == "MERGED" {
+			return &StepOutcome{
+				Result: ResultPass,
+				Notes:  fmt.Sprintf("already merged: %s", prURL),
+			}, nil
+		}
 		return &StepOutcome{
 			Result: ResultFail,
 			Notes:  fmt.Sprintf("gh pr merge failed: %s: %s", err, out),

@@ -4,6 +4,7 @@ CREATE TABLE IF NOT EXISTS work_items (
     title TEXT NOT NULL,
     description TEXT DEFAULT '',
     priority INTEGER DEFAULT 2,
+    complexity INTEGER DEFAULT 3,
     status TEXT DEFAULT 'open',
     assignee TEXT DEFAULT '',
     current_step TEXT DEFAULT '',

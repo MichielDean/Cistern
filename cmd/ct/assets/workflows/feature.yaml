@@ -227,6 +227,21 @@ roles:
 
       If ANY annotation has severity blocking or required, result MUST be revision.
 
+complexity:
+  trivial:
+    level: 1
+    skip_steps: [adversarial-review, qa]
+  standard:
+    level: 2
+    skip_steps: [qa]
+  full:
+    level: 3
+    skip_steps: []
+  critical:
+    level: 4
+    skip_steps: []
+    require_human: true
+
 steps:
   - name: implement
     type: agent

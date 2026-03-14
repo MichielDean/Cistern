@@ -951,3 +951,139 @@ func TestLookupStep(t *testing.T) {
 		t.Error("expected nil for unknown step")
 	}
 }
+
+// --- complexity skip tests ---
+
+func complexityWorkflow() *workflow.Workflow {
+	return &workflow.Workflow{
+		Name: "feature",
+		Steps: []workflow.WorkflowStep{
+			{Name: "implement", Type: workflow.StepTypeAgent, OnPass: "adversarial-review", OnFail: "blocked"},
+			{Name: "adversarial-review", Type: workflow.StepTypeAgent, SkipFor: []int{1}, OnPass: "qa", OnFail: "implement", OnRevision: "implement"},
+			{Name: "qa", Type: workflow.StepTypeAgent, SkipFor: []int{1, 2}, OnPass: "pr-create", OnFail: "implement"},
+			{Name: "pr-create", Type: workflow.StepTypeAutomated, OnPass: "ci-gate", OnFail: "human"},
+			{Name: "ci-gate", Type: workflow.StepTypeAutomated, OnPass: "merge", OnFail: "implement"},
+			{Name: "merge", Type: workflow.StepTypeAutomated, OnPass: "done", OnFail: "human"},
+		},
+		Complexity: workflow.ComplexityConfig{
+			Trivial:  workflow.ComplexityLevel{Level: 1, SkipSteps: []string{"adversarial-review", "qa"}},
+			Standard: workflow.ComplexityLevel{Level: 2, SkipSteps: []string{"qa"}},
+			Full:     workflow.ComplexityLevel{Level: 3, SkipSteps: []string{}},
+			Critical: workflow.ComplexityLevel{Level: 4, SkipSteps: []string{}, RequireHuman: true},
+		},
+	}
+}
+
+func TestAdvanceSkipped_TrivialSkipsReviewAndQA(t *testing.T) {
+	wf := complexityWorkflow()
+	skipSteps := wf.Complexity.SkipStepsForLevel(1) // ["adversarial-review", "qa"]
+
+	// After implement passes, next is adversarial-review — should skip to pr-create.
+	got := advanceSkipped("adversarial-review", wf, skipSteps)
+	if got != "pr-create" {
+		t.Errorf("advanceSkipped(adversarial-review, trivial) = %q, want %q", got, "pr-create")
+	}
+}
+
+func TestAdvanceSkipped_StandardSkipsQA(t *testing.T) {
+	wf := complexityWorkflow()
+	skipSteps := wf.Complexity.SkipStepsForLevel(2) // ["qa"]
+
+	// adversarial-review passes → qa → should skip to pr-create.
+	got := advanceSkipped("qa", wf, skipSteps)
+	if got != "pr-create" {
+		t.Errorf("advanceSkipped(qa, standard) = %q, want %q", got, "pr-create")
+	}
+
+	// adversarial-review itself is not skipped.
+	got = advanceSkipped("adversarial-review", wf, skipSteps)
+	if got != "adversarial-review" {
+		t.Errorf("advanceSkipped(adversarial-review, standard) = %q, want %q", got, "adversarial-review")
+	}
+}
+
+func TestAdvanceSkipped_FullSkipsNothing(t *testing.T) {
+	wf := complexityWorkflow()
+	skipSteps := wf.Complexity.SkipStepsForLevel(3)
+
+	got := advanceSkipped("adversarial-review", wf, skipSteps)
+	if got != "adversarial-review" {
+		t.Errorf("advanceSkipped(adversarial-review, full) = %q, want %q", got, "adversarial-review")
+	}
+}
+
+func TestAdvanceSkipped_NoSkipList(t *testing.T) {
+	wf := complexityWorkflow()
+	got := advanceSkipped("adversarial-review", wf, nil)
+	if got != "adversarial-review" {
+		t.Errorf("advanceSkipped with nil skip = %q, want %q", got, "adversarial-review")
+	}
+}
+
+func TestComplexity_CriticalHumanGateBeforeMerge(t *testing.T) {
+	wf := complexityWorkflow()
+	client := newMockClient()
+	client.readyItems = []*queue.WorkItem{
+		{ID: "crit-1", CurrentStep: "ci-gate", Complexity: 4},
+	}
+
+	runner := newMockRunner()
+	runner.outcomes["ci-gate"] = &Outcome{Result: ResultPass}
+
+	config := workflow.FarmConfig{
+		Repos: []workflow.RepoConfig{
+			{Name: "test-repo", Workers: 1, Names: []string{"alpha"}, Prefix: "test"},
+		},
+		MaxTotalWorkers: 4,
+	}
+	workflows := map[string]*workflow.Workflow{"test-repo": wf}
+	clients := map[string]QueueClient{"test-repo": client}
+	sched := NewFromParts(config, workflows, clients, runner)
+	sched.Tick(context.Background())
+
+	if !runner.waitCalls(1, time.Second) {
+		t.Fatal("timed out")
+	}
+	time.Sleep(50 * time.Millisecond)
+
+	client.mu.Lock()
+	defer client.mu.Unlock()
+	// ci-gate passes → next is merge → critical requires human gate → should escalate.
+	if _, ok := client.escalated["crit-1"]; !ok {
+		t.Errorf("expected critical drop escalated to human before merge, got step %q", client.steps["crit-1"])
+	}
+}
+
+func TestTick_TrivialDropSkipsReviewAndQA(t *testing.T) {
+	wf := complexityWorkflow()
+	client := newMockClient()
+	client.readyItems = []*queue.WorkItem{
+		{ID: "triv-1", Complexity: 1},
+	}
+
+	runner := newMockRunner()
+	runner.outcomes["implement"] = &Outcome{Result: ResultPass, Notes: "done"}
+
+	config := workflow.FarmConfig{
+		Repos: []workflow.RepoConfig{
+			{Name: "test-repo", Workers: 1, Names: []string{"alpha"}, Prefix: "test"},
+		},
+		MaxTotalWorkers: 4,
+	}
+	workflows := map[string]*workflow.Workflow{"test-repo": wf}
+	clients := map[string]QueueClient{"test-repo": client}
+	sched := NewFromParts(config, workflows, clients, runner)
+	sched.Tick(context.Background())
+
+	if !runner.waitCalls(1, time.Second) {
+		t.Fatal("timed out")
+	}
+	time.Sleep(50 * time.Millisecond)
+
+	client.mu.Lock()
+	defer client.mu.Unlock()
+	// implement passes → adversarial-review skipped → qa skipped → should go to pr-create.
+	if client.steps["triv-1"] != "pr-create" {
+		t.Errorf("expected trivial drop at pr-create, got %q", client.steps["triv-1"])
+	}
+}

@@ -437,6 +437,16 @@ func (s *Scheduler) runStep(
 		return
 	}
 
+	// Apply complexity skip rules: advance past skipped steps.
+	// Derived from each step's skip_for field in the workflow YAML.
+	skipSteps := wf.SkipStepsForLevel(item.Complexity)
+	next = advanceSkipped(next, wf, skipSteps)
+
+	// For critical drops (complexity 4), insert a human gate before merge.
+	if wf.Complexity.RequireHumanForLevel(item.Complexity) && next == "merge" {
+		next = "human"
+	}
+
 	if isTerminal(next) {
 		s.handleTerminal(client, item.ID, next, step.Name)
 		return
@@ -462,6 +472,28 @@ func route(step workflow.WorkflowStep, result Result) string {
 	default:
 		return step.OnFail
 	}
+}
+
+// advanceSkipped walks the workflow from nextStep, skipping any step whose name
+// appears in skipSteps. It follows on_pass links to find the next non-skipped step.
+// Returns "done" if all remaining steps are skipped.
+func advanceSkipped(nextStep string, wf *workflow.Workflow, skipSteps []string) string {
+	if len(skipSteps) == 0 {
+		return nextStep
+	}
+	skip := make(map[string]bool, len(skipSteps))
+	for _, s := range skipSteps {
+		skip[s] = true
+	}
+	current := nextStep
+	for skip[current] {
+		step := lookupStep(wf, current)
+		if step == nil || step.OnPass == "" {
+			return "done"
+		}
+		current = step.OnPass
+	}
+	return current
 }
 
 // isTerminal returns true if the target is a terminal state.

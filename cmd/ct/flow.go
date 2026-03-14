@@ -5,11 +5,12 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"text/tabwriter"
+	"time"
 
 	"github.com/MichielDean/citadel/internal/queue"
 	"github.com/MichielDean/citadel/internal/runner"
@@ -22,25 +23,14 @@ var configPath string
 
 var flowCmd = &cobra.Command{
 	Use:   "flow",
-	Short: "Open and close the aqueducts",
-}
-
-// Deprecated alias — "ct farm" still works but warns.
-var farmCmd = &cobra.Command{
-	Use:    "farm",
-	Short:  "Deprecated: use 'ct flow'",
-	Hidden: true,
-	RunE: func(cmd *cobra.Command, args []string) error {
-		fmt.Fprintln(os.Stderr, "The Citadel speaks water now. Use 'ct flow' instead of 'ct farm'.")
-		return cmd.Help()
-	},
+	Short: "Aqueduct management — start, stop, and monitor the Citadel",
 }
 
 // --- flow start ---
 
 var flowStartCmd = &cobra.Command{
 	Use:   "start",
-	Short: "Open the aqueducts and start the scheduler",
+	Short: "Open the aqueducts — load config, validate workflows, start scheduler",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		cfgPath := resolveConfigPath()
 		cfg, err := workflow.ParseFarmConfig(cfgPath)
@@ -65,6 +55,7 @@ var flowStartCmd = &cobra.Command{
 			workflows[repo.Name] = w
 		}
 
+		// Build per-repo queue clients for the adapter.
 		dbPath := resolveDBPath()
 		queueClients := make(map[string]*queue.Client, len(cfg.Repos))
 		for _, repo := range cfg.Repos {
@@ -75,11 +66,13 @@ var flowStartCmd = &cobra.Command{
 			queueClients[repo.Name] = c
 		}
 
+		// Build the runner adapter that implements scheduler.StepRunner.
 		adapter, err := runner.NewAdapter(cfg.Repos, workflows, queueClients)
 		if err != nil {
 			return fmt.Errorf("runner adapter: %w", err)
 		}
 
+		// Create the scheduler.
 		sched, err := scheduler.New(*cfg, dbPath, adapter)
 		if err != nil {
 			return fmt.Errorf("scheduler: %w", err)
@@ -88,13 +81,15 @@ var flowStartCmd = &cobra.Command{
 		fmt.Println("Citadel online. Aqueducts open.")
 		for _, repo := range cfg.Repos {
 			w := workflows[repo.Name]
-			fmt.Printf("  %s: %d valves, %d channels\n", repo.Name, len(w.Steps), repo.Workers)
+			names := repoWorkerNames(repo)
+			fmt.Printf("  %s: workflow=%q (%d valves), channels=%d (%s)\n",
+				repo.Name, w.Name, len(w.Steps), repo.Workers, strings.Join(names, ", "))
 		}
 
+		fmt.Println("Ctrl-C to close aqueducts.")
 		ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 		defer cancel()
 		if err := sched.Run(ctx); errors.Is(err, context.Canceled) {
-			fmt.Println("Aqueducts closed.")
 			return nil
 		} else {
 			return err
@@ -106,7 +101,7 @@ var flowStartCmd = &cobra.Command{
 
 var flowStatusCmd = &cobra.Command{
 	Use:   "status",
-	Short: "Show channels and cistern state",
+	Short: "Show channels, cistern levels, and drop assignments",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		cfgPath := resolveConfigPath()
 		cfg, err := workflow.ParseFarmConfig(cfgPath)
@@ -114,88 +109,58 @@ var flowStatusCmd = &cobra.Command{
 			return fmt.Errorf("loading config: %w", err)
 		}
 
-		cfgDir := filepath.Dir(cfgPath)
-
-		// Collect channel names.
+		// Collect all configured channel names.
 		var allNames []string
-		totalWorkers := 0
 		for _, repo := range cfg.Repos {
-			names := repo.Names
-			if len(names) == 0 {
-				for i := 0; i < repo.Workers; i++ {
-					names = append(names, fmt.Sprintf("worker-%d", i))
-				}
-			}
-			allNames = append(allNames, names...)
-			totalWorkers += repo.Workers
-
-			wfPath := repo.WorkflowPath
-			if wfPath != "" && !filepath.IsAbs(wfPath) {
-				wfPath = filepath.Join(cfgDir, wfPath)
-			}
-			if wfPath != "" {
-				if _, err := workflow.ParseWorkflow(wfPath); err != nil {
-					fmt.Fprintf(os.Stderr, "  warning: %s workflow error: %v\n", repo.Name, err)
-				}
-			}
+			allNames = append(allNames, repoWorkerNames(repo)...)
 		}
 
-		// Count drops in cistern.
+		// Open queue to count drops.
 		dbPath := resolveDBPath()
-		var totalDrops, flowingDrops, queuedDrops int
-		for _, repo := range cfg.Repos {
-			c, err := queue.New(dbPath, repo.Prefix)
-			if err != nil {
-				continue
-			}
-			items, err := c.List("", "")
-			c.Close()
-			if err != nil {
-				continue
-			}
-			for _, item := range items {
-				if item.Status == "closed" || item.Status == "escalated" {
-					continue
+		c, err := queue.New(dbPath, "")
+		if err != nil {
+			return fmt.Errorf("queue: %w", err)
+		}
+		defer c.Close()
+
+		allItems, err := c.List("", "")
+		if err != nil {
+			return fmt.Errorf("list drops: %w", err)
+		}
+
+		flowing := 0
+		queued := 0
+		type busyInfo struct {
+			name, itemID, step string
+			since              time.Time
+		}
+		var busy []busyInfo
+		for _, item := range allItems {
+			switch item.Status {
+			case "in_progress":
+				flowing++
+				if item.Assignee != "" {
+					busy = append(busy, busyInfo{item.Assignee, item.ID, item.CurrentStep, item.UpdatedAt})
 				}
-				totalDrops++
-				if item.Status == "in_progress" {
-					flowingDrops++
-				} else {
-					queuedDrops++
-				}
+			case "open":
+				queued++
 			}
 		}
 
 		fmt.Println("Citadel")
-		fmt.Printf("Channels : %d open (%s)\n", totalWorkers, strings.Join(allNames, ", "))
-		fmt.Printf("Cistern  : %d drops (%d flowing, %d queued)\n", totalDrops, flowingDrops, queuedDrops)
-		fmt.Println()
+		fmt.Printf("Channels : %d open (%s)\n", len(allNames), strings.Join(allNames, ", "))
+		total := flowing + queued
+		fmt.Printf("Cistern  : %d drops (%d flowing, %d queued)\n", total, flowing, queued)
 
-		// Show active drops.
-		tw := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
-		for _, repo := range cfg.Repos {
-			c, err := queue.New(dbPath, repo.Prefix)
-			if err != nil {
-				continue
+		if len(busy) > 0 {
+			fmt.Println()
+			tw := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
+			for _, bw := range busy {
+				elapsed := int(time.Since(bw.since).Minutes())
+				fmt.Fprintf(tw, "%s\t%s\t[%s]\t%dm\n", bw.name, bw.itemID, bw.step, elapsed)
 			}
-			items, err := c.List("", "in_progress")
-			c.Close()
-			if err != nil {
-				continue
-			}
-			for _, item := range items {
-				assignee := item.Assignee
-				if assignee == "" {
-					assignee = "\u2014"
-				}
-				step := item.CurrentStep
-				if step == "" {
-					step = "\u2014"
-				}
-				fmt.Fprintf(tw, "%s\t%s\t[%s]\n", assignee, item.ID, step)
-			}
+			tw.Flush()
 		}
-		tw.Flush()
 
 		return nil
 	},
@@ -210,7 +175,7 @@ var flowConfigCmd = &cobra.Command{
 
 var flowConfigValidateCmd = &cobra.Command{
 	Use:   "validate [path]",
-	Short: "Validate config and all referenced workflow files",
+	Short: "Validate a config and all referenced workflow files",
 	Args:  cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		path := resolveConfigPath()
@@ -261,19 +226,28 @@ var flowConfigValidateCmd = &cobra.Command{
 	},
 }
 
+// --- hidden "farm" alias (deprecated) ---
+
+var farmAliasCmd = &cobra.Command{
+	Use:                "farm",
+	Hidden:             true,
+	Short:              "Deprecated: use 'ct flow'",
+	DisableFlagParsing: true,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		fmt.Fprintln(os.Stderr, "The Citadel speaks water now. Use 'ct flow' instead of 'ct farm'.")
+		return nil
+	},
+}
+
 func init() {
-	flowStartCmd.Flags().StringVar(&configPath, "config", "", "path to citadel config (default: ~/.citadel/citadel.yaml)")
+	flowStartCmd.Flags().StringVar(&configPath, "config", "", "path to config (default: ./config.yaml)")
 
 	flowConfigCmd.AddCommand(flowConfigValidateCmd)
 	flowCmd.AddCommand(flowStartCmd, flowStatusCmd, flowConfigCmd)
 	rootCmd.AddCommand(flowCmd)
 
-	// Deprecated alias — mirrors flow subcommands so "ct farm start" still routes.
-	farmStartAlias := *flowStartCmd
-	farmStatusAlias := *flowStatusCmd
-	farmConfigAlias := *flowConfigCmd
-	farmCmd.AddCommand(&farmStartAlias, &farmStatusAlias, &farmConfigAlias)
-	rootCmd.AddCommand(farmCmd)
+	// Hidden "farm" alias — prints deprecation message for any usage.
+	rootCmd.AddCommand(farmAliasCmd)
 }
 
 func resolveConfigPath() string {
@@ -283,9 +257,18 @@ func resolveConfigPath() string {
 	if env := os.Getenv("CT_CONFIG"); env != "" {
 		return env
 	}
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "citadel.yaml"
+	return "config.yaml"
+}
+
+// repoWorkerNames returns the configured worker names for a repo,
+// falling back to worker-0, worker-1, etc.
+func repoWorkerNames(repo workflow.RepoConfig) []string {
+	if len(repo.Names) > 0 {
+		return repo.Names
 	}
-	return filepath.Join(home, ".citadel", "citadel.yaml")
+	names := make([]string, repo.Workers)
+	for i := range names {
+		names[i] = fmt.Sprintf("worker-%d", i)
+	}
+	return names
 }

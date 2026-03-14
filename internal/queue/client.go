@@ -27,6 +27,7 @@ type WorkItem struct {
 	Title        string    `json:"title"`
 	Description  string    `json:"description"`
 	Priority     int       `json:"priority"`
+	Complexity   int       `json:"complexity"`
 	Status       string    `json:"status"`
 	Assignee     string    `json:"assignee"`      // empty string when unassigned
 	CurrentStep  string    `json:"current_step"`
@@ -61,6 +62,9 @@ func New(dbPath, prefix string) (*Client, error) {
 		db.Close()
 		return nil, fmt.Errorf("queue: schema: %w", err)
 	}
+	// Migration: add complexity column for existing DBs. Ignore error — fires
+	// on first run when column already exists from schema.
+	db.Exec(`ALTER TABLE work_items ADD COLUMN complexity INTEGER DEFAULT 3`)
 	return &Client{db: db, prefix: prefix}, nil
 }
 
@@ -82,7 +86,10 @@ func (c *Client) generateID() (string, error) {
 }
 
 // Add creates a new work item and returns it.
-func (c *Client) Add(repo, title, description string, priority int) (*WorkItem, error) {
+func (c *Client) Add(repo, title, description string, priority, complexity int) (*WorkItem, error) {
+	if complexity < 1 || complexity > 4 {
+		complexity = 3
+	}
 	id, err := c.generateID()
 	if err != nil {
 		return nil, fmt.Errorf("queue: generate id: %w", err)
@@ -90,9 +97,9 @@ func (c *Client) Add(repo, title, description string, priority int) (*WorkItem, 
 
 	now := time.Now().UTC()
 	_, err = c.db.Exec(
-		`INSERT INTO work_items (id, repo, title, description, priority, status, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, 'open', ?, ?)`,
-		id, repo, title, description, priority, now, now,
+		`INSERT INTO work_items (id, repo, title, description, priority, complexity, status, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?, 'open', ?, ?)`,
+		id, repo, title, description, priority, complexity, now, now,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("queue: add: %w", err)
@@ -104,6 +111,7 @@ func (c *Client) Add(repo, title, description string, priority int) (*WorkItem, 
 		Title:       title,
 		Description: description,
 		Priority:    priority,
+		Complexity:  complexity,
 		Status:      "open",
 		CreatedAt:   now,
 		UpdatedAt:   now,
@@ -122,7 +130,7 @@ func (c *Client) GetReady(repo string) (*WorkItem, error) {
 	defer tx.Rollback()
 
 	row := tx.QueryRow(
-		`SELECT id, repo, title, description, priority, status, assignee, current_step, created_at, updated_at
+		`SELECT id, repo, title, description, priority, complexity, status, assignee, current_step, created_at, updated_at
 		 FROM work_items
 		 WHERE repo = ? AND status = 'open'
 		 ORDER BY priority ASC, created_at ASC
@@ -134,7 +142,7 @@ func (c *Client) GetReady(repo string) (*WorkItem, error) {
 	var assignee, currentStep sql.NullString
 	err = row.Scan(
 		&item.ID, &item.Repo, &item.Title, &item.Description,
-		&item.Priority, &item.Status, &assignee, &currentStep,
+		&item.Priority, &item.Complexity, &item.Status, &assignee, &currentStep,
 		&item.CreatedAt, &item.UpdatedAt,
 	)
 	if err == sql.ErrNoRows {
@@ -277,7 +285,7 @@ func (c *Client) CloseItem(id string) error {
 // Get retrieves a single work item by ID. Returns an error if not found.
 func (c *Client) Get(id string) (*WorkItem, error) {
 	row := c.db.QueryRow(
-		`SELECT id, repo, title, description, priority, status, assignee, current_step, created_at, updated_at
+		`SELECT id, repo, title, description, priority, complexity, status, assignee, current_step, created_at, updated_at
 		 FROM work_items WHERE id = ?`,
 		id,
 	)
@@ -293,7 +301,7 @@ func (c *Client) Get(id string) (*WorkItem, error) {
 
 // List returns work items filtered by repo and/or status. Empty strings mean no filter.
 func (c *Client) List(repo, status string) ([]*WorkItem, error) {
-	query := `SELECT id, repo, title, description, priority, status, assignee, current_step, created_at, updated_at
+	query := `SELECT id, repo, title, description, priority, complexity, status, assignee, current_step, created_at, updated_at
 		 FROM work_items WHERE 1=1`
 	var args []any
 	if repo != "" {
@@ -318,7 +326,7 @@ func (c *Client) List(repo, status string) ([]*WorkItem, error) {
 		var assignee, currentStep sql.NullString
 		if err := rows.Scan(
 			&item.ID, &item.Repo, &item.Title, &item.Description,
-			&item.Priority, &item.Status, &assignee, &currentStep,
+			&item.Priority, &item.Complexity, &item.Status, &assignee, &currentStep,
 			&item.CreatedAt, &item.UpdatedAt,
 		); err != nil {
 			return nil, fmt.Errorf("queue: scan item: %w", err)
@@ -336,7 +344,7 @@ func scanWorkItem(row *sql.Row) (*WorkItem, error) {
 	var assignee, currentStep sql.NullString
 	err := row.Scan(
 		&item.ID, &item.Repo, &item.Title, &item.Description,
-		&item.Priority, &item.Status, &assignee, &currentStep,
+		&item.Priority, &item.Complexity, &item.Status, &assignee, &currentStep,
 		&item.CreatedAt, &item.UpdatedAt,
 	)
 	if err == sql.ErrNoRows {

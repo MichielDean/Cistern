@@ -56,7 +56,7 @@ func TestGenerateID(t *testing.T) {
 
 func TestAdd_And_Get(t *testing.T) {
 	c := testClient(t)
-	item, err := c.Add("github.com/org/repo", "Fix bug", "Details here", 1)
+	item, err := c.Add("github.com/org/repo", "Fix bug", "Details here", 1, 3)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -84,9 +84,9 @@ func TestAdd_And_Get(t *testing.T) {
 
 func TestGetReady_PriorityOrdering(t *testing.T) {
 	c := testClient(t)
-	c.Add("myrepo", "Low priority", "", 3)
-	c.Add("myrepo", "High priority", "", 1)
-	c.Add("myrepo", "Medium priority", "", 2)
+	c.Add("myrepo", "Low priority", "", 3, 3)
+	c.Add("myrepo", "High priority", "", 1, 3)
+	c.Add("myrepo", "Medium priority", "", 2, 3)
 
 	item, err := c.GetReady("myrepo")
 	if err != nil {
@@ -102,8 +102,8 @@ func TestGetReady_PriorityOrdering(t *testing.T) {
 
 func TestGetReady_RepoFilter(t *testing.T) {
 	c := testClient(t)
-	c.Add("repo-a", "A task", "", 1)
-	c.Add("repo-b", "B task", "", 1)
+	c.Add("repo-a", "A task", "", 1, 3)
+	c.Add("repo-b", "B task", "", 1, 3)
 
 	item, err := c.GetReady("repo-a")
 	if err != nil {
@@ -124,7 +124,7 @@ func TestGetReady_RepoFilter(t *testing.T) {
 
 func TestGetReady_OnlyOpen(t *testing.T) {
 	c := testClient(t)
-	c.Add("myrepo", "Task", "", 1)
+	c.Add("myrepo", "Task", "", 1, 3)
 
 	// First GetReady atomically claims the item.
 	got, err := c.GetReady("myrepo")
@@ -158,7 +158,7 @@ func TestGetReady_NoWork(t *testing.T) {
 
 func TestAssign(t *testing.T) {
 	c := testClient(t)
-	item, _ := c.Add("myrepo", "Task", "", 1)
+	item, _ := c.Add("myrepo", "Task", "", 1, 3)
 
 	// Claim the item via GetReady (atomically sets in_progress).
 	c.GetReady("myrepo")
@@ -181,7 +181,7 @@ func TestAssign(t *testing.T) {
 
 func TestAssign_EmptyWorker_SetsOpen(t *testing.T) {
 	c := testClient(t)
-	item, _ := c.Add("myrepo", "Task", "", 1)
+	item, _ := c.Add("myrepo", "Task", "", 1, 3)
 	c.GetReady("myrepo") // claim item (sets in_progress)
 	c.Assign(item.ID, "alice", "implement")
 
@@ -204,7 +204,7 @@ func TestAssign_EmptyWorker_SetsOpen(t *testing.T) {
 
 func TestUpdateStatus(t *testing.T) {
 	c := testClient(t)
-	item, _ := c.Add("myrepo", "Task", "", 1)
+	item, _ := c.Add("myrepo", "Task", "", 1, 3)
 
 	if err := c.UpdateStatus(item.ID, "in_progress"); err != nil {
 		t.Fatal(err)
@@ -218,7 +218,7 @@ func TestUpdateStatus(t *testing.T) {
 
 func TestAddNote_And_GetNotes(t *testing.T) {
 	c := testClient(t)
-	item, _ := c.Add("myrepo", "Task", "", 1)
+	item, _ := c.Add("myrepo", "Task", "", 1, 3)
 
 	if err := c.AddNote(item.ID, "implement", "wrote the code"); err != nil {
 		t.Fatal(err)
@@ -255,7 +255,7 @@ func TestGetNotes_Empty(t *testing.T) {
 
 func TestEscalate(t *testing.T) {
 	c := testClient(t)
-	item, _ := c.Add("myrepo", "Task", "", 1)
+	item, _ := c.Add("myrepo", "Task", "", 1, 3)
 
 	if err := c.Escalate(item.ID, "stuck on flaky test"); err != nil {
 		t.Fatal(err)
@@ -269,7 +269,7 @@ func TestEscalate(t *testing.T) {
 
 func TestCloseItem(t *testing.T) {
 	c := testClient(t)
-	item, _ := c.Add("myrepo", "Task", "", 1)
+	item, _ := c.Add("myrepo", "Task", "", 1, 3)
 
 	if err := c.CloseItem(item.ID); err != nil {
 		t.Fatal(err)
@@ -283,9 +283,9 @@ func TestCloseItem(t *testing.T) {
 
 func TestList_All(t *testing.T) {
 	c := testClient(t)
-	c.Add("myrepo", "Task 1", "", 1)
-	c.Add("myrepo", "Task 2", "", 2)
-	c.Add("other", "Task 3", "", 1)
+	c.Add("myrepo", "Task 1", "", 1, 3)
+	c.Add("myrepo", "Task 2", "", 2, 3)
+	c.Add("other", "Task 3", "", 1, 3)
 
 	items, err := c.List("", "")
 	if err != nil {
@@ -298,8 +298,8 @@ func TestList_All(t *testing.T) {
 
 func TestList_ByRepo(t *testing.T) {
 	c := testClient(t)
-	c.Add("myrepo", "Task 1", "", 1)
-	c.Add("other", "Task 2", "", 1)
+	c.Add("myrepo", "Task 1", "", 1, 3)
+	c.Add("other", "Task 2", "", 1, 3)
 
 	items, err := c.List("myrepo", "")
 	if err != nil {
@@ -315,8 +315,8 @@ func TestList_ByRepo(t *testing.T) {
 
 func TestList_ByStatus(t *testing.T) {
 	c := testClient(t)
-	item1, _ := c.Add("myrepo", "Open task", "", 1)
-	item2, _ := c.Add("myrepo", "Closed task", "", 1)
+	item1, _ := c.Add("myrepo", "Open task", "", 1, 3)
+	item2, _ := c.Add("myrepo", "Closed task", "", 1, 3)
 	_ = item1
 	c.CloseItem(item2.ID)
 
@@ -348,5 +348,69 @@ func TestAssign_NotFound(t *testing.T) {
 	err := c.Assign("nonexistent", "worker", "step")
 	if err == nil {
 		t.Error("expected error for missing item")
+	}
+}
+
+func TestAdd_WithComplexity(t *testing.T) {
+	c := testClient(t)
+	item, err := c.Add("myrepo", "Trivial fix", "", 2, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if item.Complexity != 1 {
+		t.Errorf("complexity = %d, want 1", item.Complexity)
+	}
+
+	got, err := c.Get(item.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Complexity != 1 {
+		t.Errorf("stored complexity = %d, want 1", got.Complexity)
+	}
+}
+
+func TestAdd_ComplexityDefault(t *testing.T) {
+	c := testClient(t)
+	// Out-of-range complexity should default to 3.
+	item, err := c.Add("myrepo", "Bad cx", "", 2, 99)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if item.Complexity != 3 {
+		t.Errorf("complexity = %d, want 3 (default)", item.Complexity)
+	}
+}
+
+func TestGetReady_ReturnsComplexity(t *testing.T) {
+	c := testClient(t)
+	c.Add("myrepo", "Critical task", "", 1, 4)
+
+	item, err := c.GetReady("myrepo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if item.Complexity != 4 {
+		t.Errorf("complexity = %d, want 4", item.Complexity)
+	}
+}
+
+func TestList_ReturnsComplexity(t *testing.T) {
+	c := testClient(t)
+	c.Add("myrepo", "Trivial", "", 1, 1)
+	c.Add("myrepo", "Critical", "", 1, 4)
+
+	items, err := c.List("myrepo", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 2 {
+		t.Fatalf("got %d items, want 2", len(items))
+	}
+	if items[0].Complexity != 1 {
+		t.Errorf("items[0].Complexity = %d, want 1", items[0].Complexity)
+	}
+	if items[1].Complexity != 4 {
+		t.Errorf("items[1].Complexity = %d, want 4", items[1].Complexity)
 	}
 }

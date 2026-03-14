@@ -14,14 +14,8 @@ import (
 )
 
 var cisternCmd = &cobra.Command{
-	Use:     "cistern",
-	Aliases: []string{"queue"},
-	Short:   "Manage drops in the cistern",
-	PersistentPreRun: func(cmd *cobra.Command, args []string) {
-		if len(os.Args) > 1 && os.Args[1] == "queue" {
-			fmt.Fprintln(os.Stderr, "The Citadel speaks water now. Use 'ct cistern' instead of 'ct queue'.")
-		}
-	},
+	Use:   "cistern",
+	Short: "Manage drops in the cistern",
 }
 
 // --- cistern add ---
@@ -31,6 +25,7 @@ var (
 	addDescription string
 	addPriority    int
 	addRepo        string
+	addComplexity  string
 )
 
 var cisternAddCmd = &cobra.Command{
@@ -49,7 +44,11 @@ var cisternAddCmd = &cobra.Command{
 		}
 		defer c.Close()
 
-		item, err := c.Add(addRepo, addTitle, addDescription, addPriority)
+		cx, err := parseComplexity(addComplexity)
+		if err != nil {
+			return err
+		}
+		item, err := c.Add(addRepo, addTitle, addDescription, addPriority, cx)
 		if err != nil {
 			return err
 		}
@@ -65,21 +64,6 @@ var (
 	listStatus string
 	listOutput string
 )
-
-func waterStatus(s string) string {
-	switch s {
-	case "in_progress":
-		return "flowing"
-	case "open":
-		return "queued"
-	case "closed":
-		return "free"
-	case "escalated":
-		return "poisoned"
-	default:
-		return s
-	}
-}
 
 var cisternListCmd = &cobra.Command{
 	Use:   "list",
@@ -117,17 +101,33 @@ var cisternListCmd = &cobra.Command{
 		}
 
 		tw := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
-		fmt.Fprintln(tw, "ID\tTITLE\tSTATUS\tVALVE")
+		fmt.Fprintln(tw, "ID\tCOMPLEXITY\tTITLE\tSTATUS\tVALVE")
 		for _, item := range items {
-			step := item.CurrentStep
-			if step == "" {
-				step = "\u2014"
+			valve := item.CurrentStep
+			if valve == "" {
+				valve = "\u2014"
 			}
-			fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n",
-				item.ID, item.Title, waterStatus(item.Status), step)
+			fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n",
+				item.ID, complexityName(item.Complexity), item.Title, displayStatus(item.Status), valve)
 		}
 		return tw.Flush()
 	},
+}
+
+// displayStatus maps internal status names to water vocabulary.
+func displayStatus(status string) string {
+	switch status {
+	case "in_progress":
+		return "flowing"
+	case "open":
+		return "queued"
+	case "escalated":
+		return "poisoned"
+	case "closed":
+		return "flows free"
+	default:
+		return status
+	}
 }
 
 // --- cistern show ---
@@ -151,8 +151,9 @@ var cisternShowCmd = &cobra.Command{
 		fmt.Printf("ID:          %s\n", item.ID)
 		fmt.Printf("Title:       %s\n", item.Title)
 		fmt.Printf("Repo:        %s\n", item.Repo)
-		fmt.Printf("Status:      %s\n", waterStatus(item.Status))
+		fmt.Printf("Status:      %s\n", displayStatus(item.Status))
 		fmt.Printf("Priority:    %d\n", item.Priority)
+		fmt.Printf("Complexity:  %s (%d)\n", complexityName(item.Complexity), item.Complexity)
 		fmt.Printf("Channel:     %s\n", item.Assignee)
 		fmt.Printf("Valve:       %s\n", item.CurrentStep)
 
@@ -203,7 +204,7 @@ var cisternNoteCmd = &cobra.Command{
 
 var cisternCloseCmd = &cobra.Command{
 	Use:   "close <id>",
-	Short: "Close a drop",
+	Short: "Close a drop — it flows free",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		c, err := queue.New(resolveDBPath(), "")
@@ -215,7 +216,7 @@ var cisternCloseCmd = &cobra.Command{
 		if err := c.CloseItem(args[0]); err != nil {
 			return err
 		}
-		fmt.Printf("Drop %s flows free.\n", args[0])
+		fmt.Printf("drop %s flows free\n", args[0])
 		return nil
 	},
 }
@@ -224,7 +225,7 @@ var cisternCloseCmd = &cobra.Command{
 
 var cisternReopenCmd = &cobra.Command{
 	Use:   "reopen <id>",
-	Short: "Reopen a closed or poisoned drop",
+	Short: "Return a drop to the cistern",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		c, err := queue.New(resolveDBPath(), "")
@@ -236,7 +237,7 @@ var cisternReopenCmd = &cobra.Command{
 		if err := c.UpdateStatus(args[0], "open"); err != nil {
 			return err
 		}
-		fmt.Printf("Drop %s returned to cistern.\n", args[0])
+		fmt.Printf("drop %s returned to cistern\n", args[0])
 		return nil
 	},
 }
@@ -247,7 +248,7 @@ var escalateReason string
 
 var cisternEscalateCmd = &cobra.Command{
 	Use:   "escalate <id>",
-	Short: "Escalate a drop for human attention",
+	Short: "Poison a drop — escalate for human attention",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if escalateReason == "" {
@@ -262,7 +263,7 @@ var cisternEscalateCmd = &cobra.Command{
 		if err := c.Escalate(args[0], escalateReason); err != nil {
 			return err
 		}
-		fmt.Printf("Drop %s poisoned \u2014 escalated for human.\n", args[0])
+		fmt.Printf("drop %s poisoned\n", args[0])
 		return nil
 	},
 }
@@ -276,7 +277,7 @@ var (
 
 var cisternPurgeCmd = &cobra.Command{
 	Use:   "purge",
-	Short: "Delete old drops that have flowed free or been poisoned",
+	Short: "Delete closed/poisoned drops older than a threshold",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if purgeOlderThan == "" {
 			return fmt.Errorf("--older-than is required")
@@ -304,15 +305,6 @@ var cisternPurgeCmd = &cobra.Command{
 	},
 }
 
-// --- cistern get (alias for show) ---
-
-var cisternGetCmd = &cobra.Command{
-	Use:   "get <id>",
-	Short: "Get details of a drop (alias for show)",
-	Args:  cobra.ExactArgs(1),
-	RunE:  cisternShowCmd.RunE,
-}
-
 // parseDuration parses a duration string, supporting 'd' suffix for days
 // in addition to standard Go duration units (e.g., "30d", "24h", "1h30m").
 func parseDuration(s string) (time.Duration, error) {
@@ -326,11 +318,25 @@ func parseDuration(s string) (time.Duration, error) {
 	return time.ParseDuration(s)
 }
 
+// --- hidden "queue" alias (deprecated) ---
+
+var queueAliasCmd = &cobra.Command{
+	Use:                "queue",
+	Hidden:             true,
+	Short:              "Deprecated: use 'ct cistern'",
+	DisableFlagParsing: true,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		fmt.Fprintln(os.Stderr, "The Citadel speaks water now. Use 'ct cistern' instead of 'ct queue'.")
+		return nil
+	},
+}
+
 func init() {
 	cisternAddCmd.Flags().StringVar(&addTitle, "title", "", "drop title (required)")
 	cisternAddCmd.Flags().StringVar(&addDescription, "description", "", "drop description")
 	cisternAddCmd.Flags().IntVar(&addPriority, "priority", 2, "priority (1=highest)")
 	cisternAddCmd.Flags().StringVar(&addRepo, "repo", "", "target repository (required)")
+	cisternAddCmd.Flags().StringVarP(&addComplexity, "complexity", "x", "3", "drop complexity: 1/trivial, 2/standard, 3/full (default), 4/critical")
 
 	cisternListCmd.Flags().StringVar(&listRepo, "repo", "", "filter by repo")
 	cisternListCmd.Flags().StringVar(&listStatus, "status", "", "filter by status (open|in_progress|closed|escalated)")
@@ -341,13 +347,48 @@ func init() {
 	cisternPurgeCmd.Flags().StringVar(&purgeOlderThan, "older-than", "", "delete drops older than this duration (e.g. 30d, 24h) (required)")
 	cisternPurgeCmd.Flags().BoolVar(&purgeDryRun, "dry-run", false, "show what would be deleted without deleting")
 
-	cisternCmd.AddCommand(cisternAddCmd, cisternListCmd, cisternShowCmd, cisternGetCmd,
-		cisternNoteCmd, cisternCloseCmd, cisternReopenCmd, cisternEscalateCmd, cisternPurgeCmd)
+	cisternCmd.AddCommand(cisternAddCmd, cisternListCmd, cisternShowCmd, cisternNoteCmd,
+		cisternCloseCmd, cisternReopenCmd, cisternEscalateCmd, cisternPurgeCmd)
 	rootCmd.AddCommand(cisternCmd)
+
+	// Hidden "queue" alias — prints deprecation message for any usage.
+	rootCmd.AddCommand(queueAliasCmd)
+}
+
+// parseComplexity accepts "1"-"4" or names "trivial","standard","full","critical".
+func parseComplexity(s string) (int, error) {
+	switch s {
+	case "1", "trivial":
+		return 1, nil
+	case "2", "standard":
+		return 2, nil
+	case "3", "full", "":
+		return 3, nil
+	case "4", "critical":
+		return 4, nil
+	}
+	return 0, fmt.Errorf("invalid complexity %q: use 1/trivial, 2/standard, 3/full, 4/critical", s)
+}
+
+// complexityName returns the human name for a complexity level.
+func complexityName(cx int) string {
+	switch cx {
+	case 1:
+		return "trivial"
+	case 2:
+		return "standard"
+	case 4:
+		return "critical"
+	default:
+		return "full"
+	}
 }
 
 // inferPrefix extracts a short prefix from a repo path for ID generation.
+// e.g., "github.com/Org/MyRepo" → "mr" (lowercase initials of last segment),
+// or just the first two chars if the name is short.
 func inferPrefix(repo string) string {
+	// Use last path segment.
 	name := repo
 	for i := len(repo) - 1; i >= 0; i-- {
 		if repo[i] == '/' {
@@ -361,6 +402,7 @@ func inferPrefix(repo string) string {
 	if len(name) <= 2 {
 		return name
 	}
+	// Use first two lowercase chars.
 	r := []byte{name[0], name[1]}
 	for i := range r {
 		if r[i] >= 'A' && r[i] <= 'Z' {
