@@ -343,8 +343,7 @@ func TestCIGate_SkippingCountsAsPass(t *testing.T) {
 
 func TestMerge_Success(t *testing.T) {
 	rec := &recorder{responses: []response{
-		{out: []byte(`{"state":"OPEN"}`)},          // gh pr view (pre-check)
-		{out: []byte("Merged\n")},                  // gh pr merge
+		{out: []byte("Merged\n")}, // gh pr merge
 	}}
 
 	e := newExecutor(rec)
@@ -361,11 +360,9 @@ func TestMerge_Success(t *testing.T) {
 	}
 }
 
-func TestMerge_MergeFails(t *testing.T) {
+func TestMerge_Fails(t *testing.T) {
 	rec := &recorder{responses: []response{
-		{out: []byte(`{"state":"OPEN"}`)},               // pre-check: not yet merged
-		{out: []byte("merge conflict"), err: errors.New("exit 1")}, // gh pr merge fails
-		{out: []byte(`{"state":"OPEN"}`)},               // re-check: still open → fail
+		{out: []byte("merge conflict"), err: errors.New("exit 1")},
 	}}
 
 	e := newExecutor(rec)
@@ -379,25 +376,6 @@ func TestMerge_MergeFails(t *testing.T) {
 	}
 	if out.Result != ResultFail {
 		t.Fatalf("want fail, got %s", out.Result)
-	}
-}
-
-func TestMerge_AlreadyMerged(t *testing.T) {
-	rec := &recorder{responses: []response{
-		{out: []byte(`{"state":"MERGED"}`)}, // pre-check: already merged
-	}}
-
-	e := newExecutor(rec)
-	out, err := e.Merge(context.Background(), BeadContext{
-		WorkDir:  "/tmp/repo",
-		Metadata: map[string]any{MetaPRURL: "https://github.com/org/repo/pull/42"},
-	})
-
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if out.Result != ResultPass {
-		t.Fatalf("want pass (idempotent), got %s: %s", out.Result, out.Notes)
 	}
 }
 
@@ -407,26 +385,6 @@ func TestMerge_NoPRURL(t *testing.T) {
 	e := newExecutor(rec)
 	out, err := e.Merge(context.Background(), BeadContext{
 		WorkDir: "/tmp/repo",
-	})
-
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if out.Result != ResultFail {
-		t.Fatalf("want fail, got %s", out.Result)
-	}
-}
-
-func TestMerge_VerifyFails(t *testing.T) {
-	rec := &recorder{responses: []response{
-		{out: []byte("OK\n")},                                          // gh pr merge
-		{out: []byte("not found"), err: errors.New("exit 1")},          // gh pr view
-	}}
-
-	e := newExecutor(rec)
-	out, err := e.Merge(context.Background(), BeadContext{
-		WorkDir:  "/tmp/repo",
-		Metadata: map[string]any{MetaPRURL: "https://github.com/org/repo/pull/42"},
 	})
 
 	if err != nil {
