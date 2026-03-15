@@ -44,10 +44,10 @@ func testWorkflow() *workflow.Workflow {
 func TestNewRunner_NamedWorkers(t *testing.T) {
 	cfg := Config{
 		SkipInitialClone: true,
-		Repo:        testRepoConfig(),
-		Workflow:    testWorkflow(),
-		QueueClient: testQueueClient(t),
-		SandboxRoot: t.TempDir(),
+		Repo:             testRepoConfig(),
+		Workflow:         testWorkflow(),
+		QueueClient:      testQueueClient(t),
+		SandboxRoot:      t.TempDir(),
 	}
 
 	r, err := New(cfg)
@@ -87,10 +87,10 @@ func TestNewRunner_NumberedWorkers(t *testing.T) {
 
 	cfg := Config{
 		SkipInitialClone: true,
-		Repo:        repo,
-		Workflow:    testWorkflow(),
-		QueueClient: testQueueClient(t),
-		SandboxRoot: t.TempDir(),
+		Repo:             repo,
+		Workflow:         testWorkflow(),
+		QueueClient:      testQueueClient(t),
+		SandboxRoot:      t.TempDir(),
 	}
 
 	r, err := New(cfg)
@@ -110,8 +110,8 @@ func TestNewRunner_NumberedWorkers(t *testing.T) {
 func TestNewRunner_NoWorkflow(t *testing.T) {
 	cfg := Config{
 		SkipInitialClone: true,
-		Repo:        testRepoConfig(),
-		QueueClient: testQueueClient(t),
+		Repo:             testRepoConfig(),
+		QueueClient:      testQueueClient(t),
 	}
 	_, err := New(cfg)
 	if err == nil {
@@ -122,8 +122,8 @@ func TestNewRunner_NoWorkflow(t *testing.T) {
 func TestNewRunner_NoQueueClient(t *testing.T) {
 	cfg := Config{
 		SkipInitialClone: true,
-		Repo:     testRepoConfig(),
-		Workflow: testWorkflow(),
+		Repo:             testRepoConfig(),
+		Workflow:         testWorkflow(),
 	}
 	_, err := New(cfg)
 	if err == nil {
@@ -134,10 +134,10 @@ func TestNewRunner_NoQueueClient(t *testing.T) {
 func TestClaimRelease(t *testing.T) {
 	cfg := Config{
 		SkipInitialClone: true,
-		Repo:        testRepoConfig(),
-		Workflow:    testWorkflow(),
-		QueueClient: testQueueClient(t),
-		SandboxRoot: t.TempDir(),
+		Repo:             testRepoConfig(),
+		Workflow:         testWorkflow(),
+		QueueClient:      testQueueClient(t),
+		SandboxRoot:      t.TempDir(),
 	}
 
 	r, err := New(cfg)
@@ -186,10 +186,10 @@ func TestClaimRelease(t *testing.T) {
 func TestStepByName(t *testing.T) {
 	cfg := Config{
 		SkipInitialClone: true,
-		Repo:        testRepoConfig(),
-		Workflow:    testWorkflow(),
-		QueueClient: testQueueClient(t),
-		SandboxRoot: t.TempDir(),
+		Repo:             testRepoConfig(),
+		Workflow:         testWorkflow(),
+		QueueClient:      testQueueClient(t),
+		SandboxRoot:      t.TempDir(),
 	}
 
 	r, err := New(cfg)

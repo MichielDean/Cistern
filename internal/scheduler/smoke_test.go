@@ -370,12 +370,12 @@ func TestSmoke_FeatureWorkflow_RevisionLoop(t *testing.T) {
 
 	// Step log for the revision loop.
 	wantLog := []string{
-		"implement", "review",    // 1st implement → review
-		"review", "implement",    // review(revision) → implement
-		"implement", "review",    // 2nd implement → review
-		"review", "qa",           // review(pass) → qa
-		"qa", "merge",            // qa → merge
-		"merge", "done",          // merge → done
+		"implement", "review", // 1st implement → review
+		"review", "implement", // review(revision) → implement
+		"implement", "review", // 2nd implement → review
+		"review", "qa", // review(pass) → qa
+		"qa", "merge", // qa → merge
+		"merge", "done", // merge → done
 	}
 	if len(client.stepLog) != len(wantLog) {
 		t.Fatalf("step log = %v (len %d), want len %d",
@@ -491,13 +491,13 @@ func TestSmoke_QAFailReturnsToImplement(t *testing.T) {
 
 	// Verify qa failure routed back to implement (not blocked).
 	wantLog := []string{
-		"implement", "review",    // 1st implement → review
-		"review", "qa",           // 1st review → qa
-		"qa", "implement",        // qa(fail) → implement
-		"implement", "review",    // 2nd implement → review
-		"review", "qa",           // 2nd review → qa
-		"qa", "merge",            // qa(pass) → merge
-		"merge", "done",          // merge → done
+		"implement", "review", // 1st implement → review
+		"review", "qa", // 1st review → qa
+		"qa", "implement", // qa(fail) → implement
+		"implement", "review", // 2nd implement → review
+		"review", "qa", // 2nd review → qa
+		"qa", "merge", // qa(pass) → merge
+		"merge", "done", // merge → done
 	}
 	if len(client.stepLog) != len(wantLog) {
 		t.Fatalf("step log = %v (len %d), want len %d",

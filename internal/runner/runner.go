@@ -40,12 +40,12 @@ type Runner struct {
 
 // Config holds the parameters for creating a Runner.
 type Config struct {
-	Repo              workflow.RepoConfig
-	Workflow          *workflow.Workflow
-	QueueClient       *queue.Client
-	SandboxRoot       string // Override for sandbox root dir (default: ~/.citadel/sandboxes)
-	HandoffThreshold  int    // Token threshold for session handoff (default: 150000)
-	SkipInitialClone  bool   // Skip the startup clone (for tests with fake repo URLs)
+	Repo             workflow.RepoConfig
+	Workflow         *workflow.Workflow
+	QueueClient      *queue.Client
+	SandboxRoot      string // Override for sandbox root dir (default: ~/.citadel/sandboxes)
+	HandoffThreshold int    // Token threshold for session handoff (default: 150000)
+	SkipInitialClone bool   // Skip the startup clone (for tests with fake repo URLs)
 }
 
 // New creates a Runner for the given repo, initializing named workers from the

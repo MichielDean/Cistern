@@ -21,9 +21,9 @@ import (
 )
 
 const (
-	dashboardInnerWidth = 56 // inner content width (between ║ borders)
-	refreshInterval     = 2 * time.Second
-	recentEventLimit    = 5
+	dashboardInnerWidth      = 56 // inner content width (between ║ borders)
+	refreshInterval          = 2 * time.Second
+	recentEventLimit         = 5
 	defaultDashboardHTMLPort = 5737
 
 	// ANSI color codes

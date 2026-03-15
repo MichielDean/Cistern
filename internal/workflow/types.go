@@ -21,18 +21,18 @@ const (
 
 // WorkflowStep defines a single step in a workflow pipeline.
 type WorkflowStep struct {
-	Name           string       `yaml:"name"`
-	Type           StepType     `yaml:"type"`
-	Role           string       `yaml:"role,omitempty"`
-	Model          string       `yaml:"model,omitempty"`
-	Context        ContextLevel `yaml:"context,omitempty"`
+	Name    string       `yaml:"name"`
+	Type    StepType     `yaml:"type"`
+	Role    string       `yaml:"role,omitempty"`
+	Model   string       `yaml:"model,omitempty"`
+	Context ContextLevel `yaml:"context,omitempty"`
 
-	TimeoutMinutes int          `yaml:"timeout_minutes,omitempty"`
-	SkipFor        []int        `yaml:"skip_for,omitempty"` // complexity levels that skip this step
-	OnPass         string       `yaml:"on_pass,omitempty"`
-	OnFail         string       `yaml:"on_fail,omitempty"`
-	OnRevision     string       `yaml:"on_revision,omitempty"`
-	OnEscalate     string       `yaml:"on_escalate,omitempty"`
+	TimeoutMinutes int    `yaml:"timeout_minutes,omitempty"`
+	SkipFor        []int  `yaml:"skip_for,omitempty"` // complexity levels that skip this step
+	OnPass         string `yaml:"on_pass,omitempty"`
+	OnFail         string `yaml:"on_fail,omitempty"`
+	OnRevision     string `yaml:"on_revision,omitempty"`
+	OnEscalate     string `yaml:"on_escalate,omitempty"`
 }
 
 // RoleDefinition defines an agent role in YAML.
@@ -117,8 +117,8 @@ type RepoConfig struct {
 // IdleHook defines an action to run when the scheduler enters idle state.
 type IdleHook struct {
 	Name    string `yaml:"name"`
-	Action  string `yaml:"action"`            // built-in: "roles_generate", "worktree_prune", "db_vacuum" | "shell"
-	Command string `yaml:"command,omitempty"`  // only for action: shell
+	Action  string `yaml:"action"`                    // built-in: "roles_generate", "worktree_prune", "db_vacuum" | "shell"
+	Command string `yaml:"command,omitempty"`         // only for action: shell
 	Timeout int    `yaml:"timeout_seconds,omitempty"` // default 30s
 }
 

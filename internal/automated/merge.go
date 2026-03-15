@@ -38,5 +38,3 @@ func (e *Executor) Merge(ctx context.Context, bc BeadContext) (*StepOutcome, err
 		Notes:  fmt.Sprintf("merged: %s", prURL),
 	}, nil
 }
-
-

@@ -98,8 +98,6 @@ func TestUnknownTypeError(t *testing.T) {
 	}
 }
 
-
-
 func TestParseWorkflowBytes(t *testing.T) {
 	yaml := `
 name: simple

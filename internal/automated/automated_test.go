@@ -43,18 +43,18 @@ func newExecutor(r *recorder) *Executor {
 
 func TestPRCreate_Success(t *testing.T) {
 	rec := &recorder{responses: []response{
-		{out: []byte("feature-branch\n")},                              // git branch
-		{out: []byte("ok\n")},                                          // git push
-		{out: []byte("https://github.com/org/repo/pull/42\n")},         // gh pr create
+		{out: []byte("feature-branch\n")},                      // git branch
+		{out: []byte("ok\n")},                                  // git push
+		{out: []byte("https://github.com/org/repo/pull/42\n")}, // gh pr create
 	}}
 
 	e := newExecutor(rec)
 	out, err := e.PRCreate(context.Background(), BeadContext{
-		ID:         "bf-123",
-		Title:      "Fix widget",
+		ID:          "bf-123",
+		Title:       "Fix widget",
 		Description: "Fixes the broken widget",
-		BaseBranch: "main",
-		WorkDir:    "/tmp/repo",
+		BaseBranch:  "main",
+		WorkDir:     "/tmp/repo",
 	})
 
 	if err != nil {
@@ -88,7 +88,7 @@ func TestPRCreate_Success(t *testing.T) {
 
 func TestPRCreate_BranchProvided(t *testing.T) {
 	rec := &recorder{responses: []response{
-		{out: []byte("ok\n")},                                  // git push
+		{out: []byte("ok\n")}, // git push
 		{out: []byte("https://github.com/org/repo/pull/7\n")}, // gh pr create (no git branch call)
 	}}
 
@@ -121,8 +121,8 @@ func TestPRCreate_BranchProvided(t *testing.T) {
 
 func TestPRCreate_GhFails(t *testing.T) {
 	rec := &recorder{responses: []response{
-		{out: []byte("feature\n")},                                              // git branch
-		{out: []byte("ok\n")},                                                   // git push
+		{out: []byte("feature\n")}, // git branch
+		{out: []byte("ok\n")},      // git push
 		{out: []byte("pull request already exists"), err: errors.New("exit 1")}, // gh pr create
 	}}
 
@@ -164,8 +164,8 @@ func TestPRCreate_NoBranch(t *testing.T) {
 
 func TestPRCreate_DefaultTitle(t *testing.T) {
 	rec := &recorder{responses: []response{
-		{out: []byte("ok\n")},                                  // git push
-		{out: []byte("https://github.com/org/repo/pull/1\n")},  // gh pr create
+		{out: []byte("ok\n")}, // git push
+		{out: []byte("https://github.com/org/repo/pull/1\n")}, // gh pr create
 	}}
 
 	e := newExecutor(rec)

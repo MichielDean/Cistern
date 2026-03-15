@@ -530,8 +530,8 @@ func multiRepoScheduler(clients map[string]QueueClient, runner StepRunner) *Sche
 	config := multiRepoConfig()
 	wf := testWorkflow()
 	workflows := map[string]*workflow.Workflow{
-		"ScaledTest":  wf,
-		"citadel": wf,
+		"ScaledTest": wf,
+		"citadel":    wf,
 	}
 	return NewFromParts(config, workflows, clients, runner)
 }
@@ -549,8 +549,8 @@ func TestMultiRepo_ItemsGoToCorrectWorkers(t *testing.T) {
 
 	runner := newMockRunner()
 	clients := map[string]QueueClient{
-		"ScaledTest":  stClient,
-		"citadel": bfClient,
+		"ScaledTest": stClient,
+		"citadel":    bfClient,
 	}
 	sched := multiRepoScheduler(clients, runner)
 
@@ -603,16 +603,16 @@ func TestMultiRepo_GlobalCapAcrossRepos(t *testing.T) {
 
 	blocker := newBlockingRunner()
 	clients := map[string]QueueClient{
-		"ScaledTest":  stClient,
-		"citadel": bfClient,
+		"ScaledTest": stClient,
+		"citadel":    bfClient,
 	}
 
 	config := multiRepoConfig()
 	config.MaxTotalWorkers = 2 // Cap below total pool capacity (3)
 	wf := testWorkflow()
 	workflows := map[string]*workflow.Workflow{
-		"ScaledTest":  wf,
-		"citadel": wf,
+		"ScaledTest": wf,
+		"citadel":    wf,
 	}
 	sched := NewFromParts(config, workflows, clients, blocker)
 
@@ -637,8 +637,8 @@ func TestMultiRepo_WorkersNeverCrossRepoBoundaries(t *testing.T) {
 
 	runner := newMockRunner()
 	clients := map[string]QueueClient{
-		"ScaledTest":  stClient,
-		"citadel": bfClient,
+		"ScaledTest": stClient,
+		"citadel":    bfClient,
 	}
 	sched := multiRepoScheduler(clients, runner)
 	sched.Tick(context.Background())
@@ -672,8 +672,8 @@ func TestMultiRepo_RoundRobinPolling(t *testing.T) {
 
 	runner := newMockRunner()
 	clients := map[string]QueueClient{
-		"ScaledTest":  stClient,
-		"citadel": bfClient,
+		"ScaledTest": stClient,
+		"citadel":    bfClient,
 	}
 	sched := multiRepoScheduler(clients, runner)
 
@@ -703,8 +703,8 @@ func TestMultiRepo_OneRepoEmptyOtherHasWork(t *testing.T) {
 
 	runner := newMockRunner()
 	clients := map[string]QueueClient{
-		"ScaledTest":  stClient,
-		"citadel": bfClient,
+		"ScaledTest": stClient,
+		"citadel":    bfClient,
 	}
 	sched := multiRepoScheduler(clients, runner)
 	sched.Tick(context.Background())
@@ -737,8 +737,8 @@ func TestMultiRepo_RepoWorkersExhausted(t *testing.T) {
 
 	blocker := newBlockingRunner()
 	clients := map[string]QueueClient{
-		"ScaledTest":  stClient,
-		"citadel": bfClient,
+		"ScaledTest": stClient,
+		"citadel":    bfClient,
 	}
 	sched := multiRepoScheduler(clients, blocker)
 

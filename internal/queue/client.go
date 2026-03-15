@@ -22,18 +22,18 @@ const charset = "abcdefghijklmnopqrstuvwxyz0123456789"
 
 // WorkItem represents a unit of work in the queue.
 type WorkItem struct {
-	ID           string    `json:"id"`
-	Repo         string    `json:"repo"`
-	Title        string    `json:"title"`
-	Description  string    `json:"description"`
-	Priority     int       `json:"priority"`
-	Complexity   int       `json:"complexity"`
-	Status       string    `json:"status"`
-	Assignee     string    `json:"assignee"`      // empty string when unassigned
-	CurrentStep  string    `json:"current_step"`
+	ID          string `json:"id"`
+	Repo        string `json:"repo"`
+	Title       string `json:"title"`
+	Description string `json:"description"`
+	Priority    int    `json:"priority"`
+	Complexity  int    `json:"complexity"`
+	Status      string `json:"status"`
+	Assignee    string `json:"assignee"` // empty string when unassigned
+	CurrentStep string `json:"current_step"`
 
-	CreatedAt    time.Time `json:"created_at"`
-	UpdatedAt    time.Time `json:"updated_at"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
 }
 
 // StepNote is a note attached by a workflow step.
