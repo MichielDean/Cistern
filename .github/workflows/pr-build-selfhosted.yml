@@ -1,46 +1,44 @@
 name: PR build (self-hosted)
 
 concurrency:
-    group: ${{ github.workflow }}-${{ github.event.pull_request.head.ref || github.ref }}
-    cancel-in-progress: true
+  group: ${{ github.workflow }}-${{ github.event.pull_request.head.ref || github.ref }}
+  cancel-in-progress: true
 
 on:
   pull_request:
 
 jobs:
-    build:
+  build:
     if: ${{ github.event.pull_request.head.repo.full_name == github.repository }}
-        runs-on: [self-hosted, linux, x64]
-        steps:
-            - uses: actions/checkout@v4
-              with:
-                  fetch-depth: 0
-                  persist-credentials: true
-            - uses: actions/setup-go@v5
-              with:
-                  # use the module's Go version to avoid drift
-                  go-version-file: go.mod
+    runs-on: [self-hosted, linux, x64]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: true
+      - uses: actions/setup-go@v5
+        with:
+          # use the module's Go version to avoid drift
+          go-version-file: go.mod
 
-            - name: Cache Go modules
-              uses: actions/cache@v4
-              with:
-                  path: |
-                      ~/.cache/go-build
-                      ~/go/pkg/mod
-                  key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
-                  restore-keys: |
-                      ${{ runner.os }}-go-
+      - name: Cache Go modules
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            ${{ runner.os }}-go-
 
-            - name: Install deps
-              run: go mod download
+      - name: Install deps
+        run: go mod download
 
-            # formatting check removed per request
+      - name: vet
+        run: go vet ./...
 
-            - name: vet
-              run: go vet ./...
+      - name: Build
+        run: go build ./...
 
-            - name: Build
-              run: go build ./...
-
-            - name: Test
-              run: go test ./... -v
+      - name: Test
+        run: go test ./... -v
