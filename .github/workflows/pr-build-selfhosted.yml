@@ -1,7 +1,7 @@
 name: PR build (self-hosted)
 
 permissions:
-    contents: write
+  contents: read
 
 concurrency:
     group: ${{ github.workflow }}-${{ github.event.pull_request.head.ref || github.ref }}
@@ -20,7 +20,8 @@ jobs:
                   persist-credentials: true
             - uses: actions/setup-go@v5
               with:
-                  go-version: "1.26"
+                  # use the module's Go version to avoid drift
+                  go-version-file: go.mod
 
             - name: Cache Go modules
               uses: actions/cache@v4
@@ -43,23 +44,32 @@ jobs:
 
             - name: Commit formatting changes back to the branch
               env:
-                  BRANCH: ${{ github.head_ref }}
+                BRANCH: ${{ github.head_ref }}
+                PR_HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+                REPO_FULL_NAME: ${{ github.repository }}
               run: |
-                  # Only commit when running in a PR (github.head_ref present)
-                  if [ -z "$BRANCH" ]; then
-                    echo "Not a pull_request event; skipping push-back"
-                    exit 0
-                  fi
-                  if [ -n "$(git status --porcelain)" ]; then
-                    git config user.name "github-actions[bot]"
-                    git config user.email "github-actions[bot]@users.noreply.github.com"
-                    git add -A
-                    git commit -m "chore(ci): gofmt fixes [skip ci]"
-                    # push using the token attached by actions/checkout (persist-credentials: true)
-                    git push origin HEAD:$BRANCH
-                  else
-                    echo "No formatting changes to commit"
-                  fi
+                # Only commit when running in a PR (github.head_ref present)
+                if [ -z "$BRANCH" ]; then
+                  echo "Not a pull_request event; skipping push-back"
+                  exit 0
+                fi
+                # Skip committing/pushing for PRs from forks where this workflow cannot push
+                if [ -z "$PR_HEAD_REPO" ] || [ "$PR_HEAD_REPO" != "$REPO_FULL_NAME" ]; then
+                  echo "PR from fork or unknown source; skipping push-back"
+                  exit 0
+                fi
+                # find changed go files only
+                CHANGED_GO_FILES=$(git status --porcelain | awk '{print $2}' | grep '\.go$' || true)
+                if [ -n "$CHANGED_GO_FILES" ]; then
+                  git config user.name "github-actions[bot]"
+                  git config user.email "github-actions[bot]@users.noreply.github.com"
+                  echo "$CHANGED_GO_FILES" | xargs git add || true
+                  git commit -m "chore(ci): gofmt fixes [skip ci]" || echo "no commit (maybe unchanged)"
+                  # try to push but do not fail the job if push is not permitted
+                  git push origin HEAD:$BRANCH || echo "push failed or not permitted; continuing"
+                else
+                  echo "No formatting changes to commit"
+                fi
 
             - name: vet
               run: go vet ./...
