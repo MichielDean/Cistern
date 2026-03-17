@@ -7,8 +7,9 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/MichielDean/cistern/internal/cistern"
 	"github.com/MichielDean/cistern/internal/aqueduct"
+	"github.com/MichielDean/cistern/internal/cistern"
+	"github.com/MichielDean/cistern/internal/skills"
 )
 
 // ContextParams holds everything needed to prepare a step's execution context.
@@ -148,6 +149,18 @@ func writeContextFile(path string, p ContextParams) error {
 		}
 	}
 
+	if len(p.Step.Skills) > 0 {
+		b.WriteString("<available_skills>\n")
+		for _, skill := range p.Step.Skills {
+			b.WriteString("  <skill>\n")
+			b.WriteString(fmt.Sprintf("    <name>%s</name>\n", skill.Name))
+			b.WriteString(fmt.Sprintf("    <description>%s</description>\n", skillDescription(skill.Name)))
+			b.WriteString(fmt.Sprintf("    <location>.claude/skills/%s/SKILL.md</location>\n", skill.Name))
+			b.WriteString("  </skill>\n")
+		}
+		b.WriteString("</available_skills>\n\n")
+	}
+
 	b.WriteString("## Signaling Completion\n\n")
 	b.WriteString("When your work is done, signal your outcome using the `ct` CLI:\n\n")
 	b.WriteString("**Pass (work complete, move to next step):**\n")
@@ -162,6 +175,23 @@ func writeContextFile(path string, p ContextParams) error {
 	b.WriteString("The `ct` binary is on your PATH.\n")
 
 	return os.WriteFile(path, []byte(b.String()), 0644)
+}
+
+// skillDescription reads the cached SKILL.md for name and returns the first
+// non-heading, non-empty line as a brief description. Falls back to name.
+func skillDescription(name string) string {
+	data, err := os.ReadFile(skills.CachePath(name))
+	if err != nil {
+		return name
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		return line
+	}
+	return name
 }
 
 // generateDiff captures all committed changes on the item's feature branch vs
