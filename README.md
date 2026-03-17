@@ -2,7 +2,7 @@
   <img src="cistern_logo.png" alt="Cistern Logo" />
 </p>
 
-Cistern is an agentic workflow orchestrator built around a water metaphor. Droplets of work enter the cistern, flow through an aqueduct tended by named cataracta operators, are refined by adversarial reviewers and quality gatekeepers, and what emerges at the other end is clean enough to ship.
+Cistern is an agentic workflow orchestrator built around a water metaphor. Droplets of work enter the cistern, flow through named aqueducts gate by gate, and what emerges at the other end is clean enough to ship.
 
 ## The Vocabulary
 
@@ -12,7 +12,7 @@ Cistern is an agentic workflow orchestrator built around a water metaphor. Dropl
 | **Filtration** | Optional LLM refinement step. Refine a raw idea before it enters the Cistern. |
 | **Cistern** | The reservoir. Droplets queue here waiting to flow into the aqueduct. |
 | **Drought** | Idle state. The cistern is dry. Drought protocols run maintenance automatically. A drought may also be a forced maintenance window where processing is stopped. |
-| **Aqueduct** | The full pipeline — from intake through cataracta gates to delivery. |
+| **Aqueduct** | The full pipeline — from intake through cataracta gates to delivery. Named aqueducts (e.g. virgo, marcia) are independent instances the Castellarius routes droplets into. |
 | **Castellarius** | The overseer. Watches all aqueducts, routes droplets into aqueducts, runs drought protocols. External to the cistern — pure state machine, no AI. |
 | **Cataracta** | A gate along the aqueduct. Each cataracta implements, inspects, or diverts (LLMs working). |
 | **Recirculate** | Send a droplet back to a previous cataracta for further processing — revision from reviewer or QA. |
