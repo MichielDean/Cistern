@@ -691,12 +691,10 @@ func (s *Castellarius) heartbeatRepo(_ context.Context, repo aqueduct.RepoConfig
 			continue
 		}
 
-		// Items whose worker is currently busy in memory — still running normally.
-		if item.Assignee != "" && pool.IsWorkerBusy(item.Assignee) {
-			continue
-		}
-
-		// Check if the tmux session is still alive.
+		// Check if the tmux session is still alive — this is the authoritative
+		// liveness signal. Do NOT rely on pool.IsWorkerBusy: the in-memory busy
+		// state is never cleared when a tmux server crash kills the session, so
+		// an item can stay "busy" in memory indefinitely while the agent is dead.
 		if item.Assignee != "" {
 			sessionID := repo.Name + "-" + item.Assignee
 			if isTmuxAlive(sessionID) {
