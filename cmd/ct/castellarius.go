@@ -50,17 +50,21 @@ keep dispatching droplets into aqueducts automatically.`,
 			return fmt.Errorf("loading config: %w", err)
 		}
 
+		// Resolve relative workflow paths against the config file's directory so
+		// that both the adapter and the scheduler see consistent absolute paths.
 		cfgDir := filepath.Dir(cfgPath)
+		for i := range cfg.Repos {
+			if !filepath.IsAbs(cfg.Repos[i].WorkflowPath) {
+				cfg.Repos[i].WorkflowPath = filepath.Join(cfgDir, cfg.Repos[i].WorkflowPath)
+			}
+		}
+
 		workflows := make(map[string]*aqueduct.Workflow, len(cfg.Repos))
 		for _, repo := range cfg.Repos {
 			if repo.WorkflowPath == "" {
 				return fmt.Errorf("repo %q: workflow_path is required", repo.Name)
 			}
-			wfPath := repo.WorkflowPath
-			if !filepath.IsAbs(wfPath) {
-				wfPath = filepath.Join(cfgDir, wfPath)
-			}
-			w, err := aqueduct.ParseWorkflow(wfPath)
+			w, err := aqueduct.ParseWorkflow(repo.WorkflowPath)
 			if err != nil {
 				return fmt.Errorf("repo %q workflow %q: %w", repo.Name, repo.WorkflowPath, err)
 			}
@@ -373,7 +377,11 @@ func resolveConfigPath() string {
 	if env := os.Getenv("CT_CONFIG"); env != "" {
 		return env
 	}
-	return "config.yaml"
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "cistern.yaml"
+	}
+	return filepath.Join(home, ".cistern", "cistern.yaml")
 }
 
 // repoWorkerNames returns the configured worker names for a repo,
