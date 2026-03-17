@@ -192,13 +192,34 @@ func NewFromParts(
 	return s
 }
 
+// romanAqueducts is the namepool for auto-assigned operators — real Roman aqueducts,
+// historically significant and thematically fitting for a water-metaphor pipeline.
+var romanAqueducts = []string{
+	"virgo",       // still flows today, feeds the Trevi Fountain
+	"marcia",      // considered Rome's finest water quality
+	"claudia",     // 69km, one of the most impressive engineering feats
+	"traiana",     // built by Trajan, served Trastevere
+	"julia",       // built by Agrippa under Augustus
+	"appia",       // oldest of Rome's aqueducts, 312 BC
+	"anio",        // two branches: Anio Vetus and Anio Novus
+	"tepula",      // warm spring water, 126 BC
+	"gier",        // 85km aqueduct serving Lyon, France
+	"eifel",       // 130km, one of the longest Roman aqueducts, Germany
+	"alexandrina", // last of Rome's great aqueducts, 3rd century AD
+	"barbegal",    // Arles — powered an ancient grain mill complex
+}
+
 func defaultWorkerNames(n int) []string {
 	if n <= 0 {
 		n = 1
 	}
 	names := make([]string, n)
 	for i := range names {
-		names[i] = fmt.Sprintf("worker-%d", i)
+		if i < len(romanAqueducts) {
+			names[i] = romanAqueducts[i]
+		} else {
+			names[i] = fmt.Sprintf("operator-%d", i)
+		}
 	}
 	return names
 }
