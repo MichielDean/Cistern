@@ -26,6 +26,7 @@ var (
 	addPriority    int
 	addRepo        string
 	addComplexity  string
+	addDependsOn   []string
 )
 
 var dropletAddCmd = &cobra.Command{
@@ -48,7 +49,7 @@ var dropletAddCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		item, err := c.Add(addRepo, addTitle, addDescription, addPriority, cx)
+		item, err := c.Add(addRepo, addTitle, addDescription, addPriority, cx, addDependsOn...)
 		if err != nil {
 			return err
 		}
@@ -103,12 +104,20 @@ var dropletListCmd = &cobra.Command{
 		tw := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
 		fmt.Fprintln(tw, "ID\tCOMPLEXITY\tTITLE\tSTATUS\tCATARACTA")
 		for _, item := range items {
+			status := displayStatus(item.Status)
 			cataracta := item.CurrentCataracta
 			if cataracta == "" {
 				cataracta = "\u2014"
 			}
+			if item.Status == "open" {
+				blockedBy, _ := c.GetBlockedBy(item.ID)
+				if len(blockedBy) > 0 {
+					status = "\u2298 blocked"
+					cataracta = "waiting: " + blockedBy[0]
+				}
+			}
 			fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n",
-				item.ID, complexityName(item.Complexity), item.Title, displayStatus(item.Status), cataracta)
+				item.ID, complexityName(item.Complexity), item.Title, status, cataracta)
 		}
 		return tw.Flush()
 	},
@@ -318,6 +327,64 @@ func parseDuration(s string) (time.Duration, error) {
 	return time.ParseDuration(s)
 }
 
+// --- cistern deps ---
+
+var (
+	depsAdd    string
+	depsRemove string
+)
+
+var dropletDepsCmd = &cobra.Command{
+	Use:   "deps <id>",
+	Short: "List or modify dependencies of a droplet",
+	Args:  cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		id := args[0]
+		c, err := cistern.New(resolveDBPath(), "")
+		if err != nil {
+			return err
+		}
+		defer c.Close()
+
+		if depsAdd != "" {
+			if err := c.AddDependency(id, depsAdd); err != nil {
+				return err
+			}
+			fmt.Printf("dependency added: %s depends on %s\n", id, depsAdd)
+			return nil
+		}
+
+		if depsRemove != "" {
+			if err := c.RemoveDependency(id, depsRemove); err != nil {
+				return err
+			}
+			fmt.Printf("dependency removed: %s no longer depends on %s\n", id, depsRemove)
+			return nil
+		}
+
+		// List dependencies and their statuses.
+		deps, err := c.GetDependencies(id)
+		if err != nil {
+			return err
+		}
+		if len(deps) == 0 {
+			fmt.Printf("droplet %s has no dependencies\n", id)
+			return nil
+		}
+		tw := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
+		fmt.Fprintln(tw, "DEPENDS ON\tSTATUS")
+		for _, depID := range deps {
+			dep, err := c.Get(depID)
+			if err != nil {
+				fmt.Fprintf(tw, "%s\tunknown\n", depID)
+				continue
+			}
+			fmt.Fprintf(tw, "%s\t%s\n", depID, displayStatus(dep.Status))
+		}
+		return tw.Flush()
+	},
+}
+
 // --- cistern stats ---
 
 var dropletStatsCmd = &cobra.Command{
@@ -441,6 +508,10 @@ func init() {
 	dropletAddCmd.Flags().IntVar(&addPriority, "priority", 2, "priority (1=highest)")
 	dropletAddCmd.Flags().StringVar(&addRepo, "repo", "", "target repository (required)")
 	dropletAddCmd.Flags().StringVarP(&addComplexity, "complexity", "x", "3", "droplet complexity: 1/trivial, 2/standard, 3/full (default), 4/critical")
+	dropletAddCmd.Flags().StringArrayVar(&addDependsOn, "depends-on", nil, "dependency droplet ID (repeatable)")
+
+	dropletDepsCmd.Flags().StringVar(&depsAdd, "add", "", "add a dependency (dep ID)")
+	dropletDepsCmd.Flags().StringVar(&depsRemove, "remove", "", "remove a dependency (dep ID)")
 
 	dropletListCmd.Flags().StringVar(&listRepo, "repo", "", "filter by repo")
 	dropletListCmd.Flags().StringVar(&listStatus, "status", "", "filter by status (open|in_progress|delivered|stagnant)")
@@ -458,7 +529,8 @@ func init() {
 
 	dropletCmd.AddCommand(dropletAddCmd, dropletListCmd, dropletShowCmd, dropletNoteCmd,
 		dropletCloseCmd, dropletReopenCmd, dropletEscalateCmd, dropletPurgeCmd,
-		dropletPassCmd, dropletRecirculateCmd, dropletBlockCmd, dropletStatsCmd)
+		dropletPassCmd, dropletRecirculateCmd, dropletBlockCmd, dropletStatsCmd,
+		dropletDepsCmd)
 	rootCmd.AddCommand(dropletCmd)
 }
 

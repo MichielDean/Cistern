@@ -49,6 +49,7 @@ type dropletInfo struct {
 	Stage          string    `json:"stage"`
 	Operator       string    `json:"operator"`
 	UpdatedAt      time.Time `json:"updated_at"`
+	BlockedBy      []string  `json:"blocked_by,omitempty"`
 }
 
 type recentEvent struct {
@@ -182,7 +183,7 @@ func buildInspectOutput(cfgPath, dbPath string) (inspectOutput, error) {
 		if item.Status == "delivered" {
 			continue
 		}
-		out.Droplets = append(out.Droplets, dropletInfo{
+		di := dropletInfo{
 			ID:             item.ID,
 			Title:          item.Title,
 			Complexity:     item.Complexity,
@@ -191,7 +192,13 @@ func buildInspectOutput(cfgPath, dbPath string) (inspectOutput, error) {
 			Stage:          item.CurrentCataracta,
 			Operator:       item.Assignee,
 			UpdatedAt:      item.UpdatedAt,
-		})
+		}
+		if item.Status == "open" {
+			if blockedBy, err := c.GetBlockedBy(item.ID); err == nil && len(blockedBy) > 0 {
+				di.BlockedBy = blockedBy
+			}
+		}
+		out.Droplets = append(out.Droplets, di)
 	}
 	if out.Droplets == nil {
 		out.Droplets = []dropletInfo{}

@@ -426,6 +426,135 @@ func TestStats_EmptyDB(t *testing.T) {
 	}
 }
 
+func TestAdd_WithDeps(t *testing.T) {
+	c := testClient(t)
+	parent, _ := c.Add("myrepo", "Parent", "", 1, 3)
+	child, err := c.Add("myrepo", "Child", "", 1, 3, parent.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	deps, err := c.GetDependencies(child.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(deps) != 1 || deps[0] != parent.ID {
+		t.Errorf("GetDependencies = %v, want [%s]", deps, parent.ID)
+	}
+}
+
+func TestAdd_UnknownDep(t *testing.T) {
+	c := testClient(t)
+	_, err := c.Add("myrepo", "Child", "", 1, 3, "nonexistent")
+	if err == nil {
+		t.Error("expected error for unknown dep ID")
+	}
+}
+
+func TestAddDependency_And_RemoveDependency(t *testing.T) {
+	c := testClient(t)
+	a, _ := c.Add("myrepo", "A", "", 1, 3)
+	b, _ := c.Add("myrepo", "B", "", 1, 3)
+
+	if err := c.AddDependency(b.ID, a.ID); err != nil {
+		t.Fatal(err)
+	}
+	deps, _ := c.GetDependencies(b.ID)
+	if len(deps) != 1 || deps[0] != a.ID {
+		t.Errorf("after add: GetDependencies = %v, want [%s]", deps, a.ID)
+	}
+
+	if err := c.RemoveDependency(b.ID, a.ID); err != nil {
+		t.Fatal(err)
+	}
+	deps, _ = c.GetDependencies(b.ID)
+	if len(deps) != 0 {
+		t.Errorf("after remove: GetDependencies = %v, want []", deps)
+	}
+}
+
+func TestAddDependency_UnknownDroplet(t *testing.T) {
+	c := testClient(t)
+	a, _ := c.Add("myrepo", "A", "", 1, 3)
+	if err := c.AddDependency("nonexistent", a.ID); err == nil {
+		t.Error("expected error for unknown droplet")
+	}
+	if err := c.AddDependency(a.ID, "nonexistent"); err == nil {
+		t.Error("expected error for unknown depends_on")
+	}
+}
+
+func TestGetBlockedBy(t *testing.T) {
+	c := testClient(t)
+	parent, _ := c.Add("myrepo", "Parent", "", 1, 3)
+	child, _ := c.Add("myrepo", "Child", "", 1, 3, parent.ID)
+
+	// Parent not delivered — child is blocked.
+	blocked, err := c.GetBlockedBy(child.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(blocked) != 1 || blocked[0] != parent.ID {
+		t.Errorf("GetBlockedBy = %v, want [%s]", blocked, parent.ID)
+	}
+
+	// Deliver parent — child should no longer be blocked.
+	c.CloseItem(parent.ID)
+	blocked, err = c.GetBlockedBy(child.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(blocked) != 0 {
+		t.Errorf("GetBlockedBy after deliver = %v, want []", blocked)
+	}
+}
+
+func TestGetReady_SkipsBlocked(t *testing.T) {
+	c := testClient(t)
+	parent, _ := c.Add("myrepo", "Parent", "", 1, 3)
+	_, _ = c.Add("myrepo", "Child", "", 1, 3, parent.ID)
+
+	// GetReady should return parent (child is blocked).
+	got, err := c.GetReady("myrepo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got == nil {
+		t.Fatal("expected parent, got nil")
+	}
+	if got.ID != parent.ID {
+		t.Errorf("got %s, want parent %s", got.ID, parent.ID)
+	}
+
+	// Deliver parent.
+	c.CloseItem(parent.ID)
+	// Reopen child to 'open' (it was still open, just couldn't be dispatched).
+	// Child should now be ready.
+	got, err = c.GetReady("myrepo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got == nil {
+		t.Fatal("expected child to be ready after parent delivered, got nil")
+	}
+}
+
+func TestGetReady_SkipsBlocked_NothingAvailable(t *testing.T) {
+	c := testClient(t)
+	parent, _ := c.Add("myrepo", "Parent", "", 1, 3)
+	_, _ = c.Add("myrepo", "Child", "", 1, 3, parent.ID)
+
+	// Claim parent.
+	c.GetReady("myrepo") // claims parent (in_progress)
+	// Now only child is open but blocked — GetReady should return nil.
+	got, err := c.GetReady("myrepo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != nil {
+		t.Errorf("expected nil (child blocked), got %s", got.ID)
+	}
+}
+
 func TestStats_WithData(t *testing.T) {
 	c := testClient(t)
 

@@ -66,6 +66,7 @@ type DashboardData struct {
 	Cataractae      []CataractaInfo
 	CisternItems []*cistern.Droplet // flowing + queued
 	RecentItems  []*cistern.Droplet // recently closed/escalated
+	BlockedByMap map[string]string  // droplet ID -> first blocking dep ID
 	FarmRunning  bool
 	FetchedAt    time.Time
 }
@@ -160,10 +161,16 @@ func fetchDashboardData(cfgPath, dbPath string) *DashboardData {
 	}
 	data.Cataractae = cataractae
 
-	// Cistern: in_progress and open items.
+	// Cistern: in_progress and open items; build blocked-by map.
+	data.BlockedByMap = map[string]string{}
 	for _, item := range allItems {
 		if item.Status == "in_progress" || item.Status == "open" {
 			data.CisternItems = append(data.CisternItems, item)
+		}
+		if item.Status == "open" {
+			if blockedBy, err := c.GetBlockedBy(item.ID); err == nil && len(blockedBy) > 0 {
+				data.BlockedByMap[item.ID] = blockedBy[0]
+			}
 		}
 	}
 
@@ -279,7 +286,7 @@ func renderDashboard(data *DashboardData) string {
 		sb.WriteString(contentLine("  Cistern dry.") + "\n")
 	} else {
 		for _, item := range data.CisternItems {
-			sb.WriteString(contentLine(renderCisternLine(item)) + "\n")
+			sb.WriteString(contentLine(renderCisternLine(item, data.BlockedByMap)) + "\n")
 		}
 	}
 
@@ -323,14 +330,20 @@ func renderCataractaLine(ch CataractaInfo) string {
 	return line
 }
 
-// renderCisternLine builds a cistern row string.
-func renderCisternLine(item *cistern.Droplet) string {
+// renderCisternLine builds a cistern row string. blockedByMap maps droplet ID
+// to its first blocking dep ID; if the item appears there it is shown dimmed.
+func renderCisternLine(item *cistern.Droplet, blockedByMap map[string]string) string {
 	id := padRight(item.ID, 10)
 	cx := padRight(complexityName(item.Complexity), 9)
 	status := displayStatus(item.Status)
 	step := item.CurrentCataracta
 	if step == "" {
 		step = "—"
+	}
+
+	if depID, blocked := blockedByMap[item.ID]; blocked {
+		return fmt.Sprintf("%s  %s%s⊘ blocked   %s  waiting: %s%s",
+			colorDim, id, cx, cx[:0], depID, colorReset)
 	}
 
 	var statusColor string
