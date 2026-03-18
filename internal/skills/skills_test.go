@@ -12,7 +12,7 @@ func TestCachePath_UsesHomeDir(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("HOME", tmp)
 
-	got := CachePath("example")
+	got := LocalPath("example")
 	want := filepath.Join(tmp, ".cistern", "skills", "example", "SKILL.md")
 	if got != want {
 		t.Errorf("CachePath = %q, want %q", got, want)
@@ -33,7 +33,7 @@ func TestInstall_DownloadsAndCaches(t *testing.T) {
 		t.Fatalf("Install: %v", err)
 	}
 
-	data, err := os.ReadFile(CachePath("my-skill"))
+	data, err := os.ReadFile(LocalPath("my-skill"))
 	if err != nil {
 		t.Fatalf("cached file not found: %v", err)
 	}
@@ -88,7 +88,7 @@ func TestInstall_PathTraversal(t *testing.T) {
 }
 
 func TestForceUpdate_PathTraversal(t *testing.T) {
-	err := ForceUpdate("../escape", "http://example.com/SKILL.md")
+	err := Update("../escape", "http://example.com/SKILL.md")
 	if err == nil {
 		t.Fatal("expected error for path-traversal skill name, got nil")
 	}
@@ -110,7 +110,7 @@ func TestInstall_DownloadExceedsMaxSize(t *testing.T) {
 	}
 }
 
-func TestInstall_ForceUpdate(t *testing.T) {
+func TestInstall_Update(t *testing.T) {
 	callCount := 0
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		callCount++
@@ -126,7 +126,7 @@ func TestInstall_ForceUpdate(t *testing.T) {
 		t.Fatalf("Install: %v", err)
 	}
 	// ForceUpdate re-fetches even though cached.
-	if err := ForceUpdate("force-skill", srv.URL+"/SKILL.md"); err != nil {
+	if err := Update("force-skill", srv.URL+"/SKILL.md"); err != nil {
 		t.Fatalf("ForceUpdate: %v", err)
 	}
 

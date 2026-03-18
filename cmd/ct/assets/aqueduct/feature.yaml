@@ -152,7 +152,6 @@ cataractae:
       - name: cistern-droplet-state
         path: skills/cistern-droplet-state/SKILL.md
       - name: github-workflow
-        url: https://raw.githubusercontent.com/callstackincubator/agent-skills/main/skills/github/SKILL.md
     timeout_minutes: 30
     on_pass: adversarial-review
     on_fail: blocked

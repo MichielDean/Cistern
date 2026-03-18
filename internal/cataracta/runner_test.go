@@ -578,7 +578,7 @@ func TestWriteContextFile_AvailableSkillsBlock(t *testing.T) {
 		Identity: "implementer",
 		Context:  "full_codebase",
 		Skills: []aqueduct.SkillRef{
-			{Name: "my-skill", URL: "https://example.com/SKILL.md"},
+			{Name: "my-skill"},
 		},
 	}
 
@@ -634,7 +634,7 @@ func TestWriteContextFile_XMLEscapedDescription(t *testing.T) {
 		Type:    "agent",
 		Context: "full_codebase",
 		Skills: []aqueduct.SkillRef{
-			{Name: "evil-skill", URL: "https://example.com/SKILL.md"},
+			{Name: "evil-skill"},
 		},
 	}
 
@@ -721,8 +721,9 @@ cataractae:
 	if impl.Skills[0].Name != "my-skill" {
 		t.Errorf("skill name = %q, want %q", impl.Skills[0].Name, "my-skill")
 	}
-	if impl.Skills[0].URL != "https://raw.githubusercontent.com/example/repo/main/SKILL.md" {
-		t.Errorf("skill URL = %q, unexpected", impl.Skills[0].URL)
+	// URL field removed — skills are name-only in YAML, installed separately.
+	if impl.Skills[0].Path != "" {
+		t.Errorf("expected no path for externally installed skill, got %q", impl.Skills[0].Path)
 	}
 }
 

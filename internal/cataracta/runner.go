@@ -219,20 +219,23 @@ func (r *Runner) SpawnStep(w *Worker, item *cistern.Droplet, step *aqueduct.Work
 		return fmt.Errorf("context: %w", err)
 	}
 
-	// 3. Install and copy skills into sandbox/.claude/skills/<name>/SKILL.md.
+	// 3. Copy skills into sandbox/.claude/skills/<name>/SKILL.md.
+	// The runtime never fetches skills automatically — they must be installed
+	// ahead of time via `ct skills install`. In-repo skills (path: set) are
+	// copied from the sandbox worktree; external skills are read from the
+	// local store at ~/.cistern/skills/<name>/SKILL.md.
 	for _, skill := range step.Skills {
 		var src string
 		if skill.Path != "" {
-			// In-repo skill: resolve path relative to the sandbox worktree.
-			// No HTTP — the file is already on disk.
+			// In-repo skill: resolve relative to the sandbox worktree.
 			src = filepath.Join(w.SandboxDir, skill.Path)
 		} else {
-			// External skill: download once and cache in ~/.cistern/skills/.
-			if err := skills.Install(skill.Name, skill.URL); err != nil {
-				log.Printf("cataracta: warning: failed to install skill %q: %v", skill.Name, err)
+			// External skill: must already be installed locally.
+			if !skills.IsInstalled(skill.Name) {
+				log.Printf("cataracta: warning: skill %q not installed — run `ct skills install %s <url>`", skill.Name, skill.Name)
 				continue
 			}
-			src = skills.CachePath(skill.Name)
+			src = skills.LocalPath(skill.Name)
 		}
 		dest := filepath.Join(w.SandboxDir, ".claude", "skills", skill.Name, "SKILL.md")
 		if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {

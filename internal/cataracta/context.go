@@ -194,7 +194,7 @@ func writeContextFile(path string, p ContextParams) error {
 // skillDescription reads the cached SKILL.md for name and returns the first
 // non-heading, non-empty line as a brief description. Falls back to name.
 func skillDescription(name string) string {
-	data, err := os.ReadFile(skills.CachePath(name))
+	data, err := os.ReadFile(skills.LocalPath(name))
 	if err != nil {
 		return name
 	}

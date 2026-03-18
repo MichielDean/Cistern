@@ -19,13 +19,18 @@ const (
 	ContextSpecOnly     ContextLevel = "spec_only"
 )
 
-// SkillRef references a skill by name. Exactly one of URL or Path should be set.
-// Path is a repo-relative path (e.g. "skills/foo/SKILL.md") resolved against
-// the agent's sandbox worktree — no HTTP involved. URL is for external skills.
+// SkillRef references a locally installed skill by name.
+//
+// In-repo skills (e.g. a SKILL.md that lives in the same repo the agents work
+// on) may set Path to a repo-relative path — the runner copies it directly from
+// the agent's sandbox worktree without any network access.
+//
+// External skills must be installed ahead of time via `ct skills install <name>
+// <url>` and are referenced by name only. The runtime never fetches skills
+// automatically; it only reads from ~/.cistern/skills/<name>/SKILL.md.
 type SkillRef struct {
 	Name string `yaml:"name"`
-	URL  string `yaml:"url,omitempty"`  // raw URL to SKILL.md (for external skills)
-	Path string `yaml:"path,omitempty"` // repo-relative path to SKILL.md (for in-repo skills)
+	Path string `yaml:"path,omitempty"` // repo-relative path (in-repo skills only)
 }
 
 // WorkflowCataracta defines a single step in an aqueduct.
