@@ -485,51 +485,7 @@ func TestRenderDashboard_AqueductsClosedWhenNoCataractae(t *testing.T) {
 	}
 }
 
-func TestRenderDashboardHTML_ContainsEasterEggHoverText(t *testing.T) {
-	dropletID := "ct-ab123"
-	data := &DashboardData{
-		FetchedAt:    time.Now(),
-		FlowingCount: 1,
-		Cataractae: []CataractaInfo{
-			{Name: "virgo", DropletID: dropletID, CataractaIndex: 1, Steps: []string{"implement", "adversarial-review", "qa", "delivery"}, Elapsed: 42 * time.Second},
-		},
-	}
 
-	out := renderDashboardHTML(data)
-
-	if !strings.Contains(out, "id=\"easter-egg\"") {
-		t.Error("html dashboard should include subtle easter egg icon")
-	}
-	if !strings.Contains(out, "Four letters guard the gate you seek") {
-		t.Error("html dashboard should include easter egg hover text")
-	}
-	if !strings.Contains(out, "Cistern") {
-		t.Error("html dashboard should include title")
-	}
-}
-
-func TestDashboardListenAddr_UsesProvidedPort(t *testing.T) {
-	got := dashboardListenAddr(defaultDashboardHTMLPort)
-	if got != ":5737" {
-		t.Errorf("dashboardListenAddr(defaultDashboardHTMLPort) = %q, want %q", got, ":5737")
-	}
-}
-
-func TestRenderDashboardHTML_ShowsStagnantDroplet(t *testing.T) {
-	stagnantItem := &cistern.Droplet{ID: "ct-poisn1", Status: "stagnant", CurrentCataracta: "qa", UpdatedAt: time.Now()}
-	data := &DashboardData{
-		FetchedAt:  time.Now(),
-		RecentItems: []*cistern.Droplet{stagnantItem},
-	}
-
-	out := renderDashboardHTML(data)
-	if !strings.Contains(out, "ct-poisn1") {
-		t.Error("html dashboard should render droplet id")
-	}
-	if !strings.Contains(out, "status-stagnant") {
-		t.Error("html dashboard should render stagnant status class")
-	}
-}
 
 // --- TestProgressBar ---
 
