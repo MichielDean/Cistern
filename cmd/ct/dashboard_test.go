@@ -487,16 +487,15 @@ func TestRenderDashboard_AqueductsClosedWhenNoCataractae(t *testing.T) {
 
 func TestRenderDashboardHTML_ContainsEasterEggHoverText(t *testing.T) {
 	dropletID := "ct-ab123"
-	stage := "implement"
-	elapsed := 42
-	snapshot := inspectOutput{
-		Cataractae: []cataractaInfo{
-			{Name: "virgo", DropletID: &dropletID, Stage: &stage, ElapsedSeconds: &elapsed},
+	data := &DashboardData{
+		FetchedAt:    time.Now(),
+		FlowingCount: 1,
+		Cataractae: []CataractaInfo{
+			{Name: "virgo", DropletID: dropletID, CataractaIndex: 1, Steps: []string{"implement", "adversarial-review", "qa", "delivery"}, Elapsed: 42 * time.Second},
 		},
-		Counts: cisternInfo{Flowing: 1, Queued: 0, Delivered: 0},
 	}
 
-	out := renderDashboardHTML(snapshot)
+	out := renderDashboardHTML(data)
 
 	if !strings.Contains(out, "id=\"easter-egg\"") {
 		t.Error("html dashboard should include subtle easter egg icon")
@@ -504,7 +503,7 @@ func TestRenderDashboardHTML_ContainsEasterEggHoverText(t *testing.T) {
 	if !strings.Contains(out, "Four letters guard the gate you seek") {
 		t.Error("html dashboard should include easter egg hover text")
 	}
-	if !strings.Contains(out, "CT Dashboard") {
+	if !strings.Contains(out, "Cistern") {
 		t.Error("html dashboard should include title")
 	}
 }
@@ -516,17 +515,19 @@ func TestDashboardListenAddr_UsesProvidedPort(t *testing.T) {
 	}
 }
 
-func TestRenderDashboardHTML_ShowsEscalatedDropFromInspectSnapshot(t *testing.T) {
-	snapshot := inspectOutput{
-		Droplets: []dropletInfo{{ID: "ct-poisn1", Status: "stagnant", Stage: "qa", UpdatedAt: time.Now()}},
+func TestRenderDashboardHTML_ShowsStagnantDroplet(t *testing.T) {
+	stagnantItem := &cistern.Droplet{ID: "ct-poisn1", Status: "stagnant", CurrentCataracta: "qa", UpdatedAt: time.Now()}
+	data := &DashboardData{
+		FetchedAt:  time.Now(),
+		RecentItems: []*cistern.Droplet{stagnantItem},
 	}
 
-	out := renderDashboardHTML(snapshot)
+	out := renderDashboardHTML(data)
 	if !strings.Contains(out, "ct-poisn1") {
-		t.Error("html dashboard should render droplet id from inspect snapshot")
+		t.Error("html dashboard should render droplet id")
 	}
-	if !strings.Contains(out, displayStatus("stagnant")) {
-		t.Error("html dashboard should render escalated display status from inspect snapshot")
+	if !strings.Contains(out, "status-stagnant") {
+		t.Error("html dashboard should render stagnant status class")
 	}
 }
 

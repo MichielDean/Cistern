@@ -463,84 +463,177 @@ func dashboardListenAddr(port int) string {
 	return fmt.Sprintf(":%d", port)
 }
 
-func renderDashboardHTML(snapshot inspectOutput) string {
+// renderDashboardHTML renders the full-page HTML dashboard using DashboardData —
+// the same data source as the TUI. Layout mirrors the TUI: flow graph rows,
+// cistern counts, recent flow, with auto-refresh every 3 seconds.
+func renderDashboardHTML(data *DashboardData) string {
 	var sb strings.Builder
-	sb.WriteString("<!doctype html><html><head><meta charset=\"utf-8\">")
-	sb.WriteString("<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">")
-	sb.WriteString("<meta http-equiv=\"refresh\" content=\"2\">")
-	sb.WriteString("<title>CT Dashboard</title>")
+	sb.WriteString(`<!doctype html><html><head><meta charset="utf-8">`)
+	sb.WriteString(`<meta name="viewport" content="width=device-width,initial-scale=1">`)
+	sb.WriteString(`<meta http-equiv="refresh" content="3">`)
+	sb.WriteString(`<title>Cistern</title>`)
 	sb.WriteString(`<style>
-body{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;margin:0;background:#0b1020;color:#d6deeb}
-.wrap{max-width:980px;margin:24px auto;padding:0 16px}
-.card{background:#121a2b;border:1px solid #25314f;border-radius:12px;padding:14px 16px;margin-bottom:12px}
-.muted{color:#8fa1c7}.ok{color:#57d57a}.warn{color:#f0c86b}
-table{width:100%;border-collapse:collapse}th,td{padding:6px 8px;border-bottom:1px solid #22304d;text-align:left}
-h1,h2{margin:0 0 10px}h1{font-size:20px}h2{font-size:15px;color:#9db1db}
-#easter-egg{position:fixed;right:10px;bottom:8px;opacity:.28;cursor:default;user-select:none;font-size:11px}
-#easter-egg .hint{display:none;position:absolute;right:0;bottom:16px;white-space:pre-line;width:300px;padding:10px;border-radius:8px;background:#0f1728;border:1px solid #31436b;color:#ced9f0;opacity:.96}
+*{box-sizing:border-box}
+body{font-family:ui-monospace,SFMono-Regular,Menlo,"Courier New",monospace;margin:0;background:#0b1020;color:#d6deeb;font-size:14px}
+.wrap{max-width:1100px;margin:0 auto;padding:20px 24px}
+.logo{color:#7ec8e3;font-size:13px;line-height:1.25;margin-bottom:12px;opacity:.85}
+.sep{border:none;border-top:1px solid #1e2d4a;margin:12px 0}
+.header{display:flex;align-items:baseline;gap:16px;margin-bottom:4px}
+.title{font-size:18px;font-weight:700;color:#c8d8f0;letter-spacing:.05em}
+.counts{font-size:13px;color:#7a91b8}
+.flowing{color:#57d57a}.queued{color:#f0c86b}.delivered{color:#7a91b8}
+.stagnant{color:#e05c5c}
+.timestamp{font-size:12px;color:#4a5f80;margin-top:2px;margin-bottom:14px}
+.section-label{font-size:11px;font-weight:700;letter-spacing:.08em;color:#4a5f80;text-transform:uppercase;margin:14px 0 6px}
+/* Flow graph */
+.flow-table{width:100%;border-collapse:collapse}
+.flow-table td{padding:3px 0;vertical-align:top}
+.aq-name{color:#5a7aaa;min-width:80px;padding-right:12px;font-size:13px}
+.flow-graph{color:#8fa1c7;font-size:13px;letter-spacing:.02em;white-space:nowrap}
+.flow-pointer{color:#6b85ad;font-size:12px;padding-left:80px;padding-bottom:6px}
+.node-active{color:#57d57a;font-weight:700}
+.node-idle{color:#3a4f6a}
+.edge{color:#2a3d5a}
+.progress-fill{color:#57d57a}
+.progress-empty{color:#1e2d4a}
+/* Cistern table */
+.droplet-table{width:100%;border-collapse:collapse}
+.droplet-table th{font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:#4a5f80;padding:4px 8px;border-bottom:1px solid #1e2d4a;text-align:left}
+.droplet-table td{padding:5px 8px;border-bottom:1px solid #141e30;font-size:13px}
+.droplet-table tr:last-child td{border-bottom:none}
+.id{color:#7ec8e3}.muted{color:#4a5f80}.title-col{max-width:380px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.status-flowing{color:#57d57a}.status-queued{color:#f0c86b}.status-stagnant{color:#e05c5c}.status-delivered{color:#5a7aaa}
+/* Easter egg */
+#easter-egg{position:fixed;right:12px;bottom:10px;opacity:.2;cursor:default;user-select:none;font-size:11px;color:#7a91b8}
+#easter-egg .hint{display:none;position:absolute;right:0;bottom:18px;white-space:pre-line;width:320px;padding:12px;border-radius:8px;background:#0f1728;border:1px solid #2a3d5a;color:#ced9f0;font-size:11px}
 #easter-egg:hover .hint{display:block}
-</style></head><body>`)
-	sb.WriteString(`<div class="wrap">`)
-	sb.WriteString(`<div class="card"><h1>CT Dashboard</h1>`)
-	sb.WriteString(fmt.Sprintf(`<div class="muted"><span class="ok">%d flowing</span> • <span class="warn">%d queued</span> • %d delivered</div>`,
-		snapshot.Counts.Flowing, snapshot.Counts.Queued, snapshot.Counts.Delivered))
-	sb.WriteString(fmt.Sprintf(`<div class="muted" style="margin-top:6px">last update: %s</div>`, time.Now().Format("15:04:05")))
-	sb.WriteString(`</div>`)
+</style></head><body><div class="wrap">`)
 
-	sb.WriteString(`<div class="card"><h2>Aqueducts</h2><table><thead><tr><th>Aqueduct</th><th>Droplet</th><th>Cataracta</th><th>Elapsed</th></tr></thead><tbody>`)
-	if len(snapshot.Cataractae) == 0 {
-		sb.WriteString(`<tr><td colspan="4" class="muted">No aqueducts configured</td></tr>`)
-	} else {
-		for _, ch := range snapshot.Cataractae {
-			droplet := "-"
-			stage := "idle"
-			elapsed := "-"
-			if ch.DropletID != nil {
-				droplet = html.EscapeString(*ch.DropletID)
+	// Logo.
+	sb.WriteString(`<div class="logo">◈  C I S T E R N  ◈</div>`)
+	sb.WriteString(`<hr class="sep">`)
+
+	// Header counts.
+	sb.WriteString(fmt.Sprintf(
+		`<div class="counts"><span class="flowing">● %d flowing</span>  <span class="queued">○ %d queued</span>  <span class="delivered">✓ %d delivered</span></div>`,
+		data.FlowingCount, data.QueuedCount, data.DoneCount))
+	sb.WriteString(fmt.Sprintf(`<div class="timestamp">last update: %s — auto-refreshes every 3s</div>`, data.FetchedAt.Format("15:04:05")))
+
+	// Flow graph.
+	sb.WriteString(`<hr class="sep">`)
+	sb.WriteString(`<div class="section-label">Aqueducts</div>`)
+	sb.WriteString(`<table class="flow-table">`)
+	for _, ch := range data.Cataractae {
+		sb.WriteString(`<tr><td class="aq-name">` + html.EscapeString(ch.Name) + `</td><td>`)
+		// Build flow graph row.
+		for i, step := range ch.Steps {
+			if i > 0 {
+				if ch.CataractaIndex > 0 && i == ch.CataractaIndex {
+					sb.WriteString(`<span class="edge">──</span><span class="node-active">●</span><span class="edge">──▶ </span>`)
+				} else {
+					sb.WriteString(`<span class="edge"> ──○──▶ </span>`)
+				}
 			}
-			if ch.Stage != nil {
-				stage = html.EscapeString(*ch.Stage)
+			if i == ch.CataractaIndex && ch.DropletID != "" {
+				sb.WriteString(`<span class="node-active">` + html.EscapeString(step) + `</span>`)
+			} else if ch.DropletID == "" {
+				sb.WriteString(`<span class="node-idle">` + html.EscapeString(step) + `</span>`)
+			} else {
+				sb.WriteString(`<span class="flow-graph">` + html.EscapeString(step) + `</span>`)
 			}
-			if ch.ElapsedSeconds != nil {
-				elapsed = formatElapsed(time.Duration(*ch.ElapsedSeconds) * time.Second)
+		}
+		if ch.DropletID == "" {
+			sb.WriteString(` <span class="muted">— idle</span>`)
+		}
+		sb.WriteString(`</td></tr>`)
+		// Pointer row.
+		if ch.DropletID != "" {
+			elapsed := formatElapsed(ch.Elapsed)
+			pct := 0
+			if ch.TotalCataractae > 0 {
+				pct = (ch.CataractaIndex * 8) / ch.TotalCataractae
 			}
-			sb.WriteString(fmt.Sprintf(`<tr><td>%s</td><td>%s</td><td>%s</td><td>%s</td></tr>`,
-				html.EscapeString(ch.Name), droplet, stage, elapsed))
+			bar := strings.Repeat("█", pct) + strings.Repeat("░", 8-pct)
+			sb.WriteString(fmt.Sprintf(
+				`<tr><td></td><td class="flow-pointer">↑ %s · <span class="id">%s</span>  %s  <span class="progress-fill">%s</span><span class="progress-empty">%s</span></td></tr>`,
+				html.EscapeString(ch.Name),
+				html.EscapeString(ch.DropletID),
+				html.EscapeString(elapsed),
+				html.EscapeString(bar[:pct]),
+				html.EscapeString(bar[pct:]),
+			))
 		}
 	}
-	sb.WriteString(`</tbody></table></div>`)
+	if len(data.Cataractae) == 0 {
+		sb.WriteString(`<tr><td colspan="2" class="muted">No aqueducts configured</td></tr>`)
+	}
+	sb.WriteString(`</table>`)
 
-	sb.WriteString(`<div class="card"><h2>Cistern</h2><table><thead><tr><th>Droplet</th><th>Status</th><th>Stage</th></tr></thead><tbody>`)
-	if len(snapshot.Droplets) == 0 {
-		sb.WriteString(`<tr><td colspan="3" class="muted">Cistern dry.</td></tr>`)
+	// Cistern — active droplets.
+	sb.WriteString(`<hr class="sep">`)
+	sb.WriteString(`<div class="section-label">Cistern</div>`)
+	sb.WriteString(`<table class="droplet-table"><thead><tr><th>ID</th><th>Title</th><th>Status</th><th>Cataracta</th><th>Elapsed</th></tr></thead><tbody>`)
+	if len(data.CisternItems) == 0 {
+		sb.WriteString(`<tr><td colspan="5" class="muted">Cistern dry.</td></tr>`)
 	} else {
-		for _, d := range snapshot.Droplets {
-			step := d.Stage
+		for _, d := range data.CisternItems {
+			statusClass := "status-" + d.Status
+			step := d.CurrentCataracta
 			if step == "" {
-				step = "-"
+				step = "—"
 			}
-			sb.WriteString(fmt.Sprintf(`<tr><td>%s</td><td>%s</td><td>%s</td></tr>`,
-				html.EscapeString(d.ID), html.EscapeString(displayStatus(d.Status)), html.EscapeString(step)))
+			elapsed := "—"
+			if d.Status == "in_progress" {
+				elapsed = formatElapsed(time.Since(d.UpdatedAt))
+			}
+			title := d.Title
+			if len(title) > 60 {
+				title = title[:57] + "..."
+			}
+			sb.WriteString(fmt.Sprintf(
+				`<tr><td class="id">%s</td><td class="title-col">%s</td><td class="%s">%s</td><td class="muted">%s</td><td class="muted">%s</td></tr>`,
+				html.EscapeString(d.ID), html.EscapeString(title),
+				statusClass, html.EscapeString(displayStatus(d.Status)),
+				html.EscapeString(step), html.EscapeString(elapsed),
+			))
 		}
 	}
-	sb.WriteString(`</tbody></table></div>`)
+	sb.WriteString(`</tbody></table>`)
 
-	sb.WriteString(`<div class="card"><h2>Recent Flow</h2><table><thead><tr><th>Time</th><th>Droplet</th><th>Event</th></tr></thead><tbody>`)
-	if len(snapshot.RecentEvents) == 0 {
-		sb.WriteString(`<tr><td colspan="3" class="muted">No recent flow.</td></tr>`)
+	// Recent flow.
+	sb.WriteString(`<hr class="sep">`)
+	sb.WriteString(`<div class="section-label">Recent Flow</div>`)
+	sb.WriteString(`<table class="droplet-table"><thead><tr><th>Time</th><th>ID</th><th>Title</th><th>Cataracta</th><th></th></tr></thead><tbody>`)
+	if len(data.RecentItems) == 0 {
+		sb.WriteString(`<tr><td colspan="5" class="muted">No recent flow.</td></tr>`)
 	} else {
-		for _, evt := range snapshot.RecentEvents {
-			sb.WriteString(fmt.Sprintf(`<tr><td>%s</td><td>%s</td><td>%s</td></tr>`,
-				html.EscapeString(evt.Time.Format("15:04")), html.EscapeString(evt.Droplet), html.EscapeString(evt.Event)))
+		for _, d := range data.RecentItems {
+			icon := "✓"
+			cls := "status-delivered"
+			if d.Status == "stagnant" {
+				icon = "✗"
+				cls = "status-stagnant"
+			}
+			title := d.Title
+			if len(title) > 60 {
+				title = title[:57] + "..."
+			}
+			sb.WriteString(fmt.Sprintf(
+				`<tr><td class="muted">%s</td><td class="id">%s</td><td class="title-col">%s</td><td class="muted">%s</td><td class="%s">%s</td></tr>`,
+				html.EscapeString(d.UpdatedAt.Format("15:04")),
+				html.EscapeString(d.ID),
+				html.EscapeString(title),
+				html.EscapeString(d.CurrentCataracta),
+				cls, icon,
+			))
 		}
 	}
-	sb.WriteString(`</tbody></table></div></div>`)
+	sb.WriteString(`</tbody></table>`)
 
 	sb.WriteString(`<div id="easter-egg" aria-hidden="true">◈<span class="hint">`)
 	sb.WriteString(html.EscapeString(dashboardEasterEggText))
 	sb.WriteString(`</span></div>`)
-	sb.WriteString(`</body></html>`)
-
+	sb.WriteString(`</div></body></html>`)
 	return sb.String()
 }
 
@@ -548,13 +641,9 @@ func runDashboardHTML(cfgPath, dbPath string, out io.Writer) error {
 	addr := dashboardListenAddr(dashboardPort)
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		snapshot, err := buildInspectOutput(cfgPath, dbPath)
-		if err != nil {
-			http.Error(w, "failed to build dashboard snapshot", http.StatusInternalServerError)
-			return
-		}
+		data := fetchDashboardData(cfgPath, dbPath)
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		_, _ = io.WriteString(w, renderDashboardHTML(snapshot))
+		_, _ = io.WriteString(w, renderDashboardHTML(data))
 	})
 
 	srv := &http.Server{
