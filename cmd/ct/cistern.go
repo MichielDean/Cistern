@@ -335,7 +335,7 @@ var dropletStatsCmd = &cobra.Command{
 			return err
 		}
 
-		tw := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', tabwriter.AlignRight)
+		tw := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
 		fmt.Fprintf(tw, "  flowing\t%d\n", s.Flowing)
 		fmt.Fprintf(tw, "  queued\t%d\n", s.Queued)
 		fmt.Fprintf(tw, "  delivered\t%d\n", s.Delivered)
