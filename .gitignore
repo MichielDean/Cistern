@@ -3,7 +3,7 @@ CONTEXT.md
 .claude/
 
 # Build artifacts
-ct
+/ct
 /dist/
 
 # Go test cache
