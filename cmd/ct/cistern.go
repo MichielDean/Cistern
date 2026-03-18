@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
+	"regexp"
 	"strconv"
 	"strings"
 	"text/tabwriter"
@@ -608,6 +610,104 @@ var dropletBlockCmd = &cobra.Command{
 	},
 }
 
+// --- cistern peek ---
+
+var (
+	peekLines  int
+	peekRaw    bool
+	peekFollow bool
+)
+
+var ansiRE = regexp.MustCompile(`\x1b\[[0-9;]*m`)
+
+// stripANSI removes ANSI color/style escape sequences from s.
+func stripANSI(s string) string {
+	return ansiRE.ReplaceAllString(s, "")
+}
+
+// capturePane runs tmux capture-pane and returns the output.
+func capturePane(session string, lines int) (string, error) {
+	out, err := exec.Command("tmux", "capture-pane", "-t", session, "-p",
+		"-S", fmt.Sprintf("-%d", lines)).Output()
+	if err != nil {
+		return "", err
+	}
+	return string(out), nil
+}
+
+var dropletPeekCmd = &cobra.Command{
+	Use:   "peek <id>",
+	Short: "Tail live agent output from the active tmux session for a droplet",
+	Args:  cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		id := args[0]
+		c, err := cistern.New(resolveDBPath(), "")
+		if err != nil {
+			return err
+		}
+		defer c.Close()
+
+		item, err := c.Get(id)
+		if err != nil {
+			return err
+		}
+
+		if item.Status != "in_progress" {
+			fmt.Printf("%s is not currently flowing (status: %s)\n", id, displayStatus(item.Status))
+			return nil
+		}
+
+		// Check if tmux is available.
+		if _, err := exec.LookPath("tmux"); err != nil {
+			fmt.Println("tmux not installed")
+			return nil
+		}
+
+		session := item.Repo + "-" + item.Assignee
+
+		printCapture := func() {
+			if err := exec.Command("tmux", "has-session", "-t", session).Run(); err != nil {
+				fmt.Printf("No active tmux session found for %s — may have just completed\n", id)
+				// Fall back to last 10 lines of the most recent note.
+				notes, nerr := c.GetNotes(id)
+				if nerr == nil && len(notes) > 0 {
+					last := notes[len(notes)-1]
+					lines := strings.Split(last.Content, "\n")
+					if len(lines) > 10 {
+						lines = lines[len(lines)-10:]
+					}
+					fmt.Println(strings.Join(lines, "\n"))
+				}
+				return
+			}
+			out, cerr := capturePane(session, peekLines)
+			if cerr != nil {
+				fmt.Fprintf(os.Stderr, "tmux capture-pane: %v\n", cerr)
+				return
+			}
+			if !peekRaw {
+				out = stripANSI(out)
+			}
+			fmt.Print(out)
+		}
+
+		if !peekFollow {
+			printCapture()
+			return nil
+		}
+
+		// --follow: re-capture every 3 seconds until Ctrl-C.
+		printCapture()
+		ticker := time.NewTicker(3 * time.Second)
+		defer ticker.Stop()
+		for range ticker.C {
+			fmt.Println("───")
+			printCapture()
+		}
+		return nil
+	},
+}
+
 func init() {
 	dropletAddCmd.Flags().StringVar(&addTitle, "title", "", "droplet title (required)")
 	dropletAddCmd.Flags().StringVar(&addDescription, "description", "", "droplet description")
@@ -636,10 +736,14 @@ func init() {
 	dropletRecirculateCmd.Flags().StringVar(&recirculateNotes, "notes", "", "add a note before signaling recirculate")
 	dropletBlockCmd.Flags().StringVar(&blockNotes, "notes", "", "add a note before signaling block")
 
+	dropletPeekCmd.Flags().IntVar(&peekLines, "lines", 50, "number of lines to capture")
+	dropletPeekCmd.Flags().BoolVar(&peekRaw, "raw", false, "do not strip ANSI codes")
+	dropletPeekCmd.Flags().BoolVar(&peekFollow, "follow", false, "re-capture every 3 seconds (Ctrl-C to stop)")
+
 	dropletCmd.AddCommand(dropletAddCmd, dropletListCmd, dropletShowCmd, dropletNoteCmd,
 		dropletCloseCmd, dropletReopenCmd, dropletEscalateCmd, dropletPurgeCmd,
 		dropletPassCmd, dropletRecirculateCmd, dropletBlockCmd, dropletStatsCmd,
-		dropletDepsCmd)
+		dropletDepsCmd, dropletPeekCmd)
 	rootCmd.AddCommand(dropletCmd)
 }
 
