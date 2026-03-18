@@ -44,8 +44,10 @@ func newExecutor(r *recorder) *Executor {
 
 func TestPRCreate_Success(t *testing.T) {
 	rec := &recorder{responses: []response{
-		{out: []byte("feature-branch\n")},                      // git branch
-		{out: []byte("ok\n")},                                  // git push
+		{out: []byte("feature-branch\n")},                      // git branch --show-current
+		{out: []byte("ok\n")},                                  // git fetch origin main
+		{out: []byte("ok\n")},                                  // git rebase origin/main
+		{out: []byte("ok\n")},                                  // git push --force-with-lease
 		{out: []byte("https://github.com/org/repo/pull/42\n")}, // gh pr create
 	}}
 
@@ -71,8 +73,8 @@ func TestPRCreate_Success(t *testing.T) {
 		t.Errorf("want pr_number=42, got %q", out.Annotations[AnnoPRNumber])
 	}
 
-	// Verify gh pr create was called with correct args.
-	ghCall := rec.calls[2]
+	// Verify gh pr create was called with correct args (index 4 now: branch, fetch, rebase, push, gh).
+	ghCall := rec.calls[4]
 	if ghCall.name != "gh" {
 		t.Errorf("want gh command, got %q", ghCall.name)
 	}
@@ -89,8 +91,10 @@ func TestPRCreate_Success(t *testing.T) {
 
 func TestPRCreate_BranchProvided(t *testing.T) {
 	rec := &recorder{responses: []response{
-		{out: []byte("ok\n")}, // git push
-		{out: []byte("https://github.com/org/repo/pull/7\n")}, // gh pr create (no git branch call)
+		{out: []byte("ok\n")},                                  // git fetch origin main
+		{out: []byte("ok\n")},                                  // git rebase origin/main
+		{out: []byte("ok\n")},                                  // git push --force-with-lease
+		{out: []byte("https://github.com/org/repo/pull/7\n")}, // gh pr create
 	}}
 
 	e := newExecutor(rec)
@@ -108,23 +112,26 @@ func TestPRCreate_BranchProvided(t *testing.T) {
 	if out.Result != ResultPass {
 		t.Fatalf("want pass, got %s: %s", out.Result, out.Notes)
 	}
-	// Should have called git push + gh (no git branch --show-current).
-	if len(rec.calls) != 2 {
-		t.Fatalf("want 2 calls (push + gh), got %d", len(rec.calls))
+	// Should have called fetch + rebase + push + gh (no git branch --show-current when branch provided).
+	if len(rec.calls) != 4 {
+		t.Fatalf("want 4 calls (fetch+rebase+push+gh), got %d: %v", len(rec.calls), rec.calls)
 	}
-	if rec.calls[0].name != "git" {
-		t.Errorf("want git (push), got %q", rec.calls[0].name)
+	if rec.calls[2].name != "git" || rec.calls[2].args[0] != "push" {
+		t.Errorf("want git push at index 2, got %q %v", rec.calls[2].name, rec.calls[2].args)
 	}
-	if rec.calls[1].name != "gh" {
-		t.Errorf("want gh, got %q", rec.calls[1].name)
+	if rec.calls[3].name != "gh" {
+		t.Errorf("want gh at index 3, got %q", rec.calls[3].name)
 	}
 }
 
 func TestPRCreate_GhFails(t *testing.T) {
+	// Generic gh failure (not "already exists") → ResultFail.
 	rec := &recorder{responses: []response{
-		{out: []byte("feature\n")}, // git branch
-		{out: []byte("ok\n")},      // git push
-		{out: []byte("pull request already exists"), err: errors.New("exit 1")}, // gh pr create
+		{out: []byte("feature\n")},                       // git branch --show-current
+		{out: []byte("ok\n")},                            // git fetch
+		{out: []byte("ok\n")},                            // git rebase
+		{out: []byte("ok\n")},                            // git push
+		{out: []byte("authentication required"), err: errors.New("exit 1")}, // gh pr create
 	}}
 
 	e := newExecutor(rec)
@@ -141,6 +148,60 @@ func TestPRCreate_GhFails(t *testing.T) {
 	}
 	if out.Notes == "" {
 		t.Error("want notes with error details")
+	}
+}
+
+func TestPRCreate_AlreadyExists(t *testing.T) {
+	// "Already exists" → extract URL and return pass (idempotent).
+	existingMsg := "a pull request for branch \"feature\" into branch \"main\" already exists:\nhttps://github.com/org/repo/pull/42"
+	rec := &recorder{responses: []response{
+		{out: []byte("feature\n")},            // git branch --show-current
+		{out: []byte("ok\n")},                 // git fetch
+		{out: []byte("ok\n")},                 // git rebase
+		{out: []byte("ok\n")},                 // git push
+		{out: []byte(existingMsg), err: errors.New("exit 1")}, // gh pr create
+	}}
+
+	e := newExecutor(rec)
+	out, err := e.PRCreate(context.Background(), DropletContext{
+		ID:      "bf-already",
+		WorkDir: "/tmp/repo",
+	})
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if out.Result != ResultPass {
+		t.Fatalf("want pass (idempotent), got %s: %s", out.Result, out.Notes)
+	}
+	if out.Annotations[AnnoPRURL] != "https://github.com/org/repo/pull/42" {
+		t.Errorf("want existing pr_url, got %v", out.Annotations)
+	}
+}
+
+func TestPRCreate_RebaseConflict(t *testing.T) {
+	// Rebase conflict → ResultRecirculate with actionable note.
+	rec := &recorder{responses: []response{
+		{out: []byte("feature\n")},                                     // git branch --show-current
+		{out: []byte("ok\n")},                                          // git fetch
+		{out: []byte("CONFLICT (content): Merge conflict in foo.go\n"), err: errors.New("exit 1")}, // git rebase
+		{out: []byte("ok\n")},                                          // git rebase --abort
+	}}
+
+	e := newExecutor(rec)
+	out, err := e.PRCreate(context.Background(), DropletContext{
+		ID:      "bf-conflict",
+		WorkDir: "/tmp/repo",
+	})
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if out.Result != ResultRecirculate {
+		t.Fatalf("want recirculate, got %s: %s", out.Result, out.Notes)
+	}
+	if !strings.Contains(out.Notes, "rebase conflict") {
+		t.Errorf("want notes mentioning rebase conflict, got: %s", out.Notes)
 	}
 }
 
@@ -165,7 +226,9 @@ func TestPRCreate_NoBranch(t *testing.T) {
 
 func TestPRCreate_DefaultTitle(t *testing.T) {
 	rec := &recorder{responses: []response{
-		{out: []byte("ok\n")}, // git push
+		{out: []byte("ok\n")},                                 // git fetch
+		{out: []byte("ok\n")},                                 // git rebase
+		{out: []byte("ok\n")},                                 // git push
 		{out: []byte("https://github.com/org/repo/pull/1\n")}, // gh pr create
 	}}
 
@@ -184,7 +247,7 @@ func TestPRCreate_DefaultTitle(t *testing.T) {
 		t.Fatalf("want pass, got %s: %s", out.Result, out.Notes)
 	}
 
-	ghCall := rec.calls[1]
+	ghCall := rec.calls[3] // fetch + rebase + push + gh
 	// Title should be "droplet bf-xyz".
 	for i, a := range ghCall.args {
 		if a == "--title" && i+1 < len(ghCall.args) {
@@ -221,8 +284,10 @@ func TestCIGate_PendingThenPass(t *testing.T) {
 	pending := `[{"name":"build","bucket":"pending"}]`
 	passed := `[{"name":"build","bucket":"pass"}]`
 	rec := &recorder{responses: []response{
-		{out: []byte(pending)},
-		{out: []byte(passed)},
+		{out: []byte("MERGEABLE\n")}, // gh pr view (poll 1)
+		{out: []byte(pending)},       // gh pr checks (poll 1)
+		{out: []byte("MERGEABLE\n")}, // gh pr view (poll 2)
+		{out: []byte(passed)},        // gh pr checks (poll 2)
 	}}
 
 	e := newExecutor(rec)
@@ -237,14 +302,15 @@ func TestCIGate_PendingThenPass(t *testing.T) {
 	if out.Result != ResultPass {
 		t.Fatalf("want pass, got %s: %s", out.Result, out.Notes)
 	}
-	if len(rec.calls) != 2 {
-		t.Errorf("want 2 poll calls, got %d", len(rec.calls))
+	if len(rec.calls) != 4 {
+		t.Errorf("want 4 calls (2 mergeable + 2 checks), got %d", len(rec.calls))
 	}
 }
 
 func TestCIGate_CheckFails(t *testing.T) {
 	checksJSON := `[{"name":"build","bucket":"pass"},{"name":"test","bucket":"fail"}]`
 	rec := &recorder{responses: []response{
+		{out: []byte("MERGEABLE\n")},                                                    // gh pr view --json mergeable
 		{out: []byte(checksJSON)},                                                       // gh pr checks
 		{out: []byte("feature-branch\n")},                                               // git rev-parse
 		{out: []byte(`[{"databaseId":12345,"status":"completed"}]`)},                    // gh run list
@@ -269,8 +335,11 @@ func TestCIGate_CheckFails(t *testing.T) {
 }
 
 func TestCIGate_NoChecks(t *testing.T) {
+	// No checks configured: needs 3 polls with empty checks before declaring pass.
 	rec := &recorder{responses: []response{
-		{out: []byte("[]")},
+		{out: []byte("MERGEABLE\n")}, {out: []byte("[]")}, // poll 1
+		{out: []byte("MERGEABLE\n")}, {out: []byte("[]")}, // poll 2
+		{out: []byte("MERGEABLE\n")}, {out: []byte("[]")}, // poll 3 → pass
 	}}
 
 	e := newExecutor(rec)
@@ -283,7 +352,7 @@ func TestCIGate_NoChecks(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if out.Result != ResultPass {
-		t.Fatalf("want pass (no checks), got %s: %s", out.Result, out.Notes)
+		t.Fatalf("want pass (no checks configured), got %s: %s", out.Result, out.Notes)
 	}
 }
 

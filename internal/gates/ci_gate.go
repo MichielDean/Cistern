@@ -34,8 +34,17 @@ func (e *Executor) CIGate(ctx context.Context, bc DropletContext, pollInterval t
 	}
 
 	startTime := time.Now()
+	noChecksCount := 0
 
 	for {
+		// Detect merge conflicts early — CI won't run on a conflicting PR.
+		if e.prHasConflicts(ctx, bc.WorkDir, prURL) {
+			return &StepOutcome{
+				Result: ResultRecirculate,
+				Notes:  "PR has merge conflicts with base branch — rebase onto main and force-push to resolve",
+			}, nil
+		}
+
 		checks, err := e.fetchChecks(ctx, bc.WorkDir, prURL)
 		if err != nil {
 			return &StepOutcome{
@@ -55,10 +64,22 @@ func (e *Executor) CIGate(ctx context.Context, bc DropletContext, pollInterval t
 		}
 
 		if allDone {
-			return &StepOutcome{
-				Result: ResultPass,
-				Notes:  fmt.Sprintf("CI passed: %s", summary),
-			}, nil
+			if len(checks) == 0 {
+				// No checks configured or runner offline.
+				// After several polls with no checks, treat as passed (no CI configured).
+				noChecksCount++
+				if noChecksCount >= 3 {
+					return &StepOutcome{
+						Result: ResultPass,
+						Notes:  "no CI checks configured — proceeding to merge",
+					}, nil
+				}
+			} else {
+				return &StepOutcome{
+					Result: ResultPass,
+					Notes:  fmt.Sprintf("CI passed: %s", summary),
+				}, nil
+			}
 		}
 
 		select {
@@ -112,9 +133,12 @@ func (e *Executor) extractCIFailure(ctx context.Context, bc DropletContext) stri
 func (e *Executor) fetchChecks(ctx context.Context, dir, prURL string) ([]checkRun, error) {
 	out, err := e.ExecFn(ctx, dir, "gh", "pr", "checks", prURL, "--json", "name,bucket")
 	if err != nil {
-		// gh pr checks returns exit code 1 when no checks exist; treat as empty.
 		outStr := string(out)
-		if len(outStr) == 0 || outStr == "[]\n" || outStr == "[]" {
+		// gh pr checks exits 1 when no checks are configured or the runner is
+		// offline — both are "no checks yet", not a fatal error.
+		if len(outStr) == 0 || outStr == "[]\n" || outStr == "[]" ||
+			strings.Contains(outStr, "no checks reported") ||
+			strings.Contains(outStr, "no checks") {
 			return nil, nil
 		}
 		return nil, fmt.Errorf("%w: %s", err, out)
@@ -125,6 +149,15 @@ func (e *Executor) fetchChecks(ctx context.Context, dir, prURL string) ([]checkR
 		return nil, fmt.Errorf("parse checks: %w", err)
 	}
 	return checks, nil
+}
+
+// prHasConflicts returns true if the PR has a merge conflict with its base branch.
+func (e *Executor) prHasConflicts(ctx context.Context, dir, prURL string) bool {
+	out, err := e.ExecFn(ctx, dir, "gh", "pr", "view", prURL, "--json", "mergeable", "--jq", ".mergeable")
+	if err != nil {
+		return false
+	}
+	return strings.TrimSpace(string(out)) == "CONFLICTING"
 }
 
 // evaluateChecks returns whether all checks are done, whether any failed,
