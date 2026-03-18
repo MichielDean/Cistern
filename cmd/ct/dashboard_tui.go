@@ -107,8 +107,8 @@ func (m dashboardTUIModel) View() string {
 	parts = append(parts, m.viewLogo()...)
 	parts = append(parts, sep)
 
-	// 2. Flow graph — one row per aqueduct.
-	parts = append(parts, m.viewFlowGraph()...)
+	// 2. Aqueduct arch diagram — one arch per aqueduct.
+	parts = append(parts, m.viewAqueductArches()...)
 	parts = append(parts, sep)
 
 	// 3. Cistern counts.
@@ -157,20 +157,138 @@ func (m dashboardTUIModel) viewStatusBar() string {
 	return fmt.Sprintf("  %s  %s  %s  %s", flowing, queued, done, ts)
 }
 
-// viewFlowGraph renders each aqueduct as a left-to-right flow graph.
-func (m dashboardTUIModel) viewFlowGraph() []string {
+// viewAqueductArches renders each aqueduct as a Roman arch diagram.
+// Each cataracta is a pier supporting the water channel above.
+func (m dashboardTUIModel) viewAqueductArches() []string {
 	if len(m.data.Cataractae) == 0 {
 		return []string{tuiStyleDim.Render("  No aqueducts configured")}
 	}
 	var lines []string
-	for _, ch := range m.data.Cataractae {
-		graphLine, infoLine := m.tuiFlowGraphRow(ch)
-		lines = append(lines, graphLine)
-		if infoLine != "" {
-			lines = append(lines, infoLine)
+	for i, ch := range m.data.Cataractae {
+		if i > 0 {
+			lines = append(lines, "") // gap between aqueducts
 		}
+		lines = append(lines, m.tuiAqueductRow(ch)...)
 	}
 	return lines
+}
+
+// tuiAqueductRow renders a single aqueduct as an 8-line arch diagram:
+//
+//	  virgo       ╔══════════════════════════════════════════════════════╗
+//	              ║  ≈ ≈  ci-pqz1q  implement  2m 14s  ████░░░░  ≈ ≈   ║
+//	              ╚═══════╤══════════════╤══════════════╤════════════════╝
+//	                      │              │              │              │
+//	                   ╔══╧══╗       ╔══╧══╗        ╔══╧══╗       ╔══╧══╗
+//	                   ║  ●  ║       ║  ○  ║        ║  ○  ║       ║  ○  ║
+//	                   ╚═════╝       ╚═════╝        ╚═════╝       ╚═════╝
+//	                 implement    adv-review           qa          delivery
+func (m dashboardTUIModel) tuiAqueductRow(ch CataractaInfo) []string {
+	const (
+		colW    = 16 // chars per cataracta column
+		pierInW = 5  // inner width of pier: "  ●  "
+		nameW   = 10 // left name column width
+	)
+	g := tuiStyleGreen
+	dim := tuiStyleDim
+
+	steps := ch.Steps
+	if len(steps) == 0 {
+		steps = []string{"—"}
+	}
+	n := len(steps)
+	prefix := "  " + padRight(ch.Name, nameW) + "  "
+	indent := strings.Repeat(" ", len([]rune(prefix)))
+	chanW := n*colW - 1
+
+	active := func(step string) bool {
+		return step == ch.Step && ch.DropletID != ""
+	}
+
+	// Line 1 — channel top.
+	line1 := prefix + dim.Render("╔"+strings.Repeat("═", chanW)+"╗")
+
+	// Line 2 — water / droplet.
+	var water string
+	if ch.DropletID != "" {
+		bar := progressBar(ch.CataractaIndex, ch.TotalCataractae, 8)
+		content := fmt.Sprintf(" ≈ ≈  %s  %s  %s  ≈ ≈ ", ch.DropletID, formatElapsed(ch.Elapsed), bar)
+		water = g.Render(padOrTruncCenter(content, chanW))
+	} else {
+		water = dim.Render(padOrTruncCenter(" — idle — ", chanW))
+	}
+	line2 := indent + dim.Render("║") + water + dim.Render("║")
+
+	// Line 3 — channel bottom with ╤ at each pier centre.
+	var bot strings.Builder
+	bot.WriteString(indent)
+	bot.WriteString(dim.Render("╚"))
+	for i := range steps {
+		half := (colW - 1) / 2
+		rest := colW - 1 - half
+		if i < n-1 {
+			bot.WriteString(dim.Render(strings.Repeat("═", half) + "╤" + strings.Repeat("═", rest-1)))
+		} else {
+			bot.WriteString(dim.Render(strings.Repeat("═", half) + "╤" + strings.Repeat("═", rest-1)))
+		}
+	}
+	bot.WriteString(dim.Render("═╝"))
+	line3 := bot.String()
+
+	// Line 4 — vertical stems.
+	var stemLine strings.Builder
+	stemLine.WriteString(indent)
+	for range steps {
+		half := (colW - 1) / 2
+		stemLine.WriteString(strings.Repeat(" ", half))
+		stemLine.WriteString(dim.Render("│"))
+		stemLine.WriteString(strings.Repeat(" ", colW-half-1))
+	}
+	line4 := stemLine.String()
+
+	// Lines 5-7 — pier top/mid/bot.
+	var pt, pm, pb strings.Builder
+	for _, step := range steps {
+		half := (colW - 1) / 2
+		pad := half - (pierInW/2 + 1)
+		sp := strings.Repeat(" ", pad)
+		spR := strings.Repeat(" ", colW-pad-pierInW-2)
+
+		style := dim
+		if active(step) {
+			style = g
+		}
+		sym := "  ○  "
+		if active(step) {
+			sym = "  ●  "
+		}
+		pt.WriteString(sp + style.Render("╔"+strings.Repeat("═", pierInW)+"╗") + spR)
+		pm.WriteString(sp + style.Render("║"+sym+"║") + spR)
+		pb.WriteString(sp + style.Render("╚"+strings.Repeat("═", pierInW)+"╝") + spR)
+	}
+	line5 := indent + pt.String()
+	line6 := indent + pm.String()
+	line7 := indent + pb.String()
+
+	// Line 8 — labels.
+	var lblLine strings.Builder
+	lblLine.WriteString(indent)
+	for _, step := range steps {
+		lbl := step
+		maxLbl := colW - 2
+		if len([]rune(lbl)) > maxLbl {
+			lbl = string([]rune(lbl)[:maxLbl-1]) + "…"
+		}
+		centered := padOrTruncCenter(lbl, colW)
+		if active(step) {
+			lblLine.WriteString(g.Bold(true).Render(centered))
+		} else {
+			lblLine.WriteString(dim.Render(centered))
+		}
+	}
+	line8 := lblLine.String()
+
+	return []string{line1, line2, line3, line4, line5, line6, line7, line8}
 }
 
 // tuiFlowGraphRow renders a single aqueduct as a styled flow graph row.

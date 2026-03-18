@@ -259,14 +259,183 @@ func padRight(s string, width int) string {
 	return s + strings.Repeat(" ", width-len(r))
 }
 
-// renderFlowGraphRow renders a single aqueduct as a horizontal flow graph.
-// The aqueduct name is shown as a left-column prefix so every row is labelled.
-// graphLine shows the pipeline with ● for the active node and ○ for inactive nodes.
-// infoLine shows the ↑ pointer with droplet details (empty when idle).
+// renderAqueductRow renders a single aqueduct as a Roman aqueduct arch diagram.
+// Each cataracta is an arch pier. The channel on top carries the flowing droplet.
+// Returns a multi-line string (7 lines) suitable for the TUI dashboard.
+//
+// Example output (active in green, idle piers dim):
+//
+//	virgo  ╔════════════════════════════════════════════════════════╗
+//	       ║ ≈ ≈ ≈  ci-pqz1q  implement  2m 14s  ████░░░░  ≈ ≈ ≈  ║
+//	       ╚════════╤═══════════════╤═══════════════╤══════════════╝
+//	                │               │               │               │
+//	             ╔══╧══╗         ╔══╧══╗         ╔══╧══╗        ╔══╧══╗
+//	             ║  ●  ║         ║  ○  ║         ║  ○  ║        ║  ○  ║
+//	             ╚═════╝         ╚═════╝         ╚═════╝        ╚═════╝
+//	           implement      adv-review            qa          delivery
+func renderAqueductRow(ch CataractaInfo) string {
+	const (
+		colW    = 15 // visual width per cataracta column (label + spacing)
+		pierInW = 5  // inner width of pier box: "  ●  " or " impl"
+		nameW   = 10 // left label column width
+	)
+
+	steps := ch.Steps
+	if len(steps) == 0 {
+		steps = []string{"(empty)"}
+	}
+	n := len(steps)
+
+	// Channel total inner width = n columns of colW, separated by ┬ joints.
+	chanW := n*colW - 1
+
+	// ── Line 1: channel top ────────────────────────────────────────────────
+	prefix := "  " + padRight(ch.Name, nameW) + "  "
+	indent := strings.Repeat(" ", len([]rune(prefix)))
+
+	chanTop := prefix + colorDim + "╔" + strings.Repeat("═", chanW) + "╗" + colorReset
+
+	// ── Line 2: water / droplet info ───────────────────────────────────────
+	var waterInner string
+	if ch.DropletID != "" {
+		bar := progressBar(ch.CataractaIndex, ch.TotalCataractae, 8)
+		content := fmt.Sprintf(" ≈ ≈  %s  %s  %s  ≈ ≈ ", ch.DropletID, formatElapsed(ch.Elapsed), bar)
+		waterInner = padOrTruncCenter(content, chanW)
+		waterInner = colorGreen + waterInner + colorReset
+	} else {
+		waterInner = colorDim + padOrTruncCenter(" — idle — ", chanW) + colorReset
+	}
+	chanMid := indent + colorDim + "║" + colorReset + waterInner + colorDim + "║" + colorReset
+
+	// ── Line 3: channel bottom with ┬ connectors at each pier ──────────────
+	var chanBot strings.Builder
+	chanBot.WriteString(indent)
+	chanBot.WriteString(colorDim + "╚" + colorReset)
+	for i := range steps {
+		half := (colW - 1) / 2
+		rest := colW - 1 - half
+		if i == 0 {
+			chanBot.WriteString(colorDim + strings.Repeat("═", half) + "╤" + strings.Repeat("═", rest-1) + colorReset)
+		} else {
+			chanBot.WriteString(colorDim + strings.Repeat("═", half) + "╤" + strings.Repeat("═", rest-1) + colorReset)
+		}
+	}
+	chanBot.WriteString(colorDim + "═╝" + colorReset)
+
+	// ── Line 4: vertical stems from channel to pier caps ───────────────────
+	var stems strings.Builder
+	stems.WriteString(indent)
+	for range steps {
+		half := (colW - 1) / 2
+		stems.WriteString(strings.Repeat(" ", half))
+		stems.WriteString(colorDim + "│" + colorReset)
+		stems.WriteString(strings.Repeat(" ", colW-half-1))
+	}
+
+	// ── Line 5: pier tops ╔══╧══╗ ─────────────────────────────────────────
+	var pierTop strings.Builder
+	pierTop.WriteString(indent)
+	for i, step := range steps {
+		half := (colW - 1) / 2
+		pad := half - (pierInW/2 + 1)
+		pierTop.WriteString(strings.Repeat(" ", pad))
+		active := step == ch.Step && ch.DropletID != ""
+		box := "╔" + strings.Repeat("═", pierInW) + "╗"
+		if active {
+			pierTop.WriteString(colorGreen + box + colorReset)
+		} else {
+			pierTop.WriteString(colorDim + box + colorReset)
+		}
+		_ = i
+		pierTop.WriteString(strings.Repeat(" ", colW-pad-pierInW-2))
+	}
+
+	// ── Line 6: pier middle ║  ●  ║ ─────────────────────────────────────
+	var pierMid strings.Builder
+	pierMid.WriteString(indent)
+	for _, step := range steps {
+		half := (colW - 1) / 2
+		pad := half - (pierInW/2 + 1)
+		pierMid.WriteString(strings.Repeat(" ", pad))
+		active := step == ch.Step && ch.DropletID != ""
+		sym := "  ○  "
+		if active {
+			sym = "  ●  "
+		}
+		var body string
+		if active {
+			body = colorGreen + "║" + sym + "║" + colorReset
+		} else {
+			body = colorDim + "║" + sym + "║" + colorReset
+		}
+		pierMid.WriteString(body)
+		pierMid.WriteString(strings.Repeat(" ", colW-pad-pierInW-2))
+	}
+
+	// ── Line 7: pier bottoms ╚═════╝ ─────────────────────────────────────
+	var pierBot strings.Builder
+	pierBot.WriteString(indent)
+	for _, step := range steps {
+		half := (colW - 1) / 2
+		pad := half - (pierInW/2 + 1)
+		pierBot.WriteString(strings.Repeat(" ", pad))
+		active := step == ch.Step && ch.DropletID != ""
+		box := "╚" + strings.Repeat("═", pierInW) + "╝"
+		if active {
+			pierBot.WriteString(colorGreen + box + colorReset)
+		} else {
+			pierBot.WriteString(colorDim + box + colorReset)
+		}
+		pierBot.WriteString(strings.Repeat(" ", colW-pad-pierInW-2))
+	}
+
+	// ── Line 8: labels ────────────────────────────────────────────────────
+	var labels strings.Builder
+	labels.WriteString(indent)
+	for _, step := range steps {
+		lbl := step
+		if len([]rune(lbl)) > colW-1 {
+			runes := []rune(lbl)
+			lbl = string(runes[:colW-2]) + "…"
+		}
+		active := step == ch.Step && ch.DropletID != ""
+		centered := padOrTruncCenter(lbl, colW)
+		if active {
+			labels.WriteString(colorGreen + centered + colorReset)
+		} else {
+			labels.WriteString(colorDim + centered + colorReset)
+		}
+	}
+
+	return strings.Join([]string{
+		chanTop,
+		chanMid,
+		chanBot.String(),
+		stems.String(),
+		pierTop.String(),
+		pierMid.String(),
+		pierBot.String(),
+		labels.String(),
+	}, "\n")
+}
+
+// padOrTruncCenter centers s within width w, padding with spaces.
+// Truncates with … if s is too long.
+func padOrTruncCenter(s string, w int) string {
+	runes := []rune(s)
+	if len(runes) > w {
+		return string(runes[:w-1]) + "…"
+	}
+	total := w - len(runes)
+	left := total / 2
+	right := total - left
+	return strings.Repeat(" ", left) + s + strings.Repeat(" ", right)
+}
+
+// renderFlowGraphRow is kept for tests; the TUI now uses renderAqueductRow.
 func renderFlowGraphRow(ch CataractaInfo) (graphLine, infoLine string) {
-	const namePad = 12 // fixed visual width for the name column
+	const namePad = 12
 	namePfx := padRight(ch.Name, namePad)
-	// prefix: "  <name>  " — 2 + namePad + 2 = namePad+4 visual chars
 	const pfxWidth = namePad + 4
 
 	if len(ch.Steps) == 0 {
@@ -294,7 +463,7 @@ func renderFlowGraphRow(ch CataractaInfo) (graphLine, infoLine string) {
 		}
 		if step == ch.Step && ch.DropletID != "" {
 			g.WriteString(colorGreen + step + colorReset)
-			activeCol = visualCol // step name starts here (after any incoming edge)
+			activeCol = visualCol
 		} else {
 			g.WriteString(colorDim + step + colorReset)
 		}
@@ -314,16 +483,16 @@ func renderDashboard(data *DashboardData) string {
 	var sb strings.Builder
 	sep := strings.Repeat("─", 70)
 
-	// Flow graph — one row per aqueduct.
+	// Aqueduct arch visualization — one arch diagram per aqueduct.
 	if len(data.Cataractae) == 0 {
 		sb.WriteString("  No aqueducts configured\n")
 	} else {
-		for _, ch := range data.Cataractae {
-			g, info := renderFlowGraphRow(ch)
-			sb.WriteString(g + "\n")
-			if info != "" {
-				sb.WriteString(info + "\n")
+		for i, ch := range data.Cataractae {
+			if i > 0 {
+				sb.WriteString("\n")
 			}
+			sb.WriteString(renderAqueductRow(ch))
+			sb.WriteString("\n")
 		}
 	}
 	sb.WriteString(sep + "\n")
