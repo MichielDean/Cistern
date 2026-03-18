@@ -42,6 +42,11 @@ cataracta_definitions:
       git status --short          # confirm your changed files are staged
       git commit -m "<droplet-id>: <description>"
       AFTER=$(git rev-parse HEAD)
+      if [ "$BEFORE" = "$AFTER" ]; then
+        echo "ERROR: commit failed — HEAD did not advance. Check git status."
+        ct droplet recirculate <id> --notes "Commit failed: HEAD did not advance after git commit. Nothing was staged."
+        exit 1
+      fi
       ```
       If BEFORE == AFTER: the commit failed. Nothing was staged.
       → Run `git status` and `git diff` to diagnose.

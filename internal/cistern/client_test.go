@@ -555,6 +555,73 @@ func TestGetReady_SkipsBlocked_NothingAvailable(t *testing.T) {
 	}
 }
 
+func TestSetAndGetLastReviewedCommit(t *testing.T) {
+	c := testClient(t)
+	item, _ := c.Add("myrepo", "Task", "", 1, 3)
+
+	// Initially empty.
+	commit, err := c.GetLastReviewedCommit(item.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if commit != "" {
+		t.Errorf("expected empty last_reviewed_commit, got %q", commit)
+	}
+
+	// Set a commit hash.
+	hash := "abc1234def5678"
+	if err := c.SetLastReviewedCommit(item.ID, hash); err != nil {
+		t.Fatalf("SetLastReviewedCommit: %v", err)
+	}
+
+	// Read it back.
+	got, err := c.GetLastReviewedCommit(item.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != hash {
+		t.Errorf("GetLastReviewedCommit = %q, want %q", got, hash)
+	}
+}
+
+func TestSetLastReviewedCommit_Overwrite(t *testing.T) {
+	c := testClient(t)
+	item, _ := c.Add("myrepo", "Task", "", 1, 3)
+
+	if err := c.SetLastReviewedCommit(item.ID, "hash-old"); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.SetLastReviewedCommit(item.ID, "hash-new"); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := c.GetLastReviewedCommit(item.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "hash-new" {
+		t.Errorf("expected overwritten hash 'hash-new', got %q", got)
+	}
+}
+
+func TestGetLastReviewedCommit_PersistedInGet(t *testing.T) {
+	c := testClient(t)
+	item, _ := c.Add("myrepo", "Task", "", 1, 3)
+
+	hash := "deadbeef00"
+	if err := c.SetLastReviewedCommit(item.ID, hash); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := c.Get(item.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.LastReviewedCommit != hash {
+		t.Errorf("Droplet.LastReviewedCommit = %q, want %q", got.LastReviewedCommit, hash)
+	}
+}
+
 func TestStats_WithData(t *testing.T) {
 	c := testClient(t)
 

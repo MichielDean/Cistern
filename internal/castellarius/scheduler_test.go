@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -18,15 +19,16 @@ import (
 // --- mocks ---
 
 type mockClient struct {
-	mu         sync.Mutex
-	readyItems []*cistern.Droplet
-	readyCalls int
-	steps      map[string]string              // id → current step (for assertions)
-	items      map[string]*cistern.Droplet    // id → item (for List/SetOutcome)
-	notes      map[string][]cistern.CataractaNote
-	escalated  map[string]string
-	attached   []attachedNote
-	closed     map[string]bool
+	mu                  sync.Mutex
+	readyItems          []*cistern.Droplet
+	readyCalls          int
+	steps               map[string]string              // id → current step (for assertions)
+	items               map[string]*cistern.Droplet    // id → item (for List/SetOutcome)
+	notes               map[string][]cistern.CataractaNote
+	escalated           map[string]string
+	attached            []attachedNote
+	closed              map[string]bool
+	lastReviewedCommits map[string]string
 }
 
 type attachedNote struct {
@@ -35,11 +37,12 @@ type attachedNote struct {
 
 func newMockClient() *mockClient {
 	return &mockClient{
-		steps:     make(map[string]string),
-		items:     make(map[string]*cistern.Droplet),
-		notes:     make(map[string][]cistern.CataractaNote),
-		escalated: make(map[string]string),
-		closed:    make(map[string]bool),
+		steps:               make(map[string]string),
+		items:               make(map[string]*cistern.Droplet),
+		notes:               make(map[string][]cistern.CataractaNote),
+		escalated:           make(map[string]string),
+		closed:              make(map[string]bool),
+		lastReviewedCommits: make(map[string]string),
 	}
 }
 
@@ -153,6 +156,12 @@ func (m *mockClient) SetCataracta(id, cataracta string) error {
 		item.CurrentCataracta = cataracta
 	}
 	return nil
+}
+
+func (m *mockClient) GetLastReviewedCommit(id string) (string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.lastReviewedCommits[id], nil
 }
 
 // mockRunner records Spawn calls and writes outcomes to the mockClient.
@@ -1222,5 +1231,187 @@ func TestParseOutcome(t *testing.T) {
 		if to != tt.wantRecircTo {
 			t.Errorf("parseOutcome(%q).recirculateTo = %q, want %q", tt.outcome, to, tt.wantRecircTo)
 		}
+	}
+}
+
+// --- Phantom commit prevention tests ---
+
+// makeGitSandbox initialises a git repo in dir with an initial commit and
+// returns the HEAD hash. Used by scheduler tests that need a real sandbox.
+func makeGitSandbox(t *testing.T, dir string) string {
+	t.Helper()
+	cmds := [][]string{
+		{"git", "init"},
+		{"git", "config", "user.email", "test@test.com"},
+		{"git", "config", "user.name", "Test"},
+	}
+	for _, args := range cmds {
+		cmd := exec.Command(args[0], args[1:]...)
+		cmd.Dir = dir
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("%v: %v\n%s", args, err, out)
+		}
+	}
+	// Create an initial commit.
+	if err := os.WriteFile(filepath.Join(dir, "README.md"), []byte("init\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	for _, args := range [][]string{
+		{"git", "add", "."},
+		{"git", "commit", "-m", "initial"},
+	} {
+		cmd := exec.Command(args[0], args[1:]...)
+		cmd.Dir = dir
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("%v: %v\n%s", args, err, out)
+		}
+	}
+	out, err := exec.Command("git", "-C", dir, "rev-parse", "HEAD").Output()
+	if err != nil {
+		t.Fatalf("rev-parse HEAD: %v", err)
+	}
+	return strings.TrimSpace(string(out))
+}
+
+// TestObserve_HeadNotAdvanced verifies that when implement passes but HEAD
+// has not advanced since the last review, the scheduler auto-recirculates.
+func TestObserve_HeadNotAdvanced(t *testing.T) {
+	sandboxRoot := t.TempDir()
+
+	client := newMockClient()
+	item := &cistern.Droplet{
+		ID:               "ph-1",
+		CurrentCataracta: "implement",
+		Assignee:         "alpha",
+		Status:           "in_progress",
+		Outcome:          "pass",
+	}
+	client.items["ph-1"] = item
+
+	// Create a real git sandbox so sandboxHead() works.
+	sandboxDir := filepath.Join(sandboxRoot, "test-repo", "alpha")
+	if err := os.MkdirAll(sandboxDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	headHash := makeGitSandbox(t, sandboxDir)
+
+	// Record the same hash as the last reviewed commit — HEAD has not advanced.
+	client.lastReviewedCommits["ph-1"] = headHash
+
+	cataracta := newMockRunner(client)
+	config := testConfig()
+	workflows := map[string]*aqueduct.Workflow{"test-repo": testWorkflow()}
+	clients := map[string]CisternClient{"test-repo": client}
+	sched := NewFromParts(config, workflows, clients, cataracta,
+		WithSandboxRoot(sandboxRoot))
+
+	// Observe tick should detect the phantom commit and recirculate.
+	sched.Tick(context.Background())
+	time.Sleep(10 * time.Millisecond)
+
+	client.mu.Lock()
+	defer client.mu.Unlock()
+
+	// Item must stay at implement, not advance to review.
+	if client.steps["ph-1"] != "implement" {
+		t.Errorf("expected item to stay at 'implement', got %q", client.steps["ph-1"])
+	}
+	// A note must have been attached.
+	hasNote := false
+	for _, n := range client.attached {
+		if n.id == "ph-1" && strings.Contains(n.notes, "HEAD has not advanced") {
+			hasNote = true
+		}
+	}
+	if !hasNote {
+		t.Errorf("expected phantom commit note to be attached, got: %v", client.attached)
+	}
+}
+
+// TestObserve_HeadAdvanced verifies that when implement passes and HEAD has
+// advanced since the last review, routing proceeds normally to review.
+func TestObserve_HeadAdvanced(t *testing.T) {
+	sandboxRoot := t.TempDir()
+
+	client := newMockClient()
+	item := &cistern.Droplet{
+		ID:               "ph-2",
+		CurrentCataracta: "implement",
+		Assignee:         "alpha",
+		Status:           "in_progress",
+		Outcome:          "pass",
+	}
+	client.items["ph-2"] = item
+
+	// Create a real git sandbox and make an additional commit.
+	sandboxDir := filepath.Join(sandboxRoot, "test-repo", "alpha")
+	if err := os.MkdirAll(sandboxDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	oldHash := makeGitSandbox(t, sandboxDir)
+
+	// Make a new commit so HEAD advances.
+	if err := os.WriteFile(filepath.Join(sandboxDir, "feature.go"), []byte("package main\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	for _, args := range [][]string{
+		{"git", "add", "."},
+		{"git", "commit", "-m", "feat: add feature"},
+	} {
+		cmd := exec.Command(args[0], args[1:]...)
+		cmd.Dir = sandboxDir
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("%v: %v\n%s", args, err, out)
+		}
+	}
+
+	// Record the OLD hash as last reviewed — HEAD has now advanced past it.
+	client.lastReviewedCommits["ph-2"] = oldHash
+
+	cataracta := newMockRunner(client)
+	config := testConfig()
+	workflows := map[string]*aqueduct.Workflow{"test-repo": testWorkflow()}
+	clients := map[string]CisternClient{"test-repo": client}
+	sched := NewFromParts(config, workflows, clients, cataracta,
+		WithSandboxRoot(sandboxRoot))
+
+	sched.Tick(context.Background())
+	time.Sleep(10 * time.Millisecond)
+
+	client.mu.Lock()
+	defer client.mu.Unlock()
+
+	// Item must have advanced to review.
+	if client.steps["ph-2"] != "review" {
+		t.Errorf("expected item at 'review', got %q", client.steps["ph-2"])
+	}
+}
+
+// TestObserve_FirstPass verifies that when LastReviewedCommit is empty
+// (first implement pass), the scheduler routes normally without any HEAD check.
+func TestObserve_FirstPass(t *testing.T) {
+	client := newMockClient()
+	item := &cistern.Droplet{
+		ID:               "ph-3",
+		CurrentCataracta: "implement",
+		Assignee:         "alpha",
+		Status:           "in_progress",
+		Outcome:          "pass",
+	}
+	client.items["ph-3"] = item
+	// lastReviewedCommits["ph-3"] is empty — first pass.
+
+	cataracta := newMockRunner(client)
+	sched := testScheduler(client, cataracta)
+
+	sched.Tick(context.Background())
+	time.Sleep(10 * time.Millisecond)
+
+	client.mu.Lock()
+	defer client.mu.Unlock()
+
+	// First pass: route normally to review.
+	if client.steps["ph-3"] != "review" {
+		t.Errorf("expected first pass to route to 'review', got %q", client.steps["ph-3"])
 	}
 }

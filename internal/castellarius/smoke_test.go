@@ -200,6 +200,10 @@ func (c *pipelineClient) SetCataracta(id, cataracta string) error {
 	return nil
 }
 
+func (c *pipelineClient) GetLastReviewedCommit(id string) (string, error) {
+	return "", nil
+}
+
 // resultToOutcome converts an Outcome Result to the DB outcome string
 // written by `ct droplet` commands.
 func resultToOutcome(r Result) string {

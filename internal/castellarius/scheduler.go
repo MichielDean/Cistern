@@ -36,6 +36,9 @@ type CisternClient interface {
 	List(repo, status string) ([]*cistern.Droplet, error)
 	Purge(olderThan time.Duration, dryRun bool) (int, error)
 	SetCataracta(id, cataracta string) error
+	// GetLastReviewedCommit returns the HEAD commit hash recorded when the last
+	// review diff was generated. Used to detect phantom commits.
+	GetLastReviewedCommit(dropletID string) (string, error)
 }
 
 // CataractaRunner executes a single workflow step.
@@ -411,6 +414,28 @@ func (s *Castellarius) observeRepo(_ context.Context, repo aqueduct.RepoConfig) 
 			s.logger.Info("Droplet stagnant at cataracta", "droplet", item.ID, "cataracta", step.Name, "outcome", item.Outcome)
 		}
 
+		// Phantom commit prevention: when implement passes, verify that HEAD has
+		// advanced since the last review. If not, the implementer signed pass without
+		// committing — auto-recirculate with a diagnostic message.
+		if result == ResultPass && step.Name == "implement" {
+			if lastCommit, err := client.GetLastReviewedCommit(item.ID); err == nil && lastCommit != "" {
+				sandboxDir := filepath.Join(s.sandboxRoot, repo.Name, item.Assignee)
+				if head, err := sandboxHead(sandboxDir); err == nil && head == lastCommit {
+					note := fmt.Sprintf(
+						"Implement pass rejected: HEAD has not advanced since last review (commit: %s). No new commits were found. You must commit your changes before signaling pass.",
+						lastCommit,
+					)
+					s.logger.Warn("Phantom commit detected — recirculating to implement",
+						"droplet", item.ID, "commit", lastCommit)
+					_ = client.AddNote(item.ID, "scheduler", note)
+					if err := client.Assign(item.ID, "", "implement"); err != nil {
+						s.logger.Error("observe: phantom commit recirculate failed", "droplet", item.ID, "error", err)
+					}
+					continue
+				}
+			}
+		}
+
 		var next string
 		if recirculateTo != "" {
 			// Agent specified an explicit target step (e.g. recirculate:implement).
@@ -768,6 +793,17 @@ func (s *Castellarius) heartbeatRepo(_ context.Context, repo aqueduct.RepoConfig
 // isTmuxAlive returns true if a tmux session with the given name is running.
 func isTmuxAlive(sessionID string) bool {
 	return exec.Command("tmux", "has-session", "-t", sessionID).Run() == nil
+}
+
+// sandboxHead returns the current HEAD commit hash in the given directory.
+func sandboxHead(dir string) (string, error) {
+	cmd := exec.Command("git", "rev-parse", "HEAD")
+	cmd.Dir = dir
+	out, err := cmd.Output()
+	if err != nil {
+		return "", fmt.Errorf("git rev-parse HEAD in %s: %w", dir, err)
+	}
+	return strings.TrimSpace(string(out)), nil
 }
 
 // WriteContext writes a CONTEXT.md file with notes from previous steps.

@@ -154,6 +154,18 @@ func configureGitIdentity(dir string) error {
 	return nil
 }
 
+// currentHead returns the current HEAD commit hash in the given directory.
+// It is a pure helper with no side effects.
+func currentHead(dir string) (string, error) {
+	cmd := exec.Command("git", "rev-parse", "HEAD")
+	cmd.Dir = dir
+	out, err := cmd.Output()
+	if err != nil {
+		return "", fmt.Errorf("git rev-parse HEAD in %s: %w", dir, err)
+	}
+	return strings.TrimSpace(string(out)), nil
+}
+
 // ParkWorktree is a no-op kept for backward compatibility.
 // Dedicated clones don't need HEAD parking between steps.
 func ParkWorktree(_ string) {}

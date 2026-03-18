@@ -37,6 +37,10 @@ type Droplet struct {
 	// AssignedAqueduct is set on first dispatch and never cleared.
 	// Once a droplet enters an aqueduct it stays there for its full lifecycle.
 	AssignedAqueduct string `json:"assigned_aqueduct,omitempty"`
+	// LastReviewedCommit is the HEAD commit hash at the time the last review
+	// diff was generated. Used to detect phantom commits (implement pass without
+	// any new commits since the last review).
+	LastReviewedCommit string `json:"last_reviewed_commit,omitempty"`
 
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
@@ -102,6 +106,8 @@ func New(dbPath, prefix string) (*Client, error) {
 	db.Exec(`UPDATE droplets SET status = 'delivered' WHERE status = 'closed'`)
 	// Sticky aqueduct assignment migration (idempotent).
 	db.Exec(`ALTER TABLE droplets ADD COLUMN assigned_aqueduct TEXT DEFAULT ''`)
+	// Phantom commit prevention: track the last reviewed commit hash (idempotent).
+	db.Exec(`ALTER TABLE droplets ADD COLUMN last_reviewed_commit TEXT DEFAULT NULL`)
 	if _, err := db.Exec(schema); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("cistern: schema: %w", err)
@@ -201,7 +207,7 @@ func (c *Client) GetReady(repo string) (*Droplet, error) {
 	defer tx.Rollback()
 
 	row := tx.QueryRow(
-		`SELECT id, repo, title, description, priority, complexity, status, assignee, current_cataracta, outcome, assigned_aqueduct, created_at, updated_at
+		`SELECT id, repo, title, description, priority, complexity, status, assignee, current_cataracta, outcome, assigned_aqueduct, last_reviewed_commit, created_at, updated_at
 		 FROM droplets d
 		 WHERE d.repo = ? AND d.status = 'open'
 		   AND NOT EXISTS (
@@ -215,10 +221,10 @@ func (c *Client) GetReady(repo string) (*Droplet, error) {
 	)
 
 	var droplet Droplet
-	var assignee, currentCataracta, outcome, assignedAqueduct sql.NullString
+	var assignee, currentCataracta, outcome, assignedAqueduct, lastReviewedCommit sql.NullString
 	err = row.Scan(
 		&droplet.ID, &droplet.Repo, &droplet.Title, &droplet.Description,
-		&droplet.Priority, &droplet.Complexity, &droplet.Status, &assignee, &currentCataracta, &outcome, &assignedAqueduct,
+		&droplet.Priority, &droplet.Complexity, &droplet.Status, &assignee, &currentCataracta, &outcome, &assignedAqueduct, &lastReviewedCommit,
 		&droplet.CreatedAt, &droplet.UpdatedAt,
 	)
 	if err == sql.ErrNoRows {
@@ -231,6 +237,7 @@ func (c *Client) GetReady(repo string) (*Droplet, error) {
 	droplet.CurrentCataracta = currentCataracta.String
 	droplet.Outcome = outcome.String
 	droplet.AssignedAqueduct = assignedAqueduct.String
+	droplet.LastReviewedCommit = lastReviewedCommit.String
 
 	now := time.Now().UTC()
 	if _, err := tx.Exec(
@@ -261,7 +268,7 @@ func (c *Client) GetReadyForAqueduct(repo, aqueductName string) (*Droplet, error
 	defer tx.Rollback()
 
 	row := tx.QueryRow(
-		`SELECT id, repo, title, description, priority, complexity, status, assignee, current_cataracta, outcome, assigned_aqueduct, created_at, updated_at
+		`SELECT id, repo, title, description, priority, complexity, status, assignee, current_cataracta, outcome, assigned_aqueduct, last_reviewed_commit, created_at, updated_at
 		 FROM droplets d
 		 WHERE d.repo = ? AND d.status = 'open'
 		   AND (d.assigned_aqueduct = '' OR d.assigned_aqueduct IS NULL OR d.assigned_aqueduct = ?)
@@ -276,11 +283,11 @@ func (c *Client) GetReadyForAqueduct(repo, aqueductName string) (*Droplet, error
 	)
 
 	var droplet Droplet
-	var assignee, currentCataracta, outcome, assignedAqueduct sql.NullString
+	var assignee, currentCataracta, outcome, assignedAqueduct, lastReviewedCommit sql.NullString
 	now := time.Now().UTC()
 	err = row.Scan(
 		&droplet.ID, &droplet.Repo, &droplet.Title, &droplet.Description,
-		&droplet.Priority, &droplet.Complexity, &droplet.Status, &assignee, &currentCataracta, &outcome, &assignedAqueduct,
+		&droplet.Priority, &droplet.Complexity, &droplet.Status, &assignee, &currentCataracta, &outcome, &assignedAqueduct, &lastReviewedCommit,
 		&droplet.CreatedAt, &droplet.UpdatedAt,
 	)
 	if err == sql.ErrNoRows {
@@ -293,6 +300,7 @@ func (c *Client) GetReadyForAqueduct(repo, aqueductName string) (*Droplet, error
 	droplet.CurrentCataracta = currentCataracta.String
 	droplet.Outcome = outcome.String
 	droplet.AssignedAqueduct = assignedAqueduct.String
+	droplet.LastReviewedCommit = lastReviewedCommit.String
 
 	if _, err := tx.Exec(
 		`UPDATE droplets SET status = 'in_progress', updated_at = ? WHERE id = ?`,
@@ -346,6 +354,32 @@ func (c *Client) SetAssignedAqueduct(id, aqueductName string) error {
 		return fmt.Errorf("cistern: set assigned_aqueduct %s: %w", id, err)
 	}
 	return nil
+}
+
+// SetLastReviewedCommit records the HEAD commit hash at the time the review diff
+// was generated. Called by the runner when preparing a diff_only context.
+func (c *Client) SetLastReviewedCommit(id, commitHash string) error {
+	_, err := c.db.Exec(
+		`UPDATE droplets SET last_reviewed_commit = ? WHERE id = ?`,
+		commitHash, id,
+	)
+	if err != nil {
+		return fmt.Errorf("cistern: set last_reviewed_commit %s: %w", id, err)
+	}
+	return nil
+}
+
+// GetLastReviewedCommit returns the HEAD commit hash from the last time a review
+// diff was generated for this droplet. Returns an empty string if not yet set.
+func (c *Client) GetLastReviewedCommit(id string) (string, error) {
+	var commit sql.NullString
+	err := c.db.QueryRow(
+		`SELECT last_reviewed_commit FROM droplets WHERE id = ?`, id,
+	).Scan(&commit)
+	if err != nil {
+		return "", fmt.Errorf("cistern: get last_reviewed_commit %s: %w", id, err)
+	}
+	return commit.String, nil
 }
 
 // UpdateStatus sets the status field on a droplet.
@@ -471,7 +505,7 @@ func (c *Client) SetCataracta(id, cataracta string) error {
 // Get retrieves a single droplet by ID. Returns an error if not found.
 func (c *Client) Get(id string) (*Droplet, error) {
 	row := c.db.QueryRow(
-		`SELECT id, repo, title, description, priority, complexity, status, assignee, current_cataracta, outcome, assigned_aqueduct, created_at, updated_at
+		`SELECT id, repo, title, description, priority, complexity, status, assignee, current_cataracta, outcome, assigned_aqueduct, last_reviewed_commit, created_at, updated_at
 		 FROM droplets WHERE id = ?`,
 		id,
 	)
@@ -487,7 +521,7 @@ func (c *Client) Get(id string) (*Droplet, error) {
 
 // List returns droplets filtered by repo and/or status. Empty strings mean no filter.
 func (c *Client) List(repo, status string) ([]*Droplet, error) {
-	query := `SELECT id, repo, title, description, priority, complexity, status, assignee, current_cataracta, outcome, assigned_aqueduct, created_at, updated_at
+	query := `SELECT id, repo, title, description, priority, complexity, status, assignee, current_cataracta, outcome, assigned_aqueduct, last_reviewed_commit, created_at, updated_at
 		 FROM droplets WHERE 1=1`
 	var args []any
 	if repo != "" {
@@ -509,10 +543,10 @@ func (c *Client) List(repo, status string) ([]*Droplet, error) {
 	var droplets []*Droplet
 	for rows.Next() {
 		var droplet Droplet
-		var assignee, currentCataracta, outcome, assignedAqueduct sql.NullString
+		var assignee, currentCataracta, outcome, assignedAqueduct, lastReviewedCommit sql.NullString
 		if err := rows.Scan(
 			&droplet.ID, &droplet.Repo, &droplet.Title, &droplet.Description,
-			&droplet.Priority, &droplet.Complexity, &droplet.Status, &assignee, &currentCataracta, &outcome, &assignedAqueduct,
+			&droplet.Priority, &droplet.Complexity, &droplet.Status, &assignee, &currentCataracta, &outcome, &assignedAqueduct, &lastReviewedCommit,
 			&droplet.CreatedAt, &droplet.UpdatedAt,
 		); err != nil {
 			return nil, fmt.Errorf("cistern: scan droplet: %w", err)
@@ -521,6 +555,7 @@ func (c *Client) List(repo, status string) ([]*Droplet, error) {
 		droplet.CurrentCataracta = currentCataracta.String
 		droplet.Outcome = outcome.String
 		droplet.AssignedAqueduct = assignedAqueduct.String
+		droplet.LastReviewedCommit = lastReviewedCommit.String
 		droplets = append(droplets, &droplet)
 	}
 	return droplets, rows.Err()
@@ -529,10 +564,10 @@ func (c *Client) List(repo, status string) ([]*Droplet, error) {
 // scanDroplet scans a single row into a Droplet. Returns nil, nil for sql.ErrNoRows.
 func scanDroplet(row *sql.Row) (*Droplet, error) {
 	var droplet Droplet
-	var assignee, currentCataracta, outcome, assignedAqueduct sql.NullString
+	var assignee, currentCataracta, outcome, assignedAqueduct, lastReviewedCommit sql.NullString
 	err := row.Scan(
 		&droplet.ID, &droplet.Repo, &droplet.Title, &droplet.Description,
-		&droplet.Priority, &droplet.Complexity, &droplet.Status, &assignee, &currentCataracta, &outcome, &assignedAqueduct,
+		&droplet.Priority, &droplet.Complexity, &droplet.Status, &assignee, &currentCataracta, &outcome, &assignedAqueduct, &lastReviewedCommit,
 		&droplet.CreatedAt, &droplet.UpdatedAt,
 	)
 	if err == sql.ErrNoRows {
@@ -545,6 +580,7 @@ func scanDroplet(row *sql.Row) (*Droplet, error) {
 	droplet.CurrentCataracta = currentCataracta.String
 	droplet.Outcome = outcome.String
 	droplet.AssignedAqueduct = assignedAqueduct.String
+	droplet.LastReviewedCommit = lastReviewedCommit.String
 	return &droplet, nil
 }
 

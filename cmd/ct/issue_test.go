@@ -123,6 +123,7 @@ func TestDropletIssueReject_UpdatesStatus(t *testing.T) {
 	db := filepath.Join(t.TempDir(), "test.db")
 	t.Setenv("CT_DB", db)
 	t.Setenv("CT_NO_ASCII_LOGO", "1")
+	t.Setenv("CT_CATARACTA_NAME", "reviewer")
 
 	c, _ := cistern.New(db, "ct")
 	item, _ := c.Add("myrepo", "Task", "", 1, 3)

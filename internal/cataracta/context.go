@@ -26,6 +26,13 @@ func xmlEscape(s string) string {
 	return buf.String()
 }
 
+// reviewedCommitRecorder is satisfied by *cistern.Client and allows recording
+// the HEAD commit when a review diff is generated, without importing the full
+// cistern package into the context params type signature.
+type reviewedCommitRecorder interface {
+	SetLastReviewedCommit(dropletID, commitHash string) error
+}
+
 // ContextParams holds everything needed to prepare a step's execution context.
 type ContextParams struct {
 	Level      aqueduct.ContextLevel
@@ -36,6 +43,9 @@ type ContextParams struct {
 	// OpenIssues is the list of open droplet_issues for this droplet.
 	// For reviewer cataractae, these drive the Phase 1 verification list.
 	OpenIssues []cistern.DropletIssue
+	// QueueClient is used to record the HEAD commit hash after generating a
+	// diff_only context. Optional — if nil, no recording is performed.
+	QueueClient reviewedCommitRecorder
 }
 
 // PrepareContext sets up the working directory for a step based on its context level.
@@ -82,6 +92,14 @@ func prepareDiffOnly(p ContextParams) (string, func(), error) {
 	if err != nil {
 		cleanup()
 		return "", func() {}, err
+	}
+
+	// Record the HEAD commit so the scheduler can detect phantom commits
+	// (implement pass without any new commits since the last review).
+	if p.QueueClient != nil {
+		if head, err := currentHead(p.SandboxDir); err == nil {
+			_ = p.QueueClient.SetLastReviewedCommit(p.Item.ID, head)
+		}
 	}
 
 	diffPath := filepath.Join(tmpDir, "diff.patch")

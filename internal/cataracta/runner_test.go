@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/MichielDean/cistern/internal/cistern"
@@ -742,6 +743,50 @@ cataractae:
 	}
 	if len(w.Cataractae[0].Skills) != 0 {
 		t.Errorf("expected no skills, got %v", w.Cataractae[0].Skills)
+	}
+}
+
+// TestCurrentHead verifies that currentHead() returns the HEAD commit hash
+// for a git repo. It sets up a minimal repo with one commit.
+func TestCurrentHead(t *testing.T) {
+	dir := t.TempDir()
+
+	mustRun(t, gitCmd(dir, "init"))
+	mustRun(t, gitCmd(dir, "config", "user.email", "test@test.com"))
+	mustRun(t, gitCmd(dir, "config", "user.name", "Test"))
+
+	if err := os.WriteFile(filepath.Join(dir, "README.md"), []byte("init\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	mustRun(t, gitCmd(dir, "add", "."))
+	mustRun(t, gitCmd(dir, "commit", "-m", "initial"))
+
+	// Get expected HEAD via git directly.
+	out, err := exec.Command("git", "-C", dir, "rev-parse", "HEAD").Output()
+	if err != nil {
+		t.Fatalf("git rev-parse HEAD: %v", err)
+	}
+	expected := strings.TrimSpace(string(out))
+
+	got, err := currentHead(dir)
+	if err != nil {
+		t.Fatalf("currentHead: %v", err)
+	}
+	if got != expected {
+		t.Errorf("currentHead = %q, want %q", got, expected)
+	}
+	// SHA-1 hashes are 40 hex chars; SHA-256 are 64 hex chars. Either way ≥ 40.
+	if len(got) < 40 {
+		t.Errorf("currentHead hash too short: %q (len=%d)", got, len(got))
+	}
+}
+
+// TestCurrentHead_NotARepo verifies that currentHead() returns an error for
+// a directory that is not a git repository.
+func TestCurrentHead_NotARepo(t *testing.T) {
+	_, err := currentHead(t.TempDir())
+	if err == nil {
+		t.Error("expected error for non-repo directory")
 	}
 }
 
