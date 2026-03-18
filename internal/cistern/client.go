@@ -76,6 +76,12 @@ func New(dbPath, prefix string) (*Client, error) {
 	db.Exec(`ALTER TABLE droplets ADD COLUMN outcome TEXT DEFAULT NULL`)
 	// Vocabulary migrations: update legacy status values to canonical vocabulary.
 	db.Exec(`UPDATE droplets SET status = 'stagnant' WHERE status = 'escalated'`)
+	// Dependency table migration for existing DBs (idempotent — IF NOT EXISTS).
+	db.Exec(`CREATE TABLE IF NOT EXISTS droplet_dependencies (
+		droplet_id TEXT NOT NULL REFERENCES droplets(id),
+		depends_on TEXT NOT NULL REFERENCES droplets(id),
+		PRIMARY KEY (droplet_id, depends_on)
+	)`)
 	db.Exec(`UPDATE droplets SET status = 'delivered' WHERE status = 'closed'`)
 	if _, err := db.Exec(schema); err != nil {
 		db.Close()
@@ -101,8 +107,9 @@ func (c *Client) generateID() (string, error) {
 	return c.prefix + "-" + string(b), nil
 }
 
-// Add creates a new droplet and returns it.
-func (c *Client) Add(repo, title, description string, priority, complexity int) (*Droplet, error) {
+// Add creates a new droplet and returns it. Optional deps are dependency IDs
+// that must be delivered before this droplet can be dispatched.
+func (c *Client) Add(repo, title, description string, priority, complexity int, deps ...string) (*Droplet, error) {
 	if complexity < 1 || complexity > 4 {
 		complexity = 3
 	}
@@ -111,14 +118,43 @@ func (c *Client) Add(repo, title, description string, priority, complexity int) 
 		return nil, fmt.Errorf("cistern: generate id: %w", err)
 	}
 
+	// Validate dep IDs before inserting.
+	for _, dep := range deps {
+		var exists int
+		if err := c.db.QueryRow(`SELECT COUNT(*) FROM droplets WHERE id = ?`, dep).Scan(&exists); err != nil {
+			return nil, fmt.Errorf("cistern: validate dep %s: %w", dep, err)
+		}
+		if exists == 0 {
+			return nil, fmt.Errorf("cistern: dependency %s not found", dep)
+		}
+	}
+
+	tx, err := c.db.Begin()
+	if err != nil {
+		return nil, fmt.Errorf("cistern: begin tx: %w", err)
+	}
+	defer tx.Rollback()
+
 	now := time.Now().UTC()
-	_, err = c.db.Exec(
+	if _, err = tx.Exec(
 		`INSERT INTO droplets (id, repo, title, description, priority, complexity, status, created_at, updated_at)
 		 VALUES (?, ?, ?, ?, ?, ?, 'open', ?, ?)`,
 		id, repo, title, description, priority, complexity, now, now,
-	)
-	if err != nil {
+	); err != nil {
 		return nil, fmt.Errorf("cistern: add: %w", err)
+	}
+
+	for _, dep := range deps {
+		if _, err := tx.Exec(
+			`INSERT INTO droplet_dependencies (droplet_id, depends_on) VALUES (?, ?)`,
+			id, dep,
+		); err != nil {
+			return nil, fmt.Errorf("cistern: add dep %s: %w", dep, err)
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return nil, fmt.Errorf("cistern: commit: %w", err)
 	}
 
 	return &Droplet{
@@ -147,9 +183,14 @@ func (c *Client) GetReady(repo string) (*Droplet, error) {
 
 	row := tx.QueryRow(
 		`SELECT id, repo, title, description, priority, complexity, status, assignee, current_cataracta, outcome, created_at, updated_at
-		 FROM droplets
-		 WHERE repo = ? AND status = 'open'
-		 ORDER BY priority ASC, created_at ASC
+		 FROM droplets d
+		 WHERE d.repo = ? AND d.status = 'open'
+		   AND NOT EXISTS (
+		     SELECT 1 FROM droplet_dependencies dep
+		     JOIN droplets dep_d ON dep_d.id = dep.depends_on
+		     WHERE dep.droplet_id = d.id AND dep_d.status != 'delivered'
+		   )
+		 ORDER BY d.priority ASC, d.created_at ASC
 		 LIMIT 1`,
 		repo,
 	)
@@ -525,6 +566,86 @@ func (c *Client) Stats() (DropletStats, error) {
 		}
 	}
 	return s, rows.Err()
+}
+
+// AddDependency adds a dependency edge: dropletID must wait for dependsOnID.
+// Returns an error if either ID does not exist.
+func (c *Client) AddDependency(dropletID, dependsOnID string) error {
+	for _, id := range []string{dropletID, dependsOnID} {
+		var exists int
+		if err := c.db.QueryRow(`SELECT COUNT(*) FROM droplets WHERE id = ?`, id).Scan(&exists); err != nil {
+			return fmt.Errorf("cistern: validate %s: %w", id, err)
+		}
+		if exists == 0 {
+			return fmt.Errorf("cistern: droplet %s not found", id)
+		}
+	}
+	_, err := c.db.Exec(
+		`INSERT OR IGNORE INTO droplet_dependencies (droplet_id, depends_on) VALUES (?, ?)`,
+		dropletID, dependsOnID,
+	)
+	if err != nil {
+		return fmt.Errorf("cistern: add dependency %s->%s: %w", dropletID, dependsOnID, err)
+	}
+	return nil
+}
+
+// RemoveDependency removes a dependency edge.
+func (c *Client) RemoveDependency(dropletID, dependsOnID string) error {
+	_, err := c.db.Exec(
+		`DELETE FROM droplet_dependencies WHERE droplet_id = ? AND depends_on = ?`,
+		dropletID, dependsOnID,
+	)
+	if err != nil {
+		return fmt.Errorf("cistern: remove dependency %s->%s: %w", dropletID, dependsOnID, err)
+	}
+	return nil
+}
+
+// GetDependencies returns the IDs of all droplets that dropletID depends on.
+func (c *Client) GetDependencies(dropletID string) ([]string, error) {
+	rows, err := c.db.Query(
+		`SELECT depends_on FROM droplet_dependencies WHERE droplet_id = ? ORDER BY depends_on`,
+		dropletID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("cistern: get dependencies %s: %w", dropletID, err)
+	}
+	defer rows.Close()
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("cistern: scan dependency: %w", err)
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
+}
+
+// GetBlockedBy returns the IDs of undelivered dependencies that are blocking dropletID.
+func (c *Client) GetBlockedBy(dropletID string) ([]string, error) {
+	rows, err := c.db.Query(
+		`SELECT dep.depends_on
+		 FROM droplet_dependencies dep
+		 JOIN droplets d ON d.id = dep.depends_on
+		 WHERE dep.droplet_id = ? AND d.status != 'delivered'
+		 ORDER BY dep.depends_on`,
+		dropletID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("cistern: get blocked-by %s: %w", dropletID, err)
+	}
+	defer rows.Close()
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("cistern: scan blocked-by: %w", err)
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
 }
 
 func checkRowsAffected(res sql.Result, id string) error {

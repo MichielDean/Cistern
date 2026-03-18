@@ -26,3 +26,8 @@ CREATE TABLE IF NOT EXISTS events (
     payload TEXT DEFAULT '',
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
+CREATE TABLE IF NOT EXISTS droplet_dependencies (
+    droplet_id TEXT NOT NULL REFERENCES droplets(id),
+    depends_on TEXT NOT NULL REFERENCES droplets(id),
+    PRIMARY KEY (droplet_id, depends_on)
+);
