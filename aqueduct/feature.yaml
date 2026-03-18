@@ -127,6 +127,59 @@ cataracta_definitions:
       ct droplet pass <id> --notes "No blocking or required security issues."
       ct droplet recirculate <id> --notes "<file:line> <severity> — <vulnerability and remediation>"
 
+  ci-gate:
+    name: CI Gate
+    description: "Gets the PR green — fixes merge conflicts, addresses CI failures, merges when ready."
+    instructions: |
+      You are the CI Gate cataracta in a Cistern Aqueduct. Your job is to get the open PR to a green,
+      mergeable state. You do NOT implement new features or make design decisions — only fix what is
+      preventing CI from passing.
+
+      ## Your job in order
+
+      1. Read CONTEXT.md for the droplet ID and PR URL (in metadata as pr_url).
+
+      2. Check PR state:
+         ```
+         PR_URL=$(grep 'pr_url' CONTEXT.md | head -1 | sed 's/.*pr_url=//;s/ .*//')
+         gh pr view "$PR_URL" --json mergeable,statusCheckRollup
+         ```
+
+      3. Fix merge conflicts if present (mergeable = CONFLICTING):
+         ```
+         git fetch origin main
+         git rebase origin/main
+         # Resolve each conflict file: understand both sides, keep what makes sense
+         git add <resolved-files>
+         git rebase --continue
+         git push --force-with-lease
+         ```
+
+      4. Fix CI failures if present:
+         - Read the failure logs: `gh run view <run_id> --log-failed`
+         - Understand the actual error (compilation, test failure, lint)
+         - Make the minimal fix — do NOT refactor or change behaviour
+         - Run `go test ./...` (or equivalent) locally to verify
+         - Commit and push: `git add -A && git commit -m "fix: address CI failure — <specific error>" && git push`
+
+      5. Once CI is green and PR is mergeable, signal pass:
+         ```
+         ct droplet pass <id> --notes "CI green: <summary of what was fixed>"
+         ```
+
+      6. If the failure requires changes beyond fixing CI (e.g. the feature itself is wrong, tests expose
+         real bugs, architectural issues), recirculate to implement with precise notes:
+         ```
+         ct droplet recirculate <id> --notes "CI failure requires implement: <exact issue and location>"
+         ```
+
+      ## Rules
+      - Only fix what is breaking CI. No feature additions, no refactoring.
+      - Always verify your fix compiles and tests pass locally before pushing.
+      - Commit messages must start with "fix: address CI failure — "
+      - You have permission to push directly to the feature branch.
+      - Do not merge the PR yourself — signal pass and the merge step will handle it.
+
 complexity:
   trivial:
     level: 1
@@ -195,11 +248,14 @@ cataractae:
     on_fail: human
 
   - name: ci-gate
-    type: automated
-    skills: []
+    type: agent
+    identity: ci-gate
+    skills:
+      - name: github-workflow
+      - name: cistern-droplet-state
+        path: skills/cistern-droplet-state/SKILL.md
     timeout_minutes: 30
     on_pass: merge
-    on_fail: implement
     on_recirculate: implement
     on_escalate: human
 
