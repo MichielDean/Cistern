@@ -316,20 +316,49 @@ var statusCmd = &cobra.Command{
 			}
 		}
 
-		// ── Cistern ──────────────────────────────────────────────────────────
-		fmt.Printf("Cistern     %d flowing  %d queued  %d delivered\n\n", flowing, queued, done)
+		// ── Cistern summary ───────────────────────────────────────────────────
+		summary := fmt.Sprintf("%s flowing · %s queued · %s delivered",
+			col(colorGreen, fmt.Sprintf("%d", flowing)),
+			col(colorYellow, fmt.Sprintf("%d", queued)),
+			col(colorDim, fmt.Sprintf("%d", done)))
+		fmt.Printf("%s\n\n", summary)
 
 		// ── Castellarius / aqueducts ──────────────────────────────────────────
 		fmt.Printf("Castellarius  watching\n")
 
+		// Pre-load workflow step counts for progress indicators.
+		cfgDir := filepath.Dir(cfgPath)
+		wfSteps := map[string][]aqueduct.WorkflowCataracta{}
+		for _, repo := range cfg.Repos {
+			wfPath := repo.WorkflowPath
+			if !filepath.IsAbs(wfPath) {
+				wfPath = filepath.Join(cfgDir, wfPath)
+			}
+			if wf, wfErr := aqueduct.ParseWorkflow(wfPath); wfErr == nil {
+				wfSteps[repo.Name] = wf.Cataractae
+			}
+		}
+
 		tw := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
 		for _, repo := range cfg.Repos {
+			steps := wfSteps[repo.Name]
 			for _, name := range repoWorkerNames(repo) {
 				if item, ok := assignee[name]; ok {
-					elapsed := int(time.Since(item.UpdatedAt).Minutes())
-					fmt.Fprintf(tw, "  %s\t→ %s\t[%s]\t%dm\n", name, item.ID, item.CurrentCataracta, elapsed)
+					elapsed := formatElapsed(time.Since(item.UpdatedAt))
+					stage := item.CurrentCataracta
+					idx := cataractaIndexInWorkflow(stage, steps)
+					total := len(steps)
+					var progress string
+					if idx > 0 && total > 0 {
+						progress = fmt.Sprintf("%s [%d/%d]", stage, idx, total)
+					} else {
+						progress = stage
+					}
+					line := fmt.Sprintf("  %s\t→ %s\t[%s]\t%s\n", name, item.ID, progress, elapsed)
+					fmt.Fprint(tw, col(colorGreen, line))
 				} else {
-					fmt.Fprintf(tw, "  %s\t→ idle\t\t\n", name)
+					line := fmt.Sprintf("  %s\t→ idle\t\t\n", name)
+					fmt.Fprint(tw, col(colorDim, line))
 				}
 			}
 		}
@@ -337,16 +366,12 @@ var statusCmd = &cobra.Command{
 
 		// ── Aqueducts ─────────────────────────────────────────────────────────
 		fmt.Println()
-		cfgDir := filepath.Dir(cfgPath)
 		fmt.Printf("Aqueducts\n")
 		for _, repo := range cfg.Repos {
-			wfPath := repo.WorkflowPath
-			if !filepath.IsAbs(wfPath) {
-				wfPath = filepath.Join(cfgDir, wfPath)
-			}
+			steps := wfSteps[repo.Name]
 			stepCount := "?"
-			if wf, err := aqueduct.ParseWorkflow(wfPath); err == nil {
-				stepCount = fmt.Sprintf("%d", len(wf.Cataractae))
+			if len(steps) > 0 {
+				stepCount = fmt.Sprintf("%d", len(steps))
 			}
 			fmt.Printf("  %-20s  %s  (%s cataractae)\n", repo.Name, repo.WorkflowPath, stepCount)
 		}

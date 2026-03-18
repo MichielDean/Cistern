@@ -173,13 +173,15 @@ func runSkillsList(cmd *cobra.Command, args []string) error {
 	}
 
 	tw := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
-	fmt.Fprintln(tw, "NAME\tSTATUS\tUSED BY\tSOURCE")
-	fmt.Fprintln(tw, "────\t──────\t───────\t──────")
+	fmt.Fprintln(tw, "NAME\tSTATUS\tUSED BY\tDESCRIPTION\tSOURCE")
+	fmt.Fprintln(tw, "────\t──────\t───────\t───────────\t──────")
 	for name := range allNames {
 		entry, isInstalled := installedMap[name]
-		status := "✓ installed"
-		if !isInstalled {
-			status = "✗ missing"
+		var statusStr string
+		if isInstalled {
+			statusStr = col(colorGreen, "✓") + " installed"
+		} else {
+			statusStr = col(colorRed, "✗") + " missing"
 		}
 		used := "—"
 		if u := usedBy[name]; u != nil {
@@ -191,11 +193,15 @@ func runSkillsList(cmd *cobra.Command, args []string) error {
 				used += c
 			}
 		}
+		desc := skillDesc(skills.LocalPath(name))
+		if desc == "" {
+			desc = "—"
+		}
 		source := entry.SourceURL
 		if source == "" {
 			source = "—"
 		}
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n", name, status, used, source)
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n", name, statusStr, used, desc, source)
 	}
 	tw.Flush()
 	return nil

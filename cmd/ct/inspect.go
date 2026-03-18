@@ -219,24 +219,46 @@ func tmuxSessionAlive(name string) bool {
 func printInspectTable(out inspectOutput) error {
 	tw := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
 	defer tw.Flush()
+
+	// Summary line.
+	summary := fmt.Sprintf("%s flowing · %s queued · %s delivered",
+		col(colorGreen, fmt.Sprintf("%d", out.Counts.Flowing)),
+		col(colorYellow, fmt.Sprintf("%d", out.Counts.Queued)),
+		col(colorDim, fmt.Sprintf("%d", out.Counts.Delivered)))
+	fmt.Fprintf(tw, "%s\n\n", summary)
+
 	fmt.Fprintf(tw, "Config:\t%s\n", out.Cistern.Config)
 	fmt.Fprintf(tw, "Running:\t%v\n", out.Cistern.Running)
-	fmt.Fprintf(tw, "\nQueue:\ttotal=%d  flowing=%d  queued=%d  stagnant=%d  delivered=%d\n",
-		out.Counts.Total, out.Counts.Flowing, out.Counts.Queued, out.Counts.Stagnant, out.Counts.Delivered)
+
 	if len(out.Cataractae) > 0 {
-		fmt.Fprintf(tw, "\\nCataractae:\n")
+		fmt.Fprintf(tw, "\nCataractae:\n")
 		for _, ch := range out.Cataractae {
-			session := "-"
-			if ch.Session != nil {
-				session = *ch.Session
+			if ch.DropletID != nil && *ch.DropletID != "" {
+				// Active: green row with progress indicator.
+				stage := ""
+				if ch.Stage != nil {
+					stage = *ch.Stage
+				}
+				elapsed := ""
+				if ch.ElapsedSeconds != nil {
+					elapsed = formatElapsed(time.Duration(*ch.ElapsedSeconds) * time.Second)
+				}
+				line := fmt.Sprintf("  %s\t→ %s\t[%s]\t%s\n", ch.Name, *ch.DropletID, stage, elapsed)
+				fmt.Fprint(tw, col(colorGreen, line))
+			} else {
+				// Idle: dim row.
+				line := fmt.Sprintf("  %s\t→ idle\t\t\n", ch.Name)
+				fmt.Fprint(tw, col(colorDim, line))
 			}
-			fmt.Fprintf(tw, "  %s\t%s\talive=%v\n", ch.Name, session, ch.SessionAlive)
 		}
 	}
+
 	if len(out.Droplets) > 0 {
 		fmt.Fprintf(tw, "\nDroplets:\n")
 		for _, d := range out.Droplets {
-			fmt.Fprintf(tw, "  %s\t%s\t[%s]\t%s\n", d.ID, d.Title, d.Status, d.Operator)
+			ds := displayStatus(d.Status)
+			statusStr := statusCell(ds, 12)
+			fmt.Fprintf(tw, "  %s\t%s\t%s\t%s\n", d.ID, d.Title, statusStr, d.Operator)
 		}
 	}
 	return nil

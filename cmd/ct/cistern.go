@@ -63,11 +63,12 @@ var (
 	listRepo   string
 	listStatus string
 	listOutput string
+	listAll    bool
 )
 
 var dropletListCmd = &cobra.Command{
 	Use:   "list",
-		Short: "List droplets in the cistern",
+	Short: "List droplets in the cistern",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if listOutput != "table" && listOutput != "json" {
 			return fmt.Errorf("--output must be table or json")
@@ -95,23 +96,110 @@ var dropletListCmd = &cobra.Command{
 			return nil
 		}
 
-		if len(items) == 0 {
+		// TABLE output: split into active and delivered.
+		// Default hides delivered items; --all shows them in a dimmed section.
+		// If --status is set explicitly, honour it and don't split.
+		filterDelivered := listStatus == "" && !listAll
+		var active, dimmed []*cistern.Droplet
+		for _, item := range items {
+			if filterDelivered && item.Status == "delivered" {
+				dimmed = append(dimmed, item)
+			} else {
+				active = append(active, item)
+			}
+		}
+
+		if len(active) == 0 && (!listAll || len(dimmed) == 0) {
 			fmt.Println("Cistern dry.")
 			return nil
 		}
 
+		// Title truncation width.
+		titleMax := 40
+		if isTerminal() {
+			if w := termWidth(); w-55 > 15 {
+				titleMax = w - 55
+			}
+		}
+
+		if isTerminal() {
+			printDropletListTerminal(active, dimmed, listAll, titleMax)
+			return nil
+		}
+
+		// Non-terminal / piped output: plain tabwriter, no ANSI.
 		tw := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
-		fmt.Fprintln(tw, "ID\tCOMPLEXITY\tTITLE\tSTATUS\tCATARACTA")
-		for _, item := range items {
+		fmt.Fprintln(tw, "ID\tCOMPLEXITY\tTITLE\tSTATUS\tELAPSED\tCATARACTA")
+		for _, item := range active {
+			ds := displayStatus(item.Status)
 			cataracta := item.CurrentCataracta
 			if cataracta == "" {
 				cataracta = "\u2014"
 			}
-			fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n",
-				item.ID, complexityName(item.Complexity), item.Title, displayStatus(item.Status), cataracta)
+			elapsed := "\u2014"
+			if item.Status == "in_progress" {
+				elapsed = formatElapsed(time.Since(item.UpdatedAt))
+			}
+			fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\n",
+				item.ID, complexityName(item.Complexity), truncate(item.Title, titleMax),
+				ds, elapsed, cataracta)
+		}
+		if listAll && len(dimmed) > 0 {
+			fmt.Fprintln(tw, "— delivered —")
+			for _, item := range dimmed {
+				age := formatElapsed(time.Since(item.UpdatedAt))
+				cataracta := item.CurrentCataracta
+				if cataracta == "" {
+					cataracta = "\u2014"
+				}
+				fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\n",
+					item.ID, complexityName(item.Complexity), truncate(item.Title, titleMax),
+					"delivered", age, cataracta)
+			}
 		}
 		return tw.Flush()
 	},
+}
+
+// printDropletListTerminal renders the droplet list with colors to a terminal.
+func printDropletListTerminal(active, dimmed []*cistern.Droplet, showAll bool, titleMax int) {
+	const (
+		colID = 12
+		colCX = 10
+		colSt = 12 // STATUS cell visual width (icon + space + text)
+		colEl = 10 // ELAPSED
+	)
+	fmt.Printf("  %-*s  %-*s  %-*s  %-*s  %-*s  %s\n",
+		colID, "ID", colCX, "COMPLEXITY", titleMax, "TITLE", colSt, "STATUS", colEl, "ELAPSED", "CATARACTA")
+
+	for _, item := range active {
+		ds := displayStatus(item.Status)
+		cataracta := item.CurrentCataracta
+		if cataracta == "" {
+			cataracta = "—"
+		}
+		elapsed := "—"
+		if item.Status == "in_progress" {
+			elapsed = formatElapsed(time.Since(item.UpdatedAt))
+		}
+		title := padRight(truncate(item.Title, titleMax), titleMax)
+		sc := statusCell(ds, colSt)
+		fmt.Printf("  %-*s  %-*s  %s  %s  %-*s  %s\n",
+			colID, item.ID, colCX, complexityName(item.Complexity),
+			title, sc, colEl, elapsed, cataracta)
+	}
+
+	if showAll && len(dimmed) > 0 {
+		fmt.Println(colorDim + "  ── delivered " + strings.Repeat("─", titleMax+colID+colCX+6) + colorReset)
+		for _, item := range dimmed {
+			age := formatElapsed(time.Since(item.UpdatedAt))
+			title := padRight(truncate(item.Title, titleMax), titleMax)
+			line := fmt.Sprintf("  %-*s  %-*s  %s  ✓ %-*s  %-*s  —",
+				colID, item.ID, colCX, complexityName(item.Complexity),
+				title, colSt-2, "delivered", colEl, age)
+			fmt.Println(colorDim + line + colorReset)
+		}
+	}
 }
 
 // displayStatus maps internal status names to water vocabulary.
@@ -445,6 +533,7 @@ func init() {
 	dropletListCmd.Flags().StringVar(&listRepo, "repo", "", "filter by repo")
 	dropletListCmd.Flags().StringVar(&listStatus, "status", "", "filter by status (open|in_progress|delivered|stagnant)")
 	dropletListCmd.Flags().StringVar(&listOutput, "output", "table", "output format: table or json")
+	dropletListCmd.Flags().BoolVar(&listAll, "all", false, "include delivered droplets in a dimmed section below active ones")
 
 	dropletEscalateCmd.Flags().StringVar(&escalateReason, "reason", "", "escalation reason (required)")
 
