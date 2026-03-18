@@ -569,6 +569,9 @@ var dropletIssueResolveCmd = &cobra.Command{
 		}
 		defer c.Close()
 
+		if issueResolveEvidence == "" {
+			return fmt.Errorf("--evidence is required")
+		}
 		if err := c.ResolveIssue(args[0], issueResolveEvidence); err != nil {
 			return err
 		}
@@ -594,6 +597,9 @@ var dropletIssueRejectCmd = &cobra.Command{
 		}
 		defer c.Close()
 
+		if issueRejectEvidence == "" {
+			return fmt.Errorf("--evidence is required")
+		}
 		if err := c.RejectIssue(args[0], issueRejectEvidence); err != nil {
 			return err
 		}
@@ -657,7 +663,10 @@ var dropletPassCmd = &cobra.Command{
 			return err
 		}
 		if openCount > 0 {
-			issues, _ := c.ListIssues(args[0], true)
+			issues, err2 := c.ListIssues(args[0], true)
+			if err2 != nil {
+				return err2
+			}
 			ids := make([]string, 0, len(issues))
 			for _, iss := range issues {
 				ids = append(ids, iss.ID)
@@ -871,6 +880,8 @@ func init() {
 
 	dropletIssueResolveCmd.Flags().StringVar(&issueResolveEvidence, "evidence", "", "command + output proving resolution")
 	dropletIssueRejectCmd.Flags().StringVar(&issueRejectEvidence, "evidence", "", "command + output proving issue still present")
+	_ = dropletIssueResolveCmd.MarkFlagRequired("evidence")
+	_ = dropletIssueRejectCmd.MarkFlagRequired("evidence")
 	dropletIssueListCmd.Flags().BoolVar(&issueListOpen, "open", false, "only show open issues")
 
 	dropletIssueCmd.AddCommand(dropletIssueAddCmd, dropletIssueResolveCmd, dropletIssueRejectCmd, dropletIssueListCmd)

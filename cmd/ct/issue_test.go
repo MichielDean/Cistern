@@ -1,6 +1,8 @@
 package main
 
 import (
+	"bytes"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -260,5 +262,126 @@ func TestDropletPass_NoIssues(t *testing.T) {
 	d, _ := c2.Get(item.ID)
 	if d.Outcome != "pass" {
 		t.Errorf("outcome = %q, want pass", d.Outcome)
+	}
+}
+
+func captureStdout(t *testing.T, fn func()) string {
+	t.Helper()
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	old := os.Stdout
+	os.Stdout = w
+	fn()
+	w.Close()
+	os.Stdout = old
+	var buf bytes.Buffer
+	if _, err := io.Copy(&buf, r); err != nil {
+		t.Fatal(err)
+	}
+	r.Close()
+	return buf.String()
+}
+
+func TestDropletIssueList_NoIssues(t *testing.T) {
+	db := filepath.Join(t.TempDir(), "test.db")
+	t.Setenv("CT_DB", db)
+	t.Setenv("CT_NO_ASCII_LOGO", "1")
+
+	c, _ := cistern.New(db, "ct")
+	item, _ := c.Add("myrepo", "Task", "", 1, 3)
+	c.Close()
+
+	out := captureStdout(t, func() {
+		if err := execCmd(t, "droplet", "issue", "list", item.ID); err != nil {
+			t.Fatalf("issue list failed: %v", err)
+		}
+	})
+	if !strings.Contains(out, "no issues found") {
+		t.Errorf("expected 'no issues found', got: %q", out)
+	}
+}
+
+func TestDropletIssueList_WithIssues(t *testing.T) {
+	db := filepath.Join(t.TempDir(), "test.db")
+	t.Setenv("CT_DB", db)
+	t.Setenv("CT_NO_ASCII_LOGO", "1")
+
+	c, _ := cistern.New(db, "ct")
+	item, _ := c.Add("myrepo", "Task", "", 1, 3)
+	c.AddIssue(item.ID, "reviewer", "first issue description")
+	c.AddIssue(item.ID, "reviewer", "second issue description")
+	c.Close()
+
+	out := captureStdout(t, func() {
+		if err := execCmd(t, "droplet", "issue", "list", item.ID); err != nil {
+			t.Fatalf("issue list failed: %v", err)
+		}
+	})
+	if !strings.Contains(out, "first issue description") {
+		t.Errorf("expected first issue in output, got: %q", out)
+	}
+	if !strings.Contains(out, "second issue description") {
+		t.Errorf("expected second issue in output, got: %q", out)
+	}
+}
+
+func TestDropletIssueList_OpenFilter(t *testing.T) {
+	db := filepath.Join(t.TempDir(), "test.db")
+	t.Setenv("CT_DB", db)
+	t.Setenv("CT_NO_ASCII_LOGO", "1")
+
+	c, _ := cistern.New(db, "ct")
+	item, _ := c.Add("myrepo", "Task", "", 1, 3)
+	c.AddIssue(item.ID, "reviewer", "open issue stays")
+	iss2, _ := c.AddIssue(item.ID, "reviewer", "resolved issue hidden")
+	c.ResolveIssue(iss2.ID, "fixed it")
+	c.Close()
+
+	out := captureStdout(t, func() {
+		if err := execCmd(t, "droplet", "issue", "list", "--open", item.ID); err != nil {
+			t.Fatalf("issue list --open failed: %v", err)
+		}
+	})
+	if !strings.Contains(out, "open issue stays") {
+		t.Errorf("expected open issue in output, got: %q", out)
+	}
+	if strings.Contains(out, "resolved issue hidden") {
+		t.Errorf("resolved issue should be filtered out, got: %q", out)
+	}
+}
+
+func TestDropletIssueResolve_EmptyEvidence(t *testing.T) {
+	db := filepath.Join(t.TempDir(), "test.db")
+	t.Setenv("CT_DB", db)
+	t.Setenv("CT_NO_ASCII_LOGO", "1")
+	t.Setenv("CT_CATARACTA_NAME", "reviewer")
+
+	c, _ := cistern.New(db, "ct")
+	item, _ := c.Add("myrepo", "Task", "", 1, 3)
+	iss, _ := c.AddIssue(item.ID, "reviewer", "some issue")
+	c.Close()
+
+	err := execCmd(t, "droplet", "issue", "resolve", iss.ID, "--evidence", "")
+	if err == nil {
+		t.Error("expected error: resolve with empty --evidence should fail")
+	}
+}
+
+func TestDropletIssueReject_EmptyEvidence(t *testing.T) {
+	db := filepath.Join(t.TempDir(), "test.db")
+	t.Setenv("CT_DB", db)
+	t.Setenv("CT_NO_ASCII_LOGO", "1")
+	t.Setenv("CT_CATARACTA_NAME", "reviewer")
+
+	c, _ := cistern.New(db, "ct")
+	item, _ := c.Add("myrepo", "Task", "", 1, 3)
+	iss, _ := c.AddIssue(item.ID, "reviewer", "some issue")
+	c.Close()
+
+	err := execCmd(t, "droplet", "issue", "reject", iss.ID, "--evidence", "")
+	if err == nil {
+		t.Error("expected error: reject with empty --evidence should fail")
 	}
 }
