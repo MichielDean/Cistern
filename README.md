@@ -36,6 +36,10 @@ ct droplet add --title "Add retry logic to fetch" --repo myproject
 # Wake the Castellarius — he watches the cistern and routes droplets automatically
 ct castellarius start
 
+# After rebuilding ct (go build), restart the Castellarius to pick up changes:
+# ct binary changes → restart required (long-running process uses old binary)
+# feature.yaml / CLAUDE.md / skills changes → no restart (read per spawn)
+
 # See the overall picture
 ct status
 
