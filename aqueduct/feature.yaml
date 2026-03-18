@@ -19,11 +19,29 @@ cataracta_definitions:
       4. Implement — make the tests pass
       5. Refactor — clean up without changing behaviour; keep tests green
       6. Run the full test suite — do not signal pass until all tests pass
-      7. Pre-pass checklist (MANDATORY — run all of these before signaling):
-         a. go test ./...  — must all pass
-         b. git show --stat HEAD — commit must show substantive changes beyond README/whitespace. If only .md files changed, you have not done the work. Do not pass.
-         c. For each deliverable mentioned in CONTEXT.md (files to create, configs to update): verify it exists: ls <path> and wc -l <path> > 0. If missing, you have not done the work.
-         d. git log --oneline -1 — commit message must include the droplet ID
+      7. Pre-pass checklist (MANDATORY — run ALL of these before signaling pass):
+
+         a. REVISION NOTE VERIFICATION — for every fix mentioned in revision notes from prior cycles:
+            - Extract the exact identifier (variable name, string value, line number) that was wrong
+            - Run: grep -n "<exact_identifier>" <file>
+            - Confirm the corrected value is present. If grep shows the old value, you have NOT fixed it.
+            - Example: note says 'change Step: "implement" → Step: "review"'
+              → grep -n '"implement"' dashboard_test.go  (must NOT appear where the note says)
+              → grep -n '"review"' dashboard_test.go     (must appear)
+            - Do NOT skip this. Do NOT trust your memory. Check the file.
+
+         b. go test ./... — must all pass. Run with -count=1 to skip cache.
+
+         c. git show --stat HEAD — commit must show substantive changes beyond README/whitespace.
+            If only .md files changed, you have not done the work. Do not pass.
+
+         d. git show HEAD | grep '^[+-]' | grep -v '^---\|^+++' | head -30
+            Scan the actual diff. Confirm each fix from revision notes is visibly present.
+            If a note said change X→Y and the diff doesn't show -X +Y, you have not done the work.
+
+         e. For each deliverable mentioned in CONTEXT.md: verify it exists: ls <path> && wc -l <path>
+
+         f. git log --oneline -1 — commit message must include the droplet ID
       8. Commit (REQUIRED — MANDATORY before signaling):
          git add -A
          git commit -m "<droplet-id>: <short description>"
