@@ -33,6 +33,9 @@ type ContextParams struct {
 	Item       *cistern.Droplet
 	Step       *aqueduct.WorkflowCataracta
 	Notes      []cistern.CataractaNote
+	// OpenIssues is the list of open droplet_issues for this droplet.
+	// For reviewer cataractae, these drive the Phase 1 verification list.
+	OpenIssues []cistern.DropletIssue
 }
 
 // PrepareContext sets up the working directory for a step based on its context level.
@@ -156,10 +159,31 @@ func writeContextFile(path string, p ContextParams) error {
 	isReviewer := isReviewerCataracta(p.Step)
 	revisionNotes := revisionCycleNotes(p.Notes)
 
-	if isReviewer && len(revisionNotes) > 0 {
-		// Reviewer with prior issues: two-phase structure.
+	if isReviewer && len(p.OpenIssues) > 0 {
+		// Reviewer with DB-tracked open issues: two-phase structure.
 		// Phase 1 is evidence-based verification — no opinions, just grep/test results.
 		// Phase 2 is a clean fresh review of the diff for new issues.
+		b.WriteString("## ⚠️ TWO-PHASE REVIEW — Read carefully before doing anything\n\n")
+		b.WriteString("This droplet was recirculated after a prior review. You have TWO distinct jobs:\n\n")
+		b.WriteString("### Phase 1 — Verify prior issues are resolved\n\n")
+		b.WriteString("For EACH issue below, run the exact check (grep, test, cat) and call:\n")
+		b.WriteString("- `ct droplet issue resolve <id> --evidence \"<command + output>\"` — if fixed\n")
+		b.WriteString("- `ct droplet issue reject <id> --evidence \"<command + output>\"` — if still present\n\n")
+		b.WriteString("No opinions. No pattern-matching from memory. Run the command. Paste the output.\n")
+		b.WriteString("If you cannot verify with a command, state what you checked and what you found.\n\n")
+		for i, iss := range p.OpenIssues {
+			b.WriteString(fmt.Sprintf("#### Issue %d — %s (flagged by: %s)\n\n", i+1, iss.ID, iss.FlaggedBy))
+			b.WriteString(iss.Description)
+			b.WriteString("\n\n")
+		}
+		b.WriteString("### Phase 2 — Fresh review of new changes\n\n")
+		b.WriteString("After completing Phase 1, do a full adversarial review of the diff for NEW issues.\n")
+		b.WriteString("Do NOT re-examine issues from Phase 1 — they are already handled.\n")
+		b.WriteString("For each new finding: `ct droplet issue add " + p.Item.ID + " \"<description>\"`\n")
+		b.WriteString("Treat this as a clean review of a fresh diff.\n\n")
+		b.WriteString("---\n\n")
+	} else if isReviewer && len(revisionNotes) > 0 {
+		// Fallback: reviewer with free-text notes but no DB issues (legacy path).
 		b.WriteString("## ⚠️ TWO-PHASE REVIEW — Read carefully before doing anything\n\n")
 		b.WriteString("This droplet was recirculated after a prior review. You have TWO distinct jobs:\n\n")
 		b.WriteString("### Phase 1 — Verify prior issues are resolved\n\n")

@@ -82,6 +82,20 @@ func New(dbPath, prefix string) (*Client, error) {
 		depends_on TEXT NOT NULL REFERENCES droplets(id),
 		PRIMARY KEY (droplet_id, depends_on)
 	)`)
+	// Issues table migration for existing DBs (idempotent — IF NOT EXISTS).
+	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS droplet_issues (
+		id          TEXT PRIMARY KEY,
+		droplet_id  TEXT NOT NULL REFERENCES droplets(id),
+		flagged_by  TEXT NOT NULL,
+		flagged_at  DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+		description TEXT NOT NULL,
+		status      TEXT NOT NULL DEFAULT 'open',
+		evidence    TEXT,
+		resolved_at DATETIME
+	)`); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("cistern: droplet_issues migration: %w", err)
+	}
 	db.Exec(`UPDATE droplets SET status = 'delivered' WHERE status = 'closed'`)
 	if _, err := db.Exec(schema); err != nil {
 		db.Close()
@@ -481,6 +495,14 @@ func (c *Client) Purge(olderThan time.Duration, dryRun bool) (int, error) {
 		return 0, fmt.Errorf("cistern: purge events: %w", err)
 	}
 
+	if _, err := tx.Exec(
+		`DELETE FROM droplet_issues WHERE droplet_id IN (
+			SELECT id FROM droplets WHERE status IN ('delivered', 'stagnant') AND updated_at < ?
+		)`, cutoff,
+	); err != nil {
+		return 0, fmt.Errorf("cistern: purge droplet_issues: %w", err)
+	}
+
 	res, err := tx.Exec(
 		`DELETE FROM droplets WHERE status IN ('delivered', 'stagnant') AND updated_at < ?`,
 		cutoff,
@@ -657,4 +679,143 @@ func checkRowsAffected(res sql.Result, id string) error {
 		return fmt.Errorf("cistern: droplet %s not found", id)
 	}
 	return nil
+}
+
+// DropletIssue is a reviewer finding tracked as a first-class DB record.
+type DropletIssue struct {
+	ID          string     `json:"id"`
+	DropletID   string     `json:"droplet_id"`
+	FlaggedBy   string     `json:"flagged_by"`
+	FlaggedAt   time.Time  `json:"flagged_at"`
+	Description string     `json:"description"`
+	Status      string     `json:"status"` // open | resolved | unresolved
+	Evidence    string     `json:"evidence,omitempty"`
+	ResolvedAt  *time.Time `json:"resolved_at,omitempty"`
+}
+
+// generateIssueID returns a unique issue ID derived from the droplet ID.
+func generateIssueID(dropletID string) (string, error) {
+	b := make([]byte, 5)
+	for i := range b {
+		n, err := rand.Int(rand.Reader, big.NewInt(int64(len(charset))))
+		if err != nil {
+			return "", err
+		}
+		b[i] = charset[n.Int64()]
+	}
+	return dropletID + "-" + string(b), nil
+}
+
+// AddIssue creates a new open issue for a droplet and returns it.
+func (c *Client) AddIssue(dropletID, flaggedBy, description string) (*DropletIssue, error) {
+	id, err := generateIssueID(dropletID)
+	if err != nil {
+		return nil, fmt.Errorf("cistern: generate issue id: %w", err)
+	}
+	now := time.Now().UTC()
+	_, err = c.db.Exec(
+		`INSERT INTO droplet_issues (id, droplet_id, flagged_by, flagged_at, description, status)
+		 VALUES (?, ?, ?, ?, ?, 'open')`,
+		id, dropletID, flaggedBy, now.Format("2006-01-02T15:04:05Z"), description,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("cistern: add issue: %w", err)
+	}
+	return &DropletIssue{
+		ID:          id,
+		DropletID:   dropletID,
+		FlaggedBy:   flaggedBy,
+		FlaggedAt:   now,
+		Description: description,
+		Status:      "open",
+	}, nil
+}
+
+// ResolveIssue marks an issue as resolved with supporting evidence.
+func (c *Client) ResolveIssue(issueID, evidence string) error {
+	now := time.Now().UTC()
+	res, err := c.db.Exec(
+		`UPDATE droplet_issues SET status = 'resolved', evidence = ?, resolved_at = ? WHERE id = ?`,
+		evidence, now.Format("2006-01-02T15:04:05Z"), issueID,
+	)
+	if err != nil {
+		return fmt.Errorf("cistern: resolve issue %s: %w", issueID, err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("cistern: resolve issue rows affected: %w", err)
+	}
+	if n == 0 {
+		return fmt.Errorf("cistern: issue %s not found", issueID)
+	}
+	return nil
+}
+
+// RejectIssue marks an issue as unresolved (still present) with evidence.
+func (c *Client) RejectIssue(issueID, evidence string) error {
+	res, err := c.db.Exec(
+		`UPDATE droplet_issues SET status = 'unresolved', evidence = ? WHERE id = ?`,
+		evidence, issueID,
+	)
+	if err != nil {
+		return fmt.Errorf("cistern: reject issue %s: %w", issueID, err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("cistern: reject issue rows affected: %w", err)
+	}
+	if n == 0 {
+		return fmt.Errorf("cistern: issue %s not found", issueID)
+	}
+	return nil
+}
+
+// ListIssues returns all issues for a droplet. If openOnly is true, only open issues are returned.
+func (c *Client) ListIssues(dropletID string, openOnly bool) ([]DropletIssue, error) {
+	query := `SELECT id, droplet_id, flagged_by, flagged_at, description, status, COALESCE(evidence,''), resolved_at
+	          FROM droplet_issues WHERE droplet_id = ?`
+	if openOnly {
+		query += ` AND status = 'open'`
+	}
+	query += ` ORDER BY flagged_at ASC`
+
+	rows, err := c.db.Query(query, dropletID)
+	if err != nil {
+		return nil, fmt.Errorf("cistern: list issues %s: %w", dropletID, err)
+	}
+	defer rows.Close()
+
+	var issues []DropletIssue
+	for rows.Next() {
+		var iss DropletIssue
+		var resolvedAt sql.NullString
+		var flaggedAt string
+		if err := rows.Scan(&iss.ID, &iss.DropletID, &iss.FlaggedBy, &flaggedAt,
+			&iss.Description, &iss.Status, &iss.Evidence, &resolvedAt); err != nil {
+			return nil, fmt.Errorf("cistern: scan issue: %w", err)
+		}
+		if t, err := time.Parse("2006-01-02T15:04:05Z", flaggedAt); err == nil {
+			iss.FlaggedAt = t
+		}
+		if resolvedAt.Valid && resolvedAt.String != "" {
+			if t, err := time.Parse("2006-01-02T15:04:05Z", resolvedAt.String); err == nil {
+				iss.ResolvedAt = &t
+			}
+		}
+		issues = append(issues, iss)
+	}
+	return issues, rows.Err()
+}
+
+// CountOpenIssues returns the number of open issues for a droplet.
+func (c *Client) CountOpenIssues(dropletID string) (int, error) {
+	var count int
+	err := c.db.QueryRow(
+		`SELECT COUNT(*) FROM droplet_issues WHERE droplet_id = ? AND status = 'open'`,
+		dropletID,
+	).Scan(&count)
+	if err != nil {
+		return 0, fmt.Errorf("cistern: count open issues %s: %w", dropletID, err)
+	}
+	return count, nil
 }

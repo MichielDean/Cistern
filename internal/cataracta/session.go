@@ -64,6 +64,9 @@ func (s *Session) spawn() error {
 	if tok := os.Getenv("GH_TOKEN"); tok != "" {
 		args = append(args, "-e", "GH_TOKEN="+tok)
 	}
+	if s.Identity != "" {
+		args = append(args, "-e", "CT_CATARACTA_NAME="+s.Identity)
+	}
 	args = append(args, claudeCmd)
 	cmd := exec.Command("tmux", args...)
 	if out, err := cmd.CombinedOutput(); err != nil {

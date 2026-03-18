@@ -208,12 +208,18 @@ func (r *Runner) SpawnStep(w *Worker, item *cistern.Droplet, step *aqueduct.Work
 		log.Printf("cataracta: warning: could not fetch notes for %s: %v", item.ID, err)
 	}
 
+	openIssues, err := r.queue.ListIssues(item.ID, true)
+	if err != nil {
+		log.Printf("cataracta: warning: could not fetch open issues for %s: %v", item.ID, err)
+	}
+
 	ctxDir, cleanup, err := PrepareContext(ContextParams{
 		Level:      step.Context,
 		SandboxDir: w.SandboxDir,
 		Item:       item,
 		Step:       step,
 		Notes:      notes,
+		OpenIssues: openIssues,
 	})
 	if err != nil {
 		return fmt.Errorf("context: %w", err)

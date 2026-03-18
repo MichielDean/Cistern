@@ -31,3 +31,13 @@ CREATE TABLE IF NOT EXISTS droplet_dependencies (
     depends_on TEXT NOT NULL REFERENCES droplets(id),
     PRIMARY KEY (droplet_id, depends_on)
 );
+CREATE TABLE IF NOT EXISTS droplet_issues (
+    id          TEXT PRIMARY KEY,
+    droplet_id  TEXT NOT NULL REFERENCES droplets(id),
+    flagged_by  TEXT NOT NULL,
+    flagged_at  DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    description TEXT NOT NULL,
+    status      TEXT NOT NULL DEFAULT 'open',
+    evidence    TEXT,
+    resolved_at DATETIME
+);

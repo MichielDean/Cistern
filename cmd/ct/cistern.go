@@ -521,6 +521,127 @@ var dropletStatsCmd = &cobra.Command{
 	},
 }
 
+// --- cistern issue ---
+
+var dropletIssueCmd = &cobra.Command{
+	Use:   "issue",
+	Short: "Manage structured issues for a droplet",
+}
+
+var dropletIssueAddCmd = &cobra.Command{
+	Use:   "add <droplet-id> <description>",
+	Short: "File a new open issue against a droplet",
+	Args:  cobra.ExactArgs(2),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		c, err := cistern.New(resolveDBPath(), "")
+		if err != nil {
+			return err
+		}
+		defer c.Close()
+
+		flaggedBy := os.Getenv("CT_CATARACTA_NAME")
+		if flaggedBy == "" {
+			flaggedBy = "manual"
+		}
+		iss, err := c.AddIssue(args[0], flaggedBy, args[1])
+		if err != nil {
+			return err
+		}
+		fmt.Printf("issue filed: %s\n", iss.ID)
+		return nil
+	},
+}
+
+var issueResolveEvidence string
+
+var dropletIssueResolveCmd = &cobra.Command{
+	Use:   "resolve <issue-id>",
+	Short: "Mark an issue resolved (forbidden for implementer)",
+	Args:  cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		name := strings.ToLower(os.Getenv("CT_CATARACTA_NAME"))
+		if name == "implementer" || name == "implement" {
+			return fmt.Errorf("only reviewer cataractae may resolve issues")
+		}
+		c, err := cistern.New(resolveDBPath(), "")
+		if err != nil {
+			return err
+		}
+		defer c.Close()
+
+		if issueResolveEvidence == "" {
+			return fmt.Errorf("--evidence is required")
+		}
+		if err := c.ResolveIssue(args[0], issueResolveEvidence); err != nil {
+			return err
+		}
+		fmt.Printf("issue %s resolved\n", args[0])
+		return nil
+	},
+}
+
+var issueRejectEvidence string
+
+var dropletIssueRejectCmd = &cobra.Command{
+	Use:   "reject <issue-id>",
+	Short: "Mark an issue unresolved — still present",
+	Args:  cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		name := strings.ToLower(os.Getenv("CT_CATARACTA_NAME"))
+		if name == "implementer" || name == "implement" {
+			return fmt.Errorf("only reviewer cataractae may reject issues")
+		}
+		c, err := cistern.New(resolveDBPath(), "")
+		if err != nil {
+			return err
+		}
+		defer c.Close()
+
+		if issueRejectEvidence == "" {
+			return fmt.Errorf("--evidence is required")
+		}
+		if err := c.RejectIssue(args[0], issueRejectEvidence); err != nil {
+			return err
+		}
+		fmt.Printf("issue %s marked unresolved\n", args[0])
+		return nil
+	},
+}
+
+var issueListOpen bool
+
+var dropletIssueListCmd = &cobra.Command{
+	Use:   "list <droplet-id>",
+	Short: "List issues for a droplet",
+	Args:  cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		c, err := cistern.New(resolveDBPath(), "")
+		if err != nil {
+			return err
+		}
+		defer c.Close()
+
+		issues, err := c.ListIssues(args[0], issueListOpen)
+		if err != nil {
+			return err
+		}
+		if len(issues) == 0 {
+			fmt.Println("no issues found")
+			return nil
+		}
+		tw := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
+		fmt.Fprintln(tw, "ID\tSTATUS\tFLAGGED BY\tDESCRIPTION")
+		for _, iss := range issues {
+			desc := iss.Description
+			if len(desc) > 60 {
+				desc = desc[:57] + "..."
+			}
+			fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n", iss.ID, iss.Status, iss.FlaggedBy, desc)
+		}
+		return tw.Flush()
+	},
+}
+
 // --- cistern pass ---
 
 var passNotes string
@@ -535,6 +656,23 @@ var dropletPassCmd = &cobra.Command{
 			return err
 		}
 		defer c.Close()
+
+		// Refuse to pass if there are open issues.
+		openCount, err := c.CountOpenIssues(args[0])
+		if err != nil {
+			return err
+		}
+		if openCount > 0 {
+			issues, err2 := c.ListIssues(args[0], true)
+			if err2 != nil {
+				return err2
+			}
+			ids := make([]string, 0, len(issues))
+			for _, iss := range issues {
+				ids = append(ids, iss.ID)
+			}
+			return fmt.Errorf("cannot pass: %d open issue(s) remain: %s", openCount, strings.Join(ids, ", "))
+		}
 
 		if passNotes != "" {
 			if err := c.AddNote(args[0], "manual", passNotes); err != nil {
@@ -740,10 +878,18 @@ func init() {
 	dropletPeekCmd.Flags().BoolVar(&peekRaw, "raw", false, "do not strip ANSI codes")
 	dropletPeekCmd.Flags().BoolVar(&peekFollow, "follow", false, "re-capture every 3 seconds (Ctrl-C to stop)")
 
+	dropletIssueResolveCmd.Flags().StringVar(&issueResolveEvidence, "evidence", "", "command + output proving resolution")
+	dropletIssueRejectCmd.Flags().StringVar(&issueRejectEvidence, "evidence", "", "command + output proving issue still present")
+	_ = dropletIssueResolveCmd.MarkFlagRequired("evidence")
+	_ = dropletIssueRejectCmd.MarkFlagRequired("evidence")
+	dropletIssueListCmd.Flags().BoolVar(&issueListOpen, "open", false, "only show open issues")
+
+	dropletIssueCmd.AddCommand(dropletIssueAddCmd, dropletIssueResolveCmd, dropletIssueRejectCmd, dropletIssueListCmd)
+
 	dropletCmd.AddCommand(dropletAddCmd, dropletListCmd, dropletShowCmd, dropletNoteCmd,
 		dropletCloseCmd, dropletReopenCmd, dropletEscalateCmd, dropletPurgeCmd,
 		dropletPassCmd, dropletRecirculateCmd, dropletBlockCmd, dropletStatsCmd,
-		dropletDepsCmd, dropletPeekCmd)
+		dropletDepsCmd, dropletPeekCmd, dropletIssueCmd)
 	rootCmd.AddCommand(dropletCmd)
 }
 
