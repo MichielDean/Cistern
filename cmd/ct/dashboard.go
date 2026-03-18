@@ -601,29 +601,7 @@ func runDashboard(cmd *cobra.Command, args []string) error {
 		return runDashboardHTML(cfgPath, dbPath, os.Stdout)
 	}
 
-	// Forward SIGINT to the input channel as Ctrl-C byte.
-	inputCh := startKeyboardReader()
-	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
-
-	merged := make(chan byte, 8)
-	go func() {
-		defer close(merged)
-		for {
-			select {
-			case b, ok := <-inputCh:
-				if !ok {
-					return
-				}
-				merged <- b
-			case <-sigCh:
-				merged <- 3 // Ctrl-C
-				return
-			}
-		}
-	}()
-
-	return RunDashboard(cfgPath, dbPath, merged, os.Stdout)
+	return RunDashboardTUI(cfgPath, dbPath)
 }
 
 func init() {
