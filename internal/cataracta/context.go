@@ -168,9 +168,16 @@ func writeContextFile(path string, p ContextParams) error {
 
 	b.WriteString("\n")
 
+	// Show only the last 4 notes — long histories poison LLM context by repeating
+	// the same bug pattern, causing reviewers to hallucinate the old issue even
+	// after it has been fixed.
 	if len(p.Notes) > 0 {
-		b.WriteString("## All Prior Step Notes\n\n")
-		for _, n := range p.Notes {
+		recent := p.Notes
+		if len(recent) > 4 {
+			recent = recent[len(recent)-4:]
+		}
+		b.WriteString("## Recent Step Notes\n\n")
+		for _, n := range recent {
 			if n.CataractaName != "" {
 				b.WriteString(fmt.Sprintf("### From: %s\n\n", n.CataractaName))
 			}
