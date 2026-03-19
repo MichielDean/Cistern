@@ -17,12 +17,12 @@ import (
 // --- Lip Gloss styles ---
 
 var (
-	tuiStyleGreen  = lipgloss.NewStyle().Foreground(lipgloss.Color("#57d57a"))
+	tuiStyleGreen  = lipgloss.NewStyle().Foreground(lipgloss.Color("#4bb96e"))
 	tuiStyleYellow = lipgloss.NewStyle().Foreground(lipgloss.Color("#f0c86b"))
 	tuiStyleRed    = lipgloss.NewStyle().Foreground(lipgloss.Color("#e06c75"))
-	tuiStyleDim    = lipgloss.NewStyle().Faint(true)
+	tuiStyleDim    = lipgloss.NewStyle().Foreground(lipgloss.Color("#46465a"))
 	tuiStyleHeader = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#9db1db"))
-	tuiStyleFooter = lipgloss.NewStyle().Faint(true)
+	tuiStyleFooter = lipgloss.NewStyle().Foreground(lipgloss.Color("#36364a"))
 )
 
 // --- Messages ---
