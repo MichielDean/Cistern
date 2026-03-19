@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/csv"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -342,6 +343,71 @@ var dropletSearchCmd = &cobra.Command{
 				ds, elapsed, cataracta)
 		}
 		return tw.Flush()
+	},
+}
+
+// --- cistern export ---
+
+var (
+	exportFormat   string
+	exportQuery    string
+	exportStatus   string
+	exportPriority int
+)
+
+var dropletExportCmd = &cobra.Command{
+	Use:   "export",
+	Short: "Export droplets to JSON or CSV",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		if exportFormat != "json" && exportFormat != "csv" {
+			return fmt.Errorf("--format must be json or csv")
+		}
+		c, err := cistern.New(resolveDBPath(), "")
+		if err != nil {
+			return err
+		}
+		defer c.Close()
+
+		items, err := c.Search(exportQuery, exportStatus, exportPriority)
+		if err != nil {
+			return err
+		}
+
+		if exportFormat == "json" {
+			if items == nil {
+				items = []*cistern.Droplet{}
+			}
+			out, err := json.MarshalIndent(items, "", "  ")
+			if err != nil {
+				return err
+			}
+			fmt.Println(string(out))
+			return nil
+		}
+
+		// CSV output.
+		w := csv.NewWriter(os.Stdout)
+		_ = w.Write([]string{"id", "repo", "title", "description", "priority", "complexity", "status", "assignee", "current_cataracta", "outcome", "assigned_aqueduct", "last_reviewed_commit", "created_at", "updated_at"})
+		for _, item := range items {
+			_ = w.Write([]string{
+				item.ID,
+				item.Repo,
+				item.Title,
+				item.Description,
+				strconv.Itoa(item.Priority),
+				strconv.Itoa(item.Complexity),
+				item.Status,
+				item.Assignee,
+				item.CurrentCataracta,
+				item.Outcome,
+				item.AssignedAqueduct,
+				item.LastReviewedCommit,
+				item.CreatedAt.Format(time.RFC3339),
+				item.UpdatedAt.Format(time.RFC3339),
+			})
+		}
+		w.Flush()
+		return w.Error()
 	},
 }
 
@@ -996,6 +1062,11 @@ func init() {
 	dropletSearchCmd.Flags().IntVar(&searchPriority, "priority", 0, "filter by priority (0 means no filter)")
 	dropletSearchCmd.Flags().StringVar(&searchOutput, "output", "table", "output format: table or json")
 
+	dropletExportCmd.Flags().StringVar(&exportFormat, "format", "json", "output format: json or csv")
+	dropletExportCmd.Flags().StringVar(&exportQuery, "query", "", "filter by title substring (case-insensitive)")
+	dropletExportCmd.Flags().StringVar(&exportStatus, "status", "", "filter by status (open|in_progress|delivered|stagnant)")
+	dropletExportCmd.Flags().IntVar(&exportPriority, "priority", 0, "filter by priority (0 means no filter)")
+
 	dropletEscalateCmd.Flags().StringVar(&escalateReason, "reason", "", "escalation reason (required)")
 
 	dropletPurgeCmd.Flags().StringVar(&purgeOlderThan, "older-than", "", "delete droplets older than this duration (e.g. 30d, 24h) (required)")
@@ -1021,7 +1092,8 @@ func init() {
 	dropletCmd.AddCommand(dropletAddCmd, dropletListCmd, dropletShowCmd, dropletNoteCmd,
 		dropletCloseCmd, dropletReopenCmd, dropletEscalateCmd, dropletPurgeCmd,
 		dropletPassCmd, dropletRecirculateCmd, dropletBlockCmd, dropletApproveCmd,
-		dropletStatsCmd, dropletDepsCmd, dropletPeekCmd, dropletIssueCmd, dropletSearchCmd)
+		dropletStatsCmd, dropletDepsCmd, dropletPeekCmd, dropletIssueCmd, dropletSearchCmd,
+		dropletExportCmd)
 	rootCmd.AddCommand(dropletCmd)
 }
 

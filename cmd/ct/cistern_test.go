@@ -584,3 +584,129 @@ func TestDropletSearch(t *testing.T) {
 	searchPriority = 0
 	searchOutput = "table"
 }
+
+func TestDropletExport(t *testing.T) {
+	dir := t.TempDir()
+	db := filepath.Join(dir, "test.db")
+	t.Setenv("CT_DB", db)
+
+	captureStdout := func(t *testing.T, fn func()) string {
+		t.Helper()
+		old := os.Stdout
+		r, w, _ := os.Pipe()
+		os.Stdout = w
+		fn()
+		w.Close()
+		os.Stdout = old
+		var buf bytes.Buffer
+		buf.ReadFrom(r)
+		return buf.String()
+	}
+
+	// Seed data.
+	c, err := cistern.New(db, "ts")
+	if err != nil {
+		t.Fatal(err)
+	}
+	item, err := c.Add("repo", "Export test droplet", "", 1, 3)
+	c.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	t.Run("json empty", func(t *testing.T) {
+		dir2 := t.TempDir()
+		db2 := filepath.Join(dir2, "empty.db")
+		t.Setenv("CT_DB", db2)
+		defer t.Setenv("CT_DB", db)
+
+		exportFormat = "json"
+		exportQuery = ""
+		exportStatus = ""
+		exportPriority = 0
+		out := captureStdout(t, func() {
+			if err := dropletExportCmd.RunE(dropletExportCmd, nil); err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+		})
+		var items []*cistern.Droplet
+		if err := json.Unmarshal([]byte(out), &items); err != nil {
+			t.Fatalf("output is not valid JSON: %v\noutput: %s", err, out)
+		}
+		if len(items) != 0 {
+			t.Fatalf("expected empty array, got %d items", len(items))
+		}
+	})
+
+	t.Run("json with items", func(t *testing.T) {
+		exportFormat = "json"
+		exportQuery = ""
+		exportStatus = ""
+		exportPriority = 0
+		out := captureStdout(t, func() {
+			if err := dropletExportCmd.RunE(dropletExportCmd, nil); err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+		})
+		var items []*cistern.Droplet
+		if err := json.Unmarshal([]byte(out), &items); err != nil {
+			t.Fatalf("output is not valid JSON: %v\noutput: %s", err, out)
+		}
+		if len(items) != 1 {
+			t.Fatalf("expected 1 item, got %d", len(items))
+		}
+		if items[0].ID != item.ID {
+			t.Fatalf("expected ID %q, got %q", item.ID, items[0].ID)
+		}
+	})
+
+	t.Run("csv header and row", func(t *testing.T) {
+		exportFormat = "csv"
+		exportQuery = ""
+		exportStatus = ""
+		exportPriority = 0
+		out := captureStdout(t, func() {
+			if err := dropletExportCmd.RunE(dropletExportCmd, nil); err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+		})
+		if !strings.Contains(out, "id,repo,title") {
+			t.Errorf("expected CSV header, got:\n%s", out)
+		}
+		if !strings.Contains(out, item.ID) {
+			t.Errorf("expected item ID %q in CSV output:\n%s", item.ID, out)
+		}
+		if !strings.Contains(out, "Export test droplet") {
+			t.Errorf("expected item title in CSV output:\n%s", out)
+		}
+	})
+
+	t.Run("csv query filter", func(t *testing.T) {
+		exportFormat = "csv"
+		exportQuery = "export"
+		exportStatus = ""
+		exportPriority = 0
+		out := captureStdout(t, func() {
+			if err := dropletExportCmd.RunE(dropletExportCmd, nil); err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+		})
+		if !strings.Contains(out, "Export test droplet") {
+			t.Errorf("expected matching item in output:\n%s", out)
+		}
+	})
+
+	t.Run("invalid format flag", func(t *testing.T) {
+		exportFormat = "table"
+		err := dropletExportCmd.RunE(dropletExportCmd, nil)
+		if err == nil {
+			t.Fatal("expected error for invalid --format value")
+		}
+	})
+
+	// Reset flags.
+	exportFormat = "json"
+	exportQuery = ""
+	exportStatus = ""
+	exportPriority = 0
+}
