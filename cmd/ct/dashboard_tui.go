@@ -269,8 +269,13 @@ func (m dashboardTUIModel) tuiAqueductRow(ch CataractaInfo) []string {
 		return lf, og, rf
 	}
 
-	// Channel rows.
-	l1 := prefix + chanPad + dim.Render("╔"+strings.Repeat("═", chanW)+"╗")
+	// Channel rows — brick masonry style matching the pier aesthetic.
+	// Top cap: full-width ▀ mortar (chanW + 2 to cover the wall thickness).
+	// Middle: solid █ walls with water/idle content.
+	// Bottom cap: same mortar line; merges visually with arch crown mortar at row 0.
+	wallW   := chanW + 2
+	cStyle  := dim // channel uses same dim stone when idle
+	l1      := prefix + chanPad + cStyle.Render(strings.Repeat("▀", wallW))
 	var water string
 	if ch.DropletID != "" {
 		bar     := progressBar(ch.CataractaIndex, ch.TotalCataractae, 8)
@@ -279,8 +284,8 @@ func (m dashboardTUIModel) tuiAqueductRow(ch CataractaInfo) []string {
 	} else {
 		water = dim.Render(padOrTruncCenter(" — idle — ", chanW))
 	}
-	l2 := indent + chanPad + dim.Render("║") + water + dim.Render("║")
-	l3 := indent + chanPad + dim.Render("╚"+strings.Repeat("═", chanW)+"╝")
+	l2 := indent + chanPad + cStyle.Render("█") + water + cStyle.Render("█")
+	l3 := indent + chanPad + cStyle.Render(strings.Repeat("▀", wallW))
 
 	// Arch + pier rows: each logical row → 2 rendered sub-rows.
 	// Piers are brick-textured (tapered). Arch-crown material fills the inter-pier
