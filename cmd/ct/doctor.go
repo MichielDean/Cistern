@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"os/user"
 	"path/filepath"
 	"strings"
 	"time"
@@ -221,7 +222,10 @@ func runDoctorExtendedChecks(cfg *aqueduct.AqueductConfig, cfgPath, home, dbPath
 	// Check 4: Castellarius process (informational — does not affect ok).
 	checkCastellariusProcess()
 
-	// Check 5: Stalled droplets (warnings only — does not affect ok).
+	// Check 5: Systemd service health (only on systemd systems).
+	checkSystemdService()
+
+	// Check 6: Stalled droplets (warnings only — does not affect ok).
 	checkStalledDroplets(dbPath)
 
 	return ok
@@ -253,6 +257,155 @@ func checkCastellariusProcess() {
 	}
 	pid := strings.SplitN(strings.TrimSpace(string(out)), "\n", 2)[0]
 	fmt.Printf("\u2713 castellarius: running (pid %s)\n", pid)
+}
+
+// checkSystemdService verifies the Castellarius systemd user service is installed,
+// enabled, active, and that linger is on. Informational — does not affect ok.
+// With --fix it installs/enables/starts the service and enables linger.
+func checkSystemdService() {
+	// Skip entirely on non-systemd systems.
+	if _, err := exec.LookPath("systemctl"); err != nil {
+		return
+	}
+	// Check if user session is available.
+	if err := exec.Command("systemctl", "--user", "status").Run(); err != nil {
+		// systemctl exits non-zero when no units are running but session exists;
+		// if we get "Failed to connect" it means no user session.
+		if strings.Contains(err.Error(), "exit status 1") {
+			return // no user session — skip
+		}
+	}
+
+	serviceName := "cistern-castellarius.service"
+
+	// --- enabled? ---
+	enabledOut, _ := exec.Command("systemctl", "--user", "is-enabled", serviceName).Output()
+	enabled := strings.TrimSpace(string(enabledOut)) == "enabled"
+
+	// --- active? ---
+	activeOut, _ := exec.Command("systemctl", "--user", "is-active", serviceName).Output()
+	active := strings.TrimSpace(string(activeOut)) == "active"
+
+	// --- linger? ---
+	lingerOn := false
+	if u, err := user.Current(); err == nil {
+		out, _ := exec.Command("loginctl", "show-user", u.Username).Output()
+		lingerOn = strings.Contains(string(out), "Linger=yes")
+	}
+
+	// Report.
+	if !enabled {
+		msg := "not enabled"
+		if doctorFix {
+			// Write service file and enable.
+			if installErr := installSystemdService(); installErr != nil {
+				fmt.Printf("✗ systemd service: fix failed: %v\n", installErr)
+			} else {
+				fmt.Printf("↻ systemd service: installed and enabled\n")
+				enabled = true
+			}
+		} else {
+			fmt.Printf("✗ systemd service: %s — run: ct doctor --fix\n", msg)
+		}
+	} else if !active {
+		if doctorFix {
+			exec.Command("systemctl", "--user", "start", serviceName).Run() //nolint:errcheck
+			activeOut2, _ := exec.Command("systemctl", "--user", "is-active", serviceName).Output()
+			if strings.TrimSpace(string(activeOut2)) == "active" {
+				fmt.Printf("↻ systemd service: started\n")
+				active = true
+			} else {
+				fmt.Printf("✗ systemd service: enabled but failed to start\n")
+			}
+		} else {
+			fmt.Printf("✗ systemd service: enabled but not active — run: systemctl --user start %s\n", serviceName)
+		}
+	} else {
+		fmt.Printf("✓ systemd service: enabled + active\n")
+	}
+
+	if !lingerOn {
+		if doctorFix {
+			if u, err := user.Current(); err == nil {
+				if lingerErr := exec.Command("loginctl", "enable-linger", u.Username).Run(); lingerErr != nil {
+					fmt.Printf("✗ linger: fix failed: %v\n", lingerErr)
+				} else {
+					fmt.Printf("↻ linger: enabled — service will survive SSH logout\n")
+				}
+			}
+		} else {
+			fmt.Printf("✗ linger: not enabled — service dies on SSH logout. Run: ct doctor --fix\n")
+		}
+	} else if enabled && active {
+		fmt.Printf("✓ linger: enabled\n")
+	}
+
+	_ = active // suppress unused warning when fix path is taken
+}
+
+// installSystemdService writes the cistern-castellarius.service file and enables it.
+func installSystemdService() error {
+	gobin, err := resolveGoBin()
+	if err != nil {
+		return fmt.Errorf("cannot resolve Go bin dir: %w", err)
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return err
+	}
+	ctBin := filepath.Join(gobin, "ct")
+	serviceDir := filepath.Join(home, ".config", "systemd", "user")
+	if err := os.MkdirAll(serviceDir, 0o755); err != nil {
+		return err
+	}
+	logPath := filepath.Join(home, ".cistern", "castellarius.log")
+	content := fmt.Sprintf(`[Unit]
+Description=Cistern Castellarius — aqueduct scheduler
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=%s castellarius start
+Restart=always
+RestartSec=5
+StartLimitIntervalSec=120
+StartLimitBurst=10
+StartLimitAction=none
+TimeoutStopSec=15
+KillMode=mixed
+KillSignal=SIGTERM
+StandardOutput=append:%s
+StandardError=append:%s
+Environment=HOME=%s
+Environment=PATH=%s:/usr/local/go/bin:/usr/local/bin:/usr/bin:/bin
+
+[Install]
+WantedBy=default.target
+`, ctBin, logPath, logPath, home, gobin)
+
+	svcPath := filepath.Join(serviceDir, "cistern-castellarius.service")
+	if err := os.WriteFile(svcPath, []byte(content), 0o644); err != nil {
+		return err
+	}
+	exec.Command("systemctl", "--user", "daemon-reload").Run() //nolint:errcheck
+	if err := exec.Command("systemctl", "--user", "enable", "cistern-castellarius").Run(); err != nil {
+		return fmt.Errorf("enable failed: %w", err)
+	}
+	exec.Command("systemctl", "--user", "start", "cistern-castellarius").Run() //nolint:errcheck
+	return nil
+}
+
+// resolveGoBin returns the directory where `go install` places binaries.
+func resolveGoBin() (string, error) {
+	out, err := exec.Command("go", "env", "GOBIN").Output()
+	if err == nil && strings.TrimSpace(string(out)) != "" {
+		return strings.TrimSpace(string(out)), nil
+	}
+	out, err = exec.Command("go", "env", "GOPATH").Output()
+	if err != nil {
+		return "", fmt.Errorf("cannot determine GOPATH: %w", err)
+	}
+	return filepath.Join(strings.TrimSpace(string(out)), "bin"), nil
 }
 
 // checkStalledDroplets warns about in_progress droplets that have not updated
