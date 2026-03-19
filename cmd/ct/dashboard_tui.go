@@ -241,15 +241,15 @@ func (m dashboardTUIModel) tuiAqueductRow(ch CataractaInfo) []string {
 		return step == ch.Step && ch.DropletID != ""
 	}
 
-	// archCrown computes how many chars to fill from each side of the inter-pier
-	// gap at logical row lr, using a semicircle formula keyed to gapWidth.
-	// Returns (leftFill, openGap, rightFill). Active only during taper rows.
-	archCrown := func(lr, gapWidth int) (lf, og, rf int) {
-		if lr >= taperRows || gapWidth <= 0 {
-			return 0, gapWidth, 0
+	// archCrownAtT computes arch-crown fill at an arbitrary t in [0,1].
+	// t=0: keystone (fully closed). t=1: impost (fully open).
+	// Evaluating mortar and brick sub-rows at different t gives 2× curve resolution
+	// without adding logical rows.
+	archCrownAtT := func(t float64, gapWidth int) (lf, og, rf int) {
+		if gapWidth <= 0 {
+			return 0, 0, 0
 		}
 		r  := float64(gapWidth) / 2.0
-		t  := float64(lr) / float64(taperRows)
 		oh := r * math.Sin(math.Pi / 2.0 * t)
 		fe := r - oh
 		full := int(fe)
@@ -283,8 +283,10 @@ func (m dashboardTUIModel) tuiAqueductRow(ch CataractaInfo) []string {
 	l3 := indent + chanPad + dim.Render("╚"+strings.Repeat("═", chanW)+"╝")
 
 	// Arch + pier rows: each logical row → 2 rendered sub-rows.
-	// Piers are brick-textured (tapered). Inter-pier span gets arch-crown
-	// material (solid) in the top rows, empty in the lower rows.
+	// Piers are brick-textured (tapered). Arch-crown material fills the inter-pier
+	// span during taper rows, evaluated at per-sub-row t for smoother curve.
+	// Mortar sub-row: t = lr/taperRows  (start of logical row)
+	// Brick sub-row:  t = (lr+0.5)/taperRows  (mid-point — extra curve step)
 	var archLines []string
 	for lr := 0; lr < taperRows+pierRows; lr++ {
 		bodyW := archTopW - lr*2
@@ -292,9 +294,21 @@ func (m dashboardTUIModel) tuiAqueductRow(ch CataractaInfo) []string {
 			bodyW = pierW
 		}
 		rowPadL := (colW - bodyW) / 2
-		gapW    := colW - bodyW         // inter-pier gap width = rowPadR + next rowPadL
+		gapW    := colW - bodyW
 
-		lf, og, rf := archCrown(lr, gapW)
+		// Mortar sub-row arch crown: t at start of this logical row.
+		tMort  := math.Min(float64(lr)/float64(taperRows), 1.0)
+		lfM, ogM, rfM := 0, gapW, 0
+		if lr < taperRows {
+			lfM, ogM, rfM = archCrownAtT(tMort, gapW)
+		}
+
+		// Brick sub-row arch crown: t at midpoint — gives extra curve resolution.
+		tBrick := math.Min(float64(lr)+0.5, float64(taperRows)) / float64(taperRows)
+		lfB, ogB, rfB := 0, gapW, 0
+		if lr < taperRows {
+			lfB, ogB, rfB = archCrownAtT(tBrick, gapW)
+		}
 
 		var mortSB, brickSB strings.Builder
 		mortSB.WriteString(indent)
@@ -325,35 +339,40 @@ func (m dashboardTUIModel) tuiAqueductRow(ch CataractaInfo) []string {
 			}
 			brickSB.WriteString(pStyle.Render(string(body)))
 
-			// Inter-pier span (between this pier and the next).
+			// Inter-pier span: arch crown (mortar sub-row) + arch crown (brick sub-row).
+			// Each uses its own fill values (lfM/lfB) for smoother curve resolution.
 			if i < n-1 {
-				// Arch crown follows the LEFT pier (pier i) — matches V1 design:
-				// one green arch span to the right of the active pier.
 				aStyle := dim
 				if isActive(step) {
 					aStyle = g
 				}
 
-				// Left arch crown: mortar row = solid ▀; brick row uses ▌ haunch at edge.
-				if lf > 0 {
-					mortSB.WriteString(aStyle.Render(strings.Repeat("▀", lf)))
-					if lf > 1 {
-						brickSB.WriteString(aStyle.Render(strings.Repeat("█", lf-1)))
-					}
-					brickSB.WriteString(aStyle.Render("▌")) // intrados haunch edge
+				// ── Mortar sub-row arch crown (solid ▀) ──────────────────────────────
+				if lfM > 0 {
+					mortSB.WriteString(aStyle.Render(strings.Repeat("▀", lfM)))
 				}
-				// Open arch gap.
-				if og > 0 {
-					mortSB.WriteString(strings.Repeat(" ", og))
-					brickSB.WriteString(strings.Repeat(" ", og))
+				if ogM > 0 {
+					mortSB.WriteString(strings.Repeat(" ", ogM))
 				}
-				// Right arch crown: ▐ haunch at left edge.
-				if rf > 0 {
-					brickSB.WriteString(aStyle.Render("▐")) // intrados haunch edge
-					if rf > 1 {
-						brickSB.WriteString(aStyle.Render(strings.Repeat("█", rf-1)))
+				if rfM > 0 {
+					mortSB.WriteString(aStyle.Render(strings.Repeat("▀", rfM)))
+				}
+
+				// ── Brick sub-row arch crown (█ body + ▌▐ haunch at intrados edge) ──
+				if lfB > 0 {
+					if lfB > 1 {
+						brickSB.WriteString(aStyle.Render(strings.Repeat("█", lfB-1)))
 					}
-					mortSB.WriteString(aStyle.Render(strings.Repeat("▀", rf)))
+					brickSB.WriteString(aStyle.Render("▌"))
+				}
+				if ogB > 0 {
+					brickSB.WriteString(strings.Repeat(" ", ogB))
+				}
+				if rfB > 0 {
+					brickSB.WriteString(aStyle.Render("▐"))
+					if rfB > 1 {
+						brickSB.WriteString(aStyle.Render(strings.Repeat("█", rfB-1)))
+					}
 				}
 			}
 		}
