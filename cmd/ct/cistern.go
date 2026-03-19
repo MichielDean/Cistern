@@ -6,9 +6,11 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"os/signal"
 	"regexp"
 	"strconv"
 	"strings"
+	"syscall"
 	"text/tabwriter"
 	"time"
 
@@ -87,6 +89,7 @@ var (
 	listStatus string
 	listOutput string
 	listAll    bool
+	listWatch  bool
 )
 
 var dropletListCmd = &cobra.Command{
@@ -96,101 +99,138 @@ var dropletListCmd = &cobra.Command{
 		if listOutput != "table" && listOutput != "json" {
 			return fmt.Errorf("--output must be table or json")
 		}
+		if listWatch && listOutput != "table" {
+			return fmt.Errorf("--watch requires --output table")
+		}
+		if listWatch && !isTerminal() {
+			return fmt.Errorf("--watch requires an interactive terminal")
+		}
+
 		c, err := cistern.New(resolveDBPath(), "")
 		if err != nil {
 			return err
 		}
 		defer c.Close()
 
-		items, err := c.List(listRepo, listStatus)
-		if err != nil {
-			return err
-		}
-
-		if listOutput == "json" {
-			if items == nil {
-				items = []*cistern.Droplet{}
-			}
-			out, err := json.MarshalIndent(items, "", "  ")
+		render := func() error {
+			items, err := c.List(listRepo, listStatus)
 			if err != nil {
 				return err
 			}
-			fmt.Println(string(out))
-			return nil
-		}
 
-		// TABLE output: split into active and delivered.
-		// Default hides delivered items; --all shows them in a dimmed section.
-		// If --status is set explicitly, honour it and don't split.
-		filterDelivered := listStatus == "" && !listAll
-		var active, dimmed []*cistern.Droplet
-		for _, item := range items {
-			if filterDelivered && item.Status == "delivered" {
-				dimmed = append(dimmed, item)
-			} else {
-				active = append(active, item)
+			if listOutput == "json" {
+				if items == nil {
+					items = []*cistern.Droplet{}
+				}
+				out, err := json.MarshalIndent(items, "", "  ")
+				if err != nil {
+					return err
+				}
+				fmt.Println(string(out))
+				return nil
 			}
-		}
 
-		if len(active) == 0 && (!listAll || len(dimmed) == 0) {
-			fmt.Println("Cistern dry.")
-			return nil
-		}
-
-		// Title truncation width.
-		titleMax := 40
-		if isTerminal() {
-			if w := termWidth(); w-55 > 15 {
-				titleMax = w - 55
-			}
-		}
-
-		if isTerminal() {
-			printDropletListTerminal(active, dimmed, listAll, titleMax)
-			return nil
-		}
-
-		// Non-terminal / piped output: plain tabwriter, no ANSI.
-		tw := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
-		fmt.Fprintln(tw, "ID\tCOMPLEXITY\tTITLE\tSTATUS\tELAPSED\tCATARACTA")
-		for _, item := range active {
-			ds := displayStatusForDroplet(item)
-			cataracta := item.CurrentCataracta
-			if cataracta == "" {
-				cataracta = "\u2014"
-			}
-			if item.Status == "open" {
-				blockedBy, _ := c.GetBlockedBy(item.ID)
-				if len(blockedBy) > 0 {
-					ds = "\u2298 blocked"
-					cataracta = "waiting: " + blockedBy[0]
+			// TABLE output: split into active and delivered.
+			// Default hides delivered items; --all shows them in a dimmed section.
+			// If --status is set explicitly, honour it and don't split.
+			filterDelivered := listStatus == "" && !listAll
+			var active, dimmed []*cistern.Droplet
+			for _, item := range items {
+				if filterDelivered && item.Status == "delivered" {
+					dimmed = append(dimmed, item)
+				} else {
+					active = append(active, item)
 				}
 			}
-			if ds == "awaiting" {
-				ds = "\u23f8 awaiting approval"
+
+			if len(active) == 0 && (!listAll || len(dimmed) == 0) {
+				fmt.Println("Cistern dry.")
+				return nil
 			}
-			elapsed := "\u2014"
-			if item.Status == "in_progress" {
-				elapsed = formatElapsed(time.Since(item.UpdatedAt))
+
+			// Title truncation width.
+			titleMax := 40
+			if isTerminal() {
+				if w := termWidth(); w-55 > 15 {
+					titleMax = w - 55
+				}
 			}
-			fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\n",
-				item.ID, complexityName(item.Complexity), truncate(item.Title, titleMax),
-				ds, elapsed, cataracta)
-		}
-		if listAll && len(dimmed) > 0 {
-			fmt.Fprintln(tw, "— delivered —")
-			for _, item := range dimmed {
-				age := formatElapsed(time.Since(item.UpdatedAt))
+
+			if isTerminal() {
+				printDropletListTerminal(active, dimmed, listAll, titleMax)
+				return nil
+			}
+
+			// Non-terminal / piped output: plain tabwriter, no ANSI.
+			tw := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
+			fmt.Fprintln(tw, "ID\tCOMPLEXITY\tTITLE\tSTATUS\tELAPSED\tCATARACTA")
+			for _, item := range active {
+				ds := displayStatusForDroplet(item)
 				cataracta := item.CurrentCataracta
 				if cataracta == "" {
 					cataracta = "\u2014"
 				}
+				if item.Status == "open" {
+					blockedBy, _ := c.GetBlockedBy(item.ID)
+					if len(blockedBy) > 0 {
+						ds = "\u2298 blocked"
+						cataracta = "waiting: " + blockedBy[0]
+					}
+				}
+				if ds == "awaiting" {
+					ds = "\u23f8 awaiting approval"
+				}
+				elapsed := "\u2014"
+				if item.Status == "in_progress" {
+					elapsed = formatElapsed(time.Since(item.UpdatedAt))
+				}
 				fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\n",
 					item.ID, complexityName(item.Complexity), truncate(item.Title, titleMax),
-					"delivered", age, cataracta)
+					ds, elapsed, cataracta)
+			}
+			if listAll && len(dimmed) > 0 {
+				fmt.Fprintln(tw, "— delivered —")
+				for _, item := range dimmed {
+					age := formatElapsed(time.Since(item.UpdatedAt))
+					cataracta := item.CurrentCataracta
+					if cataracta == "" {
+						cataracta = "\u2014"
+					}
+					fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\n",
+						item.ID, complexityName(item.Complexity), truncate(item.Title, titleMax),
+						"delivered", age, cataracta)
+				}
+			}
+			return tw.Flush()
+		}
+
+		if !listWatch {
+			return render()
+		}
+
+		// Watch mode: clear screen and re-render every 2 seconds. Ctrl-C to exit.
+		sigCh := make(chan os.Signal, 1)
+		signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
+		defer signal.Stop(sigCh)
+
+		ticker := time.NewTicker(2 * time.Second)
+		defer ticker.Stop()
+
+		fmt.Print(clearScreen)
+		if err := render(); err != nil {
+			return err
+		}
+		for {
+			select {
+			case <-ticker.C:
+				fmt.Print(clearScreen)
+				if err := render(); err != nil {
+					return err
+				}
+			case <-sigCh:
+				return nil
 			}
 		}
-		return tw.Flush()
 	},
 }
 
@@ -1078,6 +1118,7 @@ func init() {
 	dropletListCmd.Flags().StringVar(&listStatus, "status", "", "filter by status (open|in_progress|delivered|stagnant)")
 	dropletListCmd.Flags().StringVar(&listOutput, "output", "table", "output format: table or json")
 	dropletListCmd.Flags().BoolVar(&listAll, "all", false, "include delivered droplets in a dimmed section below active ones")
+	dropletListCmd.Flags().BoolVar(&listWatch, "watch", false, "live-refresh the list every 2 seconds (Ctrl-C to stop)")
 
 	dropletSearchCmd.Flags().StringVar(&searchQuery, "query", "", "filter by title substring (case-insensitive)")
 	dropletSearchCmd.Flags().StringVar(&searchStatus, "status", "", "filter by status (open|in_progress|delivered|stagnant)")

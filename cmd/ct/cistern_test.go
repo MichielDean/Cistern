@@ -711,6 +711,45 @@ func TestDropletExport(t *testing.T) {
 	exportPriority = 0
 }
 
+func TestDropletListWatchValidation(t *testing.T) {
+	dir := t.TempDir()
+	db := filepath.Join(dir, "test.db")
+	t.Setenv("CT_DB", db)
+
+	t.Run("watch requires table output", func(t *testing.T) {
+		listWatch = true
+		listOutput = "json"
+		listRepo = ""
+		listStatus = ""
+		defer func() { listWatch = false; listOutput = "table" }()
+
+		err := dropletListCmd.RunE(dropletListCmd, nil)
+		if err == nil {
+			t.Fatal("expected error when --watch used with non-table output")
+		}
+		if !strings.Contains(err.Error(), "--watch requires --output table") {
+			t.Errorf("unexpected error message: %v", err)
+		}
+	})
+
+	t.Run("watch requires interactive terminal", func(t *testing.T) {
+		// In tests stdout is not a terminal, so isTerminal() returns false.
+		listWatch = true
+		listOutput = "table"
+		listRepo = ""
+		listStatus = ""
+		defer func() { listWatch = false; listOutput = "table" }()
+
+		err := dropletListCmd.RunE(dropletListCmd, nil)
+		if err == nil {
+			t.Fatal("expected error when --watch used outside an interactive terminal")
+		}
+		if !strings.Contains(err.Error(), "--watch requires an interactive terminal") {
+			t.Errorf("unexpected error message: %v", err)
+		}
+	})
+}
+
 func TestDropletRename(t *testing.T) {
 	dir := t.TempDir()
 	db := filepath.Join(dir, "test.db")
