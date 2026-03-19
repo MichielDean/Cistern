@@ -308,6 +308,13 @@ func (m dashboardTUIModel) tuiAqueductRow(ch CataractaeInfo, frame int) []string
 	n := len(steps)
 
 	prefix  := "  " + padRight(ch.Name, nameW) + "  "
+	// Channel row gets repo name in the same-width prefix column, stacked under aqueduct name.
+	// Truncate repo to nameW chars to preserve alignment.
+	repoLabel := ch.RepoName
+	if len([]rune(repoLabel)) > nameW {
+		repoLabel = string([]rune(repoLabel)[:nameW-1]) + "…"
+	}
+	prefixRepo := "  " + tuiStyleDim.Render(padRight(repoLabel, nameW)) + "  "
 	indent  := strings.Repeat(" ", len([]rune(prefix)))
 	// chanW spans the full n*colW so channel walls align with label row edges.
 	// chanPadL is 0 — channel starts immediately after the name prefix.
@@ -452,7 +459,7 @@ func (m dashboardTUIModel) tuiAqueductRow(ch CataractaeInfo, frame int) []string
 
 	// Channel exit: compact spill — trim trailing two blocks (▒░) off the top row.
 	wfExit := wfDim.Render("░") + wfMid.Render("▒") + wfA(0).Render("▓▓")
-	l2 := indent + chanPad + cStyle.Render("█") + water + cStyle.Render("█") + wfExit
+	l2 := prefixRepo + chanPad + cStyle.Render("█") + water + cStyle.Render("█") + wfExit
 
 	// Arch + pier rows: each logical row → 2 rendered sub-rows.
 	// Solid masonry ABUTMENTS (rowPadL wide) fill each side so the arch spans
