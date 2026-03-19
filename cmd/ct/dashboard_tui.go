@@ -338,27 +338,30 @@ func (m dashboardTUIModel) tuiAqueductRow(ch CataractaInfo, frame int) []string 
 		}
 	}
 
+	// Option C: Spill & curtain — water exits flush against the abutment edge,
+	// hugs the structure for the first couple of rows, then falls nearly vertical.
+	// Stays close → feels connected to the arch. Wide pool forms at the base.
 	wfRows := [8]string{
-		// sub 0: exits channel — wide horizontal jet
-		sp(1) + wfDim.Render("░") + wfMid.Render("≈") + wfA(0).Render("▓") + wfMid.Render("≈") + wfDim.Render("░"),
-		// sub 1: spreading, gravity starting
-		sp(2) + wfDim.Render("░") + wfMid.Render("≈") + wfA(1).Render("▓") + wfMid.Render("≈"),
-		// sub 2: arc turning, narrows
-		sp(4) + wfMid.Render("≈") + wfA(2).Render("▓") + wfA(0).Render("▓") + wfMid.Render("≈"),
-		// sub 3: steep thin curtain
-		sp(6) + wfMid.Render("≈") + wfA(1).Render("▓") + wfA(2).Render("▓"),
-		// sub 4: nearly vertical
-		sp(7) + wfA(0).Render("▓") + wfMid.Render("▒"),
-		// sub 5: vertical fall
-		sp(7) + wfMid.Render("▒") + wfA(1).Render("▓"),
-		// sub 6: base approaching, widening
-		sp(6) + wfDim.Render("░") + wfMid.Render("▒") + wfA(2).Render("▓") + wfMid.Render("▒"),
-		// sub 7: base splash — wide pool, spray at edges
-		sp(4) + wfDim.Render("░≈") + wfMid.Render("▒") + wfA(0).Render("▓") + wfA(1).Render("▓") + wfMid.Render("▒") + wfDim.Render("≈░"),
+		// sub 0: exits flush — ▓ right against the abutment edge
+		sp(0) + wfMid.Render("▒") + wfA(0).Render("▓") + wfMid.Render("▒") + wfDim.Render("░"),
+		// sub 1: still hugging the structure
+		sp(0) + wfDim.Render("░") + wfA(1).Render("▓") + wfMid.Render("▒"),
+		// sub 2: just starts to peel away
+		sp(1) + wfMid.Render("▒") + wfA(2).Render("▓") + wfMid.Render("▒"),
+		// sub 3: drifting slightly, near-vertical
+		sp(1) + wfDim.Render("░") + wfA(0).Render("▓") + wfMid.Render("▒"),
+		// sub 4: thin falling curtain
+		sp(2) + wfA(1).Render("▓") + wfMid.Render("▒"),
+		// sub 5: thin falling curtain
+		sp(2) + wfA(2).Render("▓") + wfMid.Render("▒"),
+		// sub 6: widening as it approaches the base
+		sp(2) + wfDim.Render("░") + wfMid.Render("▒") + wfA(0).Render("▓") + wfMid.Render("▒") + wfDim.Render("░"),
+		// sub 7: wide pool — spray at edges, bright core, spreads both ways
+		sp(0) + wfDim.Render("░≈") + wfMid.Render("▒▒") + wfA(1).Render("▓▓") + wfMid.Render("▒▒") + wfDim.Render("≈░"),
 	}
 
-	// Channel exit: water shoots out horizontally — also animated.
-	wfExit := wfDim.Render("░") + wfMid.Render("≈") + wfA(0).Render("▓") + wfA(1).Render("▓") + wfMid.Render("≈") + wfDim.Render("░")
+	// Channel exit: compact spill — water exits flush, no wide launching jet.
+	wfExit := wfDim.Render("░") + wfMid.Render("▒") + wfA(0).Render("▓▓") + wfMid.Render("▒") + wfDim.Render("░")
 	l2 := indent + chanPad + cStyle.Render("█") + water + cStyle.Render("█") + wfExit
 
 	// Arch + pier rows: each logical row → 2 rendered sub-rows.
