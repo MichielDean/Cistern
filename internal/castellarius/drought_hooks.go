@@ -19,13 +19,25 @@ import (
 
 // RunDroughtHooks executes all configured drought hooks sequentially.
 // Errors are logged but do not crash the flow.
-func RunDroughtHooks(hooks []aqueduct.DroughtHook, cfg *aqueduct.AqueductConfig, dbPath string, sandboxRoot string, logger *slog.Logger) {
+// If any hook signals that a restart is needed (e.g. git_sync updated the workflow
+// and restart_if_updated is set, or action is restart_self), the process exits
+// cleanly with code 0 after all hooks finish — safe because drought means no
+// active agents. A process supervisor (systemd Restart=always) brings it back fresh.
+func RunDroughtHooks(hooks []aqueduct.DroughtHook, cfg *aqueduct.AqueductConfig, dbPath string, sandboxRoot string, logger *slog.Logger, startupBinaryMtime time.Time) {
+	needsRestart := false
+	restartReason := ""
+
 	for _, hook := range hooks {
 		logger.Info("drought hook starting", "hook", hook.Name, "action", hook.Action)
 		var err error
 		switch hook.Action {
 		case "git_sync":
-			err = hookGitSync(cfg, sandboxRoot, logger)
+			var changed bool
+			changed, err = hookGitSync(cfg, sandboxRoot, logger)
+			if changed && hook.RestartIfUpdated {
+				needsRestart = true
+				restartReason = "workflow YAML updated by git_sync"
+			}
 		case "cataractae_generate":
 			err = hookCataractaeGenerate(cfg, logger)
 		case "worktree_prune":
@@ -36,6 +48,11 @@ func RunDroughtHooks(hooks []aqueduct.DroughtHook, cfg *aqueduct.AqueductConfig,
 			err = hookEventsPrune(dbPath, hook, logger)
 		case "tmp_cleanup":
 			err = hookTmpCleanup(logger)
+		case "restart_self":
+			// Always restart — useful for "restart after every drought" or to pick
+			// up a new binary after a manual deploy.
+			needsRestart = true
+			restartReason = "restart_self hook"
 		case "shell":
 			err = hookShell(hook, logger)
 		default:
@@ -48,6 +65,24 @@ func RunDroughtHooks(hooks []aqueduct.DroughtHook, cfg *aqueduct.AqueductConfig,
 			logger.Info("drought hook completed", "hook", hook.Name)
 		}
 	}
+
+	// Binary-update detection: if the on-disk binary is newer than when we started,
+	// exit so the supervisor restarts with the fresh binary.
+	if !startupBinaryMtime.IsZero() {
+		if exe, err := os.Executable(); err == nil {
+			if info, err := os.Stat(exe); err == nil {
+				if info.ModTime().After(startupBinaryMtime) {
+					needsRestart = true
+					restartReason = "binary updated on disk"
+				}
+			}
+		}
+	}
+
+	if needsRestart {
+		logger.Info("Castellarius exiting for clean restart", "reason", restartReason)
+		os.Exit(0)
+	}
 }
 
 // hookGitSync fetches the latest workflow YAML from origin/main for each repo and
@@ -55,10 +90,10 @@ func RunDroughtHooks(hooks []aqueduct.DroughtHook, cfg *aqueduct.AqueductConfig,
 // Uses `git fetch` + `git show origin/main:<path>` — safe to run while agents are
 // on feature branches because it never touches the working tree.
 // Must run before cataractae_generate so roles are rebuilt from the freshest YAML.
-func hookGitSync(cfg *aqueduct.AqueductConfig, sandboxRoot string, logger *slog.Logger) error {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return fmt.Errorf("git_sync: home dir: %w", err)
+func hookGitSync(cfg *aqueduct.AqueductConfig, sandboxRoot string, logger *slog.Logger) (changed bool, err error) {
+	home, hErr := os.UserHomeDir()
+	if hErr != nil {
+		return false, fmt.Errorf("git_sync: home dir: %w", hErr)
 	}
 
 	for _, repo := range cfg.Repos {
@@ -128,8 +163,9 @@ func hookGitSync(cfg *aqueduct.AqueductConfig, sandboxRoot string, logger *slog.
 			continue
 		}
 		logger.Info("git_sync: workflow updated", "repo", repo.Name, "path", deployedPath)
+		changed = true
 	}
-	return nil
+	return changed, nil
 }
 
 // hookCataractaeGenerate checks if any workflow YAML mtime is newer than the oldest

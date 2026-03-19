@@ -72,11 +72,12 @@ type Castellarius struct {
 	// heartbeatInterval controls how often orphaned in-progress droplets are
 	// checked. Independent of pollInterval so it fires even when the main tick
 	// is busy. Defaults to 30s.
-	heartbeatInterval time.Duration
-	sandboxRoot       string
-	cleanupInterval   time.Duration
-	dbPath            string
-	wasDrought        bool
+	heartbeatInterval   time.Duration
+	sandboxRoot         string
+	cleanupInterval     time.Duration
+	dbPath              string
+	wasDrought          bool
+	startupBinaryMtime  time.Time // mtime of the binary at startup; used to detect updates
 }
 
 // Option configures a flow.
@@ -101,16 +102,25 @@ func WithSandboxRoot(root string) Option {
 // Workflows are loaded from each RepoConfig.WorkflowPath.
 // Each repo gets its own cistern.Client scoped by prefix.
 func New(config aqueduct.AqueductConfig, dbPath string, runner CataractaeRunner, opts ...Option) (*Castellarius, error) {
+	// Capture binary mtime at construction time for update detection.
+	var startupBinaryMtime time.Time
+	if exe, err := os.Executable(); err == nil {
+		if info, err := os.Stat(exe); err == nil {
+			startupBinaryMtime = info.ModTime()
+		}
+	}
+
 	s := &Castellarius{
-		config:            config,
-		workflows:         make(map[string]*aqueduct.Workflow),
-		clients:           make(map[string]CisternClient),
-		pools:             make(map[string]*AqueductPool),
-		runner:            runner,
-		logger:            slog.Default(),
-		pollInterval:      10 * time.Second,
-		heartbeatInterval: 30 * time.Second,
-		dbPath:            dbPath,
+		config:             config,
+		workflows:          make(map[string]*aqueduct.Workflow),
+		clients:            make(map[string]CisternClient),
+		pools:              make(map[string]*AqueductPool),
+		runner:             runner,
+		logger:             slog.Default(),
+		pollInterval:       10 * time.Second,
+		heartbeatInterval:  30 * time.Second,
+		dbPath:             dbPath,
+		startupBinaryMtime: startupBinaryMtime,
 	}
 	for _, o := range opts {
 		o(s)
@@ -355,7 +365,7 @@ func (s *Castellarius) tick(ctx context.Context) {
 	if isDrought && !s.wasDrought {
 		if len(s.config.DroughtHooks) > 0 {
 			s.logger.Info("Drought protocols running.")
-			go RunDroughtHooks(s.config.DroughtHooks, &s.config, s.dbPath, s.sandboxRoot, s.logger)
+			go RunDroughtHooks(s.config.DroughtHooks, &s.config, s.dbPath, s.sandboxRoot, s.logger, s.startupBinaryMtime)
 		}
 	}
 	s.wasDrought = isDrought

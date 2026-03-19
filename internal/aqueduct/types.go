@@ -131,11 +131,12 @@ type RepoConfig struct {
 
 // DroughtHook defines an action to run when the scheduler enters drought (idle) state.
 type DroughtHook struct {
-	Name     string `yaml:"name"`
-	Action   string `yaml:"action"`                    // built-in: "git_sync", "cataractae_generate", "worktree_prune", "db_vacuum", "events_prune", "tmp_cleanup" | "shell"
-	Command  string `yaml:"command,omitempty"`         // only for action: shell
-	Timeout  int    `yaml:"timeout_seconds,omitempty"` // default 30s
-	KeepDays int    `yaml:"keep_days,omitempty"`       // for events_prune: days to retain (default 30)
+	Name             string `yaml:"name"`
+	Action           string `yaml:"action"`                      // built-in: "git_sync", "cataractae_generate", "worktree_prune", "db_vacuum", "events_prune", "tmp_cleanup", "restart_self" | "shell"
+	Command          string `yaml:"command,omitempty"`           // only for action: shell
+	Timeout          int    `yaml:"timeout_seconds,omitempty"`   // default 30s
+	KeepDays         int    `yaml:"keep_days,omitempty"`         // for events_prune: days to retain (default 30)
+	RestartIfUpdated bool   `yaml:"restart_if_updated,omitempty"` // for git_sync: exit cleanly if workflow changed (supervisor restarts)
 }
 
 // RateLimitConfig configures rate limiting for the delivery cataractae API endpoint.

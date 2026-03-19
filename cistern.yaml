@@ -45,6 +45,7 @@ heartbeat_interval: 30s
 drought_hooks:
   - name: sync-workflow
     action: git_sync            # Pull latest aqueduct.yaml from origin/main → auto-deploys new cataractae
+    restart_if_updated: true    # Exit cleanly after sync so supervisor restarts with new workflow
 
   - name: sync-cataractae
     action: cataractae_generate # Regenerate CLAUDE.md files from updated workflow YAML
