@@ -38,6 +38,7 @@ type dashboardTUIModel struct {
 	dbPath  string
 	data    *DashboardData
 	frame   int  // animation frame counter — increments every animInterval
+	scrollY int  // scroll offset in lines (0 = top)
 	width   int
 	height  int
 }
@@ -98,6 +99,32 @@ func (m dashboardTUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 		case "r", "R":
 			return m, m.fetchDataCmd()
+		case "up", "k":
+			if m.scrollY > 0 {
+				m.scrollY--
+			}
+		case "down", "j":
+			m.scrollY++
+		case "home", "g":
+			m.scrollY = 0
+		case "end", "G":
+			m.scrollY = 999999 // clamped in View()
+		case "pgup", "ctrl+u":
+			m.scrollY -= m.height / 2
+			if m.scrollY < 0 { m.scrollY = 0 }
+		case "pgdown", "ctrl+d":
+			m.scrollY += m.height / 2
+		}
+
+	case tea.MouseMsg:
+		switch msg.Button {
+		case tea.MouseButtonWheelUp:
+			if m.scrollY > 0 {
+				m.scrollY -= 3
+			}
+			if m.scrollY < 0 { m.scrollY = 0 }
+		case tea.MouseButtonWheelDown:
+			m.scrollY += 3
 		}
 	}
 	return m, nil
@@ -133,10 +160,23 @@ func (m dashboardTUIModel) View() string {
 	parts = append(parts, m.viewRecentFlow()...)
 	parts = append(parts, sep)
 
-	// 5. Footer.
-	parts = append(parts, tuiStyleFooter.Render("  q quit  r refresh  ? help"))
+	// 5. Footer — always pinned at the bottom (not scrolled).
+	footer := tuiStyleFooter.Render("  q quit  r refresh  ↑↓/jk scroll  g/G top/bottom")
 
-	return strings.Join(parts, "\n")
+	// Apply scroll: render full content, slice visible window.
+	full  := strings.Join(parts, "\n")
+	lines := strings.Split(full, "\n")
+	total := len(lines)
+	// Reserve 1 line for the pinned footer.
+	viewH := m.height - 1
+	if viewH < 1 { viewH = 1 }
+	maxScroll := total - viewH
+	if maxScroll < 0 { maxScroll = 0 }
+	if m.scrollY > maxScroll { m.scrollY = maxScroll }
+	end := m.scrollY + viewH
+	if end > total { end = total }
+	visible := lines[m.scrollY:end]
+	return strings.Join(visible, "\n") + "\n" + footer
 }
 
 func (m dashboardTUIModel) viewLogo() []string {
@@ -342,8 +382,8 @@ func (m dashboardTUIModel) tuiAqueductRow(ch CataractaInfo, frame int) []string 
 	// hugs the structure for the first couple of rows, then falls nearly vertical.
 	// Stays close → feels connected to the arch. Wide pool forms at the base.
 	wfRows := [8]string{
-		// sub 0: exits flush — ▓ right against the abutment edge
-		sp(0) + wfMid.Render("▒") + wfA(0).Render("▓") + wfMid.Render("▒") + wfDim.Render("░"),
+		// sub 0: exits flush — ▓ right against the abutment edge (trimmed to 2 chars)
+		sp(0) + wfMid.Render("▒") + wfA(0).Render("▓"),
 		// sub 1: still hugging the structure
 		sp(0) + wfDim.Render("░") + wfA(1).Render("▓") + wfMid.Render("▒"),
 		// sub 2: just starts to peel away
@@ -708,7 +748,7 @@ func tuiPadCenter(s string, width int) string {
 // RunDashboardTUI runs the Bubble Tea TUI dashboard using the alternate screen.
 func RunDashboardTUI(cfgPath, dbPath string) error {
 	m := newDashboardTUIModel(cfgPath, dbPath)
-	p := tea.NewProgram(m, tea.WithAltScreen())
+	p := tea.NewProgram(m, tea.WithAltScreen(), tea.WithMouseCellMotion())
 	_, err := p.Run()
 	return err
 }
