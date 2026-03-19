@@ -339,39 +339,44 @@ func (m dashboardTUIModel) tuiAqueductRow(ch CataractaInfo) []string {
 			}
 			brickSB.WriteString(pStyle.Render(string(body)))
 
-			// Inter-pier span: arch crown (mortar sub-row) + arch crown (brick sub-row).
-			// Each uses its own fill values (lfM/lfB) for smoother curve resolution.
+			// Inter-pier span: arch crown colored per side.
+			// Left fill (lf) belongs to the LEFT pier; right fill (rf) to the RIGHT pier.
+			// This prevents color bleeding onto adjacent idle piers.
 			if i < n-1 {
-				aStyle := dim
+				lStyle := dim // left arch crown = left pier's color
 				if isActive(step) {
-					aStyle = g
+					lStyle = g
+				}
+				rStyle := dim // right arch crown = right pier's color
+				if isActive(steps[i+1]) {
+					rStyle = g
 				}
 
-				// ── Mortar sub-row arch crown (solid ▀) ──────────────────────────────
+				// ── Mortar sub-row ────────────────────────────────────────────────────
 				if lfM > 0 {
-					mortSB.WriteString(aStyle.Render(strings.Repeat("▀", lfM)))
+					mortSB.WriteString(lStyle.Render(strings.Repeat("▀", lfM)))
 				}
 				if ogM > 0 {
 					mortSB.WriteString(strings.Repeat(" ", ogM))
 				}
 				if rfM > 0 {
-					mortSB.WriteString(aStyle.Render(strings.Repeat("▀", rfM)))
+					mortSB.WriteString(rStyle.Render(strings.Repeat("▀", rfM)))
 				}
 
-				// ── Brick sub-row arch crown (█ body + ▌▐ haunch at intrados edge) ──
+				// ── Brick sub-row (▌▐ haunch at intrados edge) ───────────────────────
 				if lfB > 0 {
 					if lfB > 1 {
-						brickSB.WriteString(aStyle.Render(strings.Repeat("█", lfB-1)))
+						brickSB.WriteString(lStyle.Render(strings.Repeat("█", lfB-1)))
 					}
-					brickSB.WriteString(aStyle.Render("▌"))
+					brickSB.WriteString(lStyle.Render("▌"))
 				}
 				if ogB > 0 {
 					brickSB.WriteString(strings.Repeat(" ", ogB))
 				}
 				if rfB > 0 {
-					brickSB.WriteString(aStyle.Render("▐"))
+					brickSB.WriteString(rStyle.Render("▐"))
 					if rfB > 1 {
-						brickSB.WriteString(aStyle.Render(strings.Repeat("█", rfB-1)))
+						brickSB.WriteString(rStyle.Render(strings.Repeat("█", rfB-1)))
 					}
 				}
 			}
