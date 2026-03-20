@@ -291,7 +291,9 @@ ct droplet deps <id>                                              List dependenc
 ct droplet deps <id> --add <dep-id>                               Add a dependency
 ct droplet deps <id> --remove <dep-id>                            Remove a dependency
 ct droplet close <id>                                             Mark delivered
-ct droplet reopen <id>                                            Return to cistern
+ct droplet reopen <id>                                            Return to cistern (status=open, cataractae unchanged)
+ct droplet restart <id> --cataractae delivery                     Re-enter at a specific cataractae (recovery)
+ct droplet restart <id> --cataractae delivery --notes "..."       Re-enter with a recovery note
 ct droplet purge --older-than 30d                                 Delete old delivered/stagnant droplets
 ct droplet purge --older-than 24h --dry-run                       Preview what would be purged
 ct droplet escalate <id> --reason "..."                           Mark a droplet stagnant
@@ -342,3 +344,30 @@ ct version                     Version info
 ```
 
 ---
+
+## Recovery
+
+When a delivery fails mid-flight (merge conflict, CI failure, permission issue) or a droplet gets
+incorrectly marked delivered before the PR actually merged, use `ct droplet restart` to send it
+back into the pipeline at the exact cataractae it needs:
+
+```bash
+# Re-enter delivery after manually resolving conflicts
+ct droplet restart sc-uvfhw --cataractae delivery
+
+# Re-enter with a note explaining why
+ct droplet restart sc-uvfhw --cataractae delivery \
+  --notes "PR #157 had webhook store signature conflict — resolved manually, re-entering delivery"
+
+# Send back to implement if the feature itself needs rework
+ct droplet restart sc-gh7lg --cataractae implement \
+  --notes "GetMe and UpdateMe handlers collided with main — needs clean rewrite"
+```
+
+`restart` clears the assignee, outcome, and sets status back to `open` at the named cataractae.
+The Castellarius picks it up on the next tick. Works from any terminal state: delivered, blocked,
+stagnant, or open.
+
+This differs from `reopen` (which returns to `open` with the cataractae unchanged) and
+`recirculate` (which is an agent-issued signal during active processing). `restart` is for
+human-initiated recovery after something went wrong.
