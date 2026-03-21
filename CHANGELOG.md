@@ -10,7 +10,17 @@
 - Branch lifecycle is now owned by the Castellarius: feature branches (`feat/<id>`) are created and cleaned up by the scheduler, not the runner. Agents do not manage branches directly.
 - Non-terminal routes (pass to next step, recirculate) preserve the feature branch so the next cycle can resume incrementally. Terminal routes (deliver, block, escalate) clean up the branch.
 
+### Web dashboard: xterm.js TUI terminal (ci-792v7)
+- `/ws/tui` WebSocket endpoint streams the TUI render loop as raw ANSI to the browser — the same output the terminal sees, with no reimplementation drift
+- Replaces the CSS arch section and all JS rendering functions with a single full-viewport xterm.js terminal
+- xterm.js 5.3.0 + FitAddon 0.8.0 loaded from CDN (no build step); handles ANSI codes, Unicode box-drawing chars, and cursor movement natively
+- `lipgloss.SetColorProfile(TrueColor)` set in `RunDashboardWeb` so the server produces ANSI colour output even when stdout is not a terminal
+- FitAddon auto-sizes the terminal to the browser window; window resize reconnects with updated `cols`/`rows` query params
+- Automatic 3 s reconnection on WebSocket close
+- SSE (`/api/dashboard/events`) and peek WebSocket (`/ws/aqueducts/{name}/peek`) endpoints preserved for programmatic consumers
+
 ### Web dashboard: responsive CSS arch diagram (ci-jvgk7)
+*(superseded by ci-792v7 above — xterm.js replaces the CSS arch section entirely)*
 - Arch section replaced block-character rendering with CSS flexbox/grid — readable on mobile (375 px viewport and up)
 - CSS `wave-scroll` animation (linear-gradient) replaces `░▒▓≈` scrolling characters; `wf-fall` animation replaces block-char waterfall shimmer
 - Responsive breakpoint at 480 px: piers wrap to two-column grid on narrow screens, aqueducts stack vertically
