@@ -4,6 +4,7 @@ After=network.target
 
 [Service]
 Type=simple
+User=lobsterdog
 ExecStart=/home/lobsterdog/go/bin/ct dashboard --web --addr :5737
 
 Restart=always
