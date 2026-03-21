@@ -42,19 +42,12 @@ func (s *Session) spawn() error {
 	// Kill any stale session with the same name.
 	s.kill()
 
-	// Build the claude command string. The prompt must be single-quoted so that
-	// tmux/sh doesn't word-split it — unquoted spaces would cause only the first
-	// word to be passed to -p. Single-quote the prompt and escape any literal
-	// single quotes inside it using the 'x'\''y' idiom.
-	prompt := strings.ReplaceAll(s.buildPrompt(), "'", `'\''`)
-
-	var flagsStr string
-	if s.Model != "" {
-		flagsStr = "--model " + s.Model + " "
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return fmt.Errorf("spawn: cannot determine home directory: %w", err)
 	}
-	home, _ := os.UserHomeDir()
 	skillsDir := filepath.Join(home, ".cistern", "skills")
-	claudeCmd := fmt.Sprintf("%s --dangerously-skip-permissions --add-dir %s %s-p '%s'", claudePath(), skillsDir, flagsStr, prompt)
+	claudeCmd := s.buildClaudeCmd(skillsDir)
 
 	args := []string{"new-session", "-d", "-s", s.ID, "-c", s.WorkDir}
 	if key := os.Getenv("ANTHROPIC_API_KEY"); key != "" {
@@ -77,6 +70,28 @@ func (s *Session) spawn() error {
 
 	log.Printf("session %s: spawned in %s", s.ID, s.WorkDir)
 	return nil
+}
+
+// buildClaudeCmd constructs the shell command string passed to tmux new-session.
+// skillsDir is shell-quoted so paths containing spaces are handled correctly.
+func (s *Session) buildClaudeCmd(skillsDir string) string {
+	// The prompt must be single-quoted so that tmux/sh doesn't word-split it —
+	// unquoted spaces would cause only the first word to be passed to -p.
+	// Single-quote the prompt and escape any literal single quotes inside it
+	// using the 'x'\''y' idiom.
+	prompt := strings.ReplaceAll(s.buildPrompt(), "'", `'\''`)
+	var flagsStr string
+	if s.Model != "" {
+		flagsStr = "--model " + s.Model + " "
+	}
+	return fmt.Sprintf("%s --dangerously-skip-permissions --add-dir %s %s-p '%s'",
+		claudePath(), shellQuote(skillsDir), flagsStr, prompt)
+}
+
+// shellQuote wraps s in single quotes, escaping any single quotes within s,
+// so the result is safe to embed in a POSIX shell command string.
+func shellQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
 // baseCataractaePrompt is the constitutional layer — hardcoded in the binary,
