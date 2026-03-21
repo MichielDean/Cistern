@@ -20,6 +20,12 @@ import (
 	"github.com/MichielDean/cistern/internal/cistern"
 )
 
+// wsWriteTimeout is the per-frame write deadline set on the hijacked net.Conn
+// before each wsSendText call. Without this, a client that disappears via a
+// network partition (no TCP FIN) causes the goroutine to block indefinitely
+// inside bufio.Writer.Flush.
+const wsWriteTimeout = 10 * time.Second
+
 // aqueductSessionInfo holds the tmux session name and droplet context for an
 // active aqueduct worker.
 type aqueductSessionInfo struct {
@@ -249,6 +255,7 @@ func newDashboardMux(cfgPath, dbPath string) http.Handler {
 				next = stripANSI(content)
 			}
 			if diff := computeDiff(prev, next); diff != "" {
+				conn.SetWriteDeadline(time.Now().Add(wsWriteTimeout)) //nolint:errcheck
 				if wsSendText(brw.Writer, diff) != nil {
 					return
 				}

@@ -298,6 +298,51 @@ func TestWsSendText_MediumPayload(t *testing.T) {
 	}
 }
 
+// TestWsSendText_LargePayload verifies the 8-byte extended length frame (>= 65536 bytes).
+// This is a regression test for the bug fixed in bdab760 where the high 32 bits
+// of the 8-byte payload length were silently discarded (RFC 6455 §5.2 non-compliance).
+func TestWsSendText_LargePayload(t *testing.T) {
+	payload := strings.Repeat("x", 65536)
+	var buf bytes.Buffer
+	bw := bufio.NewWriter(&buf)
+	if err := wsSendText(bw, payload); err != nil {
+		t.Fatalf("wsSendText: %v", err)
+	}
+	b := buf.Bytes()
+	if b[0] != 0x81 {
+		t.Errorf("byte[0] = 0x%02x, want 0x81 (FIN+text)", b[0])
+	}
+	if b[1] != 0x7F {
+		t.Errorf("byte[1] = 0x%02x, want 0x7F (8-byte extended len)", b[1])
+	}
+	n := int(binary.BigEndian.Uint64(b[2:10]))
+	if n != 65536 {
+		t.Errorf("encoded length = %d, want 65536", n)
+	}
+	if string(b[10:]) != payload {
+		t.Error("payload content mismatch for large frame")
+	}
+}
+
+// TestWsFrameRoundtrip_LargePayload verifies that wsSendText and readWSTextFrame
+// correctly encode and decode payloads >= 65536 bytes (RFC 6455 §5.2 case 127).
+func TestWsFrameRoundtrip_LargePayload(t *testing.T) {
+	payload := strings.Repeat("z", 65536)
+	var buf bytes.Buffer
+	bw := bufio.NewWriter(&buf)
+	if err := wsSendText(bw, payload); err != nil {
+		t.Fatalf("wsSendText: %v", err)
+	}
+	br := bufio.NewReader(&buf)
+	got, err := readWSTextFrame(br)
+	if err != nil {
+		t.Fatalf("readWSTextFrame: %v", err)
+	}
+	if got != payload {
+		t.Errorf("roundtrip length mismatch: got %d bytes, want %d", len(got), len(payload))
+	}
+}
+
 // TestLookupAqueductSession_Empty returns false when the DB has no in_progress items.
 func TestLookupAqueductSession_Empty(t *testing.T) {
 	_, ok := lookupAqueductSession(tempDB(t), "virgo")
