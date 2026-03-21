@@ -255,8 +255,8 @@ ct castellarius status         Show aqueduct flow — which are flowing, which a
 
 # Dashboard
 ct dashboard                   Live TUI aqueduct arch diagram with cistern and recent flow
-ct dashboard --web             HTTP web dashboard — CSS-based responsive arch diagrams with animated waves and waterfall; mobile-friendly (SSE live updates, port 5737)
-                               # Click an active arch to open a read-only live peek panel (WebSocket)
+ct dashboard --web             HTTP web dashboard — xterm.js terminal renders the TUI faithfully in-browser via /ws/tui WebSocket (ANSI, box chars, animations); port 5737
+                               # SSE (/api/dashboard/events) and peek WebSocket (/ws/aqueducts/{name}/peek) preserved for programmatic consumers
 ct dashboard --web --addr :8080  Custom listen address for web dashboard
 ct feed                        Alias for dashboard
 
