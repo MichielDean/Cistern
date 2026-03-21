@@ -239,26 +239,19 @@ func newDashboardMux(cfgPath, dbPath string) http.Handler {
 		defer ticker.Stop()
 
 		for range ticker.C {
-			sess, ok := lookupAqueductSession(dbPath, name)
-			if !ok || !capturer.HasSession(sess.sessionID) {
-				if diff := computeDiff(prev, "session not active"); diff != "" {
-					if wsSendText(brw.Writer, diff) != nil {
-						return
-					}
-					prev = "session not active"
+			next := "session not active"
+			if sess, ok := lookupAqueductSession(dbPath, name); ok && capturer.HasSession(sess.sessionID) {
+				content, err := capturer.Capture(sess.sessionID, lines)
+				if err != nil {
+					continue
 				}
-				continue
+				next = stripANSI(content)
 			}
-			content, err := capturer.Capture(sess.sessionID, lines)
-			if err != nil {
-				continue
-			}
-			clean := stripANSI(content)
-			if diff := computeDiff(prev, clean); diff != "" {
+			if diff := computeDiff(prev, next); diff != "" {
 				if wsSendText(brw.Writer, diff) != nil {
 					return
 				}
-				prev = clean
+				prev = next
 			}
 		}
 	})

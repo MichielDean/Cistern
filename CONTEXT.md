@@ -28,19 +28,19 @@ Add ability to observe any active cataractae session in real-time without intera
 
 ### From: manual
 
-Simplified: removed unused prevContent field from peekModel (dead code), renamed cap->capturer in peek HTTP/WS handlers to avoid shadowing Go builtin, replaced nested bounds checks with max()/min(). Tests: all 9 packages pass.
+Simplified: (1) extracted parsePeekLines() helper to eliminate duplicated ?lines= query parsing in GET and WS peek handlers, (2) consolidated two separate session-not-active guard clauses into one in the GET peek handler. Net -22 lines. Tests: all 9 packages pass.
 
 ### From: manual
 
-Phase 2: (1) cmd/ct/peek_tui.go Init() — double polling logic bug: tea.Batch(m.fetchCmd(), peekTickCmd()) starts two independent 500ms polling loops. fetchCmd() fires immediately, peekContentMsg handler schedules peekTickCmd() (loop A); the initial peekTickCmd() in Init() fires at t=500ms, its peekTickMsg handler calls fetchCmd(), which returns peekContentMsg, which schedules another peekTickCmd() (loop B). Both loops run indefinitely, polling tmux at ~2x the intended rate (~250ms effective interval). Fix: Init() should return only peekTickCmd() or only fetchCmd(), not both. (2) cmd/ct/dashboard_web.go — new HTTP/WS behavior has zero test coverage: lookupAqueductSession, GET /api/aqueducts/{name}/peek handler, WS /ws/aqueducts/{name}/peek handler, wsUpgrade, wsSendText, and wsAcceptKey are all untested. peek_tui_test.go covers only the TUI model.
+Phase 2: (1) dashboard_web.go render template — XSS via esc() in onclick context: esc() converts single-quote to &#39; but the HTML attribute parser decodes &#39; back to ' before the JS engine sees it, so an aqueduct name like a'); alert(1)// produces peekOpen('a'); alert(1)//) — stored XSS exploitable by anyone with pipeline-config write access. Fix: use a data-aqname attribute and addEventListener instead of an inline onclick string. (2) dashboard_web.go WS handler — for-range-ticker.C success path has zero test coverage: TestWsPeek_NonWebSocketRejected and TestWsPeek_MissingKeyRejected only test rejection branches (426/400); the entire streaming loop (lookupAqueductSession → HasSession → Capture → computeDiff → wsSendText) is untested for a connected client.
 
 ### From: manual
 
-Fixed double polling bug in peekModel.Init(): was calling tea.Batch(fetchCmd(), peekTickCmd()) which started two independent 500ms loops; changed to return only peekTickCmd() for a single tick→fetch→tick loop. Added 13 new tests in dashboard_web_test.go covering wsAcceptKey (RFC 6455 test vector), wsSendText small+medium frame encoding, lookupAqueductSession (empty/no-match/found), GET /api/aqueducts/{name}/peek (405, idle, active with mock capturer, session-gone, ?lines= param), and WS endpoint rejection (426 for non-WS, 400 for missing key). All 9 packages pass. Committed 9d4d96f.
+Fixed XSS in dashboard_web.go: replaced inline onclick="peekOpen('...')" with data-aqname attribute + delegated addEventListener on app element. esc() encodes " as &quot; (safe in double-quoted attribute) while browsers decode &#39; back to ' before JS execution, making the old approach exploitable. Added TestWsPeek_SuccessfulStreamIdle and TestWsPeek_SuccessfulStreamActive covering the full WS success loop (wsUpgrade → ticker → lookupAqueductSession → HasSession → Capture → computeDiff → wsSendText) using httptest.NewServer + real net.Dial + manual RFC6455 frame decoding. Added readWSTextFrame helper. All 9 packages pass. Committed fde6069.
 
 ### From: manual
 
-Fixed double polling in Init() (single peekTickCmd() loop). Added 13 tests covering wsAcceptKey, wsSendText (small+medium), lookupAqueductSession, GET peek endpoint (405/idle/active-mock/gone-session/?lines), WS rejection (426/400). All packages pass. Committed 9d4d96f.
+Fixed XSS (onclick→data-aqname+addEventListener) and added TestWsPeek_SuccessfulStreamIdle/Active covering full WS streaming loop. All 9 packages pass.
 
 <available_skills>
   <skill>

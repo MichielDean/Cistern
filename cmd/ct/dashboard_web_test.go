@@ -471,6 +471,31 @@ func TestWsPeek_MissingKeyRejected(t *testing.T) {
 	}
 }
 
+// wsDialPeek performs a WebSocket handshake to /ws/aqueducts/{name}/peek and
+// returns the buffered reader (for reading frames) and the connection (caller
+// must defer conn.Close). A 2s read deadline is set.
+func wsDialPeek(t *testing.T, srv *httptest.Server, aqName string) (*bufio.Reader, net.Conn) {
+	t.Helper()
+	conn, err := net.Dial("tcp", srv.Listener.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	key := "dGhlIHNhbXBsZSBub25jZQ=="
+	fmt.Fprintf(conn, "GET /ws/aqueducts/%s/peek HTTP/1.1\r\nHost: localhost\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: %s\r\nSec-WebSocket-Version: 13\r\n\r\n", aqName, key)
+	br := bufio.NewReader(conn)
+	resp, err := http.ReadResponse(br, nil)
+	if err != nil {
+		conn.Close()
+		t.Fatalf("read handshake response: %v", err)
+	}
+	if resp.StatusCode != http.StatusSwitchingProtocols {
+		conn.Close()
+		t.Fatalf("expected 101, got %d", resp.StatusCode)
+	}
+	conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+	return br, conn
+}
+
 // TestWsPeek_SuccessfulStreamIdle connects a real WebSocket to the WS peek
 // endpoint for an idle aqueduct and verifies "session not active" is streamed.
 func TestWsPeek_SuccessfulStreamIdle(t *testing.T) {
@@ -478,25 +503,9 @@ func TestWsPeek_SuccessfulStreamIdle(t *testing.T) {
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
 
-	conn, err := net.Dial("tcp", srv.Listener.Addr().String())
-	if err != nil {
-		t.Fatal(err)
-	}
+	br, conn := wsDialPeek(t, srv, "virgo")
 	defer conn.Close()
 
-	key := "dGhlIHNhbXBsZSBub25jZQ=="
-	fmt.Fprintf(conn, "GET /ws/aqueducts/virgo/peek HTTP/1.1\r\nHost: localhost\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: %s\r\nSec-WebSocket-Version: 13\r\n\r\n", key)
-
-	br := bufio.NewReader(conn)
-	resp, err := http.ReadResponse(br, nil)
-	if err != nil {
-		t.Fatalf("read handshake response: %v", err)
-	}
-	if resp.StatusCode != http.StatusSwitchingProtocols {
-		t.Fatalf("expected 101, got %d", resp.StatusCode)
-	}
-
-	conn.SetReadDeadline(time.Now().Add(2 * time.Second))
 	payload, err := readWSTextFrame(br)
 	if err != nil {
 		t.Fatalf("read WS frame: %v", err)
@@ -527,25 +536,9 @@ func TestWsPeek_SuccessfulStreamActive(t *testing.T) {
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
 
-	conn, err := net.Dial("tcp", srv.Listener.Addr().String())
-	if err != nil {
-		t.Fatal(err)
-	}
+	br, conn := wsDialPeek(t, srv, "virgo")
 	defer conn.Close()
 
-	key := "dGhlIHNhbXBsZSBub25jZQ=="
-	fmt.Fprintf(conn, "GET /ws/aqueducts/virgo/peek HTTP/1.1\r\nHost: localhost\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: %s\r\nSec-WebSocket-Version: 13\r\n\r\n", key)
-
-	br := bufio.NewReader(conn)
-	resp, err := http.ReadResponse(br, nil)
-	if err != nil {
-		t.Fatalf("read handshake response: %v", err)
-	}
-	if resp.StatusCode != http.StatusSwitchingProtocols {
-		t.Fatalf("expected 101, got %d", resp.StatusCode)
-	}
-
-	conn.SetReadDeadline(time.Now().Add(2 * time.Second))
 	payload, err := readWSTextFrame(br)
 	if err != nil {
 		t.Fatalf("read WS frame: %v", err)
