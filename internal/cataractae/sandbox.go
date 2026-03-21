@@ -14,7 +14,14 @@ import (
 // On first call: clones the repo.
 // On subsequent calls: fetches latest remote refs.
 func EnsurePrimaryClone(primaryDir, repoURL string) error {
-	return ensureClone(primaryDir, repoURL)
+	gitDir := filepath.Join(primaryDir, ".git")
+	if _, err := os.Stat(gitDir); os.IsNotExist(err) {
+		if err := os.RemoveAll(primaryDir); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("remove stale dir %s: %w", primaryDir, err)
+		}
+		return cloneSandbox(primaryDir, repoURL)
+	}
+	return fetchSandbox(primaryDir)
 }
 
 // EnsureWorktree ensures a git worktree exists at worktreeDir backed by primaryDir.
@@ -61,19 +68,6 @@ func EnsureWorktree(primaryDir, worktreeDir string) error {
 		return fmt.Errorf("git worktree add --detach %s: %w: %s", worktreeDir, err, addOut)
 	}
 	return nil
-}
-
-// ensureClone is the shared implementation for EnsurePrimaryClone.
-// Clones the repo if .git doesn't exist; otherwise fetches latest refs.
-func ensureClone(dir, repoURL string) error {
-	gitDir := filepath.Join(dir, ".git")
-	if _, err := os.Stat(gitDir); os.IsNotExist(err) {
-		if err := os.RemoveAll(dir); err != nil && !os.IsNotExist(err) {
-			return fmt.Errorf("remove stale dir %s: %w", dir, err)
-		}
-		return cloneSandbox(dir, repoURL)
-	}
-	return fetchSandbox(dir)
 }
 
 // cloneSandbox performs a fresh git clone into dir.

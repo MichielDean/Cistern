@@ -65,58 +65,27 @@ This is backward compatible — worktree directories have the same paths as curr
 
 ### From: manual
 
-ARCHITECTURAL REVISION: Castellarius owns branch lifecycle, not agents.
+Added tests for the three previously uncovered functions:
 
-The state machine already knows which aqueduct has which droplet. Extend it to own worktree + branch management:
+1. EnsureWorktree (internal/cataractae/sandbox_test.go): 4 tests covering creation, idempotency, legacy clone replacement, and stale-registration pruning. Each test uses a real git repo.
 
-## Castellarius-managed branch lifecycle
+2. prepareBranchInSandbox (internal/castellarius/branch_lifecycle_test.go): 3 tests covering new branch creation from origin/main, git identity configuration, and branch resumption (verifies existing commits are preserved).
 
-On DISPATCH (Castellarius assigns droplet to aqueduct):
-1. Ensure worktree exists for this aqueduct (git worktree add --detach if not present)
-2. git worktree prune --expire=0 on the primary clone first
-3. Create/checkout feat/<droplet-id> branch in that worktree
-4. Record branch assignment in scheduler state
-
-On COMPLETION/RECIRCULATION (Castellarius receives outcome signal):
-1. Push the branch if delivery step (already done by delivery agent)
-2. Delete local branch from worktree (git branch -D feat/<droplet-id>)
-3. Return worktree to detached HEAD state: git checkout --detach HEAD
-4. Mark aqueduct slot as free
-
-On STARTUP:
-1. Prune stale worktree registrations (git worktree prune --expire=0)
-2. Reconcile: for each registered worktree, verify it matches Castellarius DB state
-3. Any worktree with a branch not matching an in_progress droplet → reset to detached HEAD
-
-## What agents no longer need to do
-- Agents never call git checkout -b or manage branches
-- PrepareBranch() moves from sandbox.go to castellarius/scheduler.go
-- Agents just work in their working directory — branch is already set up on spawn
-- On signal (pass/recirculate/block), Castellarius handles cleanup
-
-## Why this eliminates conflicts
-- Castellarius is single-threaded dispatch — it's structurally impossible to assign the same branch to two aqueducts
-- No race condition: branch exists and is checked out BEFORE the agent process starts
-- No stale registration: Castellarius prunes before every worktree operation
-
-This is cleaner than the current model where agents manage their own git state.
-
-### From: manual
-
-Implemented Option A (git worktrees with --detach) with Castellarius-managed branch lifecycle.
-
-Changes:
-- sandbox.go: Added EnsurePrimaryClone (shared object store at _primary/); implemented EnsureWorktree (prunes stale registrations, detects legacy dedicated clones and replaces them, adds worktree --detach); kept EnsureDedicatedClone etc for backward compat
-- runner.go: Replaced per-worker EnsureDedicatedClone with single EnsurePrimaryClone + per-worker EnsureWorktree; removed PrepareBranch call from SpawnStep (Castellarius now owns branch lifecycle)
-- scheduler.go: Added prepareBranchInSandbox (create or resume feat/<id> branch, called before Spawn) and cleanupBranchInSandbox (detach HEAD + delete branch, called after outcome observed); both guarded by s.sandboxRoot != '' to skip in test environments
-
-Disk model: _primary/ = full clone (~16MB); each aqueduct worktree = working tree only (~4.7MB). 100 aqueducts: ~487MB vs ~1.6GB before.
+3. cleanupBranchInSandbox (internal/castellarius/branch_lifecycle_test.go): 2 tests covering branch deletion + HEAD detach, and best-effort no-op when branch is missing.
 
 All 9 test packages pass.
 
 ### From: manual
 
-Implemented git worktree shared object store. EnsurePrimaryClone + EnsureWorktree in sandbox.go, runner.go switched from N full clones to 1 primary + N worktrees, Castellarius now owns branch lifecycle via prepareBranchInSandbox/cleanupBranchInSandbox in scheduler.go. All tests pass.
+Added tests for all three previously uncovered functions. All 9 packages pass.
+
+### From: scheduler
+
+Implement pass rejected: HEAD has not advanced since last review (commit: 6eb2462665f0c1219f6f5948b9575f18dad6d47e). No new commits were found. You must commit your changes before signaling pass.
+
+### From: manual
+
+Committed the 9 test files (sandbox_test.go, branch_lifecycle_test.go) that were written but untracked. All 9 packages pass. HEAD now at 90a5ff8.
 
 <available_skills>
   <skill>
