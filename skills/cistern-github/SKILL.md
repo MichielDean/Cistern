@@ -22,13 +22,13 @@ gh pr create \
 gh pr view $BRANCH --json url --jq '.url'
 
 # Check CI status
-gh pr checks <PR_URL>
+gh pr checks $PR_URL
 
 # Squash-merge when all checks pass
-gh pr merge <PR_URL> --squash --delete-branch
+gh pr merge $PR_URL --squash --delete-branch
 
 # Confirm merge
-gh pr view <PR_URL> --json state --jq '.state'   # must be "MERGED"
+gh pr view $PR_URL --json state --jq '.state'   # must be "MERGED"
 ```
 
 ## Conflict Resolution
