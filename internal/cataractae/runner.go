@@ -182,8 +182,16 @@ func (r *Runner) findWorkerByName(name string) *Worker {
 // session in tmux and returns immediately. The agent signals completion by calling
 // `ct droplet pass/recirculate/block <id>`, which the Castellarius observe loop
 // detects on its next tick.
-func (r *Runner) SpawnStep(w *Worker, item *cistern.Droplet, step *aqueduct.WorkflowCataractae) error {
+//
+// sandboxDirOverride, if non-empty, is used as the sandbox directory instead of
+// w.SandboxDir. The Castellarius sets this to the per-droplet worktree path.
+func (r *Runner) SpawnStep(w *Worker, item *cistern.Droplet, step *aqueduct.WorkflowCataractae, sandboxDirOverride string) error {
 	log.Printf("cataractae: %s/%s: spawning step %q for item %s", r.repo.Name, w.Name, step.Name, item.ID)
+
+	sandboxDir := w.SandboxDir
+	if sandboxDirOverride != "" {
+		sandboxDir = sandboxDirOverride
+	}
 
 	// 1. Prepare context directory and CONTEXT.md.
 	// Branch setup is owned by the Castellarius and happens before this call.
@@ -199,7 +207,7 @@ func (r *Runner) SpawnStep(w *Worker, item *cistern.Droplet, step *aqueduct.Work
 
 	ctxDir, cleanup, err := PrepareContext(ContextParams{
 		Level:       step.Context,
-		SandboxDir:  w.SandboxDir,
+		SandboxDir:  sandboxDir,
 		Item:        item,
 		Step:        step,
 		Notes:       notes,

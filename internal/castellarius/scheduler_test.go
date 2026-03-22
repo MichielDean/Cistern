@@ -1291,7 +1291,8 @@ func TestObserve_HeadNotAdvanced(t *testing.T) {
 	client.items["ph-1"] = item
 
 	// Create a real git sandbox so sandboxHead() works.
-	sandboxDir := filepath.Join(sandboxRoot, "test-repo", "alpha")
+	// Per-droplet worktrees are at sandboxRoot/<repo>/<dropletID>.
+	sandboxDir := filepath.Join(sandboxRoot, "test-repo", "ph-1")
 	if err := os.MkdirAll(sandboxDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -1346,7 +1347,8 @@ func TestObserve_HeadAdvanced(t *testing.T) {
 	client.items["ph-2"] = item
 
 	// Create a real git sandbox and make an additional commit.
-	sandboxDir := filepath.Join(sandboxRoot, "test-repo", "alpha")
+	// Per-droplet worktrees are at sandboxRoot/<repo>/<dropletID>.
+	sandboxDir := filepath.Join(sandboxRoot, "test-repo", "ph-2")
 	if err := os.MkdirAll(sandboxDir, 0o755); err != nil {
 		t.Fatal(err)
 	}

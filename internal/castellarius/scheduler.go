@@ -49,12 +49,15 @@ type CataractaeRunner interface {
 
 // CataractaeRequest contains everything needed to execute a workflow step.
 type CataractaeRequest struct {
-	Item       *cistern.Droplet
-	Step       aqueduct.WorkflowCataractae
-	Workflow   *aqueduct.Workflow
-	RepoConfig aqueduct.RepoConfig
+	Item         *cistern.Droplet
+	Step         aqueduct.WorkflowCataractae
+	Workflow     *aqueduct.Workflow
+	RepoConfig   aqueduct.RepoConfig
 	AqueductName string
-	Notes      []cistern.CataractaeNote // context from previous steps
+	Notes        []cistern.CataractaeNote // context from previous steps
+	// SandboxDir is the per-droplet worktree path created by the Castellarius.
+	// Set for full_codebase agent steps; empty otherwise.
+	SandboxDir string
 }
 
 // Castellarius is the core loop that polls for work, assigns it to operators,
@@ -461,13 +464,13 @@ func (s *Castellarius) observeRepo(_ context.Context, repo aqueduct.RepoConfig) 
 		step := currentCataracta(item, wf)
 		assignee := item.Assignee
 
-		// cleanupBranch detaches HEAD and deletes feat/<id> in the assignee's sandbox.
+		// cleanupBranch removes the per-droplet worktree.
 		// Called at terminal states and no-route escalation — non-terminal routes keep
-		// the branch so the next dispatch cycle can resume incrementally.
+		// the worktree so the next dispatch cycle can resume incrementally.
 		cleanupBranch := func() {
-			if assignee != "" && s.sandboxRoot != "" {
-				sandboxDir := filepath.Join(s.sandboxRoot, repo.Name, assignee)
-				cleanupBranchInSandbox(sandboxDir, "feat/"+item.ID)
+			if s.sandboxRoot != "" {
+				primaryDir := filepath.Join(s.sandboxRoot, repo.Name, "_primary")
+				removeDropletWorktree(primaryDir, s.sandboxRoot, repo.Name, item.ID)
 			}
 		}
 
@@ -508,7 +511,7 @@ func (s *Castellarius) observeRepo(_ context.Context, repo aqueduct.RepoConfig) 
 		// committing — auto-recirculate with a diagnostic message.
 		if result == ResultPass && step.Name == "implement" {
 			if lastCommit, err := client.GetLastReviewedCommit(item.ID); err == nil && lastCommit != "" {
-				sandboxDir := filepath.Join(s.sandboxRoot, repo.Name, assignee)
+				sandboxDir := filepath.Join(s.sandboxRoot, repo.Name, item.ID)
 				if head, err := sandboxHead(sandboxDir); err == nil && head == lastCommit {
 					note := fmt.Sprintf(
 						"Implement pass rejected: HEAD has not advanced since last review (commit: %s). No new commits were found. You must commit your changes before signaling pass.",
@@ -637,25 +640,48 @@ func (s *Castellarius) dispatchRepo(ctx context.Context, repo aqueduct.RepoConfi
 
 		w := worker // capture for goroutine
 		go func() {
-			// Prepare the feature branch before spawning the agent.
-			// Castellarius owns branch lifecycle — agents never call git checkout -b.
+			// Prepare the per-droplet worktree before spawning the agent.
+			// Castellarius owns worktree lifecycle — agents never call git worktree add.
 			// Skipped when sandboxRoot is unset (test environments without real repos).
 			if s.sandboxRoot != "" &&
 				req.Step.Type == aqueduct.CataractaeTypeAgent &&
 				(req.Step.Context == aqueduct.ContextFullCodebase || req.Step.Context == "") {
-				sandboxDir := filepath.Join(s.sandboxRoot, req.RepoConfig.Name, w.Name)
-				if err := prepareBranchInSandbox(sandboxDir, req.Item.ID); err != nil {
-					s.logger.Error("prepare branch failed",
+				primaryDir := filepath.Join(s.sandboxRoot, req.RepoConfig.Name, "_primary")
+				sandboxDir, err := prepareDropletWorktree(primaryDir, s.sandboxRoot, req.RepoConfig.Name, req.Item.ID)
+				if err != nil {
+					s.logger.Error("prepare worktree failed",
 						"repo", req.RepoConfig.Name,
 						"droplet", req.Item.ID,
 						"error", err,
 					)
 					if err2 := client.Assign(req.Item.ID, "", req.Step.Name); err2 != nil {
-						s.logger.Error("reset after branch failure", "droplet", req.Item.ID, "error", err2)
+						s.logger.Error("reset after worktree failure", "droplet", req.Item.ID, "error", err2)
 					}
 					pool.Release(w)
 					return
 				}
+
+				// Dirty state check: if non-CONTEXT.md files are uncommitted,
+				// recirculate with a diagnostic note rather than spawning into dirty state.
+				if dirtyFiles := dirtyNonContextFiles(sandboxDir); len(dirtyFiles) > 0 {
+					note := fmt.Sprintf(
+						"Dispatch blocked: worktree has uncommitted files from a prior session: %s. "+
+							"These must be committed or discarded before proceeding.",
+						strings.Join(dirtyFiles, ", "),
+					)
+					s.logger.Warn("dirty worktree — recirculating",
+						"droplet", req.Item.ID,
+						"files", dirtyFiles,
+					)
+					_ = client.AddNote(req.Item.ID, "scheduler", note)
+					if err2 := client.Assign(req.Item.ID, "", req.Step.Name); err2 != nil {
+						s.logger.Error("reset after dirty check", "droplet", req.Item.ID, "error", err2)
+					}
+					pool.Release(w)
+					return
+				}
+
+				req.SandboxDir = sandboxDir
 			}
 
 			if err := s.runner.Spawn(ctx, req); err != nil {
@@ -978,9 +1004,98 @@ func prepareBranchInSandbox(dir, itemID string) error {
 	return nil
 }
 
+// prepareDropletWorktree creates (or resumes) a per-droplet git worktree at
+// sandboxRoot/<repoName>/<dropletID>/ on branch feat/<dropletID>.
+//
+// If the directory already exists (recirculation), the branch is checked out
+// without resetting — preserving all prior agent commits.
+// If new, it is created via `git worktree add -b feat/<id> <path> origin/main`.
+func prepareDropletWorktree(primaryDir, sandboxRoot, repoName, dropletID string) (string, error) {
+	worktreePath := filepath.Join(sandboxRoot, repoName, dropletID)
+	branch := "feat/" + dropletID
+
+	if _, err := os.Stat(worktreePath); err == nil {
+		// Worktree exists — resume by checking out the branch.
+		checkout := exec.Command("git", "checkout", branch)
+		checkout.Dir = worktreePath
+		if out, err := checkout.CombinedOutput(); err != nil {
+			return "", fmt.Errorf("git checkout %s in %s: %w: %s", branch, worktreePath, err, out)
+		}
+		return worktreePath, nil
+	}
+
+	// Fetch latest before creating.
+	fetch := exec.Command("git", "fetch", "origin")
+	fetch.Dir = primaryDir
+	if out, err := fetch.CombinedOutput(); err != nil {
+		return "", fmt.Errorf("git fetch in %s: %w: %s", primaryDir, err, out)
+	}
+
+	if err := os.MkdirAll(filepath.Dir(worktreePath), 0o755); err != nil {
+		return "", fmt.Errorf("mkdir for worktree %s: %w", worktreePath, err)
+	}
+
+	add := exec.Command("git", "worktree", "add", "-b", branch, worktreePath, "origin/main")
+	add.Dir = primaryDir
+	if out, err := add.CombinedOutput(); err != nil {
+		return "", fmt.Errorf("git worktree add %s in %s: %w: %s", worktreePath, primaryDir, err, out)
+	}
+
+	for _, args := range [][]string{
+		{"git", "config", "user.name", "Cistern Agent"},
+		{"git", "config", "user.email", "agent@cistern.local"},
+	} {
+		c := exec.Command(args[0], args[1:]...)
+		c.Dir = worktreePath
+		if out, err := c.CombinedOutput(); err != nil {
+			return "", fmt.Errorf("%v in %s: %w: %s", args, worktreePath, err, out)
+		}
+	}
+
+	return worktreePath, nil
+}
+
+// removeDropletWorktree removes the per-droplet worktree directory and
+// unregisters it from git. Errors are ignored — best-effort cleanup.
+func removeDropletWorktree(primaryDir, sandboxRoot, repoName, dropletID string) {
+	worktreePath := filepath.Join(sandboxRoot, repoName, dropletID)
+	rm := exec.Command("git", "worktree", "remove", "--force", worktreePath)
+	rm.Dir = primaryDir
+	_ = rm.Run()
+}
+
+// dirtyNonContextFiles returns uncommitted non-CONTEXT.md files in dir.
+// An empty slice means the worktree is clean for dispatch.
+func dirtyNonContextFiles(dir string) []string {
+	cmd := exec.Command("git", "status", "--porcelain")
+	cmd.Dir = dir
+	out, err := cmd.Output()
+	if err != nil {
+		return nil
+	}
+	var dirty []string
+	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		if line == "" {
+			continue
+		}
+		// Format: "XY filename" — extract filename (col 3+)
+		if len(line) < 4 {
+			continue
+		}
+		name := strings.TrimSpace(line[3:])
+		if name != "CONTEXT.md" {
+			dirty = append(dirty, name)
+		}
+	}
+	return dirty
+}
+
 // cleanupBranchInSandbox detaches HEAD in the worktree and deletes the feature
 // branch. Called by the Castellarius after a droplet completes or recirculates.
 // Errors are ignored — this is best-effort cleanup.
+//
+// Deprecated: use removeDropletWorktree for per-droplet worktrees.
+// Kept for backwards compatibility with existing tests.
 func cleanupBranchInSandbox(dir, branch string) {
 	// Detach HEAD so we can delete the branch.
 	detach := exec.Command("git", "checkout", "--detach", "HEAD")

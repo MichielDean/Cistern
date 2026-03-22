@@ -68,7 +68,7 @@ func (a *Adapter) Spawn(ctx context.Context, req castellarius.CataractaeRequest)
 	}
 
 	step := req.Step
-	return r.SpawnStep(worker, req.Item, &step)
+	return r.SpawnStep(worker, req.Item, &step, req.SandboxDir)
 }
 
 // spawnAutomated runs an automated (gate) step synchronously, then writes the
@@ -80,8 +80,13 @@ func (a *Adapter) spawnAutomated(ctx context.Context, req castellarius.Cataracta
 		return fmt.Errorf("adapter: no queue client for repo %q", req.RepoConfig.Name)
 	}
 
-	home, _ := os.UserHomeDir()
-	sandboxDir := filepath.Join(home, ".cistern", "sandboxes", req.RepoConfig.Name, req.AqueductName)
+	// Use per-droplet sandbox if set by Castellarius, otherwise fall back to
+	// aqueduct-named sandbox for automated steps (they don't use the worktree directly).
+	sandboxDir := req.SandboxDir
+	if sandboxDir == "" {
+		home, _ := os.UserHomeDir()
+		sandboxDir = filepath.Join(home, ".cistern", "sandboxes", req.RepoConfig.Name, req.AqueductName)
+	}
 	branch := "feat/" + req.Item.ID
 
 	// Build metadata from prior annotations stored as step notes with "meta:" prefix.
