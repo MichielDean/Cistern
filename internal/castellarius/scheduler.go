@@ -1088,10 +1088,17 @@ func prepareDropletWorktree(primaryDir, sandboxRoot, repoName, dropletID string)
 		return "", fmt.Errorf("mkdir for worktree %s: %w", worktreePath, err)
 	}
 
-	add := exec.Command("git", "worktree", "add", "-b", branch, worktreePath, "origin/main")
-	add.Dir = primaryDir
-	if out, err := add.CombinedOutput(); err != nil {
-		return "", fmt.Errorf("git worktree add %s in %s: %w: %s", worktreePath, primaryDir, err, out)
+	// First try attaching to an existing branch (handles crash-between-branch-create-and-worktree-add).
+	addExisting := exec.Command("git", "worktree", "add", worktreePath, branch)
+	addExisting.Dir = primaryDir
+	if out, err := addExisting.CombinedOutput(); err != nil {
+		// Branch doesn't exist yet — create it fresh from origin/main.
+		addNew := exec.Command("git", "worktree", "add", "-b", branch, worktreePath, "origin/main")
+		addNew.Dir = primaryDir
+		if out2, err2 := addNew.CombinedOutput(); err2 != nil {
+			return "", fmt.Errorf("git worktree add %s in %s: %w: %s", worktreePath, primaryDir, err2, out2)
+		}
+		_ = out // first attempt output discarded; only the second failure matters
 	}
 
 	for _, args := range [][]string{
