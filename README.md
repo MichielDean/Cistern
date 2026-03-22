@@ -77,7 +77,7 @@ Filtration is an optional pre-intake step (`--filter`) that refines vague ideas 
 
 5. **Human Gate** — Critical droplets pause before delivery and require explicit human approval: `ct droplet approve <id>`. This ensures a human signs off before any critical change ships.
 
-6. **Delivery** (`delivery`) — The Delivery cataractae owns all git operations: stash, rebase, PR creation, CI monitoring, PR review response, and merge. One agent cataractae handles the full branch-to-merged lifecycle.
+6. **Delivery** (`delivery`) — The Delivery cataractae owns all git operations: stash, rebase, PR creation, CI monitoring, PR review response, and merge. One agent cataractae handles the full branch-to-merged lifecycle. If a delivery agent stalls (e.g. misses a branch-behind condition), the Castellarius detects it and recovers automatically — see [Automatic Stuck Delivery Recovery](#automatic-stuck-delivery-recovery).
 
 7. **Recirculation** — Revision sends the droplet back upstream to a prior cataractae for another pass. No retry limits. The water flows until it's pure.
 
@@ -345,6 +345,32 @@ ct doctor                      Full health check (prerequisites, config, CLAUDE.
 ct doctor --fix                Auto-repair common issues
 ct version                     Version info
 ```
+
+---
+
+## Automatic Stuck Delivery Recovery
+
+The Castellarius detects and recovers stuck delivery agents automatically — no human intervention required for the common failure modes.
+
+A delivery agent is considered **stuck** when all of the following are true:
+- The droplet has been in the `delivery` step for longer than 1.5× the delivery `timeout_minutes` (default: 45 m → 67.5 m)
+- The agent's tmux session is still alive
+- No outcome has been written yet
+
+Every 5 minutes, the Castellarius scans all active delivery droplets and recovers any that qualify:
+
+| PR State | Recovery Action |
+|---|---|
+| **MERGED** | Signals pass — agent just didn't notice |
+| **OPEN**, branch behind main | Rebase onto `origin/main`, push, enable auto-merge, signal pass |
+| **OPEN**, CI failing | Recirculate for another pipeline pass |
+| **OPEN**, all checks green | Attempt direct merge → auto-merge, signal pass |
+| **CLOSED** (not merged) | Recirculate with notes |
+| No PR found | Recirculate with notes |
+
+Recovery actions are noted on the droplet (`ct droplet show <id>`) and logged by the Castellarius. Recovery is idempotent — safe to trigger multiple times.
+
+The stuck threshold is configurable via `timeout_minutes` on the `delivery` step in your aqueduct YAML. The check fires at 1.5× that value.
 
 ---
 

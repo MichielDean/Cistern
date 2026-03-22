@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+### Castellarius: stuck delivery detection and recovery (ci-8hhrs)
+- The Castellarius now detects delivery agents that have been running past 1.5× the delivery `timeout_minutes` (default 45 m → 67.5 m threshold) and recovers them automatically — no human intervention required
+- A background goroutine checks every 5 minutes; a stuck agent is one whose tmux session is still alive past the threshold with no outcome written
+- Recovery protocol per PR state:
+  - **MERGED**: signals pass — the work is done, the agent just didn't notice
+  - **OPEN + branch behind main** (`BEHIND`): rebases onto `origin/main`, force-pushes with lease, enables `--auto` merge, signals pass
+  - **OPEN + CI failing** (`BLOCKED`/`UNSTABLE`): recirculates so the pipeline can attempt a fix
+  - **OPEN + all checks green** (`CLEAN`): attempts direct merge, falls back to `--auto` merge, signals pass
+  - **CLOSED (not merged)** or no PR found: recirculates with notes
+- Stuck threshold is configurable: set `timeout_minutes` on the `delivery` step in your aqueduct YAML; the check triggers at 1.5× that value
+- Recovery is idempotent — safe to trigger multiple times on the same droplet
+- All recovery actions are noted on the droplet (`ct droplet show <id>`) and logged by the Castellarius
+- Fixed: `gh pr list` now passes `--state all` so MERGED and CLOSED PRs are visible to the recovery logic (not just OPEN)
+
 ### Sandbox worktree optimization (ci-6al33)
 - **Reduced disk cost**: N aqueducts per repo now share a single primary clone object store. Each aqueduct gets a lightweight git worktree (~4.7 MB working tree) instead of a full independent clone (~16 MB). At 100 aqueducts this drops sandbox disk cost from ~1.6 GB to ~490 MB.
 - Primary clone lives at `~/.cistern/sandboxes/<repo>/_primary/`. Aqueduct worktrees remain at `~/.cistern/sandboxes/<repo>/<aqueduct>/` — same paths as before, no migration required.
