@@ -1,11 +1,15 @@
 package cataractae
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/MichielDean/cistern/internal/cistern"
@@ -797,4 +801,87 @@ func containsSubstring(s, substr string) bool {
 		}
 	}
 	return false
+}
+
+// --- captureHandler for slog output capture ---
+
+type contextCaptureHandler struct {
+	mu      sync.Mutex
+	records []slog.Record
+}
+
+func (h *contextCaptureHandler) Enabled(_ context.Context, _ slog.Level) bool { return true }
+func (h *contextCaptureHandler) Handle(_ context.Context, r slog.Record) error {
+	h.mu.Lock()
+	h.records = append(h.records, r.Clone())
+	h.mu.Unlock()
+	return nil
+}
+func (h *contextCaptureHandler) WithAttrs(_ []slog.Attr) slog.Handler { return h }
+func (h *contextCaptureHandler) WithGroup(_ string) slog.Handler      { return h }
+
+func (h *contextCaptureHandler) hasWarn() bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for _, r := range h.records {
+		if r.Level == slog.LevelWarn {
+			return true
+		}
+	}
+	return false
+}
+
+// errRecorder is a reviewedCommitRecorder that always returns an error.
+type errRecorder struct{}
+
+func (e *errRecorder) SetLastReviewedCommit(_, _ string) error {
+	return errors.New("db write failed")
+}
+
+// TestPrepareDiffOnly_SetLastReviewedCommitError_LogsWarn verifies that when
+// SetLastReviewedCommit returns an error, a WARN-level log is emitted and
+// PrepareContext still succeeds (non-blocking).
+func TestPrepareDiffOnly_SetLastReviewedCommitError_LogsWarn(t *testing.T) {
+	sandbox := t.TempDir()
+
+	// Set up a minimal git repo so currentHead succeeds.
+	mustRun(t, gitCmd(sandbox, "init"))
+	mustRun(t, gitCmd(sandbox, "config", "user.email", "test@test.com"))
+	mustRun(t, gitCmd(sandbox, "config", "user.name", "Test"))
+	if err := os.WriteFile(filepath.Join(sandbox, "main.go"), []byte("package main\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	mustRun(t, gitCmd(sandbox, "add", "."))
+	mustRun(t, gitCmd(sandbox, "commit", "-m", "initial"))
+	mustRun(t, gitCmd(sandbox, "branch", "-M", "main"))
+	mustRun(t, gitCmd(sandbox, "update-ref", "refs/remotes/origin/main", "HEAD"))
+
+	h := &contextCaptureHandler{}
+	logger := slog.New(h)
+
+	item := &cistern.Droplet{ID: "bf-warn-1", Title: "Test", Status: "open", Priority: 1}
+	step := &aqueduct.WorkflowCataractae{Name: "review", Type: "agent", Context: "diff_only"}
+
+	ctxDir, cleanup, err := PrepareContext(ContextParams{
+		Level:       aqueduct.ContextDiffOnly,
+		SandboxDir:  sandbox,
+		Item:        item,
+		Step:        step,
+		QueueClient: &errRecorder{},
+		Logger:      logger,
+	})
+	if err != nil {
+		t.Fatalf("PrepareContext: %v", err)
+	}
+	defer cleanup()
+
+	// PrepareContext must succeed — SetLastReviewedCommit failure is non-blocking.
+	if ctxDir == "" {
+		t.Error("expected non-empty ctxDir")
+	}
+
+	// A WARN must have been logged for the SetLastReviewedCommit failure.
+	if !h.hasWarn() {
+		t.Error("expected WARN log for SetLastReviewedCommit failure, got none")
+	}
 }

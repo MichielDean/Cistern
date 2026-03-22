@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/xml"
 	"fmt"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -46,6 +47,16 @@ type ContextParams struct {
 	// QueueClient is used to record the HEAD commit hash after generating a
 	// diff_only context. Optional — if nil, no recording is performed.
 	QueueClient reviewedCommitRecorder
+	// Logger is used to log non-fatal errors (e.g. SetLastReviewedCommit failures).
+	// If nil, slog.Default() is used.
+	Logger *slog.Logger
+}
+
+func (p ContextParams) logger() *slog.Logger {
+	if p.Logger != nil {
+		return p.Logger
+	}
+	return slog.Default()
 }
 
 // PrepareContext sets up the working directory for a step based on its context level.
@@ -98,7 +109,9 @@ func prepareDiffOnly(p ContextParams) (string, func(), error) {
 	// (implement pass without any new commits since the last review).
 	if p.QueueClient != nil {
 		if head, err := currentHead(p.SandboxDir); err == nil {
-			_ = p.QueueClient.SetLastReviewedCommit(p.Item.ID, head)
+			if err := p.QueueClient.SetLastReviewedCommit(p.Item.ID, head); err != nil {
+				p.logger().Warn("context: SetLastReviewedCommit failed", "droplet", p.Item.ID, "error", err)
+			}
 		}
 	}
 

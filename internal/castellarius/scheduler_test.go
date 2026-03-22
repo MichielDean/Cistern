@@ -29,6 +29,7 @@ type mockClient struct {
 	attached            []attachedNote
 	closed              map[string]bool
 	lastReviewedCommits map[string]string
+	addNoteErr          error // if set, AddNote returns this error
 }
 
 type attachedNote struct {
@@ -107,7 +108,7 @@ func (m *mockClient) AddNote(id, fromStep, notes string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.attached = append(m.attached, attachedNote{id, fromStep, notes})
-	return nil
+	return m.addNoteErr
 }
 
 func (m *mockClient) GetNotes(id string) ([]cistern.CataractaeNote, error) {
