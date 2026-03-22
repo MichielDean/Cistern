@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### cistern-reviewer skill: unified multi-language reviewer (ci-1xcm6)
+- New bundled skill `cistern-reviewer` merges `adversarial-reviewer` and `critical-code-reviewer` into a single authoritative review skill covering Go, TypeScript/Next.js, and TypeScript/React
+- Retains the full adversarial mindset (Guilty Until Proven Exceptional, Evaluate the Artifact), Go-specific red flags (goroutine leaks, bare recover, unguarded map writes, defer in loops), TypeScript red flags (any abuse, missing null checks, unhandled promises, useEffect lies), front-end patterns, SQL/ORM patterns, structured severity tiers (Blocking / Required / Suggestions), the Slop Detector, Structural Contempt, When Uncertain section, and the two-phase pre-finalization checklist
+- `adversarial-review` cataractae in `aqueduct.yaml` now references `cistern-reviewer` instead of `adversarial-reviewer`
+- `skills/adversarial-reviewer/` and `skills/critical-code-reviewer/` removed from the repo — both are superseded by `cistern-reviewer`
+
 ### Castellarius: hot-reload cistern.yaml on change (ci-o3790)
 - `cistern.yaml` changes are now detected on each heartbeat and trigger a clean restart — no more `systemctl --user restart cistern-castellarius` required after editing the config.
 - Detection uses mtime comparison: the file's modification time at startup is compared to the current mtime on each drought. If newer, a restart is signaled.
