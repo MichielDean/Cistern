@@ -661,6 +661,54 @@ func TestWsTui_WSReaderExitsOnConnClose(t *testing.T) {
 	}
 }
 
+// TestWsTui_WSReaderReadDeadlineExitsOnPartition verifies goroutine B (WS frame
+// reader) exits and calls cancel() when the read deadline fires with no client
+// frames — simulating the network-partition + idle-PTY scenario. In that case
+// goroutine A is blocked in ptmx.Read (no PTY output → wsWriteTimeout never
+// fires) and goroutine B would block forever in io.ReadFull without a read
+// deadline. The fix: conn.SetReadDeadline(wsWriteTimeout) before each frame
+// read makes goroutine B exit and call cancel(), triggering watchdog C to close
+// ptmx and unblock goroutine A.
+func TestWsTui_WSReaderReadDeadlineExitsOnPartition(t *testing.T) {
+	server, _ := net.Pipe()
+	defer server.Close()
+	// client is intentionally not closed — simulates a network partition
+	// where no TCP FIN arrives, so server cannot distinguish idle from dead.
+
+	br := bufio.NewReader(server)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		defer cancel()
+		buf := make([]byte, wsMaxClientPayload)
+		for {
+			// Mirror of the production fix: read deadline makes this goroutine
+			// exit within the timeout instead of blocking forever.
+			server.SetReadDeadline(time.Now().Add(50 * time.Millisecond)) //nolint:errcheck
+			_, _, nb, err := wsReadClientFrame(br, buf)
+			buf = nb
+			if err != nil {
+				return
+			}
+		}
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("WS reader goroutine did not exit after read deadline (network partition case)")
+	}
+	select {
+	case <-ctx.Done():
+	default:
+		t.Error("cancel() was not called by WS reader goroutine on read deadline")
+	}
+}
+
 // TestWsReadClientFrame_PayloadSizeLimit verifies wsMaxClientPayload enforcement:
 // frames with payload > 4096 must be rejected, payload == 4096 must be accepted.
 func TestWsReadClientFrame_PayloadSizeLimit(t *testing.T) {
