@@ -425,7 +425,7 @@ func TestWorktreeRegistered_NonGitDir_ReturnsFalse(t *testing.T) {
 	}
 }
 
-// --- removeDropletWorktree test ---
+// --- removeDropletWorktree tests ---
 
 func TestRemoveDropletWorktree_NonGitDir_NoOp(t *testing.T) {
 	// Calling removeDropletWorktree on a non-git directory ignores the error.
@@ -433,6 +433,32 @@ func TestRemoveDropletWorktree_NonGitDir_NoOp(t *testing.T) {
 	primaryDir := t.TempDir()
 	sandboxRoot := t.TempDir()
 	removeDropletWorktree(primaryDir, sandboxRoot, "myrepo", "drop-noop")
+}
+
+// TestRemoveDropletWorktree_DeletesBranchFromPrimary verifies that removing a
+// worktree also deletes the feat/<id> branch from the primary clone so branches
+// do not accumulate permanently.
+func TestRemoveDropletWorktree_DeletesBranchFromPrimary(t *testing.T) {
+	primaryDir := makeBareAndClone(t)
+	sandboxRoot := t.TempDir()
+
+	// Create a worktree on feat/drop-rm.
+	worktreePath, err := prepareDropletWorktree(primaryDir, sandboxRoot, "myrepo", "drop-rm")
+	if err != nil {
+		t.Fatalf("prepareDropletWorktree: %v", err)
+	}
+	if !branchExists(t, primaryDir, "feat/drop-rm") {
+		t.Fatal("feat/drop-rm should exist in primary after prepareDropletWorktree")
+	}
+	if _, statErr := os.Stat(worktreePath); statErr != nil {
+		t.Fatalf("worktree path should exist: %v", statErr)
+	}
+
+	removeDropletWorktree(primaryDir, sandboxRoot, "myrepo", "drop-rm")
+
+	if branchExists(t, primaryDir, "feat/drop-rm") {
+		t.Error("feat/drop-rm should have been deleted from primary by removeDropletWorktree")
+	}
 }
 
 // --- hookTmpCleanup test ---
