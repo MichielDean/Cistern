@@ -269,8 +269,13 @@ func hookWorktreePrune(cfg *aqueduct.AqueductConfig, sandboxRoot string, logger 
 			continue
 		}
 
+		// git worktree prune must run in the _primary clone, not the repo sandbox root.
+		primaryDir := filepath.Join(dir, "_primary")
+		if _, err := os.Stat(primaryDir); os.IsNotExist(err) {
+			continue // _primary not yet cloned — skip silently
+		}
 		cmd := exec.Command("git", "worktree", "prune")
-		cmd.Dir = dir
+		cmd.Dir = primaryDir
 		out, err := cmd.CombinedOutput()
 		if err != nil {
 			logger.Warn("worktree_prune: error", "repo", repo.Name, "error", err, "output", string(out))
