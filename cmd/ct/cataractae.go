@@ -62,15 +62,31 @@ func runCataractaeAdd(cmd *cobra.Command, args []string) error {
 
 	// Add the new entry to aqueduct.yaml.
 	displayName := aqueduct.TitleCaseName(name)
-	description := displayName + " identity."
-	if err := aqueduct.AddCataractaeToWorkflow(wfPath, name, displayName, description); err != nil {
+	if err := aqueduct.AddCataractaeToWorkflow(wfPath, name, displayName, "TODO: describe this cataractae"); err != nil {
 		return fmt.Errorf("update workflow: %w", err)
 	}
 
-	fmt.Printf("created %s\n", personaPath)
-	fmt.Printf("created %s\n", instrPath)
-	fmt.Printf("updated %s — added cataractae_definitions entry %q\n", wfPath, name)
-	fmt.Printf("\nEdit the template files, then run: ct cataractae generate\n")
+	fmt.Printf("Created: %s\n", personaPath)
+	fmt.Printf("Created: %s\n", instrPath)
+	fmt.Printf("Updated: %s\n", wfPath)
+
+	// Auto-generate CLAUDE.md so it is immediately available.
+	w, err := aqueduct.ParseWorkflow(wfPath)
+	if err != nil {
+		return fmt.Errorf("parse workflow: %w", err)
+	}
+	cisternDir := cisternCataractaeDir()
+	written, err := aqueduct.GenerateCataractaeFiles(w, cisternDir)
+	if err != nil {
+		return fmt.Errorf("generate: %w", err)
+	}
+	for _, p := range written {
+		if strings.HasSuffix(filepath.Dir(p), name) {
+			fmt.Printf("Generated: %s\n", p)
+		}
+	}
+
+	fmt.Printf("\nEdit PERSONA.md and INSTRUCTIONS.md, then wire the cataractae into your pipeline.\n")
 	return nil
 }
 
