@@ -661,6 +661,48 @@ func TestWsTui_WSReaderExitsOnConnClose(t *testing.T) {
 	}
 }
 
+// TestWsReadClientFrame_PayloadSizeLimit verifies wsMaxClientPayload enforcement:
+// frames with payload > 4096 must be rejected, payload == 4096 must be accepted.
+func TestWsReadClientFrame_PayloadSizeLimit(t *testing.T) {
+	// buildFrame constructs a masked client text frame with rawLen=126 and
+	// the given extended payload length. The payload itself is zero-filled.
+	buildFrame := func(extLen uint16) []byte {
+		var frame []byte
+		frame = append(frame, 0x81)       // FIN + text opcode
+		frame = append(frame, 0x80|0x7E)  // masked + rawLen=126
+		var ext [2]byte
+		binary.BigEndian.PutUint16(ext[:], extLen)
+		frame = append(frame, ext[:]...)
+		frame = append(frame, 0, 0, 0, 0) // mask key (all zeros — no-op XOR)
+		frame = append(frame, make([]byte, extLen)...)
+		return frame
+	}
+
+	t.Run("rejects_payload_exceeding_max", func(t *testing.T) {
+		frame := buildFrame(5000) // > wsMaxClientPayload (4096)
+		br := bufio.NewReader(bytes.NewReader(frame))
+		_, _, _, err := wsReadClientFrame(br, make([]byte, 128))
+		if err == nil {
+			t.Fatal("expected error for payload > wsMaxClientPayload, got nil")
+		}
+		if !strings.Contains(err.Error(), "exceeds max") {
+			t.Errorf("error = %q, want it to mention 'exceeds max'", err)
+		}
+	})
+
+	t.Run("accepts_payload_at_max", func(t *testing.T) {
+		frame := buildFrame(4096) // == wsMaxClientPayload
+		br := bufio.NewReader(bytes.NewReader(frame))
+		_, payload, _, err := wsReadClientFrame(br, make([]byte, 128))
+		if err != nil {
+			t.Fatalf("unexpected error for payload == wsMaxClientPayload: %v", err)
+		}
+		if len(payload) != 4096 {
+			t.Errorf("payload length = %d, want 4096", len(payload))
+		}
+	})
+}
+
 // readWSTextFrame reads one unmasked WebSocket text frame from br and returns the payload.
 func readWSTextFrame(br *bufio.Reader) (string, error) {
 	header := make([]byte, 2)
