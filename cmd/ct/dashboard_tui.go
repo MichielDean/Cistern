@@ -347,13 +347,15 @@ func (m dashboardTUIModel) viewIdleAqueductRow(ch CataractaeInfo) string {
 //	           implement        adv-review              qa              delivery
 func (m dashboardTUIModel) tuiAqueductRow(ch CataractaeInfo, frame int) []string {
 	const (
-		colW      = 14  // narrower columns → smaller footprint, higher density
-		archTopW  = 9   // narrower pier top → span = colW-archTopW = 5 chars at keystone
-		taperRows = 4   // pier narrows by 2 per row — more curve steps = higher resolution
+		colW      = 16  // 20% narrower than original colW=20; span=colW-archTopW=8 (visible curve)
+		archTopW  = 8   // pierW = archTopW - taperRows*2 = 8-6 = 2 (solid visible pier)
+		taperRows = 3   // sub-rows: (3+1)*2 = 8; span widens 0→12 chars at spring line
 		pierRows  = 1   // constant-width pier body rows
 		brickW    = 4   // brick face width before ▌ joint
 		nameW     = 10
 	)
+	// Formula check: pierW = archTopW - taperRows*2 must be >= 2.
+	// pierW = 8 - 6 = 2 ✓
 	pierW := archTopW - taperRows*2
 
 	g   := tuiStyleGreen
@@ -389,19 +391,21 @@ func (m dashboardTUIModel) tuiAqueductRow(ch CataractaeInfo, frame int) []string
 	// t=0: keystone (fully closed). t=1: impost (fully open).
 	// Evaluating mortar and brick sub-rows at different t gives 2× curve resolution
 	// without adding logical rows.
-	archCrownAtT := func(t float64, gapWidth int) (lf, og, rf int) {
+	// softEdge is true when frac > 0.5: the intrados edge character should be rendered
+	// as ▄ (mortar sub-row) or ░ (brick sub-row) rather than solid ▀/█.
+	archCrownAtT := func(t float64, gapWidth int) (lf, og, rf int, softEdge bool) {
 		if gapWidth <= 0 {
-			return 0, 0, 0
+			return 0, 0, 0, false
 		}
 		r  := float64(gapWidth) / 2.0
 		oh := r * math.Sin(math.Pi / 2.0 * t)
 		fe := r - oh
 		full := int(fe)
 		frac := fe - float64(full)
-		haunch := frac > 0.25 && gapWidth > 2
+		softEdge = frac > 0.5 && gapWidth > 2
 		lf = full
-		if haunch {
-			lf++
+		if softEdge {
+			lf++ // include the soft-edge character in lf; render innermost char as ▄/░
 		}
 		rf = lf
 		og = gapWidth - lf - rf
@@ -409,8 +413,9 @@ func (m dashboardTUIModel) tuiAqueductRow(ch CataractaeInfo, frame int) []string
 			og = 0
 			lf = gapWidth / 2
 			rf = gapWidth - lf
+			softEdge = false
 		}
-		return lf, og, rf
+		return lf, og, rf, softEdge
 	}
 
 	// Channel rows — brick masonry style.
@@ -506,10 +511,6 @@ func (m dashboardTUIModel) tuiAqueductRow(ch CataractaeInfo, frame int) []string
 		sp(2) + wfDim.Render("░") + wfMid.Render("▒") + wfA(0).Render("▓") + wfMid.Render("▒") + wfDim.Render("░"),
 		// sub 7: wide pool — spray at edges, bright core, spreads both ways
 		sp(0) + wfDim.Render("░≈") + wfMid.Render("▒▒") + wfA(1).Render("▓▓") + wfMid.Render("▒▒") + wfDim.Render("≈░"),
-		// sub 8: pool continues spreading (extra row from taperRows=4)
-		sp(0) + wfDim.Render("≈░") + wfMid.Render("▒▒") + wfA(2).Render("▓▓") + wfMid.Render("▒▒") + wfDim.Render("░≈"),
-		// sub 9: settling pool — narrowing core, turbulence subsiding
-		sp(1) + wfDim.Render("░") + wfMid.Render("▒") + wfA(0).Render("▓▓") + wfMid.Render("▒") + wfDim.Render("░"),
 	}
 
 	// Channel exit: compact spill — trim trailing two blocks (▒░) off the top row.
@@ -532,16 +533,16 @@ func (m dashboardTUIModel) tuiAqueductRow(ch CataractaeInfo, frame int) []string
 
 		// Mortar sub-row arch crown: t at start of this logical row.
 		tMort  := math.Min(float64(lr)/float64(taperRows), 1.0)
-		lfM, ogM, rfM := 0, gapW, 0
+		lfM, ogM, rfM, seM := 0, gapW, 0, false
 		if lr < taperRows {
-			lfM, ogM, rfM = archCrownAtT(tMort, gapW)
+			lfM, ogM, rfM, seM = archCrownAtT(tMort, gapW)
 		}
 
 		// Brick sub-row arch crown: t at midpoint — gives extra curve resolution.
 		tBrick := math.Min(float64(lr)+0.5, float64(taperRows)) / float64(taperRows)
-		lfB, ogB, rfB := 0, gapW, 0
+		lfB, ogB, rfB, seB := 0, gapW, 0, false
 		if lr < taperRows {
-			lfB, ogB, rfB = archCrownAtT(tBrick, gapW)
+			lfB, ogB, rfB, seB = archCrownAtT(tBrick, gapW)
 		}
 
 		var mortSB, brickSB strings.Builder
@@ -599,28 +600,48 @@ func (m dashboardTUIModel) tuiAqueductRow(ch CataractaeInfo, frame int) []string
 				}
 
 				// ── Mortar sub-row ────────────────────────────────────────────────────
+				// When seM: innermost arch-fill char is ▄ (lower half-block) to
+				// approximate the circular intrados at sub-pixel resolution.
 				if lfM > 0 {
-					mortSB.WriteString(lStyle.Render(strings.Repeat("▀", lfM)))
+					if seM {
+						mortSB.WriteString(lStyle.Render(strings.Repeat("▀", lfM-1) + "▄"))
+					} else {
+						mortSB.WriteString(lStyle.Render(strings.Repeat("▀", lfM)))
+					}
 				}
 				if ogM > 0 {
 					mortSB.WriteString(strings.Repeat(" ", ogM))
 				}
 				if rfM > 0 {
-					mortSB.WriteString(rStyle.Render(strings.Repeat("▀", rfM)))
+					if seM {
+						mortSB.WriteString(rStyle.Render("▄" + strings.Repeat("▀", rfM-1)))
+					} else {
+						mortSB.WriteString(rStyle.Render(strings.Repeat("▀", rfM)))
+					}
 				}
 
-				// ── Brick sub-row (▌▐ haunch at intrados edge) ───────────────────────
+				// ── Brick sub-row ─────────────────────────────────────────────────────
+				// When seB: ░ at the intrados edge visually softens the hard boundary.
+				// Otherwise: ▌▐ vertical joint for masonry appearance.
 				if lfB > 0 {
 					if lfB > 1 {
 						brickSB.WriteString(lStyle.Render(strings.Repeat("█", lfB-1)))
 					}
-					brickSB.WriteString(lStyle.Render("▌"))
+					if seB {
+						brickSB.WriteString(lStyle.Render("░"))
+					} else {
+						brickSB.WriteString(lStyle.Render("▌"))
+					}
 				}
 				if ogB > 0 {
 					brickSB.WriteString(strings.Repeat(" ", ogB))
 				}
 				if rfB > 0 {
-					brickSB.WriteString(rStyle.Render("▐"))
+					if seB {
+						brickSB.WriteString(rStyle.Render("░"))
+					} else {
+						brickSB.WriteString(rStyle.Render("▐"))
+					}
 					if rfB > 1 {
 						brickSB.WriteString(rStyle.Render(strings.Repeat("█", rfB-1)))
 					}
