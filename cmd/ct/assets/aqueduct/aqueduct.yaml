@@ -26,8 +26,8 @@ cataractae:
         path: skills/cistern-droplet-state/SKILL.md
       - name: cistern-git
         path: skills/cistern-git/SKILL.md
-      - name: github-workflow
-        path: skills/github-workflow/SKILL.md
+      - name: cistern-github
+        path: skills/cistern-github/SKILL.md
     timeout_minutes: 30
     on_pass: simplify
     on_fail: blocked
@@ -64,8 +64,8 @@ cataractae:
         path: skills/critical-code-reviewer/SKILL.md
       - name: cistern-git
         path: skills/cistern-git/SKILL.md
-      - name: github-workflow
-        path: skills/github-workflow/SKILL.md
+      - name: cistern-github
+        path: skills/cistern-github/SKILL.md
       - name: adversarial-reviewer
         path: skills/adversarial-reviewer/SKILL.md
     timeout_minutes: 15
@@ -128,8 +128,8 @@ cataractae:
     type: agent
     identity: delivery
     skills:
-      - name: github-workflow
-        path: skills/github-workflow/SKILL.md
+      - name: cistern-github
+        path: skills/cistern-github/SKILL.md
       - name: cistern-droplet-state
         path: skills/cistern-droplet-state/SKILL.md
       - name: cistern-git

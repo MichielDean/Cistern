@@ -8,6 +8,14 @@
 - `adversarial-review` cataractae in `aqueduct.yaml` now references `cistern-reviewer` instead of `adversarial-reviewer`
 - `skills/adversarial-reviewer/` and `skills/critical-code-reviewer/` removed from the repo — both are superseded by `cistern-reviewer`
 
+### Replace github-workflow skill with Cistern-native cistern-github (ci-cdc8h)
+- New `skills/cistern-github/SKILL.md` replaces the externally-installed `github-workflow` skill
+- Explicitly enforces automatic conflict resolution — agents must never stop and ask the user; keep both sets of changes (HEAD adds X, branch adds Y → keep both)
+- Includes the `git add $(git diff --name-only --diff-filter=U)` staging step between conflict resolution and `git rebase --continue` — previously missing, which left resolved files unstaged
+- Removes all stacked-PR workflow content (Cistern uses per-droplet branches, not stacked PRs)
+- `aqueduct.yaml`: `github-workflow` replaced by `cistern-github` in all cataractae that referenced it (`implement`, `adversarial-review`, `delivery`)
+- Delivery `timeout_minutes` raised from 45 → 60 to match typical merge + CI wait times
+
 ### Castellarius: hot-reload cistern.yaml on change (ci-o3790)
 - `cistern.yaml` changes are now detected on each heartbeat and trigger a clean restart — no more `systemctl --user restart cistern-castellarius` required after editing the config.
 - Detection uses mtime comparison: the file's modification time at startup is compared to the current mtime on each drought. If newer, a restart is signaled.

@@ -51,6 +51,7 @@ For each file:
 
 After resolving all files:
 ```bash
+git add $(git diff --name-only --diff-filter=U)
 git rebase --continue
 go build ./... && go test ./...
 git push --force-with-lease origin $BRANCH

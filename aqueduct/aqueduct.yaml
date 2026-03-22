@@ -24,7 +24,7 @@ cataractae:
     skills:
       - name: cistern-droplet-state
       - name: cistern-git
-      - name: github-workflow
+      - name: cistern-github
     timeout_minutes: 30
     on_pass: simplify
     on_fail: blocked
@@ -55,7 +55,7 @@ cataractae:
       - name: cistern-droplet-state
       - name: cistern-reviewer
       - name: cistern-git
-      - name: github-workflow
+      - name: cistern-github
     timeout_minutes: 15
     skip_for: [1] # trivial droplets skip this cataractae
     on_pass: qa
@@ -111,7 +111,7 @@ cataractae:
     type: agent
     identity: delivery
     skills:
-      - name: github-workflow
+      - name: cistern-github
       - name: cistern-droplet-state
       - name: cistern-git
     timeout_minutes: 60
