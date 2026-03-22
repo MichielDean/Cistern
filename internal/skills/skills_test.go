@@ -258,15 +258,10 @@ func TestDeploy_RejectsInvalidName(t *testing.T) {
 // --- IsInstalled tests ---
 
 func TestIsInstalled_TrueForInstalledSkill(t *testing.T) {
-	tmp := t.TempDir()
-	t.Setenv("HOME", tmp)
+	t.Setenv("HOME", t.TempDir())
 
-	dest := LocalPath("existing-skill")
-	if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
-		t.Fatalf("mkdir: %v", err)
-	}
-	if err := os.WriteFile(dest, []byte("# Skill\n"), 0o644); err != nil {
-		t.Fatalf("write: %v", err)
+	if _, err := Deploy("existing-skill", []byte("# Skill\n")); err != nil {
+		t.Fatalf("Deploy: %v", err)
 	}
 
 	if !IsInstalled("existing-skill") {
@@ -275,8 +270,7 @@ func TestIsInstalled_TrueForInstalledSkill(t *testing.T) {
 }
 
 func TestIsInstalled_FalseForMissingSkill(t *testing.T) {
-	tmp := t.TempDir()
-	t.Setenv("HOME", tmp)
+	t.Setenv("HOME", t.TempDir())
 
 	if IsInstalled("nonexistent-skill") {
 		t.Error("expected IsInstalled=false for missing skill")
@@ -286,8 +280,7 @@ func TestIsInstalled_FalseForMissingSkill(t *testing.T) {
 // --- ListInstalled tests ---
 
 func TestListInstalled_EmptyStore(t *testing.T) {
-	tmp := t.TempDir()
-	t.Setenv("HOME", tmp)
+	t.Setenv("HOME", t.TempDir())
 
 	entries, err := ListInstalled()
 	if err != nil {
@@ -299,8 +292,7 @@ func TestListInstalled_EmptyStore(t *testing.T) {
 }
 
 func TestListInstalled_SingleSkill(t *testing.T) {
-	tmp := t.TempDir()
-	t.Setenv("HOME", tmp)
+	t.Setenv("HOME", t.TempDir())
 
 	if err := saveManifestEntry(ManifestEntry{Name: "solo", SourceURL: "http://example.com/solo"}); err != nil {
 		t.Fatalf("saveManifestEntry: %v", err)
@@ -319,8 +311,7 @@ func TestListInstalled_SingleSkill(t *testing.T) {
 }
 
 func TestListInstalled_MultipleSkills(t *testing.T) {
-	tmp := t.TempDir()
-	t.Setenv("HOME", tmp)
+	t.Setenv("HOME", t.TempDir())
 
 	names := []string{"alpha", "beta", "gamma"}
 	for _, name := range names {
@@ -341,18 +332,10 @@ func TestListInstalled_MultipleSkills(t *testing.T) {
 // --- Remove tests ---
 
 func TestRemove_RemovesDirAndManifest(t *testing.T) {
-	tmp := t.TempDir()
-	t.Setenv("HOME", tmp)
+	t.Setenv("HOME", t.TempDir())
 
-	dest := LocalPath("rm-skill")
-	if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
-		t.Fatalf("mkdir: %v", err)
-	}
-	if err := os.WriteFile(dest, []byte("# Skill\n"), 0o644); err != nil {
-		t.Fatalf("write: %v", err)
-	}
-	if err := saveManifestEntry(ManifestEntry{Name: "rm-skill", SourceURL: "http://example.com"}); err != nil {
-		t.Fatalf("saveManifestEntry: %v", err)
+	if _, err := Deploy("rm-skill", []byte("# Skill\n")); err != nil {
+		t.Fatalf("Deploy: %v", err)
 	}
 
 	if err := Remove("rm-skill"); err != nil {
@@ -374,8 +357,7 @@ func TestRemove_RemovesDirAndManifest(t *testing.T) {
 }
 
 func TestRemove_NonExistentIsNoOp(t *testing.T) {
-	tmp := t.TempDir()
-	t.Setenv("HOME", tmp)
+	t.Setenv("HOME", t.TempDir())
 
 	if err := Remove("ghost-skill"); err != nil {
 		t.Errorf("Remove of non-existent skill: expected no error, got %v", err)
@@ -392,8 +374,7 @@ func TestRemove_RejectsInvalidName(t *testing.T) {
 // --- removeManifestEntry tests ---
 
 func TestRemoveManifestEntry_RemovesEntry(t *testing.T) {
-	tmp := t.TempDir()
-	t.Setenv("HOME", tmp)
+	t.Setenv("HOME", t.TempDir())
 
 	if err := saveManifestEntry(ManifestEntry{Name: "to-remove", SourceURL: "http://example.com/remove"}); err != nil {
 		t.Fatalf("saveManifestEntry: %v", err)
@@ -421,8 +402,7 @@ func TestRemoveManifestEntry_RemovesEntry(t *testing.T) {
 }
 
 func TestRemoveManifestEntry_HandlesMissingEntry(t *testing.T) {
-	tmp := t.TempDir()
-	t.Setenv("HOME", tmp)
+	t.Setenv("HOME", t.TempDir())
 
 	// No manifest exists — removing a nonexistent entry should not error.
 	if err := removeManifestEntry("nonexistent"); err != nil {
@@ -431,8 +411,7 @@ func TestRemoveManifestEntry_HandlesMissingEntry(t *testing.T) {
 }
 
 func TestRemoveManifestEntry_PersistsCorrectly(t *testing.T) {
-	tmp := t.TempDir()
-	t.Setenv("HOME", tmp)
+	t.Setenv("HOME", t.TempDir())
 
 	for _, name := range []string{"first", "second", "third"} {
 		if err := saveManifestEntry(ManifestEntry{Name: name, SourceURL: "http://example.com/" + name}); err != nil {
