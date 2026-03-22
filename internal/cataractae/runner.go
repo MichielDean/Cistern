@@ -223,7 +223,8 @@ func (r *Runner) SpawnStep(w *Worker, item *cistern.Droplet, step *aqueduct.Work
 	// the absolute paths written into CONTEXT.md by context.go. No file copying.
 	for _, skill := range step.Skills {
 		if !skills.IsInstalled(skill.Name) {
-			log.Printf("cataractae: warning: skill %q not installed — run `ct skills install %s <url>`", skill.Name, skill.Name)
+			cleanup()
+			return fmt.Errorf("cataractae: skill %q not installed — run `ct skills install %s <url>`", skill.Name, skill.Name)
 		}
 	}
 
