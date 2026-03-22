@@ -661,14 +661,9 @@ func TestWsTui_WSReaderExitsOnConnClose(t *testing.T) {
 	}
 }
 
-// TestWsTui_WSReaderReadDeadlineExitsOnPartition verifies goroutine B (WS frame
-// reader) exits and calls cancel() when the read deadline fires with no client
-// frames — simulating the network-partition + idle-PTY scenario. In that case
-// goroutine A is blocked in ptmx.Read (no PTY output → wsWriteTimeout never
-// fires) and goroutine B would block forever in io.ReadFull without a read
-// deadline. The fix: conn.SetReadDeadline(wsWriteTimeout) before each frame
-// read makes goroutine B exit and call cancel(), triggering watchdog C to close
-// ptmx and unblock goroutine A.
+// TestWsTui_WSReaderReadDeadlineExitsOnPartition verifies goroutine B exits
+// and calls cancel() when the read deadline fires with no client frames,
+// simulating a network partition with an idle PTY.
 func TestWsTui_WSReaderReadDeadlineExitsOnPartition(t *testing.T) {
 	server, _ := net.Pipe()
 	defer server.Close()
@@ -686,8 +681,7 @@ func TestWsTui_WSReaderReadDeadlineExitsOnPartition(t *testing.T) {
 		defer cancel()
 		buf := make([]byte, wsMaxClientPayload)
 		for {
-			// Mirror of the production fix: read deadline makes this goroutine
-			// exit within the timeout instead of blocking forever.
+			// Mirrors production read-deadline fix; shorter timeout for test speed.
 			server.SetReadDeadline(time.Now().Add(50 * time.Millisecond)) //nolint:errcheck
 			_, _, nb, err := wsReadClientFrame(br, buf)
 			buf = nb

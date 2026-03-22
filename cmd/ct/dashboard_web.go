@@ -418,15 +418,11 @@ func newDashboardMux(cfgPath, dbPath string) http.Handler {
 		//     Calls cancel() via defer on any exit.
 		//
 		// (B) WS frame reader (goroutine below): reads resize/close frames from client.
-		//     A read deadline (wsWriteTimeout) is reset before each frame read,
-		//     mirroring the write-side timeout. Without this, a network partition
-		//     with an idle PTY leaks both goroutines: goroutine A blocks in
-		//     ptmx.Read (no output → wsWriteTimeout never fires); goroutine B
-		//     blocks in io.ReadFull (no TCP FIN → no error). The read deadline
-		//     ensures goroutine B exits within wsWriteTimeout, calling cancel()
-		//     which unblocks goroutine A via watchdog C → ptmx.Close().
-		//     Also exits when: wsReadClientFrame returns error (conn closed / EOF),
-		//     or a close frame (opcode 0x8) is received.
+		//     Exits when: read deadline fires (wsWriteTimeout), wsReadClientFrame
+		//     returns error (conn closed / EOF), or a close frame (opcode 0x8).
+		//     The read deadline mirrors the write-side timeout: without it, a
+		//     network partition + idle PTY leaks goroutines A (ptmx.Read) and B
+		//     (io.ReadFull) — neither gets an error, and cancel() is never called.
 		//     Calls cancel() via defer on any exit.
 		//
 		// (C) Shutdown watchdog (goroutine below): waits for ctx cancellation.
