@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### Castellarius: hot-reload cistern.yaml on change (ci-o3790)
+- `cistern.yaml` changes are now detected on each heartbeat and trigger a clean restart — no more `systemctl --user restart cistern-castellarius` required after editing the config.
+- Detection uses mtime comparison: the file's modification time at startup is compared to the current mtime on each drought. If newer, a restart is signaled.
+- Under a supervisor (systemd, `CT_SUPERVISED=1`, etc.): `os.Exit(0)` — the supervisor restarts the process with the new config, same as binary-update behaviour.
+- Unsupervised: a `WARN` log is emitted (`cistern.yaml updated on disk — manual restart required`) and the Castellarius continues running — same behaviour as binary-update detection.
+- When both `cistern.yaml` and `aqueduct.yaml` change simultaneously, the workflow hot-reload is suppressed in favour of the clean restart (a restart picks up both changes).
+- New `WithConfigPath(path string)` option on `castellarius.New()` wires in the mtime capture at construction time; `ct castellarius start` passes this automatically.
+
 ### Per-step model selection via model: field in aqueduct.yaml (ci-4ed0h)
 - Each cataractae step now accepts an optional `model:` field specifying which LLM to use (e.g. `sonnet`, `opus`, `haiku`, `claude-opus-4-6`)
 - If `model:` is absent, the agent uses its default — no behavior change for existing configs
