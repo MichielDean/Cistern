@@ -77,6 +77,98 @@ func GenerateCataractaeFiles(w *Workflow, cataractaeDir string) ([]string, error
 	return written, nil
 }
 
+// TitleCaseName converts a snake_case or kebab-case name to Title Case.
+// "implementer" → "Implementer", "docs_writer" → "Docs Writer".
+func TitleCaseName(name string) string {
+	parts := strings.FieldsFunc(name, func(r rune) bool { return r == '_' || r == '-' })
+	for i, p := range parts {
+		if len(p) > 0 {
+			parts[i] = strings.ToUpper(p[:1]) + p[1:]
+		}
+	}
+	return strings.Join(parts, " ")
+}
+
+// ScaffoldCataractaeDir creates PERSONA.md and INSTRUCTIONS.md template files in
+// <cataractaeDir>/<name>/. Returns the paths to the created files.
+// Returns an error if either file already exists.
+func ScaffoldCataractaeDir(cataractaeDir, name string) (personaPath, instrPath string, err error) {
+	dir := filepath.Join(cataractaeDir, name)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return "", "", fmt.Errorf("create directory %s: %w", dir, err)
+	}
+
+	personaPath = filepath.Join(dir, "PERSONA.md")
+	if _, statErr := os.Stat(personaPath); statErr == nil {
+		return "", "", fmt.Errorf("PERSONA.md already exists at %s", personaPath)
+	}
+	if err := os.WriteFile(personaPath, []byte(cataractaePersonaTemplate(name)), 0o644); err != nil {
+		return "", "", fmt.Errorf("write PERSONA.md: %w", err)
+	}
+
+	instrPath = filepath.Join(dir, "INSTRUCTIONS.md")
+	if _, statErr := os.Stat(instrPath); statErr == nil {
+		return "", "", fmt.Errorf("INSTRUCTIONS.md already exists at %s", instrPath)
+	}
+	if err := os.WriteFile(instrPath, []byte(cataractaeInstructionsTemplate()), 0o644); err != nil {
+		return "", "", fmt.Errorf("write INSTRUCTIONS.md: %w", err)
+	}
+
+	return personaPath, instrPath, nil
+}
+
+// AddCataractaeToWorkflow appends a new cataractae_definitions entry to the workflow YAML file.
+// Returns an error if an entry with the same name already exists.
+func AddCataractaeToWorkflow(wfPath, name, displayName, description string) error {
+	data, err := os.ReadFile(wfPath)
+	if err != nil {
+		return fmt.Errorf("read workflow: %w", err)
+	}
+	var raw map[string]interface{}
+	if err := yaml.Unmarshal(data, &raw); err != nil {
+		return fmt.Errorf("parse yaml: %w", err)
+	}
+
+	defs, _ := raw["cataractae_definitions"].(map[string]interface{})
+	if defs == nil {
+		defs = make(map[string]interface{})
+	}
+	if _, exists := defs[name]; exists {
+		return fmt.Errorf("cataractae %q already defined in workflow", name)
+	}
+
+	defs[name] = map[string]interface{}{
+		"name":        displayName,
+		"description": description,
+	}
+	raw["cataractae_definitions"] = defs
+
+	out, err := yaml.Marshal(raw)
+	if err != nil {
+		return fmt.Errorf("marshal yaml: %w", err)
+	}
+	if err := os.WriteFile(wfPath, out, 0o644); err != nil {
+		return fmt.Errorf("write workflow: %w", err)
+	}
+	return nil
+}
+
+func cataractaePersonaTemplate(name string) string {
+	return fmt.Sprintf("# Role: %s\n\nTODO: Describe who this cataractae is and what makes them effective.\n", TitleCaseName(name))
+}
+
+func cataractaeInstructionsTemplate() string {
+	return `## Protocol
+
+1. **Read CONTEXT.md** before starting — note your droplet ID, requirements, and revision notes
+2. **Complete your work**
+3. **Signal outcome** — call one of:
+   - ` + "`ct droplet pass <id> --notes \"...\"`" + `
+   - ` + "`ct droplet recirculate <id> --notes \"...\"`" + `
+   - ` + "`ct droplet block <id> --notes \"...\"`" + `
+`
+}
+
 // buildCataractaeContent returns the CLAUDE.md content for a role.
 // If PERSONA.md and INSTRUCTIONS.md exist in dir, they are concatenated with a generated
 // header. Otherwise the legacy format (role name + description + inline instructions) is used.

@@ -358,6 +358,179 @@ func TestGenerateCataractaeFiles_FallbackToInlineInstructions(t *testing.T) {
 	}
 }
 
+// --- TitleCaseName tests ---
+
+func TestTitleCaseName(t *testing.T) {
+	tests := []struct {
+		input string
+		want  string
+	}{
+		{"implementer", "Implementer"},
+		{"docs_writer", "Docs Writer"},
+		{"my-role", "My Role"},
+		{"qa", "Qa"},
+		{"security_reviewer", "Security Reviewer"},
+	}
+	for _, tt := range tests {
+		got := TitleCaseName(tt.input)
+		if got != tt.want {
+			t.Errorf("TitleCaseName(%q) = %q, want %q", tt.input, got, tt.want)
+		}
+	}
+}
+
+// --- ScaffoldCataractaeDir tests ---
+
+func TestScaffoldCataractaeDir_CreatesTemplateFiles(t *testing.T) {
+	tmpDir := t.TempDir()
+	personaPath, instrPath, err := ScaffoldCataractaeDir(tmpDir, "my_role")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	wantPersona := filepath.Join(tmpDir, "my_role", "PERSONA.md")
+	if personaPath != wantPersona {
+		t.Errorf("personaPath = %q, want %q", personaPath, wantPersona)
+	}
+	wantInstr := filepath.Join(tmpDir, "my_role", "INSTRUCTIONS.md")
+	if instrPath != wantInstr {
+		t.Errorf("instrPath = %q, want %q", instrPath, wantInstr)
+	}
+
+	personaContent, err := os.ReadFile(personaPath)
+	if err != nil {
+		t.Fatalf("read PERSONA.md: %v", err)
+	}
+	if !strings.Contains(string(personaContent), "# Role: My Role") {
+		t.Errorf("PERSONA.md missing role header, got:\n%s", personaContent)
+	}
+
+	instrContent, err := os.ReadFile(instrPath)
+	if err != nil {
+		t.Fatalf("read INSTRUCTIONS.md: %v", err)
+	}
+	if !strings.Contains(string(instrContent), "Read CONTEXT.md") {
+		t.Errorf("INSTRUCTIONS.md missing protocol step, got:\n%s", instrContent)
+	}
+	if !strings.Contains(string(instrContent), "ct droplet pass") {
+		t.Errorf("INSTRUCTIONS.md missing signal instructions, got:\n%s", instrContent)
+	}
+}
+
+func TestScaffoldCataractaeDir_ErrorIfPersonaExists(t *testing.T) {
+	tmpDir := t.TempDir()
+	roleDir := filepath.Join(tmpDir, "existing")
+	if err := os.MkdirAll(roleDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(roleDir, "PERSONA.md"), []byte("existing"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, _, err := ScaffoldCataractaeDir(tmpDir, "existing")
+	if err == nil {
+		t.Fatal("expected error for existing PERSONA.md, got nil")
+	}
+	if !strings.Contains(err.Error(), "already exists") {
+		t.Errorf("error = %q, want it to contain 'already exists'", err)
+	}
+}
+
+func TestScaffoldCataractaeDir_ErrorIfInstructionsExists(t *testing.T) {
+	tmpDir := t.TempDir()
+	roleDir := filepath.Join(tmpDir, "existing")
+	if err := os.MkdirAll(roleDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(roleDir, "INSTRUCTIONS.md"), []byte("existing"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, _, err := ScaffoldCataractaeDir(tmpDir, "existing")
+	if err == nil {
+		t.Fatal("expected error for existing INSTRUCTIONS.md, got nil")
+	}
+	if !strings.Contains(err.Error(), "already exists") {
+		t.Errorf("error = %q, want it to contain 'already exists'", err)
+	}
+}
+
+// --- AddCataractaeToWorkflow tests ---
+
+func TestAddCataractaeToWorkflow_AddsEntry(t *testing.T) {
+	tmpDir := t.TempDir()
+	wfPath := filepath.Join(tmpDir, "aqueduct.yaml")
+	initial := `name: test
+cataractae:
+  - name: step
+    type: gate
+    on_pass: done
+cataractae_definitions:
+  existing:
+    name: Existing
+    description: "An existing role."
+`
+	if err := os.WriteFile(wfPath, []byte(initial), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := AddCataractaeToWorkflow(wfPath, "new_role", "New Role", "A new role."); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	data, err := os.ReadFile(wfPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	w, err := ParseWorkflowBytes(data)
+	if err != nil {
+		t.Fatalf("parse updated workflow: %v", err)
+	}
+
+	def, ok := w.CataractaeDefinitions["new_role"]
+	if !ok {
+		t.Fatal("new_role not found in cataractae_definitions")
+	}
+	if def.Name != "New Role" {
+		t.Errorf("Name = %q, want %q", def.Name, "New Role")
+	}
+	if def.Description != "A new role." {
+		t.Errorf("Description = %q, want %q", def.Description, "A new role.")
+	}
+	if _, ok := w.CataractaeDefinitions["existing"]; !ok {
+		t.Error("existing entry missing after add")
+	}
+	if len(w.Cataractae) != 1 {
+		t.Errorf("steps count = %d, want 1 (steps must not be modified)", len(w.Cataractae))
+	}
+}
+
+func TestAddCataractaeToWorkflow_ErrorIfAlreadyDefined(t *testing.T) {
+	tmpDir := t.TempDir()
+	wfPath := filepath.Join(tmpDir, "aqueduct.yaml")
+	initial := `name: test
+cataractae:
+  - name: step
+    type: gate
+    on_pass: done
+cataractae_definitions:
+  existing:
+    name: Existing
+    description: "An existing role."
+`
+	if err := os.WriteFile(wfPath, []byte(initial), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	err := AddCataractaeToWorkflow(wfPath, "existing", "Existing", "Dup.")
+	if err == nil {
+		t.Fatal("expected error for duplicate name, got nil")
+	}
+	if !strings.Contains(err.Error(), "already defined") {
+		t.Errorf("error = %q, want it to contain 'already defined'", err)
+	}
+}
+
 func TestGenerateCataractaeFiles_PersonaOnlyFallsBack(t *testing.T) {
 	// If only PERSONA.md exists (no INSTRUCTIONS.md), fall back to legacy format.
 	tmpDir := t.TempDir()

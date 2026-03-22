@@ -23,6 +23,57 @@ var cataractaeCmd = &cobra.Command{
 	Short: "Manage cataractae definitions",
 }
 
+// --- cataractae add ---
+
+var cataractaeAddCmd = &cobra.Command{
+	Use:   "add <name>",
+	Short: "Scaffold a new cataractae directory with PERSONA.md and INSTRUCTIONS.md templates",
+	Args:  cobra.ExactArgs(1),
+	RunE:  runCataractaeAdd,
+}
+
+func runCataractaeAdd(cmd *cobra.Command, args []string) error {
+	name := args[0]
+
+	wfPath := cataractaeGenerateWorkflow
+	if wfPath == "" {
+		cfgPath := resolveConfigPath()
+		cfg, err := aqueduct.ParseAqueductConfig(cfgPath)
+		if err != nil {
+			return fmt.Errorf("loading config: %w (use --workflow to specify an aqueduct file directly)", err)
+		}
+		if len(cfg.Repos) == 0 {
+			return fmt.Errorf("no repos configured")
+		}
+		wfPath = cfg.Repos[0].WorkflowPath
+		if !filepath.IsAbs(wfPath) {
+			wfPath = filepath.Join(filepath.Dir(cfgPath), wfPath)
+		}
+	}
+
+	// Derive cataractae dir from the workflow location (same as generate).
+	cataractaeDir := filepath.Clean(filepath.Join(filepath.Dir(wfPath), "..", "cataractae"))
+
+	// Scaffold PERSONA.md and INSTRUCTIONS.md.
+	personaPath, instrPath, err := aqueduct.ScaffoldCataractaeDir(cataractaeDir, name)
+	if err != nil {
+		return fmt.Errorf("scaffold cataractae: %w", err)
+	}
+
+	// Add the new entry to aqueduct.yaml.
+	displayName := aqueduct.TitleCaseName(name)
+	description := displayName + " identity."
+	if err := aqueduct.AddCataractaeToWorkflow(wfPath, name, displayName, description); err != nil {
+		return fmt.Errorf("update workflow: %w", err)
+	}
+
+	fmt.Printf("created %s\n", personaPath)
+	fmt.Printf("created %s\n", instrPath)
+	fmt.Printf("updated %s — added cataractae_definitions entry %q\n", wfPath, name)
+	fmt.Printf("\nEdit the template files, then run: ct cataractae generate\n")
+	return nil
+}
+
 // --- roles generate ---
 
 var cataractaeGenerateWorkflow string
@@ -490,9 +541,10 @@ func init() {
 	cataractaeGenerateCmd.Flags().StringVar(&cataractaeGenerateWorkflow, "workflow", "", "path to workflow YAML file")
 	cataractaeListCmd.Flags().StringVar(&cataractaeGenerateWorkflow, "workflow", "", "path to workflow YAML file")
 	cataractaeEditCmd.Flags().StringVar(&cataractaeGenerateWorkflow, "workflow", "", "path to workflow YAML file")
+	cataractaeAddCmd.Flags().StringVar(&cataractaeGenerateWorkflow, "workflow", "", "path to workflow YAML file")
 
 	cataractaeResetCmd.Flags().StringVar(&cataractaeGenerateWorkflow, "workflow", "", "path to workflow YAML file")
 
-	cataractaeCmd.AddCommand(cataractaeGenerateCmd, cataractaeListCmd, cataractaeEditCmd, cataractaeResetCmd, cataractaeStatusCmd)
+	cataractaeCmd.AddCommand(cataractaeGenerateCmd, cataractaeListCmd, cataractaeEditCmd, cataractaeResetCmd, cataractaeStatusCmd, cataractaeAddCmd)
 	rootCmd.AddCommand(cataractaeCmd)
 }
