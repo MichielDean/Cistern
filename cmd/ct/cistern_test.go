@@ -773,6 +773,15 @@ func TestDropletRename(t *testing.T) {
 	})
 }
 
+// resetEditFlags re-registers the edit command's flags so each sub-test
+// starts with a clean Changed() state.
+func resetEditFlags() {
+	dropletEditCmd.ResetFlags()
+	dropletEditCmd.Flags().StringVar(&editDescription, "description", "", "")
+	dropletEditCmd.Flags().StringVar(&editComplexity, "complexity", "", "")
+	dropletEditCmd.Flags().IntVar(&editPriority, "priority", 0, "")
+}
+
 func TestDropletEdit(t *testing.T) {
 	dir := t.TempDir()
 	db := filepath.Join(dir, "test.db")
@@ -789,9 +798,7 @@ func TestDropletEdit(t *testing.T) {
 	}
 
 	t.Run("update description", func(t *testing.T) {
-		editDescription = "new description"
-		editComplexity = ""
-		editPriority = 0
+		resetEditFlags()
 		dropletEditCmd.Flags().Set("description", "new description")
 
 		out := captureStdout(t, func() {
@@ -820,14 +827,7 @@ func TestDropletEdit(t *testing.T) {
 	})
 
 	t.Run("update complexity", func(t *testing.T) {
-		dropletEditCmd.ResetFlags()
-		dropletEditCmd.Flags().StringVar(&editDescription, "description", "", "")
-		dropletEditCmd.Flags().StringVar(&editComplexity, "complexity", "", "")
-		dropletEditCmd.Flags().IntVar(&editPriority, "priority", 0, "")
-
-		editDescription = ""
-		editComplexity = "trivial"
-		editPriority = 0
+		resetEditFlags()
 		dropletEditCmd.Flags().Set("complexity", "trivial")
 
 		if err := dropletEditCmd.RunE(dropletEditCmd, []string{item.ID}); err != nil {
@@ -843,14 +843,7 @@ func TestDropletEdit(t *testing.T) {
 	})
 
 	t.Run("update priority", func(t *testing.T) {
-		dropletEditCmd.ResetFlags()
-		dropletEditCmd.Flags().StringVar(&editDescription, "description", "", "")
-		dropletEditCmd.Flags().StringVar(&editComplexity, "complexity", "", "")
-		dropletEditCmd.Flags().IntVar(&editPriority, "priority", 0, "")
-
-		editDescription = ""
-		editComplexity = ""
-		editPriority = 1
+		resetEditFlags()
 		dropletEditCmd.Flags().Set("priority", "1")
 
 		if err := dropletEditCmd.RunE(dropletEditCmd, []string{item.ID}); err != nil {
@@ -866,14 +859,7 @@ func TestDropletEdit(t *testing.T) {
 	})
 
 	t.Run("no flags is an error", func(t *testing.T) {
-		dropletEditCmd.ResetFlags()
-		dropletEditCmd.Flags().StringVar(&editDescription, "description", "", "")
-		dropletEditCmd.Flags().StringVar(&editComplexity, "complexity", "", "")
-		dropletEditCmd.Flags().IntVar(&editPriority, "priority", 0, "")
-
-		editDescription = ""
-		editComplexity = ""
-		editPriority = 0
+		resetEditFlags()
 		// No flags set via .Set(), so Changed() returns false for all.
 
 		err := dropletEditCmd.RunE(dropletEditCmd, []string{item.ID})
@@ -886,17 +872,13 @@ func TestDropletEdit(t *testing.T) {
 	})
 
 	t.Run("reject in_progress", func(t *testing.T) {
-		dropletEditCmd.ResetFlags()
-		dropletEditCmd.Flags().StringVar(&editDescription, "description", "", "")
-		dropletEditCmd.Flags().StringVar(&editComplexity, "complexity", "", "")
-		dropletEditCmd.Flags().IntVar(&editPriority, "priority", 0, "")
+		resetEditFlags()
 
 		c2, _ := cistern.New(db, "")
 		ip, _ := c2.Add("repo", "Flowing droplet", "", 1, 3)
 		c2.UpdateStatus(ip.ID, "in_progress")
 		c2.Close()
 
-		editDescription = "new"
 		dropletEditCmd.Flags().Set("description", "new")
 
 		err := dropletEditCmd.RunE(dropletEditCmd, []string{ip.ID})
