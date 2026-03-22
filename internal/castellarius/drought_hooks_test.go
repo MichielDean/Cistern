@@ -732,12 +732,9 @@ func TestRunDroughtHooks_CfgFileUpdated_Unsupervised_LogsWarnOnly(t *testing.T) 
 	// When cistern.yaml is newer than startupCfgMtime and running unsupervised,
 	// onReload must NOT be called (config is not hot-reloadable — it warns and keeps running).
 	//
-	// Note: the hot-reload branch in RunDroughtHooks guards with !cfgUpdated, so it is
-	// also blocked when both workflowChanged and cfgUpdated are true simultaneously.
-	// That combined path cannot be unit-tested here because workflowChanged is set
-	// internally by the git_sync hook (not injectable), but the guard is logically
-	// covered: cfgUpdated=true falls through to the cfgUpdated warn branch regardless
-	// of workflowChanged.
+	// The !cfgUpdated guard on the hot-reload branch also blocks the combined
+	// workflowChanged+cfgUpdated path; that path is not testable here because
+	// workflowChanged is set internally by git_sync (not injectable).
 	tmpDir := t.TempDir()
 	cfgPath := filepath.Join(tmpDir, "cistern.yaml")
 	os.WriteFile(cfgPath, []byte("repos: []\n"), 0o644)
@@ -802,7 +799,6 @@ func TestRunDroughtHooks_CfgFileMissing_NoRestart(t *testing.T) {
 		t.Error("onReload should not be called when cfgPath does not exist")
 	}
 }
-
 
 func TestGitSync_SkipsMissingCataractaeFiles_Gracefully(t *testing.T) {
 	tmpDir := t.TempDir()
