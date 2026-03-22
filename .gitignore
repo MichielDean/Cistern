@@ -3,7 +3,6 @@ CONTEXT.md
 .claude/
 
 # Build artifacts
-/ct
 /dist/
 
 # Go test cache
@@ -11,3 +10,5 @@ CONTEXT.md
 
 # OS
 .DS_Store
+ct
+install
