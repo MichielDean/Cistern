@@ -178,7 +178,7 @@ cataractae/
 `CLAUDE.md` is a generated artifact — edit `PERSONA.md` and `INSTRUCTIONS.md` directly and regenerate.
 
 ```bash
-ct cataractae add <name>            # Scaffold a new cataractae directory with template files
+ct cataractae add <name>            # Scaffold a new cataractae directory with template files; auto-generates CLAUDE.md
 ct cataractae list                  # See all cataractae definitions and how to edit them
 ct cataractae edit implementer      # Open INSTRUCTIONS.md in $EDITOR, save, CLAUDE.md regenerates
 ct cataractae reset qa              # Restore to built-in default (with confirmation)
@@ -381,7 +381,7 @@ ct droplet issue resolve <issue-id> --evidence "..."              Resolve with p
 ct droplet issue reject <issue-id> --evidence "..."               Reject as still present (reviewer only)
 
 # Cataractae — manage cataractae definitions
-ct cataractae add <name>             Scaffold a new cataractae directory with PERSONA.md and INSTRUCTIONS.md
+ct cataractae add <name>             Scaffold a new cataractae directory with PERSONA.md and INSTRUCTIONS.md; auto-generates CLAUDE.md
 ct cataractae list                   See all cataractae definitions
 ct cataractae status                 Show which cataractae are active and what they're processing
 ct cataractae edit <cataractae>       Edit cataractae definition in $EDITOR

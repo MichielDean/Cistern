@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+### ct cataractae add: auto-generate CLAUDE.md on scaffold (ci-f4354)
+- `ct cataractae add <name>` now runs `ct cataractae generate` automatically after creating the template files — `CLAUDE.md` is ready immediately without a separate generate step.
+- Output format updated to `Created:` / `Updated:` / `Generated:` lines matching the actual files produced, followed by an instruction to edit `PERSONA.md` and `INSTRUCTIONS.md` and wire the cataractae into the pipeline.
+- Default description in `aqueduct.yaml` is now `TODO: describe this cataractae` instead of `<Name> identity.`
+
 ### Cataractae: self-contained directories and ct cataractae add command (ci-cgey2)
 - Each cataractae identity is now a self-contained directory under `cataractae/<identity>/` containing `PERSONA.md` (role and guardrails) and `INSTRUCTIONS.md` (task protocol). `CLAUDE.md` remains a generated artifact built from these files.
 - `aqueduct.yaml` no longer stores inline `instructions:` blobs — routing config only. Operators who previously edited inline YAML text should move that content into the appropriate `PERSONA.md` / `INSTRUCTIONS.md` files and run `ct cataractae generate`.
