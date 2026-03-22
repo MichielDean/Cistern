@@ -82,17 +82,10 @@ Next:
 }
 
 // initCataractaeDir writes PERSONA.md and INSTRUCTIONS.md for each unique agent
-// identity in the workflow. Uses built-in defaults for known roles and scaffold
-// templates for unknown ones. Skips identities that already have both files.
+// identity in the workflow. Skips identities that already have both files.
 func initCataractaeDir(w *aqueduct.Workflow, cataractaeDir string) error {
-	seen := map[string]bool{}
-	for _, step := range w.Cataractae {
-		if step.Identity == "" || seen[step.Identity] {
-			continue
-		}
-		seen[step.Identity] = true
-
-		dir := filepath.Join(cataractaeDir, step.Identity)
+	for _, id := range w.UniqueIdentities() {
+		dir := filepath.Join(cataractaeDir, id)
 		personaPath := filepath.Join(dir, "PERSONA.md")
 		instrPath := filepath.Join(dir, "INSTRUCTIONS.md")
 
@@ -103,14 +96,8 @@ func initCataractaeDir(w *aqueduct.Workflow, cataractaeDir string) error {
 			continue
 		}
 
-		if builtin, ok := aqueduct.BuiltinCataractaeDefinitions[step.Identity]; ok {
-			if err := writeBuiltinToCataractaeDir(cataractaeDir, step.Identity, builtin); err != nil {
-				return err
-			}
-		} else {
-			if _, _, err := aqueduct.ScaffoldCataractaeDir(cataractaeDir, step.Identity); err != nil {
-				return fmt.Errorf("scaffold %s: %w", step.Identity, err)
-			}
+		if _, _, err := aqueduct.ScaffoldCataractaeDir(cataractaeDir, id); err != nil {
+			return fmt.Errorf("scaffold %s: %w", id, err)
 		}
 	}
 	return nil
