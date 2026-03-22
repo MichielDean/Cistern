@@ -308,6 +308,14 @@ cataractae_definitions:
       BRANCH=$(git branch --show-current)
       BASE=main
 
+      # Pre-flight: abort if worktree has uncommitted changes to non-CONTEXT.md files
+      DIRTY=$(git status --porcelain | grep -v 'CONTEXT\.md' || true)
+      if [ -n "$DIRTY" ]; then
+        DIRTY_FILES=$(echo "$DIRTY" | awk '{print $2}' | tr '\n' ' ')
+        ct droplet recirculate $DROPLET_ID --notes "Worktree has uncommitted changes that were not committed by prior cataractae: $DIRTY_FILES. Recirculating to implement to commit the work before delivery."
+        exit 0
+      fi
+
       git stash --include-untracked -m "pre-delivery-stash" 2>/dev/null || true
       git fetch origin $BASE
       git rebase origin/$BASE
@@ -386,6 +394,18 @@ cataractae_definitions:
       cd frontend && npm run build 2>/dev/null || true
       ```
       Push only when build and tests are green.
+
+      ## Pre-PR check — verify branch contains deliverables
+
+      Before creating the PR, confirm the branch has real implementation changes:
+      ```bash
+      NON_DOC_FILES=$(git diff origin/$BASE...HEAD --name-only | grep -vE '\.(md|txt)$' | grep -vE '^(CHANGELOG|README|CONTEXT)' || true)
+      if [ -z "$NON_DOC_FILES" ]; then
+        ct droplet recirculate $DROPLET_ID --notes "Branch contains only documentation changes — no implementation files detected in diff against main. Recirculating to implement."
+        exit 0
+      fi
+      ```
+      Only proceed to create the PR if `NON_DOC_FILES` is non-empty.
 
       ## Step 2 — Create or locate the PR
 

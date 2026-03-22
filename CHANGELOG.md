@@ -10,6 +10,11 @@
 - Branch lifecycle is now owned by the Castellarius: feature branches (`feat/<id>`) are created and cleaned up by the scheduler, not the runner. Agents do not manage branches directly.
 - Non-terminal routes (pass to next step, recirculate) preserve the feature branch so the next cycle can resume incrementally. Terminal routes (deliver, block, escalate) clean up the branch.
 
+### Delivery: abort on dirty worktree and docs-only branch (ci-3sfr8)
+- **Dirty worktree pre-flight check**: before running `git stash`, the delivery cataractae runs `git status --porcelain` and recirculates if any non-CONTEXT.md files are uncommitted. Prevents silently stashing an implementer's work and delivering an empty branch.
+- **Docs-only deliverables check**: before creating the PR, the delivery cataractae checks `git diff origin/$BASE...HEAD --name-only` and recirculates if only `.md`/`.txt`/CHANGELOG/README/CONTEXT files changed. A branch must contain at least one implementation file (`.go`, `.yaml`, etc.) unless the droplet is explicitly docs-only.
+- Both checks apply to the default aqueduct (`aqueduct/aqueduct.yaml`) and the embedded asset (`cmd/ct/assets/aqueduct/aqueduct.yaml`).
+
 ### Web dashboard: xterm.js TUI terminal (ci-792v7)
 - `/ws/tui` WebSocket endpoint streams the TUI render loop as raw ANSI to the browser — the same output the terminal sees, with no reimplementation drift
 - Replaces the CSS arch section and all JS rendering functions with a single full-viewport xterm.js terminal
