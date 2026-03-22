@@ -14,6 +14,16 @@ import (
 	"github.com/MichielDean/cistern/internal/cistern"
 )
 
+// testDB creates a temporary cistern database and returns its path.
+func testDB(t *testing.T) string {
+	t.Helper()
+	dbPath := filepath.Join(t.TempDir(), "test.db")
+	if _, err := cistern.New(dbPath, "test"); err != nil {
+		t.Fatalf("cistern.New: %v", err)
+	}
+	return dbPath
+}
+
 // --- AqueductPool gap tests ---
 
 func TestAqueductPool_IsFlowing(t *testing.T) {
@@ -64,8 +74,7 @@ func TestAqueductPool_FindAndClaimByName(t *testing.T) {
 	}
 
 	// Trying to claim alpha again while flowing returns nil.
-	w2 := pool.FindAndClaimByName("alpha")
-	if w2 != nil {
+	if pool.FindAndClaimByName("alpha") != nil {
 		t.Error("FindAndClaimByName(alpha) on a flowing aqueduct should return nil")
 	}
 
@@ -97,13 +106,16 @@ func TestAqueductPool_AvailableAqueductExcluding(t *testing.T) {
 	}
 
 	// Assign alpha; AvailableAqueductExcluding with empty exclude skips it as flowing.
-	pool.Assign(pool.AvailableAqueduct(), "drop-1", "implement")
+	w0 := pool.AvailableAqueduct()
+	if w0 == nil {
+		t.Fatal("AvailableAqueduct returned nil before any assignment")
+	}
+	pool.Assign(w0, "drop-1", "implement")
 	// alpha is now flowing — available excluding {} returns beta (first idle).
 	w3 := pool.AvailableAqueductExcluding(map[string]bool{})
 	if w3 == nil {
 		t.Error("AvailableAqueductExcluding with empty exclude should return an idle aqueduct")
 	}
-	// Must be an idle one (not alpha).
 	if w3 != nil && w3.Name == "alpha" {
 		t.Error("AvailableAqueductExcluding should not return a flowing aqueduct")
 	}
@@ -137,20 +149,20 @@ func TestIsSupervisedProcess_NotSupervised(t *testing.T) {
 	t.Setenv("CT_SUPERVISED", "")
 	t.Setenv("INVOCATION_ID", "")
 	t.Setenv("SUPERVISOR_ENABLED", "")
-	// Can only test the env-var paths here (ppid==1 would be true in Docker, but
-	// in a normal test environment ppid != 1, so the function returns false).
-	// We just verify it doesn't panic.
-	_ = isSupervisedProcess()
+	// When env vars are cleared and ppid != 1, the function must return false.
+	// Skip the assertion if ppid == 1 (running inside Docker or as a PID1 child).
+	if os.Getppid() != 1 && isSupervisedProcess() {
+		t.Error("isSupervisedProcess() = true with all env vars cleared and ppid != 1")
+	}
 }
 
 // --- WithLogger / WithPollInterval option tests ---
 
 func TestWithLogger_Option(t *testing.T) {
 	client := newMockClient()
-	runner := newMockRunner(client)
+	sched := testScheduler(client, newMockRunner(client))
 	customLogger := slog.Default()
 
-	sched := testScheduler(client, runner)
 	WithLogger(customLogger)(sched)
 
 	if sched.logger != customLogger {
@@ -160,10 +172,9 @@ func TestWithLogger_Option(t *testing.T) {
 
 func TestWithPollInterval_Option(t *testing.T) {
 	client := newMockClient()
-	runner := newMockRunner(client)
 	interval := 42 * time.Second
 
-	sched := testScheduler(client, runner)
+	sched := testScheduler(client, newMockRunner(client))
 	WithPollInterval(interval)(sched)
 
 	if sched.pollInterval != interval {
@@ -206,124 +217,98 @@ func TestPurgeOldItems_DefaultRetentionDays(t *testing.T) {
 	clients := map[string]CisternClient{"test-repo": mc}
 	sched := NewFromParts(config, workflows, clients, newMockRunner(mc.mockClient))
 
-	// Must not panic or error.
 	sched.purgeOldItems()
+
+	if mc.purgeCalls != 1 {
+		t.Errorf("purgeOldItems with default retention should call Purge once, got %d", mc.purgeCalls)
+	}
 }
 
 // --- recoverInProgress tests ---
 
-func TestRecoverInProgress_ItemWithOutcome_NotReset(t *testing.T) {
-	client := newMockClient()
-	// Item already has an outcome — observe phase should handle it.
-	item := &cistern.Droplet{
-		ID:               "r1",
-		CurrentCataractae: "implement",
-		Status:           "in_progress",
-		Assignee:         "alpha",
-		Outcome:          "pass",
+func TestRecoverInProgress(t *testing.T) {
+	tests := []struct {
+		name     string
+		item     *cistern.Droplet
+		wantStep string
+	}{
+		{
+			name: "item with outcome not reset",
+			item: &cistern.Droplet{
+				ID: "r1", CurrentCataractae: "implement", Status: "in_progress",
+				Assignee: "alpha", Outcome: "pass",
+			},
+			wantStep: "", // not touched — observe phase handles it
+		},
+		{
+			name: "item without outcome reset to current step",
+			item: &cistern.Droplet{
+				ID: "r2", CurrentCataractae: "review", Status: "in_progress",
+				Assignee: "alpha", Outcome: "",
+			},
+			wantStep: "review",
+		},
+		{
+			name: "empty step falls back to first workflow step",
+			item: &cistern.Droplet{
+				ID: "r3", CurrentCataractae: "", Status: "in_progress",
+				Assignee: "alpha", Outcome: "",
+			},
+			wantStep: "implement",
+		},
 	}
-	client.items["r1"] = item
-
-	sched := testScheduler(client, newMockRunner(client))
-	sched.recoverInProgress()
-
-	client.mu.Lock()
-	defer client.mu.Unlock()
-	// Should not have been reset — still has the original step.
-	if client.steps["r1"] != "" {
-		t.Errorf("item with outcome should not be reset, got step %q", client.steps["r1"])
-	}
-}
-
-func TestRecoverInProgress_ItemWithoutOutcome_IsReset(t *testing.T) {
-	client := newMockClient()
-	item := &cistern.Droplet{
-		ID:               "r2",
-		CurrentCataractae: "review",
-		Status:           "in_progress",
-		Assignee:         "alpha",
-		Outcome:          "", // no outcome
-	}
-	client.items["r2"] = item
-
-	sched := testScheduler(client, newMockRunner(client))
-	sched.recoverInProgress()
-
-	client.mu.Lock()
-	defer client.mu.Unlock()
-	// Should have been reset to open at the same step.
-	if client.steps["r2"] != "review" {
-		t.Errorf("item without outcome should be reset to its cataractae, got %q", client.steps["r2"])
-	}
-}
-
-func TestRecoverInProgress_EmptyStep_UsesWorkflowDefault(t *testing.T) {
-	client := newMockClient()
-	// Item has no current cataractae — should fall back to first step in workflow.
-	item := &cistern.Droplet{
-		ID:               "r3",
-		CurrentCataractae: "",
-		Status:           "in_progress",
-		Assignee:         "alpha",
-		Outcome:          "",
-	}
-	client.items["r3"] = item
-
-	sched := testScheduler(client, newMockRunner(client))
-	sched.recoverInProgress()
-
-	client.mu.Lock()
-	defer client.mu.Unlock()
-	// Should have been reset to the first step in the workflow ("implement").
-	if client.steps["r3"] != "implement" {
-		t.Errorf("empty step item should be reset to first workflow step 'implement', got %q", client.steps["r3"])
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			client := newMockClient()
+			client.items[tc.item.ID] = tc.item
+			sched := testScheduler(client, newMockRunner(client))
+			sched.recoverInProgress()
+			client.mu.Lock()
+			defer client.mu.Unlock()
+			if client.steps[tc.item.ID] != tc.wantStep {
+				t.Errorf("step = %q, want %q", client.steps[tc.item.ID], tc.wantStep)
+			}
+		})
 	}
 }
 
 // --- heartbeatRepo tests ---
 
-func TestHeartbeatRepo_ResetsStalled_NoAssignee(t *testing.T) {
-	client := newMockClient()
-	// Item with no assignee — tmux check is skipped, goes straight to reset.
-	item := &cistern.Droplet{
-		ID:               "hb-1",
-		CurrentCataractae: "implement",
-		Status:           "in_progress",
-		Assignee:         "", // no assignee
-		Outcome:          "",
+func TestHeartbeatRepo(t *testing.T) {
+	tests := []struct {
+		name     string
+		item     *cistern.Droplet
+		wantStep string
+	}{
+		{
+			name: "resets stalled item with no assignee",
+			item: &cistern.Droplet{
+				ID: "hb-1", CurrentCataractae: "implement", Status: "in_progress",
+				Assignee: "", Outcome: "",
+			},
+			wantStep: "implement",
+		},
+		{
+			name: "skips item with outcome",
+			item: &cistern.Droplet{
+				ID: "hb-2", CurrentCataractae: "review", Status: "in_progress",
+				Assignee: "", Outcome: "pass",
+			},
+			wantStep: "", // not reset — outcome means observe phase handles it
+		},
 	}
-	client.items["hb-1"] = item
-
-	sched := testScheduler(client, newMockRunner(client))
-	sched.heartbeatRepo(context.Background(), sched.config.Repos[0])
-
-	client.mu.Lock()
-	defer client.mu.Unlock()
-	// Item should have been reset to open at its current step.
-	if client.steps["hb-1"] != "implement" {
-		t.Errorf("stalled item should be reset to 'implement', got %q", client.steps["hb-1"])
-	}
-}
-
-func TestHeartbeatRepo_SkipsItemsWithOutcome(t *testing.T) {
-	client := newMockClient()
-	item := &cistern.Droplet{
-		ID:               "hb-2",
-		CurrentCataractae: "review",
-		Status:           "in_progress",
-		Assignee:         "",
-		Outcome:          "pass", // has outcome — observe phase handles it
-	}
-	client.items["hb-2"] = item
-
-	sched := testScheduler(client, newMockRunner(client))
-	sched.heartbeatRepo(context.Background(), sched.config.Repos[0])
-
-	client.mu.Lock()
-	defer client.mu.Unlock()
-	// Item with outcome should NOT be reset.
-	if client.steps["hb-2"] != "" {
-		t.Errorf("item with outcome should not be reset by heartbeat, got step %q", client.steps["hb-2"])
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			client := newMockClient()
+			client.items[tc.item.ID] = tc.item
+			sched := testScheduler(client, newMockRunner(client))
+			sched.heartbeatRepo(context.Background(), sched.config.Repos[0])
+			client.mu.Lock()
+			defer client.mu.Unlock()
+			if client.steps[tc.item.ID] != tc.wantStep {
+				t.Errorf("step = %q, want %q", client.steps[tc.item.ID], tc.wantStep)
+			}
+		})
 	}
 }
 
@@ -331,11 +316,11 @@ func TestHeartbeatRepo_DeadTmuxSession_ResetsItem(t *testing.T) {
 	client := newMockClient()
 	// Item with an assignee whose tmux session does not exist (no tmux in test env).
 	item := &cistern.Droplet{
-		ID:               "hb-3",
+		ID:                "hb-3",
 		CurrentCataractae: "implement",
-		Status:           "in_progress",
-		Assignee:         "alpha", // tmux session test-repo-alpha won't be alive
-		Outcome:          "",
+		Status:            "in_progress",
+		Assignee:          "alpha", // tmux session test-repo-alpha won't be alive
+		Outcome:           "",
 	}
 	client.items["hb-3"] = item
 
@@ -361,11 +346,11 @@ func TestHeartbeatInProgress_CallsHeartbeatForAllRepos(t *testing.T) {
 	// Basic smoke test: heartbeatInProgress should iterate all repos without panic.
 	client := newMockClient()
 	item := &cistern.Droplet{
-		ID:               "hb-all-1",
+		ID:                "hb-all-1",
 		CurrentCataractae: "implement",
-		Status:           "in_progress",
-		Assignee:         "",
-		Outcome:          "",
+		Status:            "in_progress",
+		Assignee:          "",
+		Outcome:           "",
 	}
 	client.items["hb-all-1"] = item
 
@@ -401,11 +386,11 @@ func TestRemoveDropletWorktree_NonGitDir_NoOp(t *testing.T) {
 
 // --- hookTmpCleanup test ---
 
-func TestHookTmpCleanup_NoMatchingDirs_Succeeds(t *testing.T) {
-	// In a clean test environment there are no ct-diff-* dirs so this is a no-op.
-	// Verifies the function runs without error regardless.
-	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError + 1}))
-	if err := hookTmpCleanup(logger); err != nil {
+func TestHookTmpCleanup_Succeeds(t *testing.T) {
+	// hookTmpCleanup removes ct-diff-*, ct-review-*, and ct-qa-* dirs older than 2h.
+	// Dirs younger than 2h are left in place; this test verifies no error is returned
+	// regardless of what is currently present in /tmp.
+	if err := hookTmpCleanup(discardLogger()); err != nil {
 		t.Errorf("hookTmpCleanup: unexpected error: %v", err)
 	}
 }
@@ -413,129 +398,77 @@ func TestHookTmpCleanup_NoMatchingDirs_Succeeds(t *testing.T) {
 // --- hookDBVacuum tests ---
 
 func TestHookDBVacuum_EmptyPath_ReturnsError(t *testing.T) {
-	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError + 1}))
-	err := hookDBVacuum("", logger)
-	if err == nil {
+	if err := hookDBVacuum("", discardLogger()); err == nil {
 		t.Error("hookDBVacuum with empty path should return an error")
 	}
 }
 
 func TestHookDBVacuum_ValidDB_Succeeds(t *testing.T) {
-	dbPath := filepath.Join(t.TempDir(), "test.db")
-	// Create a DB with the full cistern schema (which includes all needed tables).
-	_, err := cistern.New(dbPath, "test")
-	if err != nil {
-		t.Fatalf("cistern.New: %v", err)
-	}
-
-	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError + 1}))
-	if err := hookDBVacuum(dbPath, logger); err != nil {
+	if err := hookDBVacuum(testDB(t), discardLogger()); err != nil {
 		t.Errorf("hookDBVacuum on valid DB: %v", err)
 	}
 }
 
 // --- hookEventsPrune tests ---
 
-func TestHookEventsPrune_EmptyPath_ReturnsError(t *testing.T) {
-	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError + 1}))
-	hook := aqueduct.DroughtHook{Name: "test", Action: "events_prune", KeepDays: 30}
-	err := hookEventsPrune("", hook, logger)
-	if err == nil {
-		t.Error("hookEventsPrune with empty path should return an error")
+func TestHookEventsPrune(t *testing.T) {
+	tests := []struct {
+		name     string
+		useDB    bool
+		keepDays int
+		wantErr  bool
+	}{
+		{"empty path returns error", false, 30, true},
+		{"valid DB with keep_days 30", true, 30, false},
+		{"default keep_days (zero)", true, 0, false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			dbPath := ""
+			if tc.useDB {
+				dbPath = testDB(t)
+			}
+			hook := aqueduct.DroughtHook{Name: "test", Action: "events_prune", KeepDays: tc.keepDays}
+			err := hookEventsPrune(dbPath, hook, discardLogger())
+			if (err != nil) != tc.wantErr {
+				t.Errorf("hookEventsPrune() error = %v, wantErr = %v", err, tc.wantErr)
+			}
+		})
 	}
 }
 
-func TestHookEventsPrune_ValidDB_Succeeds(t *testing.T) {
-	dbPath := filepath.Join(t.TempDir(), "test.db")
-	_, err := cistern.New(dbPath, "test")
-	if err != nil {
-		t.Fatalf("cistern.New: %v", err)
-	}
+// --- RunDroughtHooks tests ---
 
-	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError + 1}))
-	hook := aqueduct.DroughtHook{Name: "test", Action: "events_prune", KeepDays: 30}
-	if err := hookEventsPrune(dbPath, hook, logger); err != nil {
-		t.Errorf("hookEventsPrune on valid DB: %v", err)
+func TestRunDroughtHooks_Actions(t *testing.T) {
+	tests := []struct {
+		name  string
+		hooks []aqueduct.DroughtHook
+		useDB bool
+	}{
+		{"db_vacuum", []aqueduct.DroughtHook{{Name: "v", Action: "db_vacuum"}}, true},
+		{"events_prune", []aqueduct.DroughtHook{{Name: "p", Action: "events_prune", KeepDays: 30}}, true},
+		{"tmp_cleanup", []aqueduct.DroughtHook{{Name: "t", Action: "tmp_cleanup"}}, false},
+		{"unknown_action", []aqueduct.DroughtHook{{Name: "u", Action: "completely_unknown_action"}}, false},
+		{"restart_self_unsupervised", []aqueduct.DroughtHook{{Name: "r", Action: "restart_self"}}, false},
 	}
-}
-
-func TestHookEventsPrune_DefaultKeepDays(t *testing.T) {
-	dbPath := filepath.Join(t.TempDir(), "test.db")
-	_, err := cistern.New(dbPath, "test")
-	if err != nil {
-		t.Fatalf("cistern.New: %v", err)
-	}
-
-	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError + 1}))
-	// KeepDays = 0 → default 30.
-	hook := aqueduct.DroughtHook{Name: "test", Action: "events_prune", KeepDays: 0}
-	if err := hookEventsPrune(dbPath, hook, logger); err != nil {
-		t.Errorf("hookEventsPrune with KeepDays=0: %v", err)
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			dbPath := ""
+			if tc.useDB {
+				dbPath = testDB(t)
+			}
+			// Must not panic.
+			RunDroughtHooks(tc.hooks, &aqueduct.AqueductConfig{}, dbPath, t.TempDir(), discardLogger(), time.Time{}, false, nil)
+		})
 	}
 }
 
-// --- RunDroughtHooks via db_vacuum/events_prune actions ---
-
-func TestRunDroughtHooks_DbVacuumAction(t *testing.T) {
-	dbPath := filepath.Join(t.TempDir(), "test.db")
-	_, err := cistern.New(dbPath, "test")
-	if err != nil {
-		t.Fatalf("cistern.New: %v", err)
-	}
-
-	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError + 1}))
-	cfg := &aqueduct.AqueductConfig{}
-	hooks := []aqueduct.DroughtHook{{Name: "vacuum", Action: "db_vacuum"}}
-	// Must not panic.
-	RunDroughtHooks(hooks, cfg, dbPath, t.TempDir(), logger, time.Time{}, false, nil)
-}
-
-func TestRunDroughtHooks_EventsPruneAction(t *testing.T) {
-	dbPath := filepath.Join(t.TempDir(), "test.db")
-	_, err := cistern.New(dbPath, "test")
-	if err != nil {
-		t.Fatalf("cistern.New: %v", err)
-	}
-
-	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError + 1}))
-	cfg := &aqueduct.AqueductConfig{}
-	hooks := []aqueduct.DroughtHook{{Name: "prune", Action: "events_prune", KeepDays: 30}}
-	RunDroughtHooks(hooks, cfg, dbPath, t.TempDir(), logger, time.Time{}, false, nil)
-}
-
-func TestRunDroughtHooks_TmpCleanupAction(t *testing.T) {
-	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError + 1}))
-	cfg := &aqueduct.AqueductConfig{}
-	hooks := []aqueduct.DroughtHook{{Name: "tmp", Action: "tmp_cleanup"}}
-	RunDroughtHooks(hooks, cfg, "", t.TempDir(), logger, time.Time{}, false, nil)
-}
-
-func TestRunDroughtHooks_UnknownAction_Ignored(t *testing.T) {
-	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError + 1}))
-	cfg := &aqueduct.AqueductConfig{}
-	hooks := []aqueduct.DroughtHook{{Name: "noop", Action: "completely_unknown_action"}}
-	// Unknown actions are logged and skipped — must not panic.
-	RunDroughtHooks(hooks, cfg, "", t.TempDir(), logger, time.Time{}, false, nil)
-}
-
-func TestRunDroughtHooks_RestartSelf_UnsupervisedNoReload(t *testing.T) {
-	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError + 1}))
-	cfg := &aqueduct.AqueductConfig{}
-	hooks := []aqueduct.DroughtHook{{Name: "restart", Action: "restart_self"}}
-	// restart_self + unsupervised + no workflowChanged → warns but does not exit.
-	RunDroughtHooks(hooks, cfg, "", t.TempDir(), logger, time.Time{}, false, nil)
-}
-
-func TestRunDroughtHooks_RestartSelf_UnsupervisedWithReload(t *testing.T) {
-	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError + 1}))
-	cfg := &aqueduct.AqueductConfig{}
-	hooks := []aqueduct.DroughtHook{{Name: "restart", Action: "restart_self"}}
+// RestartSelf with an onReload callback and unsupervised mode: onReload must NOT be
+// called because restart_self does not set workflowChanged.
+func TestRunDroughtHooks_RestartSelf_OnReloadNotCalled(t *testing.T) {
 	reloadCalled := false
-	// restart_self + unsupervised → calls onReload if workflowChanged... but restart_self
-	// doesn't set workflowChanged. The else branch fires (no supervisor, no binary update).
-	// We just verify onReload is not called (since workflowChanged stays false).
-	onReload := func() { reloadCalled = true }
-	RunDroughtHooks(hooks, cfg, "", t.TempDir(), logger, time.Time{}, false, onReload)
+	hooks := []aqueduct.DroughtHook{{Name: "restart", Action: "restart_self"}}
+	RunDroughtHooks(hooks, &aqueduct.AqueductConfig{}, "", t.TempDir(), discardLogger(), time.Time{}, false, func() { reloadCalled = true })
 	if reloadCalled {
 		t.Error("onReload should not be called for restart_self without workflowChanged")
 	}
@@ -554,12 +487,12 @@ func TestCheckStuckDeliveries_ItemNotPastThreshold_Skipped(t *testing.T) {
 	client := newMockClient()
 	// An in_progress delivery item that is recent (well within threshold).
 	item := &cistern.Droplet{
-		ID:               "sd-skip",
+		ID:                "sd-skip",
 		CurrentCataractae: "delivery",
-		Status:           "in_progress",
-		Assignee:         "alpha",
-		Outcome:          "",
-		UpdatedAt:        time.Now(), // just updated — not past threshold
+		Status:            "in_progress",
+		Assignee:          "alpha",
+		Outcome:           "",
+		UpdatedAt:         time.Now(), // just updated — not past threshold
 	}
 	client.items["sd-skip"] = item
 
@@ -571,6 +504,31 @@ func TestCheckStuckDeliveries_ItemNotPastThreshold_Skipped(t *testing.T) {
 	// Item should not have been touched.
 	if client.steps["sd-skip"] != "" {
 		t.Errorf("recent delivery item should not be reset, got step %q", client.steps["sd-skip"])
+	}
+}
+
+func TestCheckStuckDeliveries_ItemPastThreshold_DeadSession_Skipped(t *testing.T) {
+	client := newMockClient()
+	// Item is well past the default stuck threshold (67.5m) but the tmux session
+	// is dead (no tmux in test env) → isTmuxAlive returns false → recovery skipped.
+	item := &cistern.Droplet{
+		ID:                "sd-past",
+		CurrentCataractae: "delivery",
+		Status:            "in_progress",
+		Assignee:          "alpha",
+		Outcome:           "",
+		UpdatedAt:         time.Now().Add(-2 * time.Hour),
+	}
+	client.items["sd-past"] = item
+
+	sched := testScheduler(client, newMockRunner(client))
+	sched.checkStuckDeliveries(context.Background())
+
+	client.mu.Lock()
+	defer client.mu.Unlock()
+	// Session is dead → item not modified.
+	if client.steps["sd-past"] != "" {
+		t.Errorf("past-threshold item with dead session should not be modified, got step %q", client.steps["sd-past"])
 	}
 }
 
@@ -608,10 +566,11 @@ cataractae:
 		},
 		MaxCataractae: 1,
 	}
-	workflows := map[string]*aqueduct.Workflow{"test-repo": testWorkflow()}
 	client := newMockClient()
-	clients := map[string]CisternClient{"test-repo": client}
-	sched := NewFromParts(config, workflows, clients, newMockRunner(client))
+	sched := NewFromParts(config,
+		map[string]*aqueduct.Workflow{"test-repo": testWorkflow()},
+		map[string]CisternClient{"test-repo": client},
+		newMockRunner(client))
 
 	sched.doReloadWorkflows()
 
@@ -641,10 +600,11 @@ func TestDoReloadWorkflows_InvalidFile_KeepsOldWorkflow(t *testing.T) {
 		MaxCataractae: 1,
 	}
 	original := testWorkflow()
-	workflows := map[string]*aqueduct.Workflow{"test-repo": original}
 	client := newMockClient()
-	clients := map[string]CisternClient{"test-repo": client}
-	sched := NewFromParts(config, workflows, clients, newMockRunner(client))
+	sched := NewFromParts(config,
+		map[string]*aqueduct.Workflow{"test-repo": original},
+		map[string]CisternClient{"test-repo": client},
+		newMockRunner(client))
 
 	sched.doReloadWorkflows()
 
@@ -656,7 +616,7 @@ func TestDoReloadWorkflows_InvalidFile_KeepsOldWorkflow(t *testing.T) {
 
 // --- dirtyNonContextFiles tests ---
 
-// makeSimpleGitRepo creates a bare git repo at dir with one initial commit.
+// makeSimpleGitRepo creates a git repo at a temp dir with one initial commit.
 func makeSimpleGitRepo(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
@@ -664,6 +624,7 @@ func makeSimpleGitRepo(t *testing.T) string {
 		{"git", "init"},
 		{"git", "config", "user.email", "test@test.com"},
 		{"git", "config", "user.name", "Test"},
+		{"git", "config", "commit.gpgsign", "false"},
 	}
 	for _, args := range cmds {
 		cmd := exec.Command(args[0], args[1:]...)
@@ -690,8 +651,7 @@ func makeSimpleGitRepo(t *testing.T) string {
 
 func TestDirtyNonContextFiles_CleanRepo_Empty(t *testing.T) {
 	dir := makeSimpleGitRepo(t)
-	dirty := dirtyNonContextFiles(dir)
-	if len(dirty) != 0 {
+	if dirty := dirtyNonContextFiles(dir); len(dirty) != 0 {
 		t.Errorf("clean repo should have no dirty files, got %v", dirty)
 	}
 }
@@ -702,8 +662,7 @@ func TestDirtyNonContextFiles_UntrackedFile_Ignored(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "untracked.go"), []byte("// new\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	dirty := dirtyNonContextFiles(dir)
-	if len(dirty) != 0 {
+	if dirty := dirtyNonContextFiles(dir); len(dirty) != 0 {
 		t.Errorf("untracked files should be ignored, got %v", dirty)
 	}
 }
@@ -714,8 +673,7 @@ func TestDirtyNonContextFiles_ModifiedNonContext_Reported(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "README.md"), []byte("modified\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	dirty := dirtyNonContextFiles(dir)
-	if len(dirty) == 0 {
+	if dirty := dirtyNonContextFiles(dir); len(dirty) == 0 {
 		t.Error("modified tracked file should appear in dirty list, got empty")
 	}
 }
@@ -750,8 +708,7 @@ func TestDirtyNonContextFiles_OnlyContextMd_Empty(t *testing.T) {
 
 func TestDirtyNonContextFiles_NonGitDir_ReturnsNil(t *testing.T) {
 	dir := t.TempDir() // not a git repo
-	dirty := dirtyNonContextFiles(dir)
-	if dirty != nil {
+	if dirty := dirtyNonContextFiles(dir); dirty != nil {
 		t.Errorf("non-git dir should return nil, got %v", dirty)
 	}
 }
