@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+### TUI dashboard: higher-density arch rendering (ci-qijob)
+- Arch constants updated for higher visual fidelity at smaller scale: `colW` 20→14 (30% narrower), `archTopW` 10→9, `taperRows` 3→4 (more curve steps = sharper arch shape)
+- `wfRows` expanded from 8 to 10 sub-rows to match the new `(taperRows+pierRows)×2 = 10` layout
+- `wfRows` array size is now derived from constants at compile time (`[2*(taperRows+pierRows)]string`) — mismatches between the array size and the constants are now caught by the compiler instead of causing a runtime panic
+
 ### cistern-reviewer skill: unified multi-language reviewer (ci-1xcm6)
 - New bundled skill `cistern-reviewer` merges `adversarial-reviewer` and `critical-code-reviewer` into a single authoritative review skill covering Go, TypeScript/Next.js, and TypeScript/React
 - Retains the full adversarial mindset (Guilty Until Proven Exceptional, Evaluate the Artifact), Go-specific red flags (goroutine leaks, bare recover, unguarded map writes, defer in loops), TypeScript red flags (any abuse, missing null checks, unhandled promises, useEffect lies), front-end patterns, SQL/ORM patterns, structured severity tiers (Blocking / Required / Suggestions), the Slop Detector, Structural Contempt, When Uncertain section, and the two-phase pre-finalization checklist
