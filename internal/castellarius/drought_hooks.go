@@ -19,27 +19,45 @@ import (
 	_ "github.com/mattn/go-sqlite3"
 )
 
+// DroughtHookParams bundles the context needed by RunDroughtHooks.
+// Using a struct avoids a long positional parameter list and makes call sites
+// self-documenting — callers only set the fields they need.
+type DroughtHookParams struct {
+	Hooks              []aqueduct.DroughtHook
+	Config             *aqueduct.AqueductConfig
+	DBPath             string
+	SandboxRoot        string
+	Logger             *slog.Logger
+	StartupBinaryMtime time.Time
+	CfgPath            string
+	StartupCfgMtime    time.Time
+	Supervised         bool
+	OnReload           func()
+}
+
 // RunDroughtHooks executes all configured drought hooks sequentially.
 // Errors are logged but do not crash the flow.
 //
 // Restart behaviour depends on whether the process is supervised:
 //   - supervised (systemd/supervisord/etc.): os.Exit(0) — supervisor restarts cleanly.
 //   - unsupervised (manual run): workflow changes trigger an in-process hot-reload via
-//     onReload(); binary updates log a warning but do NOT exit (Castellarius stays alive).
+//     OnReload(); binary or cistern.yaml updates log a warning but do NOT exit
+//     (Castellarius stays alive).
 //
 // This ensures the Castellarius never dies without something to bring it back.
-func RunDroughtHooks(hooks []aqueduct.DroughtHook, cfg *aqueduct.AqueductConfig, dbPath string, sandboxRoot string, logger *slog.Logger, startupBinaryMtime time.Time, supervised bool, onReload func()) {
+func RunDroughtHooks(p DroughtHookParams) {
+	logger := p.Logger
 	needsRestart := false
 	workflowChanged := false
 	restartReason := ""
 
-	for _, hook := range hooks {
+	for _, hook := range p.Hooks {
 		logger.Info("drought hook starting", "hook", hook.Name, "action", hook.Action)
 		var err error
 		switch hook.Action {
 		case "git_sync":
 			var changed bool
-			changed, err = hookGitSync(cfg, sandboxRoot, logger)
+			changed, err = hookGitSync(p.Config, p.SandboxRoot, logger)
 			if changed {
 				workflowChanged = true
 				if hook.RestartIfUpdated {
@@ -48,13 +66,13 @@ func RunDroughtHooks(hooks []aqueduct.DroughtHook, cfg *aqueduct.AqueductConfig,
 				}
 			}
 		case "cataractae_generate":
-			err = hookCataractaeGenerate(cfg, logger)
+			err = hookCataractaeGenerate(p.Config, logger)
 		case "worktree_prune":
-			err = hookWorktreePrune(cfg, sandboxRoot, logger)
+			err = hookWorktreePrune(p.Config, p.SandboxRoot, logger)
 		case "db_vacuum":
-			err = hookDBVacuum(dbPath, logger)
+			err = hookDBVacuum(p.DBPath, logger)
 		case "events_prune":
-			err = hookEventsPrune(dbPath, hook, logger)
+			err = hookEventsPrune(p.DBPath, hook, logger)
 		case "tmp_cleanup":
 			err = hookTmpCleanup(logger)
 		case "restart_self":
@@ -78,43 +96,60 @@ func RunDroughtHooks(hooks []aqueduct.DroughtHook, cfg *aqueduct.AqueductConfig,
 	// Binary-update detection: if the on-disk binary is newer than when we started,
 	// a restart is needed to run the new code.
 	binaryUpdated := false
-	if !startupBinaryMtime.IsZero() {
-		if exe, err := os.Executable(); err == nil {
-			if info, err := os.Stat(exe); err == nil {
-				if info.ModTime().After(startupBinaryMtime) {
-					binaryUpdated = true
-					needsRestart = true
-					restartReason = "binary updated on disk"
-				}
-			}
-		}
+	if exe, err := os.Executable(); err == nil && mtimeAdvanced(exe, p.StartupBinaryMtime) {
+		binaryUpdated = true
+		needsRestart = true
+		restartReason = "binary updated on disk"
+	}
+
+	// Config-update detection: if cistern.yaml is newer than when we started,
+	// a restart is needed to pick up the new config.
+	cfgUpdated := mtimeAdvanced(p.CfgPath, p.StartupCfgMtime)
+	if cfgUpdated {
+		needsRestart = true
+		restartReason = "cistern.yaml updated on disk"
 	}
 
 	if !needsRestart {
 		return
 	}
 
-	if supervised {
+	if p.Supervised {
 		// Supervisor (systemd, supervisord, etc.) will restart us.
 		logger.Info("Castellarius exiting for clean restart", "reason", restartReason)
 		os.Exit(0)
 	}
 
 	// Unsupervised — never exit on our own. Apply what we can in-process.
-	if workflowChanged && !binaryUpdated && onReload != nil {
+	if workflowChanged && !binaryUpdated && !cfgUpdated && p.OnReload != nil {
 		// Workflow change: hot-reload the parsed YAML in the main goroutine.
 		logger.Info("Workflow updated — applying hot-reload (no supervisor)",
 			"hint", "For automatic restarts, run under systemd: systemctl --user start cistern-castellarius")
-		onReload()
+		p.OnReload()
 	} else if binaryUpdated {
 		// Binary change: in-process reload is impossible. Warn and keep running.
 		logger.Warn("Binary updated on disk — manual restart required to apply new code",
+			"hint", "Run: systemctl --user restart cistern-castellarius  (or Ctrl-C and restart manually)")
+	} else if cfgUpdated {
+		// Config change: in-process reload is impossible. Warn and keep running.
+		logger.Warn("cistern.yaml updated on disk — manual restart required to apply new config",
+			"workflow_also_changed", workflowChanged,
 			"hint", "Run: systemctl --user restart cistern-castellarius  (or Ctrl-C and restart manually)")
 	} else {
 		logger.Warn("Restart requested but no supervisor detected — skipping",
 			"reason", restartReason,
 			"hint", "Set CT_SUPERVISED=1 or run under systemd to enable automatic restarts")
 	}
+}
+
+// mtimeAdvanced reports whether the file at path has been modified after baseline.
+// Returns false when path is empty, baseline is zero, or the file cannot be stat'd.
+func mtimeAdvanced(path string, baseline time.Time) bool {
+	if path == "" || baseline.IsZero() {
+		return false
+	}
+	info, err := os.Stat(path)
+	return err == nil && info.ModTime().After(baseline)
 }
 
 // hookGitSync fetches the latest workflow YAML and skills from origin/main for

@@ -351,16 +351,6 @@ func TestShellHook_EmptyCommandErrors(t *testing.T) {
 
 // --- hookGitSync skills deployment tests ---
 
-// mustRunGit is a test helper that runs a git command and fatals on error.
-func mustRunGit(t *testing.T, args ...string) {
-	t.Helper()
-	cmd := exec.Command("git", args...)
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("git %v: %v\n%s", args, err, out)
-	}
-}
-
 // setupGitOriginWithSkills creates a bare origin repo with a skills/<name>/SKILL.md
 // committed to main. Returns the origin dir path.
 func setupGitOriginWithSkills(t *testing.T, tmpDir string, skillName, skillContent string) string {
@@ -372,13 +362,13 @@ func setupGitOriginWithSkills(t *testing.T, tmpDir string, skillName, skillConte
 
 	// Create bare origin.
 	originDir := filepath.Join(tmpDir, "origin.git")
-	mustRunGit(t, "init", "--bare", originDir)
+	mustGit(t, "", "init", "--bare", originDir)
 
 	// Clone origin, add skill, commit and push to main.
 	workDir := filepath.Join(tmpDir, "work")
-	mustRunGit(t, "clone", originDir, workDir)
-	mustRunGit(t, "-C", workDir, "config", "user.email", "test@example.com")
-	mustRunGit(t, "-C", workDir, "config", "user.name", "Test")
+	mustGit(t, "", "clone", originDir, workDir)
+	mustGit(t, workDir, "config", "user.email", "test@example.com")
+	mustGit(t, workDir, "config", "user.name", "Test")
 
 	skillPath := filepath.Join(workDir, "skills", skillName, "SKILL.md")
 	if err := os.MkdirAll(filepath.Dir(skillPath), 0o755); err != nil {
@@ -387,9 +377,9 @@ func setupGitOriginWithSkills(t *testing.T, tmpDir string, skillName, skillConte
 	if err := os.WriteFile(skillPath, []byte(skillContent), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	mustRunGit(t, "-C", workDir, "add", "-A")
-	mustRunGit(t, "-C", workDir, "commit", "-m", "add skill")
-	mustRunGit(t, "-C", workDir, "push", "origin", "HEAD:main")
+	mustGit(t, workDir, "add", "-A")
+	mustGit(t, workDir, "commit", "-m", "add skill")
+	mustGit(t, workDir, "push", "origin", "HEAD:main")
 
 	return originDir
 }
@@ -406,7 +396,7 @@ func TestHookGitSync_DeploysSkillsToSkillsDir(t *testing.T) {
 	// Create a sandbox clone for hookGitSync to find.
 	sandboxRoot := filepath.Join(tmpDir, "sandboxes")
 	sandboxClone := filepath.Join(sandboxRoot, "myrepo", "worker1")
-	mustRunGit(t, "clone", originDir, sandboxClone)
+	mustGit(t, "", "clone", originDir, sandboxClone)
 
 	cfg := &aqueduct.AqueductConfig{
 		Repos: []aqueduct.RepoConfig{
@@ -442,7 +432,7 @@ func TestHookGitSync_SkillsDeployIsIdempotent(t *testing.T) {
 
 	sandboxRoot := filepath.Join(tmpDir, "sandboxes")
 	sandboxClone := filepath.Join(sandboxRoot, "repo", "worker1")
-	mustRunGit(t, "clone", originDir, sandboxClone)
+	mustGit(t, "", "clone", originDir, sandboxClone)
 
 	cfg := &aqueduct.AqueductConfig{
 		Repos: []aqueduct.RepoConfig{
@@ -482,23 +472,23 @@ func TestHookGitSync_SkillsSyncGracefulWhenNoSkillsDir(t *testing.T) {
 
 	// Create origin with just an empty commit (no skills/).
 	originDir := filepath.Join(tmpDir, "origin.git")
-	mustRunGit(t, "init", "--bare", originDir)
+	mustGit(t, "", "init", "--bare", originDir)
 	workDir := filepath.Join(tmpDir, "work")
-	mustRunGit(t, "clone", originDir, workDir)
-	mustRunGit(t, "-C", workDir, "config", "user.email", "test@example.com")
-	mustRunGit(t, "-C", workDir, "config", "user.name", "Test")
+	mustGit(t, "", "clone", originDir, workDir)
+	mustGit(t, workDir, "config", "user.email", "test@example.com")
+	mustGit(t, workDir, "config", "user.name", "Test")
 
 	// Add a README so we have something to commit.
 	if err := os.WriteFile(filepath.Join(workDir, "README.md"), []byte("hello\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	mustRunGit(t, "-C", workDir, "add", "-A")
-	mustRunGit(t, "-C", workDir, "commit", "-m", "init")
-	mustRunGit(t, "-C", workDir, "push", "origin", "HEAD:main")
+	mustGit(t, workDir, "add", "-A")
+	mustGit(t, workDir, "commit", "-m", "init")
+	mustGit(t, workDir, "push", "origin", "HEAD:main")
 
 	sandboxRoot := filepath.Join(tmpDir, "sandboxes")
 	sandboxClone := filepath.Join(sandboxRoot, "noskills-repo", "worker1")
-	mustRunGit(t, "clone", originDir, sandboxClone)
+	mustGit(t, "", "clone", originDir, sandboxClone)
 
 	cfg := &aqueduct.AqueductConfig{
 		Repos: []aqueduct.RepoConfig{
@@ -530,12 +520,15 @@ func TestHookGitSync_SkillsSyncGracefulWhenNoSkillsDir(t *testing.T) {
 
 // --- git_sync cataractae file deployment tests ---
 
-// mustGit runs git with args in dir, failing the test if it errors.
+// mustGit runs git with args, optionally in dir (pass "" to run without -C).
 func mustGit(t *testing.T, dir string, args ...string) {
 	t.Helper()
-	cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
+	if dir != "" {
+		args = append([]string{"-C", dir}, args...)
+	}
+	cmd := exec.Command("git", args...)
 	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("git -C %s %v: %v\n%s", dir, args, err, out)
+		t.Fatalf("git %v: %v\n%s", args, err, out)
 	}
 }
 
@@ -704,6 +697,105 @@ cataractae:
 	}
 	if time.Since(info.ModTime()) < 30*time.Second {
 		t.Error("PERSONA.md was rewritten even though content was identical (mtime is very recent)")
+	}
+}
+
+// --- cistern.yaml mtime detection tests ---
+
+func TestRunDroughtHooks_CfgMtimeZero_NoDetection(t *testing.T) {
+	// When startupCfgMtime is zero, the detection is disabled regardless of cfgPath.
+	tmpDir := t.TempDir()
+	cfgPath := filepath.Join(tmpDir, "cistern.yaml")
+	if err := os.WriteFile(cfgPath, []byte("repos: []\n"), 0o644); err != nil {
+		t.Fatalf("write cfg: %v", err)
+	}
+
+	reloadCalled := false
+	RunDroughtHooks(DroughtHookParams{
+		Config:      &aqueduct.AqueductConfig{},
+		SandboxRoot: tmpDir,
+		Logger:      discardLogger(),
+		CfgPath:     cfgPath,
+		OnReload:    func() { reloadCalled = true },
+	})
+	if reloadCalled {
+		t.Error("onReload should not be called when startupCfgMtime is zero")
+	}
+}
+
+func TestRunDroughtHooks_CfgFileUpdated_Unsupervised_LogsWarnOnly(t *testing.T) {
+	// When cistern.yaml is newer than startupCfgMtime and running unsupervised,
+	// onReload must NOT be called (config is not hot-reloadable — it warns and keeps running).
+	//
+	// The !cfgUpdated guard on the hot-reload branch also blocks the combined
+	// workflowChanged+cfgUpdated path; that path is not testable here because
+	// workflowChanged is set internally by git_sync (not injectable).
+	tmpDir := t.TempDir()
+	cfgPath := filepath.Join(tmpDir, "cistern.yaml")
+	if err := os.WriteFile(cfgPath, []byte("repos: []\n"), 0o644); err != nil {
+		t.Fatalf("write cfg: %v", err)
+	}
+
+	// startupCfgMtime in the past → file is newer than recorded startup time.
+	startupMtime := time.Now().Add(-time.Hour)
+
+	reloadCalled := false
+	// Must not panic; unsupervised path only logs a warning, never calls onReload.
+	RunDroughtHooks(DroughtHookParams{
+		Config:          &aqueduct.AqueductConfig{},
+		SandboxRoot:     tmpDir,
+		Logger:          discardLogger(),
+		CfgPath:         cfgPath,
+		StartupCfgMtime: startupMtime,
+		OnReload:        func() { reloadCalled = true },
+	})
+	if reloadCalled {
+		t.Error("onReload should not be called for a cistern.yaml update (not a workflow change)")
+	}
+}
+
+func TestRunDroughtHooks_CfgFileNotUpdated_NoRestart(t *testing.T) {
+	// When cistern.yaml mtime has not advanced past startupCfgMtime, no restart is triggered.
+	tmpDir := t.TempDir()
+	cfgPath := filepath.Join(tmpDir, "cistern.yaml")
+	if err := os.WriteFile(cfgPath, []byte("repos: []\n"), 0o644); err != nil {
+		t.Fatalf("write cfg: %v", err)
+	}
+
+	// startupCfgMtime in the future → file is older than recorded startup time → no update.
+	startupMtime := time.Now().Add(time.Hour)
+
+	reloadCalled := false
+	RunDroughtHooks(DroughtHookParams{
+		Config:          &aqueduct.AqueductConfig{},
+		SandboxRoot:     tmpDir,
+		Logger:          discardLogger(),
+		CfgPath:         cfgPath,
+		StartupCfgMtime: startupMtime,
+		OnReload:        func() { reloadCalled = true },
+	})
+	if reloadCalled {
+		t.Error("onReload should not be called when cistern.yaml has not been updated")
+	}
+}
+
+func TestRunDroughtHooks_CfgFileMissing_NoRestart(t *testing.T) {
+	// When cfgPath points to a non-existent file, the detection is silently skipped.
+	tmpDir := t.TempDir()
+	cfgPath := filepath.Join(tmpDir, "does-not-exist.yaml")
+	startupMtime := time.Now().Add(-time.Hour) // in the past, so update would trigger
+
+	reloadCalled := false
+	RunDroughtHooks(DroughtHookParams{
+		Config:          &aqueduct.AqueductConfig{},
+		SandboxRoot:     tmpDir,
+		Logger:          discardLogger(),
+		CfgPath:         cfgPath,
+		StartupCfgMtime: startupMtime,
+		OnReload:        func() { reloadCalled = true },
+	})
+	if reloadCalled {
+		t.Error("onReload should not be called when cfgPath does not exist")
 	}
 }
 

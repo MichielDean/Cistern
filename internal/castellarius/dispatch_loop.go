@@ -58,16 +58,20 @@ func (t *dispatchLoopTracker) resetFailures(dropletID string) {
 }
 
 // recentFailureCount returns the number of failures recorded within dispatchLoopWindow.
+// Old timestamps are pruned in place to prevent unbounded growth.
 func (t *dispatchLoopTracker) recentFailureCount(dropletID string) int {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	cutoff := time.Now().Add(-dispatchLoopWindow)
-	var n int
-	for _, ts := range t.failures[dropletID] {
+	all := t.failures[dropletID]
+	n := 0
+	for _, ts := range all {
 		if ts.After(cutoff) {
+			all[n] = ts
 			n++
 		}
 	}
+	t.failures[dropletID] = all[:n]
 	return n
 }
 

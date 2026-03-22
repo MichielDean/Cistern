@@ -86,7 +86,7 @@ keep dispatching droplets into aqueducts automatically.`,
 			return fmt.Errorf("runner adapter: %w", err)
 		}
 
-		sched, err := castellarius.New(*cfg, dbPath, adapter)
+		sched, err := castellarius.New(*cfg, dbPath, adapter, castellarius.WithConfigPath(cfgPath))
 		if err != nil {
 			return fmt.Errorf("castellarius: %w", err)
 		}

@@ -454,7 +454,13 @@ func TestRunDroughtHooks_Actions(t *testing.T) {
 				dbPath = testDB(t)
 			}
 			// Must not panic.
-			RunDroughtHooks(tc.hooks, &aqueduct.AqueductConfig{}, dbPath, t.TempDir(), discardLogger(), time.Time{}, false, nil)
+			RunDroughtHooks(DroughtHookParams{
+				Hooks:       tc.hooks,
+				Config:      &aqueduct.AqueductConfig{},
+				DBPath:      dbPath,
+				SandboxRoot: t.TempDir(),
+				Logger:      discardLogger(),
+			})
 		})
 	}
 }
@@ -464,7 +470,13 @@ func TestRunDroughtHooks_Actions(t *testing.T) {
 func TestRunDroughtHooks_RestartSelf_OnReloadNotCalled(t *testing.T) {
 	reloadCalled := false
 	hooks := []aqueduct.DroughtHook{{Name: "restart", Action: "restart_self"}}
-	RunDroughtHooks(hooks, &aqueduct.AqueductConfig{}, "", t.TempDir(), discardLogger(), time.Time{}, false, func() { reloadCalled = true })
+	RunDroughtHooks(DroughtHookParams{
+		Hooks:       hooks,
+		Config:      &aqueduct.AqueductConfig{},
+		SandboxRoot: t.TempDir(),
+		Logger:      discardLogger(),
+		OnReload:    func() { reloadCalled = true },
+	})
 	if reloadCalled {
 		t.Error("onReload should not be called for restart_self without workflowChanged")
 	}
