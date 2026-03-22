@@ -500,7 +500,18 @@ func (s *Castellarius) tick(ctx context.Context) {
 				default: // already pending
 				}
 			}
-			go RunDroughtHooks(s.config.DroughtHooks, &s.config, s.dbPath, s.sandboxRoot, s.logger, s.startupBinaryMtime, s.cfgPath, s.startupCfgMtime, s.supervised, reloadFn)
+			go RunDroughtHooks(DroughtHookParams{
+				Hooks:              s.config.DroughtHooks,
+				Config:             &s.config,
+				DBPath:             s.dbPath,
+				SandboxRoot:        s.sandboxRoot,
+				Logger:             s.logger,
+				StartupBinaryMtime: s.startupBinaryMtime,
+				CfgPath:            s.cfgPath,
+				StartupCfgMtime:    s.startupCfgMtime,
+				Supervised:         s.supervised,
+				OnReload:           reloadFn,
+			})
 		}
 	}
 	s.wasDrought = isDrought
