@@ -951,3 +951,152 @@ func TestListRecentEvents_Limit(t *testing.T) {
 		t.Errorf("got %d events, want 3 (limit enforced)", len(events))
 	}
 }
+
+func ptr[T any](v T) *T { return &v }
+
+func TestEditDroplet_Description(t *testing.T) {
+	c := testClient(t)
+	item, _ := c.Add("repo", "Title", "old desc", 2, 3)
+
+	err := c.EditDroplet(item.ID, EditDropletFields{Description: ptr("new desc")})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	got, _ := c.Get(item.ID)
+	if got.Description != "new desc" {
+		t.Errorf("description = %q, want %q", got.Description, "new desc")
+	}
+	// Other fields unchanged.
+	if got.Priority != 2 {
+		t.Errorf("priority = %d, want 2", got.Priority)
+	}
+	if got.Complexity != 3 {
+		t.Errorf("complexity = %d, want 3", got.Complexity)
+	}
+}
+
+func TestEditDroplet_Complexity(t *testing.T) {
+	c := testClient(t)
+	item, _ := c.Add("repo", "Title", "desc", 2, 3)
+
+	err := c.EditDroplet(item.ID, EditDropletFields{Complexity: ptr(1)})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	got, _ := c.Get(item.ID)
+	if got.Complexity != 1 {
+		t.Errorf("complexity = %d, want 1", got.Complexity)
+	}
+	if got.Description != "desc" {
+		t.Errorf("description changed unexpectedly: %q", got.Description)
+	}
+}
+
+func TestEditDroplet_Priority(t *testing.T) {
+	c := testClient(t)
+	item, _ := c.Add("repo", "Title", "", 2, 3)
+
+	err := c.EditDroplet(item.ID, EditDropletFields{Priority: ptr(1)})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	got, _ := c.Get(item.ID)
+	if got.Priority != 1 {
+		t.Errorf("priority = %d, want 1", got.Priority)
+	}
+}
+
+func TestEditDroplet_AllFields(t *testing.T) {
+	c := testClient(t)
+	item, _ := c.Add("repo", "Title", "old", 3, 3)
+
+	err := c.EditDroplet(item.ID, EditDropletFields{
+		Description: ptr("updated"),
+		Complexity:  ptr(2),
+		Priority:    ptr(1),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	got, _ := c.Get(item.ID)
+	if got.Description != "updated" {
+		t.Errorf("description = %q, want %q", got.Description, "updated")
+	}
+	if got.Complexity != 2 {
+		t.Errorf("complexity = %d, want 2", got.Complexity)
+	}
+	if got.Priority != 1 {
+		t.Errorf("priority = %d, want 1", got.Priority)
+	}
+}
+
+func TestEditDroplet_GuardInProgress(t *testing.T) {
+	c := testClient(t)
+	item, _ := c.Add("repo", "Title", "", 1, 3)
+	c.UpdateStatus(item.ID, "in_progress")
+
+	err := c.EditDroplet(item.ID, EditDropletFields{Description: ptr("new")})
+	if err == nil {
+		t.Fatal("expected error for in_progress droplet")
+	}
+	if !strings.Contains(err.Error(), "cannot edit a droplet that has been picked up") {
+		t.Errorf("unexpected error: %v", err)
+	}
+	if !strings.Contains(err.Error(), "in_progress") {
+		t.Errorf("error should mention status, got: %v", err)
+	}
+}
+
+func TestEditDroplet_GuardDelivered(t *testing.T) {
+	c := testClient(t)
+	item, _ := c.Add("repo", "Title", "", 1, 3)
+	c.CloseItem(item.ID)
+
+	err := c.EditDroplet(item.ID, EditDropletFields{Description: ptr("new")})
+	if err == nil {
+		t.Fatal("expected error for delivered droplet")
+	}
+	if !strings.Contains(err.Error(), "cannot edit a droplet that has been picked up") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestEditDroplet_AllowStagnant(t *testing.T) {
+	c := testClient(t)
+	item, _ := c.Add("repo", "Title", "old", 1, 3)
+	c.Escalate(item.ID, "stuck")
+
+	err := c.EditDroplet(item.ID, EditDropletFields{Description: ptr("updated")})
+	if err != nil {
+		t.Fatalf("expected stagnant droplet to be editable, got: %v", err)
+	}
+
+	got, _ := c.Get(item.ID)
+	if got.Description != "updated" {
+		t.Errorf("description = %q, want %q", got.Description, "updated")
+	}
+}
+
+func TestEditDroplet_NoFields(t *testing.T) {
+	c := testClient(t)
+	item, _ := c.Add("repo", "Title", "desc", 2, 3)
+
+	// No-op: no fields specified should be fine at the client layer.
+	err := c.EditDroplet(item.ID, EditDropletFields{})
+	if err != nil {
+		t.Fatalf("unexpected error for no-op edit: %v", err)
+	}
+}
+
+func TestEditDroplet_NotFound(t *testing.T) {
+	c := testClient(t)
+
+	err := c.EditDroplet("bf-xxxxx", EditDropletFields{Description: ptr("x")})
+	if err == nil {
+		t.Fatal("expected error for unknown droplet")
+	}
+}

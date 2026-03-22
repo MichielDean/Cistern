@@ -4,6 +4,7 @@ import (
 	"encoding/csv"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -1160,6 +1161,81 @@ var dropletPeekCmd = &cobra.Command{
 	},
 }
 
+// --- cistern edit ---
+
+var (
+	editDescription string
+	editComplexity  string
+	editPriority    int
+)
+
+var dropletEditCmd = &cobra.Command{
+	Use:   "edit <id>",
+	Short: "Update description, complexity, or priority of a queued droplet",
+	Long: `Edit mutable fields on a droplet that has not yet been picked up.
+
+At least one flag must be provided. Only the flags you pass are updated.
+
+To replace the description with multi-line text from stdin:
+  echo 'new description' | ct droplet edit <id> --description -
+
+The droplet must be queued (open or stagnant). Edits are rejected once a
+droplet is in_progress or delivered.`,
+	Args: cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		id := args[0]
+
+		descChanged := cmd.Flags().Changed("description")
+		cxChanged := cmd.Flags().Changed("complexity")
+		prioChanged := cmd.Flags().Changed("priority")
+
+		if !descChanged && !cxChanged && !prioChanged {
+			return fmt.Errorf("at least one of --description, --complexity, or --priority is required")
+		}
+
+		c, err := cistern.New(resolveDBPath(), "")
+		if err != nil {
+			return err
+		}
+		defer c.Close()
+
+		var fields cistern.EditDropletFields
+
+		if descChanged {
+			var desc string
+			if editDescription == "-" {
+				b, err := io.ReadAll(os.Stdin)
+				if err != nil {
+					return fmt.Errorf("read stdin: %w", err)
+				}
+				desc = strings.TrimRight(string(b), "\n")
+			} else {
+				desc = editDescription
+			}
+			fields.Description = &desc
+		}
+
+		if cxChanged {
+			cx, err := parseComplexity(editComplexity)
+			if err != nil {
+				return err
+			}
+			fields.Complexity = &cx
+		}
+
+		if prioChanged {
+			fields.Priority = &editPriority
+		}
+
+		if err := c.EditDroplet(id, fields); err != nil {
+			return err
+		}
+
+		fmt.Printf("droplet %s updated\n", id)
+		return nil
+	},
+}
+
 func init() {
 	dropletAddCmd.Flags().StringVar(&addTitle, "title", "", "droplet title (required)")
 	dropletAddCmd.Flags().StringVar(&addDescription, "description", "", "droplet description")
@@ -1215,11 +1291,15 @@ func init() {
 	dropletRestartCmd.Flags().StringVar(&restartNotes, "notes", "", "optional note to record before restarting")
 	_ = dropletRestartCmd.MarkFlagRequired("cataractae")
 
+	dropletEditCmd.Flags().StringVar(&editDescription, "description", "", "new description (use - to read from stdin)")
+	dropletEditCmd.Flags().StringVar(&editComplexity, "complexity", "", "new complexity: trivial|standard|full|critical (or 1-4)")
+	dropletEditCmd.Flags().IntVar(&editPriority, "priority", 0, "new priority")
+
 	dropletCmd.AddCommand(dropletAddCmd, dropletListCmd, dropletShowCmd, dropletNoteCmd,
 		dropletCloseCmd, dropletReopenCmd, dropletEscalateCmd, dropletPurgeCmd,
 		dropletPassCmd, dropletRecirculateCmd, dropletBlockCmd, dropletApproveCmd,
 		dropletStatsCmd, dropletDepsCmd, dropletPeekCmd, dropletIssueCmd, dropletSearchCmd,
-		dropletExportCmd, dropletRenameCmd, dropletRestartCmd)
+		dropletExportCmd, dropletRenameCmd, dropletRestartCmd, dropletEditCmd)
 	rootCmd.AddCommand(dropletCmd)
 }
 

@@ -772,3 +772,139 @@ func TestDropletRename(t *testing.T) {
 		}
 	})
 }
+
+func TestDropletEdit(t *testing.T) {
+	dir := t.TempDir()
+	db := filepath.Join(dir, "test.db")
+	t.Setenv("CT_DB", db)
+
+	c, err := cistern.New(db, "ts")
+	if err != nil {
+		t.Fatal(err)
+	}
+	item, err := c.Add("repo", "Original title", "old description", 3, 3)
+	c.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	t.Run("update description", func(t *testing.T) {
+		editDescription = "new description"
+		editComplexity = ""
+		editPriority = 0
+		dropletEditCmd.Flags().Set("description", "new description")
+
+		out := captureStdout(t, func() {
+			if err := dropletEditCmd.RunE(dropletEditCmd, []string{item.ID}); err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+		})
+		if !strings.Contains(out, "updated") {
+			t.Errorf("expected 'updated' in output, got: %q", out)
+		}
+
+		c2, _ := cistern.New(db, "")
+		defer c2.Close()
+		got, _ := c2.Get(item.ID)
+		if got.Description != "new description" {
+			t.Errorf("description = %q, want %q", got.Description, "new description")
+		}
+		// Title unchanged.
+		if got.Title != "Original title" {
+			t.Errorf("title changed unexpectedly: %q", got.Title)
+		}
+		// Complexity unchanged.
+		if got.Complexity != 3 {
+			t.Errorf("complexity changed unexpectedly: %d", got.Complexity)
+		}
+	})
+
+	t.Run("update complexity", func(t *testing.T) {
+		dropletEditCmd.ResetFlags()
+		dropletEditCmd.Flags().StringVar(&editDescription, "description", "", "")
+		dropletEditCmd.Flags().StringVar(&editComplexity, "complexity", "", "")
+		dropletEditCmd.Flags().IntVar(&editPriority, "priority", 0, "")
+
+		editDescription = ""
+		editComplexity = "trivial"
+		editPriority = 0
+		dropletEditCmd.Flags().Set("complexity", "trivial")
+
+		if err := dropletEditCmd.RunE(dropletEditCmd, []string{item.ID}); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		c2, _ := cistern.New(db, "")
+		defer c2.Close()
+		got, _ := c2.Get(item.ID)
+		if got.Complexity != 1 {
+			t.Errorf("complexity = %d, want 1", got.Complexity)
+		}
+	})
+
+	t.Run("update priority", func(t *testing.T) {
+		dropletEditCmd.ResetFlags()
+		dropletEditCmd.Flags().StringVar(&editDescription, "description", "", "")
+		dropletEditCmd.Flags().StringVar(&editComplexity, "complexity", "", "")
+		dropletEditCmd.Flags().IntVar(&editPriority, "priority", 0, "")
+
+		editDescription = ""
+		editComplexity = ""
+		editPriority = 1
+		dropletEditCmd.Flags().Set("priority", "1")
+
+		if err := dropletEditCmd.RunE(dropletEditCmd, []string{item.ID}); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		c2, _ := cistern.New(db, "")
+		defer c2.Close()
+		got, _ := c2.Get(item.ID)
+		if got.Priority != 1 {
+			t.Errorf("priority = %d, want 1", got.Priority)
+		}
+	})
+
+	t.Run("no flags is an error", func(t *testing.T) {
+		dropletEditCmd.ResetFlags()
+		dropletEditCmd.Flags().StringVar(&editDescription, "description", "", "")
+		dropletEditCmd.Flags().StringVar(&editComplexity, "complexity", "", "")
+		dropletEditCmd.Flags().IntVar(&editPriority, "priority", 0, "")
+
+		editDescription = ""
+		editComplexity = ""
+		editPriority = 0
+		// No flags set via .Set(), so Changed() returns false for all.
+
+		err := dropletEditCmd.RunE(dropletEditCmd, []string{item.ID})
+		if err == nil {
+			t.Fatal("expected error when no flags provided")
+		}
+		if !strings.Contains(err.Error(), "at least one") {
+			t.Errorf("unexpected error: %v", err)
+		}
+	})
+
+	t.Run("reject in_progress", func(t *testing.T) {
+		dropletEditCmd.ResetFlags()
+		dropletEditCmd.Flags().StringVar(&editDescription, "description", "", "")
+		dropletEditCmd.Flags().StringVar(&editComplexity, "complexity", "", "")
+		dropletEditCmd.Flags().IntVar(&editPriority, "priority", 0, "")
+
+		c2, _ := cistern.New(db, "")
+		ip, _ := c2.Add("repo", "Flowing droplet", "", 1, 3)
+		c2.UpdateStatus(ip.ID, "in_progress")
+		c2.Close()
+
+		editDescription = "new"
+		dropletEditCmd.Flags().Set("description", "new")
+
+		err := dropletEditCmd.RunE(dropletEditCmd, []string{ip.ID})
+		if err == nil {
+			t.Fatal("expected error for in_progress droplet")
+		}
+		if !strings.Contains(err.Error(), "cannot edit a droplet that has been picked up") {
+			t.Errorf("unexpected error: %v", err)
+		}
+	})
+}
