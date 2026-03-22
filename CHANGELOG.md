@@ -9,6 +9,11 @@
 - `ct doctor` now checks `~/.cistern/skills/<name>/SKILL.md` for every skill uniformly — the previous exemption for in-repo skills is removed.
 - `ct skills list` now shows all installed skills; the old `path:` filter that hid in-repo skills is gone.
 
+### Notes: cataractae name attribution, newest-first order, recirculate icon (ci-mvnq7)
+- Notes now show the **cataractae name** instead of `[manual]` — `CT_CATARACTA_NAME` (injected into every agent session) is used for attribution; falls back to `manual` for direct CLI invocations.
+- Notes are displayed **newest first** — `ct droplet show <id>` and CONTEXT.md both surface the most recent context at the top without scrolling.
+- `ct droplet recirculate --notes "..."` prefixes the note content with ♻ inline — the recirculate icon replaces the now-removed standalone recirculation counter and makes recirculate cycles immediately identifiable in the note list.
+
 ### ct cataractae add: auto-generate CLAUDE.md on scaffold (ci-f4354)
 - `ct cataractae add <name>` now runs `ct cataractae generate` automatically after creating the template files — `CLAUDE.md` is ready immediately without a separate generate step.
 - Output format updated to `Created:` / `Updated:` / `Generated:` lines matching the actual files produced, followed by an instruction to edit `PERSONA.md` and `INSTRUCTIONS.md` and wire the cataractae into the pipeline.
