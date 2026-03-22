@@ -4,11 +4,13 @@ import (
 	"bufio"
 	"context"
 	"crypto/sha1"
+	"embed"
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"io"
+	"io/fs"
 	"net"
 	"net/http"
 	"os"
@@ -22,6 +24,9 @@ import (
 	"github.com/MichielDean/cistern/internal/cistern"
 	"github.com/creack/pty"
 )
+
+//go:embed assets/static
+var staticAssets embed.FS
 
 // wsWriteTimeout is the per-frame write deadline set on the hijacked net.Conn
 // before each wsSendText call. Without this, a client that disappears via a
@@ -150,6 +155,11 @@ func wsReadClientFrame(br *bufio.Reader, buf []byte) (opcode byte, payload []byt
 	masked := header[1]&0x80 != 0
 	rawLen := int(header[1] & 0x7F)
 
+	// RFC 6455 §5.1: clients MUST mask all frames to the server.
+	if !masked {
+		return 0, nil, buf, fmt.Errorf("unmasked client frame (RFC 6455 §5.1)")
+	}
+
 	var payloadLen int
 	switch rawLen {
 	case 126:
@@ -241,6 +251,13 @@ func wsUpgrade(w http.ResponseWriter, r *http.Request) (net.Conn, *bufio.ReadWri
 // Exposed for testing.
 func newDashboardMux(cfgPath, dbPath string) http.Handler {
 	mux := http.NewServeMux()
+
+	// Serve bundled xterm.js assets so the dashboard works in airgapped environments.
+	staticSub, err := fs.Sub(staticAssets, "assets/static")
+	if err != nil {
+		panic("embedded static assets not found: " + err.Error())
+	}
+	mux.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.FS(staticSub))))
 
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/" {
@@ -404,9 +421,9 @@ func newDashboardMux(cfgPath, dbPath string) http.Handler {
 		//     Calls cancel() via defer on any exit.
 		//
 		// (C) Shutdown watchdog (goroutine below): waits for ctx cancellation.
-		//     Triggered when A or B exits; closes ptmx and conn so the other
-		//     goroutine unblocks from its blocked I/O call regardless of cause
-		//     (network partition, close frame, write timeout, PTY EOF).
+		//     Triggered when A or B exits; closes ptmx so goroutine A unblocks
+		//     from ptmx.Read. conn is unblocked by defer conn.Close() above,
+		//     which fires once goroutine A returns to the handler.
 		ctx, cancel := context.WithCancel(context.Background())
 		defer func() {
 			cancel()
@@ -539,12 +556,12 @@ html,body{width:100%;height:100%;background:#0d1117;overflow:hidden}
 .xterm-viewport::-webkit-scrollbar-thumb{background:#30363d;border-radius:3px}
 .xterm-viewport{scrollbar-color:#30363d #0d1117;scrollbar-width:thin}
 </style>
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.min.css"/>
+<link rel="stylesheet" href="/static/xterm.min.css"/>
 </head>
 <body>
 <div id="scroll"><div id="wrap"><div id="terminal"></div></div></div>
-<script src="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/lib/xterm.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/lib/addon-fit.min.js"></script>
+<script src="/static/xterm.min.js"></script>
+<script src="/static/addon-fit.min.js"></script>
 <script>
 var term = new Terminal({
   theme: {

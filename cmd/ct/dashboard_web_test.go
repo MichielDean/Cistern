@@ -703,6 +703,23 @@ func TestWsReadClientFrame_PayloadSizeLimit(t *testing.T) {
 	})
 }
 
+// TestWsReadClientFrame_RejectsUnmaskedFrame verifies that wsReadClientFrame
+// returns an error for unmasked client frames, as required by RFC 6455 §5.1.
+// Browsers always mask frames; a forged unmasked frame indicates a non-browser
+// client or a protocol violation.
+func TestWsReadClientFrame_RejectsUnmaskedFrame(t *testing.T) {
+	// Unmasked text frame: FIN+text (0x81), no mask bit, payload "hello".
+	frame := []byte{0x81, 0x05, 'h', 'e', 'l', 'l', 'o'}
+	br := bufio.NewReader(bytes.NewReader(frame))
+	_, _, _, err := wsReadClientFrame(br, make([]byte, 128))
+	if err == nil {
+		t.Fatal("expected error for unmasked client frame, got nil")
+	}
+	if !strings.Contains(err.Error(), "unmasked") {
+		t.Errorf("error = %q, want it to mention 'unmasked'", err)
+	}
+}
+
 // readWSTextFrame reads one unmasked WebSocket text frame from br and returns the payload.
 func readWSTextFrame(br *bufio.Reader) (string, error) {
 	header := make([]byte, 2)
