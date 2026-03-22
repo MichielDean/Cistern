@@ -3,6 +3,7 @@ package cataractae
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 
@@ -17,6 +18,7 @@ type Adapter struct {
 	runners      map[string]*Runner // keyed by repo name
 	executor     *gates.Executor
 	queueClients map[string]*cistern.Client
+	logger       *slog.Logger
 }
 
 // NewAdapter creates an Adapter with a Runner for each configured repo.
@@ -45,6 +47,7 @@ func NewAdapter(configs []aqueduct.RepoConfig, workflows map[string]*aqueduct.Wo
 		runners:      runners,
 		executor:     gates.New(),
 		queueClients: queueClients,
+		logger:       slog.Default(),
 	}, nil
 }
 
@@ -115,12 +118,16 @@ func (a *Adapter) spawnAutomated(ctx context.Context, req castellarius.Cataracta
 	result := a.executor.RunStep(ctx, req.Step.Name, bc)
 
 	// Write notes to DB (visible to downstream steps).
-	// Errors are ignored — the outcome is more important than the note.
+	// Errors are logged at WARN — the outcome is more important than the note.
 	if result.Notes != "" {
-		_ = client.AddNote(req.Item.ID, req.Step.Name, result.Notes)
+		if err := client.AddNote(req.Item.ID, req.Step.Name, result.Notes); err != nil {
+			a.logger.Warn("adapter: AddNote failed", "droplet", req.Item.ID, "step", req.Step.Name, "error", err)
+		}
 	}
 	for k, v := range result.Annotations {
-		_ = client.AddNote(req.Item.ID, req.Step.Name, fmt.Sprintf("meta:%s=%s", k, v))
+		if err := client.AddNote(req.Item.ID, req.Step.Name, fmt.Sprintf("meta:%s=%s", k, v)); err != nil {
+			a.logger.Warn("adapter: AddNote failed", "droplet", req.Item.ID, "step", req.Step.Name, "error", err)
+		}
 	}
 
 	// Write outcome to DB. The observe phase routes the item on the next tick.

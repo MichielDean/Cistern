@@ -3,15 +3,44 @@ package castellarius
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/MichielDean/cistern/internal/aqueduct"
 	"github.com/MichielDean/cistern/internal/cistern"
 )
+
+// captureHandler is a minimal slog.Handler that records log entries for assertions.
+type captureHandler struct {
+	mu      sync.Mutex
+	records []slog.Record
+}
+
+func (h *captureHandler) Enabled(_ context.Context, _ slog.Level) bool { return true }
+func (h *captureHandler) Handle(_ context.Context, r slog.Record) error {
+	h.mu.Lock()
+	h.records = append(h.records, r.Clone())
+	h.mu.Unlock()
+	return nil
+}
+func (h *captureHandler) WithAttrs(_ []slog.Attr) slog.Handler { return h }
+func (h *captureHandler) WithGroup(_ string) slog.Handler      { return h }
+
+func (h *captureHandler) hasWarn() bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for _, r := range h.records {
+		if r.Level == slog.LevelWarn {
+			return true
+		}
+	}
+	return false
+}
 
 // --- test helpers ---
 
@@ -589,5 +618,37 @@ func TestDefaultRebaseAndPush_AbortsOnConflict(t *testing.T) {
 	rebaseDir := filepath.Join(primaryDir, ".git", "rebase-merge")
 	if _, err := os.Stat(rebaseDir); err == nil {
 		t.Error("expected rebase-merge dir to be absent after abort")
+	}
+}
+
+// --- AddNote error logging tests ---
+
+// TestRecoverStuckDelivery_AddNoteError_LogsWarn verifies that when AddNote
+// returns an error, a WARN-level log is emitted and the outcome is still set
+// (non-blocking behavior).
+func TestRecoverStuckDelivery_AddNoteError_LogsWarn(t *testing.T) {
+	item := stuckItem("sd-note-err", 2*time.Hour)
+	c := newStuckClient(item)
+	c.addNoteErr = errors.New("db write failed")
+
+	h := &captureHandler{}
+	logger := slog.New(h)
+
+	s := stuckScheduler(c,
+		findPRResult{prURL: "https://github.com/o/r/pull/1", state: "MERGED"},
+		nil, nil, nil, nil,
+	)
+	s.logger = logger
+
+	s.recoverStuckDelivery(context.Background(), s.config.Repos[0], c, item)
+
+	// Outcome must still be set — AddNote failure is non-blocking.
+	if got := outcomeFor(c, item.ID); got != "pass" {
+		t.Errorf("outcome = %q, want %q", got, "pass")
+	}
+
+	// A WARN must have been logged for the AddNote failure.
+	if !h.hasWarn() {
+		t.Error("expected WARN log for AddNote failure, got none")
 	}
 }

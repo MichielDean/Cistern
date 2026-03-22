@@ -108,16 +108,20 @@ func (s *Castellarius) recoverStuckDelivery(ctx context.Context, repo aqueduct.R
 
 	if err != nil {
 		s.logger.Error("stuck delivery: PR lookup failed", "droplet", item.ID, "error", err)
-		_ = client.AddNote(item.ID, "stuck-delivery",
-			fmt.Sprintf("Stuck delivery: PR lookup failed (%v). Recirculated.", err))
+		if noteErr := client.AddNote(item.ID, "stuck-delivery",
+			fmt.Sprintf("Stuck delivery: PR lookup failed (%v). Recirculated.", err)); noteErr != nil {
+			s.logger.Warn("stuck delivery: AddNote failed", "droplet", item.ID, "error", noteErr)
+		}
 		s.logSetOutcome(client, item.ID, "recirculate", "PR lookup failed")
 		return
 	}
 
 	if prURL == "" {
 		s.logger.Warn("stuck delivery: no PR found", "droplet", item.ID)
-		_ = client.AddNote(item.ID, "stuck-delivery",
-			"Stuck delivery: no PR found for branch. Recirculated.")
+		if noteErr := client.AddNote(item.ID, "stuck-delivery",
+			"Stuck delivery: no PR found for branch. Recirculated."); noteErr != nil {
+			s.logger.Warn("stuck delivery: AddNote failed", "droplet", item.ID, "error", noteErr)
+		}
 		s.logSetOutcome(client, item.ID, "recirculate", "no PR found")
 		return
 	}
@@ -128,14 +132,18 @@ func (s *Castellarius) recoverStuckDelivery(ctx context.Context, repo aqueduct.R
 	switch state {
 	case "MERGED":
 		s.logger.Info("stuck delivery: PR already merged, signaling pass", "droplet", item.ID)
-		_ = client.AddNote(item.ID, "stuck-delivery",
-			fmt.Sprintf("Stuck delivery recovered: PR %s was already merged. Signaling pass.", prURL))
+		if noteErr := client.AddNote(item.ID, "stuck-delivery",
+			fmt.Sprintf("Stuck delivery recovered: PR %s was already merged. Signaling pass.", prURL)); noteErr != nil {
+			s.logger.Warn("stuck delivery: AddNote failed", "droplet", item.ID, "error", noteErr)
+		}
 		s.logSetOutcome(client, item.ID, "pass", "PR already merged")
 
 	case "CLOSED":
 		s.logger.Warn("stuck delivery: PR closed without merge", "droplet", item.ID, "prURL", prURL)
-		_ = client.AddNote(item.ID, "stuck-delivery",
-			fmt.Sprintf("Stuck delivery: PR %s closed without merging. Recirculated.", prURL))
+		if noteErr := client.AddNote(item.ID, "stuck-delivery",
+			fmt.Sprintf("Stuck delivery: PR %s closed without merging. Recirculated.", prURL)); noteErr != nil {
+			s.logger.Warn("stuck delivery: AddNote failed", "droplet", item.ID, "error", noteErr)
+		}
 		s.logSetOutcome(client, item.ID, "recirculate", "PR closed without merge")
 
 	case "OPEN":
@@ -143,8 +151,10 @@ func (s *Castellarius) recoverStuckDelivery(ctx context.Context, repo aqueduct.R
 
 	default:
 		s.logger.Warn("stuck delivery: unexpected PR state", "droplet", item.ID, "state", state)
-		_ = client.AddNote(item.ID, "stuck-delivery",
-			fmt.Sprintf("Stuck delivery: unexpected PR state %q. Recirculated.", state))
+		if noteErr := client.AddNote(item.ID, "stuck-delivery",
+			fmt.Sprintf("Stuck delivery: unexpected PR state %q. Recirculated.", state)); noteErr != nil {
+			s.logger.Warn("stuck delivery: AddNote failed", "droplet", item.ID, "error", noteErr)
+		}
 		s.logSetOutcome(client, item.ID, "recirculate", fmt.Sprintf("unexpected PR state: %s", state))
 	}
 }
@@ -157,8 +167,10 @@ func (s *Castellarius) recoverOpenPR(ctx context.Context, client CisternClient, 
 		// Branch is behind main — rebase, push, then enable auto-merge and signal pass.
 		if err := s.rebaseAndPushFn(ctx, sandboxDir); err != nil {
 			s.logger.Error("stuck delivery: rebase failed", "droplet", item.ID, "error", err)
-			_ = client.AddNote(item.ID, "stuck-delivery",
-				fmt.Sprintf("Stuck delivery: branch behind main, rebase failed (%v). Recirculated.", err))
+			if noteErr := client.AddNote(item.ID, "stuck-delivery",
+				fmt.Sprintf("Stuck delivery: branch behind main, rebase failed (%v). Recirculated.", err)); noteErr != nil {
+				s.logger.Warn("stuck delivery: AddNote failed", "droplet", item.ID, "error", noteErr)
+			}
 			s.logSetOutcome(client, item.ID, "recirculate", fmt.Sprintf("rebase failed: %v", err))
 			return
 		}
@@ -167,15 +179,19 @@ func (s *Castellarius) recoverOpenPR(ctx context.Context, client CisternClient, 
 			s.logger.Warn("stuck delivery: auto-merge enable failed after rebase",
 				"droplet", item.ID, "error", autoErr)
 		}
-		_ = client.AddNote(item.ID, "stuck-delivery",
-			fmt.Sprintf("Stuck delivery recovered: branch behind main. Rebased, pushed, enabled auto-merge on %s. Signaling pass.", prURL))
+		if noteErr := client.AddNote(item.ID, "stuck-delivery",
+			fmt.Sprintf("Stuck delivery recovered: branch behind main. Rebased, pushed, enabled auto-merge on %s. Signaling pass.", prURL)); noteErr != nil {
+			s.logger.Warn("stuck delivery: AddNote failed", "droplet", item.ID, "error", noteErr)
+		}
 		s.logSetOutcome(client, item.ID, "pass", "rebased and auto-merge enabled")
 		s.logger.Info("stuck delivery: recovered via rebase+auto-merge", "droplet", item.ID, "prURL", prURL)
 
 	case "BLOCKED", "UNSTABLE":
 		// CI checks are failing — recirculate so the agent can fix them.
-		_ = client.AddNote(item.ID, "stuck-delivery",
-			fmt.Sprintf("Stuck delivery: PR %s has failing CI (mergeStateStatus=%s). Recirculated.", prURL, mergeStateStatus))
+		if noteErr := client.AddNote(item.ID, "stuck-delivery",
+			fmt.Sprintf("Stuck delivery: PR %s has failing CI (mergeStateStatus=%s). Recirculated.", prURL, mergeStateStatus)); noteErr != nil {
+			s.logger.Warn("stuck delivery: AddNote failed", "droplet", item.ID, "error", noteErr)
+		}
 		s.logSetOutcome(client, item.ID, "recirculate",
 			fmt.Sprintf("CI failing: mergeStateStatus=%s", mergeStateStatus))
 		s.logger.Info("stuck delivery: recirculated due to CI failure",
@@ -185,8 +201,10 @@ func (s *Castellarius) recoverOpenPR(ctx context.Context, client CisternClient, 
 		// All checks pass, branch up-to-date — try direct merge, then auto-merge.
 		err := s.ghMergeFn(ctx, sandboxDir, prURL, false)
 		if err == nil {
-			_ = client.AddNote(item.ID, "stuck-delivery",
-				fmt.Sprintf("Stuck delivery recovered: merged PR %s directly.", prURL))
+			if noteErr := client.AddNote(item.ID, "stuck-delivery",
+				fmt.Sprintf("Stuck delivery recovered: merged PR %s directly.", prURL)); noteErr != nil {
+				s.logger.Warn("stuck delivery: AddNote failed", "droplet", item.ID, "error", noteErr)
+			}
 			s.logSetOutcome(client, item.ID, "pass", "direct merge succeeded")
 			s.logger.Info("stuck delivery: direct merge succeeded", "droplet", item.ID, "prURL", prURL)
 			return
@@ -195,24 +213,30 @@ func (s *Castellarius) recoverOpenPR(ctx context.Context, client CisternClient, 
 			"droplet", item.ID, "directErr", err)
 		autoErr := s.ghMergeFn(ctx, sandboxDir, prURL, true)
 		if autoErr != nil {
-			_ = client.AddNote(item.ID, "stuck-delivery",
-				fmt.Sprintf("Stuck delivery: all merge attempts failed. auto-merge error: %v. Recirculated.", autoErr))
+			if noteErr := client.AddNote(item.ID, "stuck-delivery",
+				fmt.Sprintf("Stuck delivery: all merge attempts failed. auto-merge error: %v. Recirculated.", autoErr)); noteErr != nil {
+				s.logger.Warn("stuck delivery: AddNote failed", "droplet", item.ID, "error", noteErr)
+			}
 			s.logSetOutcome(client, item.ID, "recirculate",
 				fmt.Sprintf("all merge attempts failed: %v", autoErr))
 			s.logger.Warn("stuck delivery: all merge attempts failed",
 				"droplet", item.ID, "directErr", err, "autoErr", autoErr)
 			return
 		}
-		_ = client.AddNote(item.ID, "stuck-delivery",
-			fmt.Sprintf("Stuck delivery recovered: enabled auto-merge on PR %s.", prURL))
+		if noteErr := client.AddNote(item.ID, "stuck-delivery",
+			fmt.Sprintf("Stuck delivery recovered: enabled auto-merge on PR %s.", prURL)); noteErr != nil {
+			s.logger.Warn("stuck delivery: AddNote failed", "droplet", item.ID, "error", noteErr)
+		}
 		s.logSetOutcome(client, item.ID, "pass", "auto-merge enabled")
 		s.logger.Info("stuck delivery: auto-merge enabled (direct merge failed)",
 			"droplet", item.ID, "prURL", prURL)
 
 	default:
 		// DIRTY, UNKNOWN, DRAFT, HAS_HOOKS, or any other unrecoverable state.
-		_ = client.AddNote(item.ID, "stuck-delivery",
-			fmt.Sprintf("Stuck delivery: PR %s in unrecoverable state %q. Recirculated.", prURL, mergeStateStatus))
+		if noteErr := client.AddNote(item.ID, "stuck-delivery",
+			fmt.Sprintf("Stuck delivery: PR %s in unrecoverable state %q. Recirculated.", prURL, mergeStateStatus)); noteErr != nil {
+			s.logger.Warn("stuck delivery: AddNote failed", "droplet", item.ID, "error", noteErr)
+		}
 		s.logSetOutcome(client, item.ID, "recirculate",
 			fmt.Sprintf("unrecoverable merge state: %s", mergeStateStatus))
 		s.logger.Info("stuck delivery: recirculated due to unrecoverable state",
