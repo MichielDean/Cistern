@@ -1304,3 +1304,24 @@ func TestSpawnStep_UsesWorkerSandboxDir(t *testing.T) {
 		t.Error("CONTEXT.md not found in w.SandboxDir when no override was set")
 	}
 }
+
+// TestRevisionCycleNotes_AllPrefixNotPassSignal verifies that a note beginning
+// with "all" but not a recognised pass-signal phrase does NOT stop the cycle.
+// Regression test for the bug where strings.HasPrefix(lower, "all") caused any
+// note starting with "all" (e.g. "All tests are still failing") to silently
+// truncate the revision cycle.
+func TestRevisionCycleNotes_AllPrefixNotPassSignal(t *testing.T) {
+	// "All tests are still failing" starts with "all" but is NOT a pass signal.
+	notes := []cistern.CataractaeNote{
+		{CataractaeName: "reviewer", Content: "Found a new bug"},
+		{CataractaeName: "reviewer", Content: "All tests are still failing"},
+		{CataractaeName: "reviewer", Content: "Older issue"},
+	}
+
+	got := revisionCycleNotes(notes)
+	// All three notes are from a reviewer and none is a pass signal, so all
+	// three should be in the cycle (oldest-first order).
+	if len(got) != 3 {
+		t.Fatalf("revisionCycleNotes returned %d notes, want 3; got: %v", len(got), got)
+	}
+}

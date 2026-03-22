@@ -128,7 +128,9 @@ func TestSpawnAutomated_SetsOutcome(t *testing.T) {
 }
 
 // TestSpawnAutomated_SandboxDirFallback verifies that when SandboxDir is empty,
-// spawnAutomated falls back to the home-based path and still runs successfully.
+// spawnAutomated falls back to the home-based path and builds the DropletContext
+// with ID = AqueductName+"-"+ItemID. The noop gate emits a note containing that
+// ID, which is stored to the DB — proving the fallback path was used.
 func TestSpawnAutomated_SandboxDirFallback(t *testing.T) {
 	client := testQueueClient(t)
 	a := newTestAdapter(t, "testrepo", client)
@@ -159,6 +161,25 @@ func TestSpawnAutomated_SandboxDirFallback(t *testing.T) {
 	}
 	if updated.Outcome != "pass" {
 		t.Errorf("outcome = %q, want %q", updated.Outcome, "pass")
+	}
+
+	// The noop gate emits "noop: item <bc.ID> passed through" where bc.ID is
+	// AqueductName+"-"+item.ID. Verify this note was written to the DB, which
+	// proves the fallback DropletContext was constructed with the correct ID.
+	wantID := "alice-" + item.ID
+	notes, err := client.GetNotes(item.ID)
+	if err != nil {
+		t.Fatalf("GetNotes: %v", err)
+	}
+	found := false
+	for _, n := range notes {
+		if strings.Contains(n.Content, wantID) {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("no note containing %q; notes: %v", wantID, notes)
 	}
 }
 

@@ -734,6 +734,8 @@ func (s *Castellarius) dispatchRepo(ctx context.Context, repo aqueduct.RepoConfi
 					s.logger.Error("dirty check: git status failed — recirculating conservatively",
 						"droplet", req.Item.ID, "error", dirtyErr)
 					s.dispatchLoop.recordFailure(req.Item.ID)
+					_ = client.AddNote(req.Item.ID, "scheduler",
+						fmt.Sprintf("Dispatch blocked: could not check worktree state: %v", dirtyErr))
 					if err2 := client.Assign(req.Item.ID, "", req.Step.Name); err2 != nil {
 						s.logger.Error("reset after dirty-check error", "droplet", req.Item.ID, "error", err2)
 					}
@@ -1174,14 +1176,15 @@ func removeDropletWorktree(primaryDir, sandboxRoot, repoName, dropletID string) 
 
 // dirtyNonContextFiles returns uncommitted non-CONTEXT.md files in dir.
 // An empty slice means the worktree is clean for dispatch.
-// Returns an error if git status cannot be run (e.g. dir is not a git repo,
-// transient failure, disk full). Callers must treat errors conservatively.
+// An error is returned when git status itself fails (non-git dir, disk error,
+// permissions) — callers must treat this as an unknown dirty state and
+// recirculate conservatively rather than proceeding to spawn.
 func dirtyNonContextFiles(dir string) ([]string, error) {
 	cmd := exec.Command("git", "status", "--porcelain")
 	cmd.Dir = dir
 	out, err := cmd.Output()
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("git status in %s: %w", dir, err)
 	}
 	var dirty []string
 	for _, line := range strings.Split(string(out), "\n") {

@@ -346,7 +346,10 @@ func revisionCycleNotes(notes []cistern.CataractaeNote) []cistern.CataractaeNote
 		lower := strings.ToLower(strings.TrimSpace(n.Content))
 		isPassSignal := strings.HasPrefix(lower, "no issues") ||
 			strings.HasPrefix(lower, "fix already in place") ||
-			strings.HasPrefix(lower, "all") ||
+			strings.HasPrefix(lower, "all good") ||
+			strings.HasPrefix(lower, "all clear") ||
+			strings.HasPrefix(lower, "all tests pass") ||
+			strings.HasPrefix(lower, "all checks pass") ||
 			strings.HasPrefix(lower, "implemented") ||
 			strings.HasPrefix(lower, "manually verified")
 		if isPassSignal {
