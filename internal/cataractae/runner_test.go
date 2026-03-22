@@ -272,7 +272,7 @@ func TestWriteContextFile(t *testing.T) {
 
 	step := &aqueduct.WorkflowCataractae{
 		Name:    "implement",
-		Type:    "agent",
+		Type:    aqueduct.CataractaeTypeAgent,
 		Identity: "implementer",
 		Context: aqueduct.ContextFullCodebase,
 	}
@@ -580,7 +580,7 @@ func TestWriteContextFile_AvailableSkillsBlock(t *testing.T) {
 	item := &cistern.Droplet{ID: "sk-1", Title: "Skill test", Status: "open", Priority: 1}
 	step := &aqueduct.WorkflowCataractae{
 		Name:     "implement",
-		Type:     "agent",
+		Type:     aqueduct.CataractaeTypeAgent,
 		Identity: "implementer",
 		Context:  aqueduct.ContextFullCodebase,
 		Skills: []aqueduct.SkillRef{
@@ -637,7 +637,7 @@ func TestWriteContextFile_XMLEscapedDescription(t *testing.T) {
 	item := &cistern.Droplet{ID: "xss-1", Title: "XSS test", Status: "open", Priority: 1}
 	step := &aqueduct.WorkflowCataractae{
 		Name:    "implement",
-		Type:    "agent",
+		Type:    aqueduct.CataractaeTypeAgent,
 		Context: aqueduct.ContextFullCodebase,
 		Skills: []aqueduct.SkillRef{
 			{Name: "evil-skill"},
@@ -677,7 +677,7 @@ func TestWriteContextFile_NoSkillsBlock_WhenEmpty(t *testing.T) {
 	item := &cistern.Droplet{ID: "no-skill", Title: "No skills", Status: "open", Priority: 1}
 	step := &aqueduct.WorkflowCataractae{
 		Name:    "implement",
-		Type:    "agent",
+		Type:    aqueduct.CataractaeTypeAgent,
 		Context: aqueduct.ContextFullCodebase,
 		// Skills intentionally empty
 	}
@@ -901,7 +901,7 @@ func TestWriteContextFile_ReviewerWithOpenIssues(t *testing.T) {
 	}
 	step := &aqueduct.WorkflowCataractae{
 		Name:     "review",
-		Type:     "agent",
+		Type:     aqueduct.CataractaeTypeAgent,
 		Identity: "reviewer",
 		Context:  aqueduct.ContextDiffOnly,
 	}
@@ -962,7 +962,7 @@ func TestWriteContextFile_ReviewerWithRevisionNotes(t *testing.T) {
 	}
 	step := &aqueduct.WorkflowCataractae{
 		Name:     "review",
-		Type:     "agent",
+		Type:     aqueduct.CataractaeTypeAgent,
 		Identity: "reviewer",
 		Context:  aqueduct.ContextDiffOnly,
 	}
@@ -1146,7 +1146,7 @@ func TestWriteContextFile_SkillDescriptionFallback(t *testing.T) {
 	item := &cistern.Droplet{ID: "sk-2", Title: "Skill fallback", Status: "open", Priority: 1}
 	step := &aqueduct.WorkflowCataractae{
 		Name:    "implement",
-		Type:    "agent",
+		Type:    aqueduct.CataractaeTypeAgent,
 		Context: aqueduct.ContextFullCodebase,
 		Skills:  []aqueduct.SkillRef{{Name: "missing-skill"}},
 	}
@@ -1237,7 +1237,7 @@ func TestSpawnStep_SandboxDirOverride(t *testing.T) {
 	item := &cistern.Droplet{ID: "ov-1", Title: "Override test", Status: "open", Priority: 1}
 	step := &aqueduct.WorkflowCataractae{
 		Name:    "implement",
-		Type:    "agent",
+		Type:    aqueduct.CataractaeTypeAgent,
 		Context: aqueduct.ContextFullCodebase,
 	}
 
@@ -1290,7 +1290,7 @@ func TestSpawnStep_UsesWorkerSandboxDir(t *testing.T) {
 	item := &cistern.Droplet{ID: "noov-1", Title: "No override test", Status: "open", Priority: 1}
 	step := &aqueduct.WorkflowCataractae{
 		Name:    "implement",
-		Type:    "agent",
+		Type:    aqueduct.CataractaeTypeAgent,
 		Context: aqueduct.ContextFullCodebase,
 	}
 
