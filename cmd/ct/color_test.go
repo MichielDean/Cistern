@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bytes"
 	"os"
 	"path/filepath"
 	"strings"
@@ -10,24 +9,6 @@ import (
 
 	"github.com/MichielDean/cistern/internal/cistern"
 )
-
-// captureStdoutFn captures stdout produced by fn and returns it as a string.
-func captureStdoutFn(t *testing.T, fn func()) string {
-	t.Helper()
-	old := os.Stdout
-	r, w, _ := os.Pipe()
-	os.Stdout = w
-	fn()
-	w.Close()
-	os.Stdout = old
-	var buf bytes.Buffer
-	buf.ReadFrom(r)
-	return buf.String()
-}
-
-// ---------------------------------------------------------------------------
-// statusCode
-// ---------------------------------------------------------------------------
 
 func TestStatusCode(t *testing.T) {
 	tests := []struct {
@@ -50,10 +31,8 @@ func TestStatusCode(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
 // statusCell — in non-terminal mode (tests) ANSI codes are not injected.
 // Expected format: icon + " " + padRight(status, width-2)
-// ---------------------------------------------------------------------------
 
 func TestStatusCell(t *testing.T) {
 	// width=12: textWidth = 12-2 = 10
@@ -81,10 +60,6 @@ func TestStatusCell(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// truncate
-// ---------------------------------------------------------------------------
-
 func TestTruncate(t *testing.T) {
 	tests := []struct {
 		s    string
@@ -108,16 +83,19 @@ func TestTruncate(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// skillDesc
-// ---------------------------------------------------------------------------
-
 func TestSkillDesc(t *testing.T) {
+	// writeSkillMD writes content to a temp SKILL.md and returns its path.
+	writeSkillMD := func(t *testing.T, content string) string {
+		t.Helper()
+		p := filepath.Join(t.TempDir(), "SKILL.md")
+		if err := os.WriteFile(p, []byte(content), 0644); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+
 	t.Run("yaml frontmatter description", func(t *testing.T) {
-		dir := t.TempDir()
-		p := filepath.Join(dir, "SKILL.md")
-		content := "---\nname: test\ndescription: My skill description\n---\nBody text here.\n"
-		os.WriteFile(p, []byte(content), 0644)
+		p := writeSkillMD(t, "---\nname: test\ndescription: My skill description\n---\nBody text here.\n")
 		got := skillDesc(p)
 		if got != "My skill description" {
 			t.Errorf("got %q, want %q", got, "My skill description")
@@ -125,11 +103,8 @@ func TestSkillDesc(t *testing.T) {
 	})
 
 	t.Run("yaml frontmatter description truncated", func(t *testing.T) {
-		dir := t.TempDir()
-		p := filepath.Join(dir, "SKILL.md")
 		long := strings.Repeat("x", 60)
-		content := "---\ndescription: " + long + "\n---\n"
-		os.WriteFile(p, []byte(content), 0644)
+		p := writeSkillMD(t, "---\ndescription: "+long+"\n---\n")
 		got := skillDesc(p)
 		want := truncate(long, 50)
 		if got != want {
@@ -138,12 +113,7 @@ func TestSkillDesc(t *testing.T) {
 	})
 
 	t.Run("fallback to first non-blank non-heading line", func(t *testing.T) {
-		dir := t.TempDir()
-		p := filepath.Join(dir, "SKILL.md")
-		// Empty frontmatter: the fallback loop skips "---" lines and headings,
-		// then returns the first real content line.
-		content := "---\n---\n# Heading\n\nFirst real line.\n"
-		os.WriteFile(p, []byte(content), 0644)
+		p := writeSkillMD(t, "---\n---\n# Heading\n\nFirst real line.\n")
 		got := skillDesc(p)
 		if got != "First real line." {
 			t.Errorf("got %q, want %q", got, "First real line.")
@@ -151,10 +121,7 @@ func TestSkillDesc(t *testing.T) {
 	})
 
 	t.Run("no frontmatter fallback", func(t *testing.T) {
-		dir := t.TempDir()
-		p := filepath.Join(dir, "SKILL.md")
-		content := "# Title\n\nDescription paragraph.\n"
-		os.WriteFile(p, []byte(content), 0644)
+		p := writeSkillMD(t, "# Title\n\nDescription paragraph.\n")
 		got := skillDesc(p)
 		if got != "Description paragraph." {
 			t.Errorf("got %q, want %q", got, "Description paragraph.")
@@ -169,19 +136,13 @@ func TestSkillDesc(t *testing.T) {
 	})
 
 	t.Run("empty file", func(t *testing.T) {
-		dir := t.TempDir()
-		p := filepath.Join(dir, "SKILL.md")
-		os.WriteFile(p, []byte(""), 0644)
+		p := writeSkillMD(t, "")
 		got := skillDesc(p)
 		if got != "" {
 			t.Errorf("expected empty string for empty file, got %q", got)
 		}
 	})
 }
-
-// ---------------------------------------------------------------------------
-// parseDuration
-// ---------------------------------------------------------------------------
 
 func TestParseDuration(t *testing.T) {
 	tests := []struct {
@@ -217,10 +178,6 @@ func TestParseDuration(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// inferPrefix
-// ---------------------------------------------------------------------------
-
 func TestInferPrefix(t *testing.T) {
 	tests := []struct {
 		repo string
@@ -243,10 +200,6 @@ func TestInferPrefix(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// printDropletListTerminal
-// ---------------------------------------------------------------------------
-
 func TestPrintDropletListTerminal(t *testing.T) {
 	// Fixture helpers.
 	newDroplet := func(id, title, status, cataractae string) *cistern.Droplet {
@@ -261,7 +214,7 @@ func TestPrintDropletListTerminal(t *testing.T) {
 	}
 
 	t.Run("empty lists print only header", func(t *testing.T) {
-		out := captureStdoutFn(t, func() {
+		out := captureStdout(t, func() {
 			printDropletListTerminal(nil, nil, false, 30)
 		})
 		// Header must contain all column labels.
@@ -279,7 +232,7 @@ func TestPrintDropletListTerminal(t *testing.T) {
 
 	t.Run("active droplet appears in output", func(t *testing.T) {
 		d := newDroplet("ts-abc12", "My Test Feature", "open", "implement")
-		out := captureStdoutFn(t, func() {
+		out := captureStdout(t, func() {
 			printDropletListTerminal([]*cistern.Droplet{d}, nil, false, 30)
 		})
 		if !strings.Contains(out, "ts-abc12") {
@@ -295,7 +248,7 @@ func TestPrintDropletListTerminal(t *testing.T) {
 
 	t.Run("empty cataractae shows em-dash", func(t *testing.T) {
 		d := newDroplet("ts-xyz99", "No Gate Yet", "open", "")
-		out := captureStdoutFn(t, func() {
+		out := captureStdout(t, func() {
 			printDropletListTerminal([]*cistern.Droplet{d}, nil, false, 30)
 		})
 		if !strings.Contains(out, "—") {
@@ -305,7 +258,7 @@ func TestPrintDropletListTerminal(t *testing.T) {
 
 	t.Run("showAll=false hides delivered section", func(t *testing.T) {
 		d := newDroplet("ts-del01", "Done Feature", "closed", "")
-		out := captureStdoutFn(t, func() {
+		out := captureStdout(t, func() {
 			printDropletListTerminal(nil, []*cistern.Droplet{d}, false, 30)
 		})
 		if strings.Contains(out, "ts-del01") {
@@ -315,7 +268,7 @@ func TestPrintDropletListTerminal(t *testing.T) {
 
 	t.Run("showAll=true shows delivered section with separator", func(t *testing.T) {
 		d := newDroplet("ts-del02", "Done Feature Two", "closed", "")
-		out := captureStdoutFn(t, func() {
+		out := captureStdout(t, func() {
 			printDropletListTerminal(nil, []*cistern.Droplet{d}, true, 30)
 		})
 		if !strings.Contains(out, "ts-del02") {
@@ -328,7 +281,7 @@ func TestPrintDropletListTerminal(t *testing.T) {
 
 	t.Run("no panic on nil slices", func(t *testing.T) {
 		// Should not panic.
-		captureStdoutFn(t, func() {
+		captureStdout(t, func() {
 			printDropletListTerminal(nil, nil, true, 20)
 		})
 	})
@@ -336,7 +289,7 @@ func TestPrintDropletListTerminal(t *testing.T) {
 	t.Run("title truncated to titleMax", func(t *testing.T) {
 		long := strings.Repeat("A", 80)
 		d := newDroplet("ts-trunc", long, "open", "")
-		out := captureStdoutFn(t, func() {
+		out := captureStdout(t, func() {
 			printDropletListTerminal([]*cistern.Droplet{d}, nil, false, 20)
 		})
 		// The full 80-char title should not appear verbatim.
