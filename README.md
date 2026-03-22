@@ -59,27 +59,31 @@ ct dashboard
 Every droplet flows through a sequence of cataractae. Which cataractae run depends on the droplet's **complexity level**:
 
 ```
-trivial:   implement                                               → delivery → done
-standard:  implement → adversarial-review                         → delivery → done
-full:      implement → adversarial-review → qa                    → delivery → done
-critical:  implement → adversarial-review → qa → security-review → [human gate] → delivery → done
+trivial:   implement                                                                    → delivery → done
+standard:  implement → simplify → adversarial-review                                   → delivery → done
+full:      implement → simplify → adversarial-review → qa → docs                       → delivery → done
+critical:  implement → simplify → adversarial-review → qa → security-review → docs → [human gate] → delivery → done
 ```
 
 Filtration is an optional pre-intake step (`--filter`) that refines vague ideas before they enter the pipeline.
 
-1. **Implement** (`implement`) — The Implementer cataractae reads the droplet, writes tests first (TDD/BDD), implements, commits. No outcome until tests pass.
+1. **Implement** (`implement`) — Reads the droplet description, implements the feature, writes tests, commits. Verifies every concrete deliverable from the description exists in the commit before signaling pass.
 
-2. **Adversarial Review** (`adversarial-review`) — The Adversarial Reviewer cataractae receives *only the diff*. No codebase access, no author context. Finds problems: bugs, security holes, missing tests, logic errors. Context isolation is enforced at the infrastructure level. Files structured issues via `ct droplet issue add`. *Skipped for trivial droplets.*
+2. **Simplify** (`simplify`) — Refines the implementation for clarity, consistency, and maintainability without changing behaviour. Runs only on branches with new commits since `origin/main`. *Skipped for trivial droplets.*
 
-3. **QA** (`qa`) — The QA cataractae checks test quality, not just whether tests pass. Finds test gaps, weak assertions, missing error paths, coverage theater. Recirculates to implement on revision. *Skipped for trivial and standard droplets.*
+3. **Adversarial Review** (`adversarial-review`) — Receives *only the diff* — no codebase access, no author context. First verifies all required deliverables are present in the diff (Phase 0), then checks for bugs, security issues, missing tests, and logic errors. Context isolation enforced at the infrastructure level. *Skipped for trivial droplets.*
 
-4. **Security Review** (`security-review`) — An adversarial security audit of the diff. Checks for auth bypass, injection, prompt injection, exposed secrets, resource safety, and path traversal. *Runs only for critical droplets.*
+4. **QA** (`qa`) — Active verification with full codebase access: runs tests, checks each deliverable exists via `grep`, verifies CLI flags, checks mirror file consistency. Recirculates to implement on any failure. *Skipped for trivial and standard droplets.*
 
-5. **Human Gate** — Critical droplets pause before delivery and require explicit human approval: `ct droplet approve <id>`. This ensures a human signs off before any critical change ships.
+5. **Security Review** (`security-review`) — Adversarial security audit of the diff. Checks for auth bypass, injection, prompt injection, exposed secrets, resource safety, and path traversal. *Runs only for critical droplets.*
 
-6. **Delivery** (`delivery`) — The Delivery cataractae owns all git operations: stash, rebase, PR creation, CI monitoring, PR review response, and merge. One agent cataractae handles the full branch-to-merged lifecycle. If a delivery agent stalls (e.g. misses a branch-behind condition), the Castellarius detects it and recovers automatically — see [Automatic Stuck Delivery Recovery](#automatic-stuck-delivery-recovery).
+6. **Docs** (`docs`) — Reviews the diff and updates documentation for all user-visible changes: README, CHANGELOG, CLI reference, config docs. Skips if there are no user-visible changes. *Skipped for trivial droplets.*
 
-7. **Recirculation** — Revision sends the droplet back upstream to a prior cataractae for another pass. No retry limits. The water flows until it's pure.
+7. **Human Gate** — Critical droplets pause before delivery and require explicit human approval: `ct droplet approve <id>`. Ensures a human signs off before any critical change ships.
+
+8. **Delivery** (`delivery`) — Owns all git operations: rebase, PR creation, CI monitoring, PR review response, and merge. One agent handles the full branch-to-merged lifecycle. If a delivery agent stalls, the Castellarius detects and recovers automatically — see [Automatic Stuck Delivery Recovery](#automatic-stuck-delivery-recovery).
+
+9. **Recirculation** — Revision sends the droplet back upstream to a prior cataractae for another pass. No retry limits. The water flows until it's pure.
 
 ## Complexity Levels
 
@@ -88,9 +92,9 @@ Set complexity when adding a droplet with `--complexity` (or `-x`):
 | Level | Name | Pipeline |
 |---|---|---|
 | 1 | trivial | implement → delivery |
-| 2 | standard | implement → adversarial-review → delivery |
-| 3 | full *(default)* | implement → adversarial-review → qa → delivery |
-| 4 | critical | implement → adversarial-review → qa → security-review → [human] → delivery |
+| 2 | standard | implement → simplify → adversarial-review → delivery |
+| 3 | full *(default)* | implement → simplify → adversarial-review → qa → docs → delivery |
+| 4 | critical | implement → simplify → adversarial-review → qa → security-review → docs → [human] → delivery |
 
 ```bash
 ct droplet add --title "Fix typo in README" --repo myproject --complexity trivial
@@ -169,6 +173,31 @@ ct cataractae status                # Show which cataractae are actively process
 ```
 
 Cataractae content lives in `~/.cistern/aqueduct/feature.yaml` under the `cataractae_definitions:` key. CLAUDE.md files are generated artifacts — the YAML is the source of truth.
+
+## Skills
+
+Skills are reusable knowledge packages injected into cataractae via `--add-dir`. They keep cataractae prompts concise by factoring out shared conventions.
+
+```bash
+ct skills install <name> <url>   Install a skill from a URL
+ct skills list                   List installed skills and which cataractae reference them
+ct skills update <name>          Re-fetch from source URL
+ct skills update                 Re-fetch all skills
+ct skills remove <name>          Remove a skill
+```
+
+Skills are referenced by name in your aqueduct YAML under each cataractae's `skills:` list. They live in `~/.cistern/skills/<name>/SKILL.md` and are also checked into the repo under `skills/`.
+
+**Built-in skills:**
+
+| Skill | Purpose | Cataractae |
+|---|---|---|
+| `cistern-droplet-state` | Signal pass/recirculate/block with `ct` CLI | All |
+| `cistern-git` | Git conventions: exclude CONTEXT.md, two-dot diff, no stash | implement, simplify, docs, delivery |
+| `github-workflow` | PR creation, squash merge, rebase patterns | implement, delivery |
+| `code-simplifier` | Simplification heuristics and patterns | simplify |
+
+The `cistern-git` skill encodes hard-won rules: always use `git add -A -- ':!CONTEXT.md'`, always use two-dot `origin/main..HEAD` diff (three dots can appear empty on rebased branches), never stash in per-droplet worktrees.
 
 ## Drought Protocols
 
@@ -259,15 +288,20 @@ ct castellarius status         Show aqueduct flow — which are flowing, which a
 
 # Dashboard
 ct dashboard                   Live TUI aqueduct arch diagram with cistern and recent flow
-ct dashboard --web             HTTP web dashboard — xterm.js terminal renders the TUI faithfully in-browser via /ws/tui WebSocket (ANSI, box chars, animations); port 5737
-                               # SSE (/api/dashboard/events) and peek WebSocket (/ws/aqueducts/{name}/peek) preserved for programmatic consumers
-ct dashboard --web --addr :8080  Custom listen address for web dashboard
+ct dashboard --web             HTTP web dashboard on port 5737 — renders the real TUI via xterm.js
+                               Full ANSI color, box-drawing chars, animations. Pinch-to-zoom on
+                               mobile (or Ctrl+scroll on desktop). Single-finger pan after zooming.
+                               Resize protocol: browser sends {resize:{cols,rows}} on viewport change
+                               so Bubble Tea renders at the correct terminal size.
+                               Programmatic endpoints preserved: /api/dashboard/events (SSE),
+                               /ws/aqueducts/{name}/peek (WebSocket)
+ct dashboard --web --addr :8080  Custom listen address
 ct feed                        Alias for dashboard
 
 # Status — observe the system
 ct status                      Overall status: cistern level, aqueduct flow, cataractae chains
-ct status --watch              Continuously refresh status every 5 seconds (Ctrl-C to stop)
-ct status --watch --interval 10  Refresh every 10 seconds
+ct status --watch              Continuously refresh every 5 seconds (Ctrl-C to stop)
+ct status --watch --interval N  Refresh every N seconds (min 1)
 ct aqueduct status             Aqueduct definitions: repos and their cataractae chains
 
 # Aqueduct — inspect and validate aqueduct definitions
@@ -349,10 +383,11 @@ ct skills remove <name>              Remove a skill
 # Utilities
 ct doctor                      Full health check (prerequisites, config, CLAUDE.md integrity, skills)
 ct doctor --fix                Auto-repair common issues
-ct version                     Version info
-ct update                      Pull latest main and rebuild the ct binary in-place
+ct version                     Print version string
+ct version --json              Machine-readable: {"version":"...","commit":"..."}
+ct update                      Pull latest main and rebuild ct in-place; warns if Castellarius is running
 ct update --dry-run            Show what would change without building
-ct update --repo-path PATH     Override the cistern repo path (default: auto-detect)
+ct update --repo-path PATH     Override repo path (default: sibling of binary or CT_REPO_PATH env)
 ```
 
 ---
