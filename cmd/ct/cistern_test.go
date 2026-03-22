@@ -119,19 +119,6 @@ func TestCisternListTableOutput(t *testing.T) {
 	db := filepath.Join(dir, "test.db")
 	t.Setenv("CT_DB", db)
 
-	captureStdout := func(t *testing.T, fn func()) string {
-		t.Helper()
-		old := os.Stdout
-		r, w, _ := os.Pipe()
-		os.Stdout = w
-		fn()
-		w.Close()
-		os.Stdout = old
-		var buf bytes.Buffer
-		buf.ReadFrom(r)
-		return buf.String()
-	}
-
 	t.Run("empty cistern", func(t *testing.T) {
 		listOutput = "table"
 		listRepo = ""
