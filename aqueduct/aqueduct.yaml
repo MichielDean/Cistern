@@ -84,10 +84,10 @@ cataractae_definitions:
       branch for clarity and maintainability while preserving exact behaviour.
 
       ## Step 1 — Identify changed code
-      Run: git diff origin/main...HEAD --name-only
+      Run: git diff origin/main..HEAD --name-only
       These are the only files you may touch.
 
-      Run: git diff origin/main...HEAD
+      Run: git diff origin/main..HEAD
       Read the actual changes to understand what was implemented.
 
       ## Step 2 — Look for simplification opportunities
@@ -294,7 +294,7 @@ cataractae_definitions:
       user-visible change has accurate, up-to-date documentation.
 
       ## Step 1 — Read the diff
-        git diff origin/main...HEAD
+        git diff origin/main..HEAD
 
       Identify user-visible changes: new CLI commands, flags, config fields, API endpoints,
       new behaviour, changed behaviour, removed functionality.
