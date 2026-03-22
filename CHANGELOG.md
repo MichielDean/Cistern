@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+### Skills: unified handling — all skills live in ~/.cistern/skills/ (ci-add2g)
+- Removed the `path:` field from skill references in `aqueduct.yaml` — all skills are now referenced by name only. Skills that previously used `path:` must be accessible via `~/.cistern/skills/<name>/SKILL.md`.
+- The `git_sync` drought hook now automatically deploys skills from the repo's `skills/` tree into `~/.cistern/skills/` after each fetch — no manual `ct skills install` required for repo-bundled skills.
+- Skills deployed by `git_sync` are recorded in the manifest as `source_url:local`; `ct skills update` skips these (they are kept up to date by `git_sync` automatically).
+- `ct doctor` now checks `~/.cistern/skills/<name>/SKILL.md` for every skill uniformly — the previous exemption for in-repo skills is removed.
+- `ct skills list` now shows all installed skills; the old `path:` filter that hid in-repo skills is gone.
+
 ### ct cataractae add: auto-generate CLAUDE.md on scaffold (ci-f4354)
 - `ct cataractae add <name>` now runs `ct cataractae generate` automatically after creating the template files — `CLAUDE.md` is ready immediately without a separate generate step.
 - Output format updated to `Created:` / `Updated:` / `Generated:` lines matching the actual files produced, followed by an instruction to edit `PERSONA.md` and `INSTRUCTIONS.md` and wire the cataractae into the pipeline.

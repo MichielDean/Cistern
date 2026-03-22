@@ -200,7 +200,9 @@ ct skills update                 Re-fetch all skills
 ct skills remove <name>          Remove a skill
 ```
 
-Skills are referenced by name in your aqueduct YAML under each cataractae's `skills:` list. They live in `~/.cistern/skills/<name>/SKILL.md` and are also checked into the repo under `skills/`.
+Skills are referenced by name in your aqueduct YAML under each cataractae's `skills:` list. They live in `~/.cistern/skills/<name>/SKILL.md`. Skills bundled with the repo live under `skills/` and are deployed automatically into `~/.cistern/skills/` by the `git_sync` drought hook — no manual install required.
+
+`ct skills update` re-fetches skills from their source URL. Skills managed by `git_sync` (recorded as `source_url:local`) are skipped — they stay in sync via `git_sync` automatically.
 
 **Built-in skills:**
 
@@ -225,6 +227,9 @@ drought_hooks:
 
   - name: prune-worktrees
     action: worktree_prune     # Prune stale aqueduct registrations
+
+  # - name: git-sync
+  #   action: git_sync         # Fetch origin/main: redeploy aqueduct.yaml and skills/ into ~/.cistern/skills/
 
   # - name: vacuum-cistern
   #   action: db_vacuum        # Compact the cistern database
