@@ -1,6 +1,8 @@
 package cataractae
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -63,5 +65,104 @@ func TestShellQuote(t *testing.T) {
 		if got != tt.want {
 			t.Errorf("shellQuote(%q) = %q, want %q", tt.input, got, tt.want)
 		}
+	}
+}
+
+func TestBuildPrompt_WithIdentity_FileFound(t *testing.T) {
+	dir := t.TempDir()
+	identityDir := filepath.Join(dir, ".cistern", "cataractae", "implementer")
+	if err := os.MkdirAll(identityDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(identityDir, "CLAUDE.md"),
+		[]byte("# Implementer\n\nYou implement things.\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HOME", dir)
+
+	s := &Session{ID: "test", WorkDir: dir, Identity: "implementer"}
+	prompt := s.buildPrompt()
+
+	if !strings.Contains(prompt, "## Your Role") {
+		t.Error("prompt missing '## Your Role' section when identity file is present")
+	}
+	if !strings.Contains(prompt, "You implement things.") {
+		t.Error("prompt missing identity file content")
+	}
+	if !strings.Contains(prompt, baseCataractaePrompt) {
+		t.Error("prompt missing constitutional base")
+	}
+}
+
+func TestBuildPrompt_WithIdentity_FileMissing(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", dir) // no CLAUDE.md at cistern identity path
+
+	s := &Session{ID: "test", WorkDir: dir, Identity: "implementer"}
+	prompt := s.buildPrompt()
+
+	// Fallback: prompt contains a pointer to the missing path.
+	if !strings.Contains(prompt, "Read") {
+		t.Error("prompt missing 'Read' fallback pointer when identity file is missing")
+	}
+	if !strings.Contains(prompt, "implementer") {
+		t.Error("prompt missing identity name in fallback")
+	}
+	if strings.Contains(prompt, "## Your Role") {
+		t.Error("prompt should not contain '## Your Role' when identity file is missing")
+	}
+}
+
+func TestResolveIdentityPath_CisternHome(t *testing.T) {
+	dir := t.TempDir()
+	cisternPath := filepath.Join(dir, ".cistern", "cataractae", "reviewer", "CLAUDE.md")
+	if err := os.MkdirAll(filepath.Dir(cisternPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(cisternPath, []byte("# Reviewer"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HOME", dir)
+
+	s := &Session{Identity: "reviewer"}
+	got := s.resolveIdentityPath()
+	if got != cisternPath {
+		t.Errorf("resolveIdentityPath = %q, want %q", got, cisternPath)
+	}
+}
+
+func TestResolveIdentityPath_FallbackSandbox(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", dir) // no CLAUDE.md at cistern identity path
+
+	s := &Session{Identity: "implementer"}
+	got := s.resolveIdentityPath()
+	want := "cataractae/implementer/CLAUDE.md"
+	if got != want {
+		t.Errorf("resolveIdentityPath = %q, want %q", got, want)
+	}
+}
+
+func TestClaudePath_EnvOverride(t *testing.T) {
+	t.Setenv("CLAUDE_PATH", "/usr/local/bin/my-claude")
+	got := claudePath()
+	if got != "/usr/local/bin/my-claude" {
+		t.Errorf("claudePath() = %q, want %q", got, "/usr/local/bin/my-claude")
+	}
+}
+
+func TestClaudePath_LookPath(t *testing.T) {
+	t.Setenv("CLAUDE_PATH", "")
+	// Place a fake "claude" executable on PATH so exec.LookPath finds it.
+	dir := t.TempDir()
+	fakeClaude := filepath.Join(dir, "claude")
+	if err := os.WriteFile(fakeClaude, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+":"+os.Getenv("PATH"))
+
+	got := claudePath()
+	if got != fakeClaude {
+		t.Errorf("claudePath() = %q, want %q", got, fakeClaude)
 	}
 }
