@@ -230,7 +230,7 @@ Skills are referenced by name in your aqueduct YAML under each cataractae's `ski
 |---|---|---|
 | `cistern-droplet-state` | Signal pass/recirculate/block with `ct` CLI | All |
 | `cistern-git` | Git conventions: exclude CONTEXT.md, two-dot diff, no stash | implement, simplify, docs, delivery |
-| `github-workflow` | PR creation, squash merge, rebase patterns | implement, delivery |
+| `cistern-github` | PR creation, CI checks, squash-merge, and automatic conflict resolution for Cistern delivery | implement, adversarial-review, delivery |
 | `code-simplifier` | Simplification heuristics and patterns | simplify |
 | `cistern-reviewer` | Adversarial code review for Go, TypeScript/Next.js, and TypeScript/React — Blocking/Required/Suggestions severity tiers | adversarial-review |
 
@@ -452,7 +452,7 @@ ct update --repo-path PATH     Override repo path (default: sibling of binary or
 The Castellarius detects and recovers stuck delivery agents automatically — no human intervention required for the common failure modes.
 
 A delivery agent is considered **stuck** when all of the following are true:
-- The droplet has been in the `delivery` step for longer than 1.5× the delivery `timeout_minutes` (default: 45 m → 67.5 m)
+- The droplet has been in the `delivery` step for longer than 1.5× the delivery `timeout_minutes` (default: 60 m → 90 m)
 - The agent's tmux session is still alive
 - No outcome has been written yet
 
