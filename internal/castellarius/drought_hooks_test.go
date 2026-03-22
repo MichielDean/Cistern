@@ -1,6 +1,7 @@
 package castellarius
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"log/slog"
@@ -796,6 +797,264 @@ func TestRunDroughtHooks_CfgFileMissing_NoRestart(t *testing.T) {
 	})
 	if reloadCalled {
 		t.Error("onReload should not be called when cfgPath does not exist")
+	}
+}
+
+// --- git_sync ordering tests ---
+
+func TestRunDroughtHooks_WarnWhenGitSyncNotFirst(t *testing.T) {
+	// When git_sync exists but is not the first hook, a prominent warning must be logged.
+	tmpDir := t.TempDir()
+	markerFile := filepath.Join(tmpDir, "marker")
+
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn}))
+
+	RunDroughtHooks(DroughtHookParams{
+		Hooks: []aqueduct.DroughtHook{
+			{Name: "first", Action: "shell", Command: platformCreateFile(markerFile), Timeout: 5},
+			{Name: "sync", Action: "git_sync"},
+		},
+		Config:      &aqueduct.AqueductConfig{},
+		SandboxRoot: tmpDir,
+		Logger:      logger,
+	})
+
+	output := buf.String()
+	if !strings.Contains(output, "git_sync is not the first hook") {
+		t.Errorf("expected warning about git_sync ordering, got: %q", output)
+	}
+}
+
+func TestRunDroughtHooks_NoWarnWhenGitSyncIsFirst(t *testing.T) {
+	// When git_sync is the first hook, no ordering warning should be logged.
+	tmpDir := t.TempDir()
+
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn}))
+
+	RunDroughtHooks(DroughtHookParams{
+		Hooks: []aqueduct.DroughtHook{
+			{Name: "sync", Action: "git_sync"},
+			{Name: "gen", Action: "cataractae_generate"},
+		},
+		Config:      &aqueduct.AqueductConfig{},
+		SandboxRoot: tmpDir,
+		Logger:      logger,
+	})
+
+	output := buf.String()
+	if strings.Contains(output, "git_sync is not the first hook") {
+		t.Errorf("unexpected ordering warning when git_sync IS first: %q", output)
+	}
+}
+
+func TestRunDroughtHooks_NoWarnWhenNoGitSync(t *testing.T) {
+	// When no git_sync hook exists, no ordering warning should be logged.
+	tmpDir := t.TempDir()
+	markerFile := filepath.Join(tmpDir, "marker")
+
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn}))
+
+	RunDroughtHooks(DroughtHookParams{
+		Hooks: []aqueduct.DroughtHook{
+			{Name: "gen", Action: "cataractae_generate"},
+			{Name: "sh", Action: "shell", Command: platformCreateFile(markerFile), Timeout: 5},
+		},
+		Config:      &aqueduct.AqueductConfig{},
+		SandboxRoot: tmpDir,
+		Logger:      logger,
+	})
+
+	output := buf.String()
+	if strings.Contains(output, "git_sync is not the first hook") {
+		t.Errorf("unexpected ordering warning when git_sync absent: %q", output)
+	}
+}
+
+// --- warnMissingSkills tests ---
+
+func TestWarnMissingSkills_LogsWhenSkillMissing(t *testing.T) {
+	// When a workflow references a skill that is not installed, a warning must be logged.
+	tmpDir := t.TempDir()
+	t.Setenv("HOME", tmpDir)
+
+	wfPath := filepath.Join(tmpDir, "aqueduct.yaml")
+	wfContent := `name: test
+cataractae:
+  - name: impl
+    type: agent
+    identity: implementer
+    skills:
+      - name: missing-skill
+    on_pass: done
+`
+	if err := os.WriteFile(wfPath, []byte(wfContent), 0o644); err != nil {
+		t.Fatalf("write workflow: %v", err)
+	}
+
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn}))
+
+	cfg := &aqueduct.AqueductConfig{
+		Repos: []aqueduct.RepoConfig{
+			{Name: "test", WorkflowPath: wfPath, Cataractae: 1, Prefix: "t"},
+		},
+	}
+
+	warnMissingSkills(cfg, logger)
+
+	output := buf.String()
+	if !strings.Contains(output, "missing-skill") {
+		t.Errorf("expected warning about missing-skill, got: %q", output)
+	}
+}
+
+func TestWarnMissingSkills_NoWarnWhenSkillInstalled(t *testing.T) {
+	// When all workflow-referenced skills are installed, no warning should be logged.
+	tmpDir := t.TempDir()
+	t.Setenv("HOME", tmpDir)
+
+	// Install the skill.
+	skillPath := filepath.Join(tmpDir, ".cistern", "skills", "my-skill", "SKILL.md")
+	if err := os.MkdirAll(filepath.Dir(skillPath), 0o755); err != nil {
+		t.Fatalf("mkdir skill: %v", err)
+	}
+	if err := os.WriteFile(skillPath, []byte("# My Skill\n"), 0o644); err != nil {
+		t.Fatalf("write skill: %v", err)
+	}
+
+	wfPath := filepath.Join(tmpDir, "aqueduct.yaml")
+	wfContent := `name: test
+cataractae:
+  - name: impl
+    type: agent
+    identity: implementer
+    skills:
+      - name: my-skill
+    on_pass: done
+`
+	if err := os.WriteFile(wfPath, []byte(wfContent), 0o644); err != nil {
+		t.Fatalf("write workflow: %v", err)
+	}
+
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn}))
+
+	cfg := &aqueduct.AqueductConfig{
+		Repos: []aqueduct.RepoConfig{
+			{Name: "test", WorkflowPath: wfPath, Cataractae: 1, Prefix: "t"},
+		},
+	}
+
+	warnMissingSkills(cfg, logger)
+
+	output := buf.String()
+	if strings.Contains(output, "SKILL MISSING") {
+		t.Errorf("unexpected skill-missing warning when skill is installed: %q", output)
+	}
+}
+
+func TestWarnMissingSkills_NoWarnWhenNoSkillsReferenced(t *testing.T) {
+	// When no skills are referenced in the workflow, no warning should be logged.
+	tmpDir := t.TempDir()
+	t.Setenv("HOME", tmpDir)
+
+	wfPath := filepath.Join(tmpDir, "aqueduct.yaml")
+	wfContent := `name: test
+cataractae:
+  - name: impl
+    type: agent
+    identity: implementer
+    on_pass: done
+`
+	if err := os.WriteFile(wfPath, []byte(wfContent), 0o644); err != nil {
+		t.Fatalf("write workflow: %v", err)
+	}
+
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn}))
+
+	cfg := &aqueduct.AqueductConfig{
+		Repos: []aqueduct.RepoConfig{
+			{Name: "test", WorkflowPath: wfPath, Cataractae: 1, Prefix: "t"},
+		},
+	}
+
+	warnMissingSkills(cfg, logger)
+
+	output := buf.String()
+	if strings.Contains(output, "SKILL MISSING") {
+		t.Errorf("unexpected skill-missing warning when no skills referenced: %q", output)
+	}
+}
+
+func TestWarnMissingSkills_DeduplicatesAcrossSteps(t *testing.T) {
+	// A skill referenced by multiple steps should only warn once.
+	tmpDir := t.TempDir()
+	t.Setenv("HOME", tmpDir)
+
+	wfPath := filepath.Join(tmpDir, "aqueduct.yaml")
+	wfContent := `name: test
+cataractae:
+  - name: step1
+    type: agent
+    identity: implementer
+    skills:
+      - name: shared-skill
+    on_pass: step2
+  - name: step2
+    type: agent
+    identity: reviewer
+    skills:
+      - name: shared-skill
+    on_pass: done
+`
+	if err := os.WriteFile(wfPath, []byte(wfContent), 0o644); err != nil {
+		t.Fatalf("write workflow: %v", err)
+	}
+
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn}))
+
+	cfg := &aqueduct.AqueductConfig{
+		Repos: []aqueduct.RepoConfig{
+			{Name: "test", WorkflowPath: wfPath, Cataractae: 1, Prefix: "t"},
+		},
+	}
+
+	warnMissingSkills(cfg, logger)
+
+	output := buf.String()
+	// Count warning records — "SKILL MISSING" appears once per log record,
+	// not per skill-name occurrence (which may also appear in the hint).
+	count := strings.Count(output, "SKILL MISSING")
+	if count != 1 {
+		t.Errorf("expected SKILL MISSING warning exactly once, got %d in: %q", count, output)
+	}
+}
+
+func TestWarnMissingSkills_SkipsUnreadableWorkflow(t *testing.T) {
+	// When a workflow file cannot be parsed, no panic and no false warning.
+	tmpDir := t.TempDir()
+	t.Setenv("HOME", tmpDir)
+
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn}))
+
+	cfg := &aqueduct.AqueductConfig{
+		Repos: []aqueduct.RepoConfig{
+			{Name: "test", WorkflowPath: filepath.Join(tmpDir, "does-not-exist.yaml"), Cataractae: 1, Prefix: "t"},
+		},
+	}
+
+	// Must not panic.
+	warnMissingSkills(cfg, logger)
+
+	output := buf.String()
+	if strings.Contains(output, "SKILL MISSING") {
+		t.Errorf("unexpected SKILL MISSING warning for unreadable workflow: %q", output)
 	}
 }
 

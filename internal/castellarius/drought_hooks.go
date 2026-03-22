@@ -51,6 +51,20 @@ func RunDroughtHooks(p DroughtHookParams) {
 	workflowChanged := false
 	restartReason := ""
 
+	// Warn if git_sync exists but is not the first hook.
+	// git_sync deploys skills and workflow YAML — it must precede cataractae_generate
+	// so CLAUDE.md files are rebuilt from the freshest sources.
+	for i, hook := range p.Hooks {
+		if hook.Action == "git_sync" {
+			if i > 0 {
+				logger.Warn("drought hooks: git_sync is not the first hook — skills and workflow may be stale when subsequent hooks run",
+					"position", i+1,
+					"hint", "Move git_sync to position 1 in drought_hooks in cistern.yaml")
+			}
+			break
+		}
+	}
+
 	for _, hook := range p.Hooks {
 		logger.Info("drought hook starting", "hook", hook.Name, "action", hook.Action)
 		var err error
@@ -92,6 +106,11 @@ func RunDroughtHooks(p DroughtHookParams) {
 			logger.Info("drought hook completed", "hook", hook.Name)
 		}
 	}
+
+	// After all hooks have run (including git_sync which deploys skills), check that
+	// every workflow-referenced skill is present locally. Missing skills will cause
+	// agent spawn failures and are surfaced here to make drift visible in the log.
+	warnMissingSkills(p.Config, logger)
 
 	// Binary-update detection: if the on-disk binary is newer than when we started,
 	// a restart is needed to run the new code.
@@ -493,6 +512,38 @@ func hookTmpCleanup(logger *slog.Logger) error {
 	}
 	logger.Info("tmp_cleanup: completed", "removed", total)
 	return nil
+}
+
+// warnMissingSkills checks each workflow in cfg for skill references that are not
+// installed locally. Called after the drought hook loop so git_sync-deployed skills
+// are already on disk. Logs a prominent warning for every missing skill so drift is
+// visible in the log during every drought cycle, not only when an agent tries to spawn.
+func warnMissingSkills(cfg *aqueduct.AqueductConfig, logger *slog.Logger) {
+	seen := map[string]bool{}
+	for _, repo := range cfg.Repos {
+		if repo.WorkflowPath == "" {
+			continue
+		}
+		w, err := aqueduct.ParseWorkflow(repo.WorkflowPath)
+		if err != nil {
+			// Workflow may be absent or invalid — other hooks already report this.
+			continue
+		}
+		for _, step := range w.Cataractae {
+			for _, skill := range step.Skills {
+				if skill.Name == "" || seen[skill.Name] {
+					continue
+				}
+				seen[skill.Name] = true
+				if !skills.IsInstalled(skill.Name) {
+					logger.Warn("SKILL MISSING: workflow references a skill not installed locally — agent spawn will fail",
+						"skill", skill.Name,
+						"repo", repo.Name,
+						"hint", "Run: ct skills install "+skill.Name+" <url>  or add skills/ to the repo for git_sync to deploy")
+				}
+			}
+		}
+	}
 }
 
 // hookShell runs a shell command with a timeout.
