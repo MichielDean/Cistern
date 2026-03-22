@@ -396,28 +396,27 @@ func TestRunDoctorExtendedChecks_FixRegeneratesClaudeMd(t *testing.T) {
 		}
 	}
 
-	// Workflow with cataractae_definitions so GenerateCataractaeFiles can write CLAUDE.md.
-	workflowWithDefs := `name: test
-cataractae_definitions:
-  tester:
-    name: Tester
-    description: "Test role."
-    instructions: |
-      ct droplet pass <id> --notes "done"
-cataractae:
-  - name: implement
-    type: agent
-    identity: tester
-    on_pass: done
-`
 	wfPath := filepath.Join(aqueductDir, "workflow.yaml")
-	if err := os.WriteFile(wfPath, []byte(workflowWithDefs), 0o644); err != nil {
+	if err := os.WriteFile(wfPath, []byte(minimalWorkflowYAML), 0o644); err != nil {
 		t.Fatalf("write workflow: %v", err)
 	}
 
 	cfgPath := filepath.Join(cisternDir, "cistern.yaml")
 	if err := os.WriteFile(cfgPath, []byte(minimalCisternConfigYAML), 0o644); err != nil {
 		t.Fatalf("write config: %v", err)
+	}
+
+	// Provide PERSONA.md and INSTRUCTIONS.md in the cataractae dir so the fix
+	// can regenerate CLAUDE.md from them.
+	testerDir := filepath.Join(cataractaeDir, "tester")
+	if err := os.MkdirAll(testerDir, 0o755); err != nil {
+		t.Fatalf("mkdir tester: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(testerDir, "PERSONA.md"), []byte("# Role: Tester\n\nA tester."), 0o644); err != nil {
+		t.Fatalf("write PERSONA.md: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(testerDir, "INSTRUCTIONS.md"), []byte(`Do tests. ct droplet pass <id> --notes "done"`), 0o644); err != nil {
+		t.Fatalf("write INSTRUCTIONS.md: %v", err)
 	}
 
 	cfg, err := aqueduct.ParseAqueductConfig(cfgPath)
@@ -428,7 +427,7 @@ cataractae:
 	doctorFix = true
 	defer func() { doctorFix = false }()
 
-	// CLAUDE.md is absent — fix should regenerate it, then check should pass.
+	// CLAUDE.md is absent — fix should regenerate it from PERSONA.md + INSTRUCTIONS.md.
 	dbPath := filepath.Join(cisternDir, "cistern.db")
 	result := runDoctorExtendedChecks(cfg, cfgPath, home, dbPath)
 	if !result {
