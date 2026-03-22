@@ -1325,3 +1325,46 @@ func TestRevisionCycleNotes_AllPrefixNotPassSignal(t *testing.T) {
 		t.Fatalf("revisionCycleNotes returned %d notes, want 3; got: %v", len(got), got)
 	}
 }
+
+// TestSpawnStep_MissingSkillReturnsError verifies that SpawnStep returns a
+// hard error (not a silent warning) when a required skill is not installed.
+// A missing skill means the agent would run without critical instructions —
+// blocking dispatch is the correct behavior.
+func TestSpawnStep_MissingSkillReturnsError(t *testing.T) {
+	sandbox := t.TempDir()
+
+	r := &Runner{
+		repo:     testRepoConfig(),
+		workflow: testWorkflow(),
+		queue:    testQueueClient(t),
+	}
+
+	w := &Worker{
+		Name:       "alice",
+		Repo:       "testrepo",
+		SandboxDir: sandbox,
+		SessionID:  "testrepo-alice",
+	}
+
+	item := &cistern.Droplet{
+		ID:       "ci-skill-missing",
+		Title:    "Skill test",
+		Status:   "open",
+		Priority: 1,
+	}
+
+	step := &aqueduct.WorkflowCataractae{
+		Name:    "implement",
+		Type:    aqueduct.CataractaeTypeAgent,
+		Context: aqueduct.ContextFullCodebase,
+		Skills:  []aqueduct.SkillRef{{Name: "nonexistent-skill-xyzabc123"}},
+	}
+
+	err := r.SpawnStep(w, item, step, "")
+	if err == nil {
+		t.Fatal("SpawnStep: expected error for missing skill, got nil")
+	}
+	if !strings.Contains(err.Error(), "nonexistent-skill-xyzabc123") {
+		t.Errorf("error %q should mention the missing skill name", err.Error())
+	}
+}
