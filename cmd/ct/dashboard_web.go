@@ -472,30 +472,29 @@ const dashboardHTML = `<!DOCTYPE html>
 <title>Cistern</title>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
-html,body{width:100%;height:100%;background:#0d1117}
-/* Outer scroll container — handles pan after zoom */
+html,body{width:100%;height:100%;background:#0d1117;overflow:hidden}
+/* Outer scroll container — pans the scaled terminal */
 #scroll{
   width:100%;height:100%;
-  overflow:auto;           /* both axes scrollable */
-  -webkit-overflow-scrolling:touch;  /* momentum scroll on iOS */
+  overflow:auto;
+  -webkit-overflow-scrolling:touch;
 }
-/* Terminal inner container — sized to actual terminal content */
-#terminal{
-  display:inline-block;    /* shrinks to content width for horizontal scroll */
-  min-width:100%;
-  min-height:100%;
+/* Terminal wrapper — transform-origin top-left so scale grows right/down */
+#wrap{
+  display:inline-block;
+  transform-origin:top left;
+  /* width/height set by JS to match scaled canvas size */
 }
-/* xterm.js scrollback scrollbar (vertical, inside the viewport) */
-.xterm-viewport::-webkit-scrollbar{width:8px}
+/* xterm.js scrollbar styling */
+.xterm-viewport::-webkit-scrollbar{width:6px}
 .xterm-viewport::-webkit-scrollbar-track{background:#0d1117}
-.xterm-viewport::-webkit-scrollbar-thumb{background:#30363d;border-radius:4px}
-.xterm-viewport::-webkit-scrollbar-thumb:hover{background:#484f58}
+.xterm-viewport::-webkit-scrollbar-thumb{background:#30363d;border-radius:3px}
 .xterm-viewport{scrollbar-color:#30363d #0d1117;scrollbar-width:thin}
 </style>
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.min.css"/>
 </head>
 <body>
-<div id="scroll"><div id="terminal"></div></div>
+<div id="scroll"><div id="wrap"><div id="terminal"></div></div></div>
 <script src="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/lib/xterm.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/lib/addon-fit.min.js"></script>
 <script>
@@ -531,97 +530,105 @@ term.loadAddon(fitAddon);
 term.open(document.getElementById('terminal'));
 
 var ws = null;
+var scale = 1.0;
+var minScale = 0.3;
+var maxScale = 3.0;
+var wrap = document.getElementById('wrap');
+var scroll = document.getElementById('scroll');
 
-/* Send resize message to server whenever xterm.js changes dimensions */
+/* Send resize to server when PTY dimensions change */
 term.onResize(function(e) {
   if (ws && ws.readyState === WebSocket.OPEN) {
     ws.send(JSON.stringify({resize: {cols: e.cols, rows: e.rows}}));
   }
 });
 
-function fitAndResize() {
-  /* Size the terminal div to the scroll container before fitting,
-     so FitAddon calculates cols/rows based on the visible area. */
-  var scroll = document.getElementById('scroll');
+/* Fit terminal to fill the viewport, then update wrap dimensions for scroll */
+function fitTerminal() {
+  /* Temporarily size terminal to full viewport so FitAddon gets correct cols/rows */
   var termEl = document.getElementById('terminal');
   termEl.style.width  = scroll.clientWidth  + 'px';
   termEl.style.height = scroll.clientHeight + 'px';
   fitAddon.fit();
-  /* After fit, let the div shrink to terminal content size for scroll */
-  termEl.style.width  = '';
-  termEl.style.height = '';
 }
 
-window.addEventListener('resize', fitAndResize);
+/* Apply CSS scale transform and update wrap dimensions so scroll container
+   knows the actual (scaled) size of the content */
+function applyScale() {
+  var termEl = document.getElementById('terminal');
+  var w = termEl.offsetWidth;
+  var h = termEl.offsetHeight;
+  wrap.style.transform = 'scale(' + scale + ')';
+  /* Wrap must report scaled dimensions to outer scroll container */
+  wrap.style.width  = Math.round(w * scale) + 'px';
+  wrap.style.height = Math.round(h * scale) + 'px';
+}
 
-/* Initial fit after the element is visible */
-requestAnimationFrame(function() { fitAndResize(); });
+function initView() {
+  fitTerminal();
+  applyScale();
+}
 
-/* Pinch-to-zoom: adjust xterm.js fontSize with two-finger gesture.
-   Works on mobile (touchstart/touchmove) and desktop trackpads (gesturestart/gesturechange). */
-var baseFontSize = 13;
-var minFontSize = 7;
-var maxFontSize = 28;
+window.addEventListener('resize', function() {
+  fitTerminal();
+  applyScale();
+});
+
+requestAnimationFrame(initView);
+
+/* ── Zoom controls ─────────────────────────────────────────────────────── */
 var pinchStartDist = 0;
-var pinchStartSize = 13;
+var pinchStartScale = 1;
 
-function clampFontSize(size) {
-  return Math.max(minFontSize, Math.min(maxFontSize, Math.round(size)));
+function setScale(s) {
+  scale = Math.max(minScale, Math.min(maxScale, s));
+  applyScale();
 }
 
-function setFontSize(size) {
-  var clamped = clampFontSize(size);
-  term.options.fontSize = clamped;
-  fitAddon.fit();
-}
-
-/* Touch events (mobile) */
-document.getElementById('scroll').addEventListener('touchstart', function(e) {
+/* Pinch-to-zoom (mobile touch) */
+scroll.addEventListener('touchstart', function(e) {
   if (e.touches.length === 2) {
     var dx = e.touches[0].clientX - e.touches[1].clientX;
     var dy = e.touches[0].clientY - e.touches[1].clientY;
-    pinchStartDist = Math.sqrt(dx*dx + dy*dy);
-    pinchStartSize = term.options.fontSize;
+    pinchStartDist  = Math.sqrt(dx*dx + dy*dy);
+    pinchStartScale = scale;
     e.preventDefault();
   }
 }, {passive: false});
 
-document.getElementById('scroll').addEventListener('touchmove', function(e) {
+scroll.addEventListener('touchmove', function(e) {
   if (e.touches.length === 2) {
     var dx = e.touches[0].clientX - e.touches[1].clientX;
     var dy = e.touches[0].clientY - e.touches[1].clientY;
     var dist = Math.sqrt(dx*dx + dy*dy);
     if (pinchStartDist > 0) {
-      setFontSize(pinchStartSize * (dist / pinchStartDist));
+      setScale(pinchStartScale * (dist / pinchStartDist));
     }
     e.preventDefault();
   }
 }, {passive: false});
 
-document.getElementById('scroll').addEventListener('touchend', function(e) {
-  if (e.touches.length < 2) {
-    pinchStartDist = 0;
-    baseFontSize = term.options.fontSize;
-  }
+scroll.addEventListener('touchend', function(e) {
+  if (e.touches.length < 2) pinchStartDist = 0;
 }, {passive: false});
 
-/* Gesture events (Safari desktop/iPad trackpad) */
-document.getElementById('scroll').addEventListener('gesturestart', function(e) {
-  pinchStartSize = term.options.fontSize;
+/* Safari gesture events (trackpad pinch on Mac/iPad) */
+scroll.addEventListener('gesturestart', function(e) {
+  pinchStartScale = scale;
   e.preventDefault();
 }, {passive: false});
 
-document.getElementById('scroll').addEventListener('gesturechange', function(e) {
-  setFontSize(pinchStartSize * e.scale);
+scroll.addEventListener('gesturechange', function(e) {
+  setScale(pinchStartScale * e.scale);
   e.preventDefault();
 }, {passive: false});
 
-/* Ctrl+scroll zoom (desktop) */
-document.getElementById('scroll').addEventListener('wheel', function(e) {
+/* Ctrl/Cmd + scroll wheel zoom (desktop) */
+scroll.addEventListener('wheel', function(e) {
   if (e.ctrlKey || e.metaKey) {
     e.preventDefault();
-    var delta = e.deltaY > 0 ? -1 : 1;
-    setFontSize(term.options.fontSize + delta);
+    var factor = e.deltaY > 0 ? 0.9 : 1.1;
+    setScale(scale * factor);
   }
 }, {passive: false});
 
