@@ -15,7 +15,6 @@ import (
 	"github.com/MichielDean/cistern/internal/aqueduct"
 	"github.com/MichielDean/cistern/internal/cistern"
 	"github.com/spf13/cobra"
-	"gopkg.in/yaml.v3"
 )
 
 var cataractaeCmd = &cobra.Command{
@@ -60,33 +59,9 @@ func runCataractaeAdd(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("scaffold cataractae: %w", err)
 	}
 
-	// Add the new entry to aqueduct.yaml.
-	displayName := aqueduct.TitleCaseName(name)
-	if err := aqueduct.AddCataractaeToWorkflow(wfPath, name, displayName, "TODO: describe this cataractae"); err != nil {
-		return fmt.Errorf("update workflow: %w", err)
-	}
-
 	fmt.Printf("Created: %s\n", personaPath)
 	fmt.Printf("Created: %s\n", instrPath)
-	fmt.Printf("Updated: %s\n", wfPath)
-
-	// Auto-generate CLAUDE.md so it is immediately available.
-	w, err := aqueduct.ParseWorkflow(wfPath)
-	if err != nil {
-		return fmt.Errorf("parse workflow: %w", err)
-	}
-	cisternDir := cisternCataractaeDir()
-	written, err := aqueduct.GenerateCataractaeFiles(w, cisternDir)
-	if err != nil {
-		return fmt.Errorf("generate: %w", err)
-	}
-	for _, p := range written {
-		if filepath.Base(filepath.Dir(p)) == name {
-			fmt.Printf("Generated: %s\n", p)
-		}
-	}
-
-	fmt.Printf("\nEdit PERSONA.md and INSTRUCTIONS.md, then wire the cataractae into your pipeline.\n")
+	fmt.Printf("\nEdit PERSONA.md and INSTRUCTIONS.md, then run: ct cataractae generate\n")
 	return nil
 }
 
@@ -96,7 +71,7 @@ var cataractaeGenerateWorkflow string
 
 var cataractaeGenerateCmd = &cobra.Command{
 	Use:   "generate",
-	Short: "Generate CLAUDE.md files from cataractae definitions",
+	Short: "Generate CLAUDE.md files from cataractae PERSONA.md and INSTRUCTIONS.md",
 	RunE:  runCataractaeGenerate,
 }
 
@@ -124,17 +99,17 @@ func runCataractaeGenerate(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("parse aqueduct: %w", err)
 	}
 
-	if len(w.CataractaeDefinitions) == 0 {
-		fmt.Println("no cataractae_definitions defined in aqueduct")
-		return nil
-	}
-
 	// Derive cataractae dir from the workflow location: <repo>/cataractae/ sits one level
 	// above the aqueduct dir that contains the workflow file.
 	cataractaeDir := filepath.Clean(filepath.Join(filepath.Dir(wfPath), "..", "cataractae"))
 	written, err := aqueduct.GenerateCataractaeFiles(w, cataractaeDir)
 	if err != nil {
 		return err
+	}
+
+	if len(written) == 0 {
+		fmt.Println("no cataractae with PERSONA.md and INSTRUCTIONS.md found")
+		return nil
 	}
 
 	for _, path := range written {
@@ -148,7 +123,7 @@ func runCataractaeGenerate(cmd *cobra.Command, args []string) error {
 
 var cataractaeListCmd = &cobra.Command{
 	Use:   "list",
-	Short: "List all cataractae definitions in the aqueduct",
+	Short: "List all agent identities in the workflow",
 	RunE:  runCataractaeList,
 }
 
@@ -174,34 +149,51 @@ func runCataractaeList(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("parse aqueduct: %w", err)
 	}
 
-	if len(w.CataractaeDefinitions) == 0 {
-		fmt.Println("no cataractae_definitions defined in aqueduct")
+	// Collect unique identities from workflow steps.
+	seen := map[string]bool{}
+	var identities []string
+	for _, step := range w.Cataractae {
+		if step.Identity != "" && !seen[step.Identity] {
+			seen[step.Identity] = true
+			identities = append(identities, step.Identity)
+		}
+	}
+
+	if len(identities) == 0 {
+		fmt.Println("no agent identities defined in workflow steps")
 		return nil
 	}
 
 	// Sort keys for stable output.
-	keys := make([]string, 0, len(w.CataractaeDefinitions))
-	for k := range w.CataractaeDefinitions {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
+	sort.Strings(identities)
 
-	for _, k := range keys {
-		role := w.CataractaeDefinitions[k]
-		desc := role.Description
-		if len(desc) > 40 {
-			desc = desc[:37] + "..."
-		}
-		fmt.Printf("  %-20s %-40s \u2192 ct cataractae edit %s\n", k, desc, k)
+	cataractaeDir := filepath.Clean(filepath.Join(filepath.Dir(wfPath), "..", "cataractae"))
+	for _, id := range identities {
+		displayName := readPersonaName(filepath.Join(cataractaeDir, id, "PERSONA.md"), id)
+		fmt.Printf("  %-20s %-40s → ct cataractae edit %s\n", id, displayName, id)
 	}
 	return nil
+}
+
+// readPersonaName reads the "# Role: <Name>" from the first line of PERSONA.md.
+// Falls back to TitleCaseName(id) if the file cannot be read or has no such header.
+func readPersonaName(personaPath, id string) string {
+	data, err := os.ReadFile(personaPath)
+	if err != nil {
+		return aqueduct.TitleCaseName(id)
+	}
+	firstLine := strings.SplitN(string(data), "\n", 2)[0]
+	if strings.HasPrefix(firstLine, "# Role: ") {
+		return strings.TrimPrefix(firstLine, "# Role: ")
+	}
+	return aqueduct.TitleCaseName(id)
 }
 
 // --- roles edit ---
 
 var cataractaeEditCmd = &cobra.Command{
 	Use:   "edit",
-	Short: "Edit a cataractae definition's instructions in $EDITOR",
+	Short: "Edit a cataractae's INSTRUCTIONS.md in $EDITOR and regenerate CLAUDE.md",
 	RunE:  runCataractaeEdit,
 }
 
@@ -222,66 +214,51 @@ func runCataractaeEdit(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	// Read the raw YAML to preserve structure.
-	data, err := os.ReadFile(wfPath)
-	if err != nil {
-		return fmt.Errorf("read aqueduct: %w", err)
-	}
-
 	w, err := aqueduct.ParseWorkflow(wfPath)
 	if err != nil {
 		return fmt.Errorf("parse aqueduct: %w", err)
 	}
 
-	if len(w.CataractaeDefinitions) == 0 {
-		fmt.Println("no cataractae_definitions defined in aqueduct")
+	// Collect unique identities from workflow steps.
+	seen := map[string]bool{}
+	var identities []string
+	for _, step := range w.Cataractae {
+		if step.Identity != "" && !seen[step.Identity] {
+			seen[step.Identity] = true
+			identities = append(identities, step.Identity)
+		}
+	}
+	sort.Strings(identities)
+
+	if len(identities) == 0 {
+		fmt.Println("no agent identities defined in workflow steps")
 		return nil
 	}
 
-	// Sort keys for stable ordering.
-	keys := make([]string, 0, len(w.CataractaeDefinitions))
-	for k := range w.CataractaeDefinitions {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-
 	// Print numbered list.
 	fmt.Println("Select a role to edit:")
-	for i, k := range keys {
-		fmt.Printf("  %d. %s — %s\n", i+1, k, w.CataractaeDefinitions[k].Name)
+	for i, id := range identities {
+		fmt.Printf("  %d. %s\n", i+1, id)
 	}
 	fmt.Print("\nEnter number: ")
 
 	var input string
 	fmt.Scanln(&input)
 	idx, err := strconv.Atoi(input)
-	if err != nil || idx < 1 || idx > len(keys) {
+	if err != nil || idx < 1 || idx > len(identities) {
 		return fmt.Errorf("invalid selection: %q", input)
 	}
 
-	selectedKey := keys[idx-1]
-	role := w.CataractaeDefinitions[selectedKey]
-
-	// Write instructions to temp file.
-	tmpFile, err := os.CreateTemp("", "cistern-role-*.md")
-	if err != nil {
-		return fmt.Errorf("create temp file: %w", err)
-	}
-	tmpPath := tmpFile.Name()
-	defer os.Remove(tmpPath)
-
-	if _, err := tmpFile.WriteString(role.Instructions); err != nil {
-		tmpFile.Close()
-		return fmt.Errorf("write temp file: %w", err)
-	}
-	tmpFile.Close()
+	selectedKey := identities[idx-1]
+	cataractaeDir := filepath.Clean(filepath.Join(filepath.Dir(wfPath), "..", "cataractae"))
+	instrPath := filepath.Join(cataractaeDir, selectedKey, "INSTRUCTIONS.md")
 
 	// Open in $EDITOR.
 	editor := os.Getenv("EDITOR")
 	if editor == "" {
 		editor = "vi"
 	}
-	editorCmd := exec.Command(editor, tmpPath)
+	editorCmd := exec.Command(editor, instrPath)
 	editorCmd.Stdin = os.Stdin
 	editorCmd.Stdout = os.Stdout
 	editorCmd.Stderr = os.Stderr
@@ -289,40 +266,13 @@ func runCataractaeEdit(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("editor: %w", err)
 	}
 
-	// Read back edited content.
-	edited, err := os.ReadFile(tmpPath)
-	if err != nil {
-		return fmt.Errorf("read edited file: %w", err)
-	}
-
-	// Update role in the aqueduct.
-	role.Instructions = string(edited)
-	w.CataractaeDefinitions[selectedKey] = role
-
-	// Re-parse the raw data into a generic structure to preserve
-	// non-role fields, then update roles and re-serialize.
-	var raw map[string]interface{}
-	if err := yaml.Unmarshal(data, &raw); err != nil {
-		return fmt.Errorf("parse raw yaml: %w", err)
-	}
-	raw["cataractae"] = w.CataractaeDefinitions
-
-	out, err := yaml.Marshal(raw)
-	if err != nil {
-		return fmt.Errorf("marshal yaml: %w", err)
-	}
-	if err := os.WriteFile(wfPath, out, 0o644); err != nil {
-		return fmt.Errorf("write aqueduct: %w", err)
-	}
-
 	// Regenerate CLAUDE.md.
-	cataractaeDir := cisternCataractaeDir()
 	written, err := aqueduct.GenerateCataractaeFiles(w, cataractaeDir)
 	if err != nil {
 		return err
 	}
 
-	fmt.Printf("\nUpdated %s and regenerated:\n", wfPath)
+	fmt.Printf("\nRegenerated:\n")
 	for _, path := range written {
 		fmt.Printf("  %s\n", path)
 	}
@@ -333,7 +283,7 @@ func runCataractaeEdit(cmd *cobra.Command, args []string) error {
 
 var cataractaeResetCmd = &cobra.Command{
 	Use:   "reset [role]",
-	Short: "Restore a cataractae definition to its built-in default (with confirmation)",
+	Short: "Restore a cataractae to its built-in default PERSONA.md and INSTRUCTIONS.md",
 	Args:  cobra.MaximumNArgs(1),
 	RunE:  runCataractaeReset,
 }
@@ -355,18 +305,18 @@ func runCataractaeReset(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	// Read the raw YAML to preserve structure.
-	data, err := os.ReadFile(wfPath)
-	if err != nil {
-		return fmt.Errorf("read aqueduct: %w", err)
-	}
-
 	w, err := aqueduct.ParseWorkflow(wfPath)
 	if err != nil {
-		return fmt.Errorf("parse aqueduct: %w", err)
+		return fmt.Errorf("parse workflow: %w", err)
 	}
 
-	cataractaeDir := cisternCataractaeDir()
+	cataractaeDir := filepath.Clean(filepath.Join(filepath.Dir(wfPath), "..", "cataractae"))
+
+	resettable := make([]string, 0, len(aqueduct.BuiltinCataractaeDefinitions))
+	for k := range aqueduct.BuiltinCataractaeDefinitions {
+		resettable = append(resettable, k)
+	}
+	sort.Strings(resettable)
 
 	if len(args) == 1 {
 		// Reset a single role.
@@ -385,14 +335,7 @@ func runCataractaeReset(cmd *cobra.Command, args []string) error {
 			return nil
 		}
 
-		// Update in aqueduct.
-		role := w.CataractaeDefinitions[roleName]
-		role.Name = builtin.Name
-		role.Description = builtin.Description
-		role.Instructions = builtin.Instructions
-		w.CataractaeDefinitions[roleName] = role
-
-		if err := writeWorkflowCataractaeDefinitions(wfPath, data, w); err != nil {
+		if err := writeBuiltinToCataractaeDir(cataractaeDir, roleName, builtin); err != nil {
 			return err
 		}
 
@@ -409,12 +352,6 @@ func runCataractaeReset(cmd *cobra.Command, args []string) error {
 	}
 
 	// No arg — list all resettable roles and prompt for all.
-	resettable := make([]string, 0)
-	for k := range aqueduct.BuiltinCataractaeDefinitions {
-		resettable = append(resettable, k)
-	}
-	sort.Strings(resettable)
-
 	if len(resettable) == 0 {
 		fmt.Println("no built-in defaults available")
 		return nil
@@ -434,20 +371,10 @@ func runCataractaeReset(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	if w.CataractaeDefinitions == nil {
-		w.CataractaeDefinitions = make(map[string]aqueduct.CataractaeDefinition)
-	}
 	for _, k := range resettable {
-		b := aqueduct.BuiltinCataractaeDefinitions[k]
-		w.CataractaeDefinitions[k] = aqueduct.CataractaeDefinition{
-			Name:         b.Name,
-			Description:  b.Description,
-			Instructions: b.Instructions,
+		if err := writeBuiltinToCataractaeDir(cataractaeDir, k, aqueduct.BuiltinCataractaeDefinitions[k]); err != nil {
+			return err
 		}
-	}
-
-	if err := writeWorkflowCataractaeDefinitions(wfPath, data, w); err != nil {
-		return err
 	}
 
 	written, err := aqueduct.GenerateCataractaeFiles(w, cataractaeDir)
@@ -460,31 +387,21 @@ func runCataractaeReset(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-// writeWorkflowCataractaeDefinitions updates the cataractae_definitions section of an aqueduct YAML file.
-func writeWorkflowCataractaeDefinitions(wfPath string, originalData []byte, w *aqueduct.Workflow) error {
-	var raw map[string]interface{}
-	if err := yaml.Unmarshal(originalData, &raw); err != nil {
-		return fmt.Errorf("parse raw yaml: %w", err)
+// writeBuiltinToCataractaeDir writes PERSONA.md and INSTRUCTIONS.md for a role
+// from the built-in default definition.
+func writeBuiltinToCataractaeDir(cataractaeDir, name string, builtin aqueduct.CataractaeDefinition) error {
+	dir := filepath.Join(cataractaeDir, name)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return fmt.Errorf("create dir %s: %w", dir, err)
 	}
-	raw["cataractae"] = w.CataractaeDefinitions
-
-	out, err := yaml.Marshal(raw)
-	if err != nil {
-		return fmt.Errorf("marshal yaml: %w", err)
+	persona := fmt.Sprintf("# Role: %s\n\n%s\n", builtin.Name, builtin.Description)
+	if err := os.WriteFile(filepath.Join(dir, "PERSONA.md"), []byte(persona), 0o644); err != nil {
+		return fmt.Errorf("write PERSONA.md: %w", err)
 	}
-	if err := os.WriteFile(wfPath, out, 0o644); err != nil {
-		return fmt.Errorf("write aqueduct: %w", err)
+	if err := os.WriteFile(filepath.Join(dir, "INSTRUCTIONS.md"), []byte(builtin.Instructions), 0o644); err != nil {
+		return fmt.Errorf("write INSTRUCTIONS.md: %w", err)
 	}
 	return nil
-}
-
-// cisternCataractaeDir returns ~/.cistern/cataractae.
-func cisternCataractaeDir() string {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return filepath.Join(".", "cataractae")
-	}
-	return filepath.Join(home, ".cistern", "cataractae")
 }
 
 // --- cataractae status ---

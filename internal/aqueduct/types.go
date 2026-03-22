@@ -113,10 +113,9 @@ func (cc ComplexityConfig) RequireHumanForLevel(level int) bool {
 
 // Workflow is a named sequence of cataractae parsed from a YAML file.
 type Workflow struct {
-	Name       string                    `yaml:"name"`
-	Cataractae    []WorkflowCataractae          `yaml:"cataractae"`
-	CataractaeDefinitions map[string]CataractaeDefinition `yaml:"cataractae_definitions,omitempty"`
-	Complexity ComplexityConfig          `yaml:"complexity"`
+	Name       string               `yaml:"name"`
+	Cataractae []WorkflowCataractae `yaml:"cataractae"`
+	Complexity ComplexityConfig     `yaml:"complexity"`
 }
 
 // RepoConfig defines a repository managed by the farm.

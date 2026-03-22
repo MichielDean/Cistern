@@ -58,10 +58,13 @@ func runInit(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("parse aqueduct workflow: %w", err)
 	}
-	if len(w.CataractaeDefinitions) > 0 {
-		if _, err := aqueduct.GenerateCataractaeFiles(w, cataractaeDir); err != nil {
-			return fmt.Errorf("generate cataractae: %w", err)
-		}
+	// Seed PERSONA.md + INSTRUCTIONS.md for each identity in the workflow so
+	// GenerateCataractaeFiles can write CLAUDE.md.
+	if err := initCataractaeDir(w, cataractaeDir); err != nil {
+		return fmt.Errorf("init cataractae dir: %w", err)
+	}
+	if _, err := aqueduct.GenerateCataractaeFiles(w, cataractaeDir); err != nil {
+		return fmt.Errorf("generate cataractae: %w", err)
 	}
 
 	// 5. Print next-steps message.
@@ -75,6 +78,41 @@ Next:
   2. ct droplet add --title "Your first droplet" --repo yourrepo
   3. ct castellarius start
 `)
+	return nil
+}
+
+// initCataractaeDir writes PERSONA.md and INSTRUCTIONS.md for each unique agent
+// identity in the workflow. Uses built-in defaults for known roles and scaffold
+// templates for unknown ones. Skips identities that already have both files.
+func initCataractaeDir(w *aqueduct.Workflow, cataractaeDir string) error {
+	seen := map[string]bool{}
+	for _, step := range w.Cataractae {
+		if step.Identity == "" || seen[step.Identity] {
+			continue
+		}
+		seen[step.Identity] = true
+
+		dir := filepath.Join(cataractaeDir, step.Identity)
+		personaPath := filepath.Join(dir, "PERSONA.md")
+		instrPath := filepath.Join(dir, "INSTRUCTIONS.md")
+
+		// Skip if both source files already exist.
+		_, personaErr := os.Stat(personaPath)
+		_, instrErr := os.Stat(instrPath)
+		if personaErr == nil && instrErr == nil {
+			continue
+		}
+
+		if builtin, ok := aqueduct.BuiltinCataractaeDefinitions[step.Identity]; ok {
+			if err := writeBuiltinToCataractaeDir(cataractaeDir, step.Identity, builtin); err != nil {
+				return err
+			}
+		} else {
+			if _, _, err := aqueduct.ScaffoldCataractaeDir(cataractaeDir, step.Identity); err != nil {
+				return fmt.Errorf("scaffold %s: %w", step.Identity, err)
+			}
+		}
+	}
 	return nil
 }
 

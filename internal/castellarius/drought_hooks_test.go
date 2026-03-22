@@ -173,12 +173,8 @@ func TestRolesGenerate_NoOpWhenYAMLOlder(t *testing.T) {
 cataractae:
   - name: impl
     type: agent
+    identity: implementer
     on_pass: done
-cataractae_definitions:
-  implementer:
-    name: Implementer
-    description: test
-    instructions: old instructions
 `
 	os.WriteFile(wfPath, []byte(wfContent), 0o644)
 
@@ -216,18 +212,14 @@ cataractae_definitions:
 func TestRolesGenerate_RegeneratesWhenYAMLNewer(t *testing.T) {
 	tmpDir := t.TempDir()
 
-	// Create a workflow YAML file.
+	// Create a workflow YAML file with an agent step that has an identity.
 	wfPath := filepath.Join(tmpDir, "aqueduct.yaml")
 	wfContent := `name: test
 cataractae:
   - name: impl
     type: agent
+    identity: implementer
     on_pass: done
-cataractae_definitions:
-  implementer:
-    name: Implementer
-    description: test
-    instructions: new instructions
 `
 	os.WriteFile(wfPath, []byte(wfContent), 0o644)
 
@@ -235,16 +227,7 @@ cataractae_definitions:
 	future := time.Now().Add(time.Hour)
 	os.Chtimes(wfPath, future, future)
 
-	// Create a roles dir with an older CLAUDE.md.
-	cataractaeDir := filepath.Join(tmpDir, "cataractae")
-	implDir := filepath.Join(cataractaeDir, "implementer")
-	os.MkdirAll(implDir, 0o755)
-	claudePath := filepath.Join(implDir, "CLAUDE.md")
-	os.WriteFile(claudePath, []byte("old content"), 0o644)
-	past := time.Now().Add(-time.Hour)
-	os.Chtimes(claudePath, past, past)
-
-	// Override home dir to use tmpDir for roles (both HOME and USERPROFILE for Windows).
+	// Override home dir so hookCataractaeGenerate uses tmpDir as HOME.
 	origHome := os.Getenv("HOME")
 	origUserProfile := os.Getenv("USERPROFILE")
 	os.Setenv("HOME", tmpDir)
@@ -254,11 +237,14 @@ cataractae_definitions:
 		os.Setenv("USERPROFILE", origUserProfile)
 	}()
 
-	// Create ~/.cistern/cataractae structure.
+	// Create ~/.cistern/cataractae/implementer/ with PERSONA.md, INSTRUCTIONS.md, and an old CLAUDE.md.
 	cisternRoles := filepath.Join(tmpDir, ".cistern", "cataractae", "implementer")
 	os.MkdirAll(cisternRoles, 0o755)
+	os.WriteFile(filepath.Join(cisternRoles, "PERSONA.md"), []byte("# Role: Implementer\n\nA new persona."), 0o644)
+	os.WriteFile(filepath.Join(cisternRoles, "INSTRUCTIONS.md"), []byte("New instructions. ct droplet pass <id>"), 0o644)
 	cisternClaude := filepath.Join(cisternRoles, "CLAUDE.md")
 	os.WriteFile(cisternClaude, []byte("old"), 0o644)
+	past := time.Now().Add(-time.Hour)
 	os.Chtimes(cisternClaude, past, past)
 
 	cfg := &aqueduct.AqueductConfig{
@@ -274,7 +260,7 @@ cataractae_definitions:
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	// The role file should have been regenerated.
+	// The role file should have been regenerated from PERSONA.md + INSTRUCTIONS.md.
 	data, _ := os.ReadFile(cisternClaude)
 	content := string(data)
 	if content == "old" {

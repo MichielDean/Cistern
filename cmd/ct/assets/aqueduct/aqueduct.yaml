@@ -1,48 +1,5 @@
 name: feature
 
-cataractae_definitions:
-  implementer:
-    name: Implementer
-    description: "Expert software engineer implementing features using TDD."
-    # persona loaded from cataractae/implementer/PERSONA.md
-    # instructions loaded from cataractae/implementer/INSTRUCTIONS.md
-
-  simplifier:
-    name: Code Simplifier
-    description: "Refines recently-written code for clarity, consistency, and maintainability without changing behaviour."
-    # persona loaded from cataractae/simplifier/PERSONA.md
-    # instructions loaded from cataractae/simplifier/INSTRUCTIONS.md
-
-  reviewer:
-    name: Adversarial Reviewer
-    description: "Rigorous code reviewer — finds problems in diffs with zero tolerance for mediocrity."
-    # persona loaded from cataractae/reviewer/PERSONA.md
-    # instructions loaded from cataractae/reviewer/INSTRUCTIONS.md
-
-  qa:
-    name: QA Reviewer
-    description: "Adversarial QA engineer — active verification, last line of defence before PR."
-    # persona loaded from cataractae/qa/PERSONA.md
-    # instructions loaded from cataractae/qa/INSTRUCTIONS.md
-
-  security:
-    name: Security Reviewer
-    description: "Security-focused reviewer — audits diffs for vulnerabilities."
-    # persona loaded from cataractae/security/PERSONA.md
-    # instructions loaded from cataractae/security/INSTRUCTIONS.md
-
-  docs_writer:
-    name: Docs Writer
-    description: "Updates documentation for all user-visible changes in the diff."
-    # persona loaded from cataractae/docs_writer/PERSONA.md
-    # instructions loaded from cataractae/docs_writer/INSTRUCTIONS.md
-
-  delivery:
-    name: Delivery
-    description: "Owns everything from branch to merged — rebase, PR, CI, conflicts, merge."
-    # persona loaded from cataractae/delivery/PERSONA.md
-    # instructions loaded from cataractae/delivery/INSTRUCTIONS.md
-
 complexity:
   trivial:
     level: 1
