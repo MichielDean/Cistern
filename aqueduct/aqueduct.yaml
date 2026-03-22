@@ -43,21 +43,9 @@ cataractae_definitions:
       All packages must pass. Fix failures before proceeding.
 
       ## Step 4 — Commit
-      ```bash
-      BEFORE=$(git rev-parse HEAD)
-      git add -A -- ':!CONTEXT.md'
-      git status --short   # verify the right files are staged — no CONTEXT.md, no binaries
-      git commit -m "<droplet-id>: <description>"
-      AFTER=$(git rev-parse HEAD)
-      if [ "$BEFORE" = "$AFTER" ]; then
-        echo "ERROR: nothing was staged. Check git status."
-        ct droplet recirculate <id> --notes "Commit failed: HEAD did not advance. git status: <output>"
-        exit 1
-      fi
-      ```
+      See cistern-git skill for staging/commit conventions (exclude CONTEXT.md, verify HEAD advances).
 
       ## Step 5 — Verify the commit is real
-      Run all of these. Each must pass.
 
       a. git show --stat HEAD
          Must show your implementation files. If only CONTEXT.md changed: the commit is empty.
@@ -84,11 +72,15 @@ cataractae_definitions:
       branch for clarity and maintainability while preserving exact behaviour.
 
       ## Step 1 — Identify changed code
+      Run: git log origin/main..HEAD --oneline
+      If empty: signal pass immediately — nothing to simplify.
+
       Run: git diff origin/main..HEAD --name-only
       These are the only files you may touch.
 
       Run: git diff origin/main..HEAD
       Read the actual changes to understand what was implemented.
+      (See cistern-git skill for git conventions.)
 
       ## Step 2 — Look for simplification opportunities
       For each changed file, check for:
@@ -115,15 +107,10 @@ cataractae_definitions:
       - Run go test ./... -count=1 after each file — revert immediately if anything fails
 
       ## Step 4 — Commit
+      Use cistern-git skill conventions (exclude CONTEXT.md, verify HEAD advances).
       ```bash
-      BEFORE=$(git rev-parse HEAD)
       git add -A -- ':!CONTEXT.md'
       git commit -m "<droplet-id>: simplify: <what was simplified and why>"
-      AFTER=$(git rev-parse HEAD)
-      if [ "$BEFORE" = "$AFTER" ]; then
-        ct droplet recirculate <id> --notes "Commit failed — nothing staged."
-        exit 1
-      fi
       ```
 
       ## Step 5 — Signal
@@ -322,16 +309,12 @@ cataractae_definitions:
       Must pass — doc changes occasionally break tests that assert README content.
 
       ## Step 5 — Commit
+      Use cistern-git skill conventions (exclude CONTEXT.md, verify HEAD advances).
       ```bash
-      BEFORE=$(git rev-parse HEAD)
       git add -A -- ':!CONTEXT.md'
       git commit -m "<id>: docs: <brief description>"
-      AFTER=$(git rev-parse HEAD)
-      if [ "$BEFORE" = "$AFTER" ]; then
-        ct droplet pass <id> --notes "No documentation updates required — diff contained no user-visible changes after review."
-        exit 0
-      fi
       ```
+      If nothing staged (no user-visible changes): signal pass instead.
 
       ## Step 6 — Signal
       ct droplet pass <id> --notes "Updated: <list of files and what changed in each>."
@@ -488,6 +471,8 @@ cataractae:
     skills:
       - name: cistern-droplet-state
         path: skills/cistern-droplet-state/SKILL.md
+      - name: cistern-git
+        path: skills/cistern-git/SKILL.md
       - name: github-workflow
     timeout_minutes: 30
     on_pass: simplify
@@ -502,6 +487,8 @@ cataractae:
     skills:
       - name: cistern-droplet-state
         path: skills/cistern-droplet-state/SKILL.md
+      - name: cistern-git
+        path: skills/cistern-git/SKILL.md
       - name: code-simplifier
         path: skills/code-simplifier/SKILL.md
     timeout_minutes: 20
@@ -564,6 +551,8 @@ cataractae:
     skills:
       - name: cistern-droplet-state
         path: skills/cistern-droplet-state/SKILL.md
+      - name: cistern-git
+        path: skills/cistern-git/SKILL.md
     timeout_minutes: 20
     skip_for: [1] # trivial droplets skip docs
     on_pass: delivery
@@ -578,6 +567,8 @@ cataractae:
       - name: github-workflow
       - name: cistern-droplet-state
         path: skills/cistern-droplet-state/SKILL.md
+      - name: cistern-git
+        path: skills/cistern-git/SKILL.md
     timeout_minutes: 60
     on_pass: done
     on_recirculate: implement
