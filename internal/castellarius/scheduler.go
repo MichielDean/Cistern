@@ -1211,15 +1211,14 @@ func prepareDropletWorktree(primaryDir, sandboxRoot, repoName, dropletID string)
 }
 
 // removeDropletWorktree removes the per-droplet worktree directory,
-// unregisters it from git, and deletes the feature branch ref.
-// Errors are ignored — best-effort cleanup.
+// unregisters it from git, and deletes the feature branch from the primary
+// clone. Errors are ignored — best-effort cleanup.
 func removeDropletWorktree(primaryDir, sandboxRoot, repoName, dropletID string) {
 	worktreePath := filepath.Join(sandboxRoot, repoName, dropletID)
 	rm := exec.Command("git", "worktree", "remove", "--force", worktreePath)
 	rm.Dir = primaryDir
 	_ = rm.Run()
 
-	// git worktree remove leaves the branch ref — delete it too.
 	del := exec.Command("git", "branch", "-D", "feat/"+dropletID)
 	del.Dir = primaryDir
 	_ = del.Run()
