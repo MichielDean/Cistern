@@ -10,6 +10,13 @@
 - Branch lifecycle is now owned by the Castellarius: feature branches (`feat/<id>`) are created and cleaned up by the scheduler, not the runner. Agents do not manage branches directly.
 - Non-terminal routes (pass to next step, recirculate) preserve the feature branch so the next cycle can resume incrementally. Terminal routes (deliver, block, escalate) clean up the branch.
 
+### Implementer: strengthened post-commit verification (ci-kxdf5)
+- **Post-commit verification section added to `implementer.md`**: after `git commit`, agents must run six checks (a–f) before signaling pass.
+- Check (a) confirms HEAD moved; (b) confirms the diff is non-empty; (c) confirms no staged or unstaged implementation files remain; (d) is a hard-gate grep for a key function from the implementation in the diff.
+- Check (e) verifies non-trivial (non-.md) files changed — if the commit only touches `.md` files the agent must not pass. **Exception:** when the named deliverable in CONTEXT.md is itself a `.md` file, check (e) does not apply; the agent proceeds to check (f) instead.
+- Check (f) confirms that any named deliverable file is present in the commit (`git show HEAD -- <file> | wc -l` must be > 0).
+- Prevents the failure mode where an agent commits only CONTEXT.md or docs files, passes the old HEAD-SHA check, and leaves real implementation files uncommitted.
+
 ### Delivery: abort on dirty worktree and docs-only branch (ci-3sfr8)
 - **Dirty worktree pre-flight check**: before running `git stash`, the delivery cataractae runs `git status --porcelain` and recirculates if any non-CONTEXT.md files are uncommitted. Prevents silently stashing an implementer's work and delivering an empty branch.
 - **Docs-only deliverables check**: before creating the PR, the delivery cataractae checks `git diff origin/$BASE...HEAD --name-only` and recirculates if only `.md`/`.txt`/CHANGELOG/README/CONTEXT files changed. A branch must contain at least one implementation file (`.go`, `.yaml`, etc.) unless the droplet is explicitly docs-only.
