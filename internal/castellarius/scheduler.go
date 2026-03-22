@@ -1066,11 +1066,14 @@ func prepareDropletWorktree(primaryDir, sandboxRoot, repoName, dropletID string)
 		if out, err := checkout.CombinedOutput(); err != nil {
 			return "", fmt.Errorf("git checkout %s in %s: %w: %s", branch, worktreePath, err, out)
 		}
-		// Discard any Castellarius-managed files left modified from prior dispatch.
-		// CONTEXT.md is written fresh on every dispatch — never block on it.
-		discard := exec.Command("git", "checkout", "--", "CONTEXT.md")
-		discard.Dir = worktreePath
-		_ = discard.Run()
+		// Discard Castellarius-managed and build-artifact files left modified.
+		// CONTEXT.md is rewritten on every dispatch; ct/install are compiled
+		// binaries committed in the repo that differ across branches.
+		for _, f := range []string{"CONTEXT.md", "ct", "install"} {
+			c := exec.Command("git", "checkout", "--", f)
+			c.Dir = worktreePath
+			_ = c.Run()
+		}
 		return worktreePath, nil
 	}
 
@@ -1128,8 +1131,14 @@ func dirtyNonContextFiles(dir string) []string {
 		if line == "" {
 			continue
 		}
-		// Format: "XY filename" — extract filename (col 3+)
+		// Format: "XY filename" — XY is always exactly 2 chars, then a space.
 		if len(line) < 4 {
+			continue
+		}
+		xy := line[:2]
+		// Skip untracked files ("??" prefix) — gitignored binaries (ct, install)
+		// show as untracked and should never block dispatch.
+		if xy == "??" {
 			continue
 		}
 		name := strings.TrimSpace(line[3:])
