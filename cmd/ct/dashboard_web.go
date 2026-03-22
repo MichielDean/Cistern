@@ -131,8 +131,8 @@ func wsSendFrame(w *bufio.Writer, opcode byte, payload []byte) error {
 // to avoid per-frame allocation; if the payload exceeds len(buf), a new slice is
 // allocated and returned as the buf going forward.
 func wsReadClientFrame(br *bufio.Reader, buf []byte) (opcode byte, payload []byte, newBuf []byte, err error) {
-	header := make([]byte, 2)
-	if _, err = io.ReadFull(br, header); err != nil {
+	var header [2]byte
+	if _, err = io.ReadFull(br, header[:]); err != nil {
 		return 0, nil, buf, err
 	}
 	opcode = header[0] & 0x0F
@@ -142,17 +142,21 @@ func wsReadClientFrame(br *bufio.Reader, buf []byte) (opcode byte, payload []byt
 	var payloadLen int
 	switch rawLen {
 	case 126:
-		ext := make([]byte, 2)
-		if _, err = io.ReadFull(br, ext); err != nil {
+		var ext [2]byte
+		if _, err = io.ReadFull(br, ext[:]); err != nil {
 			return 0, nil, buf, err
 		}
-		payloadLen = int(binary.BigEndian.Uint16(ext))
+		payloadLen = int(binary.BigEndian.Uint16(ext[:]))
 	case 127:
-		ext := make([]byte, 8)
-		if _, err = io.ReadFull(br, ext); err != nil {
+		var ext [8]byte
+		if _, err = io.ReadFull(br, ext[:]); err != nil {
 			return 0, nil, buf, err
 		}
-		payloadLen = int(binary.BigEndian.Uint64(ext))
+		extLen := binary.BigEndian.Uint64(ext[:])
+		if extLen > uint64(wsMaxClientPayload) {
+			return 0, nil, buf, fmt.Errorf("client frame payload %d exceeds max %d", extLen, wsMaxClientPayload)
+		}
+		payloadLen = int(extLen)
 	default:
 		payloadLen = rawLen
 	}
