@@ -1109,6 +1109,17 @@ func prepareDropletWorktree(primaryDir, sandboxRoot, repoName, dropletID string)
 		}
 	}
 
+	// Hard-reset to origin/main to guarantee a clean baseline — the worktree
+	// may inherit local modifications from the primary clone.
+	reset := exec.Command("git", "reset", "--hard", "origin/main")
+	reset.Dir = worktreePath
+	if out, err := reset.CombinedOutput(); err != nil {
+		return "", fmt.Errorf("git reset in %s: %w: %s", worktreePath, err, out)
+	}
+	clean := exec.Command("git", "clean", "-fd")
+	clean.Dir = worktreePath
+	_ = clean.Run()
+
 	return worktreePath, nil
 }
 

@@ -283,9 +283,12 @@ func newDashboardMux(cfgPath, dbPath string) http.Handler {
 		defer cancel()
 
 		// Run the dashboard render loop in a goroutine, writing ANSI to pw.
+		// Use a stripping writer to remove clearScreen sequences (\033[2J\033[H)
+		// — xterm.js handles cursor movement natively; raw clear codes cause
+		// the terminal to flash and can corrupt frame boundaries.
 		go func() {
 			defer pw.Close()
-			_ = RunDashboard(cfgPath, dbPath, inputCh, pw)
+			_ = RunDashboard(cfgPath, dbPath, inputCh, &stripClearWriter{w: pw})
 		}()
 
 		// Read from pipe and forward as WebSocket text frames.
@@ -308,6 +311,20 @@ func newDashboardMux(cfgPath, dbPath string) http.Handler {
 	})
 
 	return mux
+}
+
+// stripClearWriter wraps an io.Writer and strips ANSI clear-screen sequences
+// (\033[2J\033[H) from the stream. xterm.js renders incrementally — clear
+// codes cause visible flashing and can corrupt multi-frame renders.
+type stripClearWriter struct{ w io.Writer }
+
+func (s *stripClearWriter) Write(p []byte) (int, error) {
+	clean := strings.ReplaceAll(string(p), "\033[2J\033[H", "")
+	n, err := s.w.Write([]byte(clean))
+	if err != nil {
+		return n, err
+	}
+	return len(p), nil // report original len to avoid short-write errors
 }
 
 // RunDashboardWeb starts the HTTP web dashboard on addr and blocks until
