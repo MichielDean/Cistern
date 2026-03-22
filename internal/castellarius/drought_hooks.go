@@ -128,8 +128,6 @@ func hookGitSync(cfg *aqueduct.AqueductConfig, sandboxRoot string, logger *slog.
 	if hErr != nil {
 		return false, fmt.Errorf("git_sync: home dir: %w", hErr)
 	}
-	skillsDir := filepath.Join(home, ".cistern", "skills")
-
 	for _, repo := range cfg.Repos {
 		if repo.WorkflowPath == "" {
 			continue
@@ -199,15 +197,14 @@ func hookGitSync(cfg *aqueduct.AqueductConfig, sandboxRoot string, logger *slog.
 		// Sync skills from the skills/ tree in origin/main into ~/.cistern/skills/.
 		// This runs independently of the workflow sync — skills are deployed even if
 		// the workflow YAML is missing or unchanged.
-		syncSkillsFromRepo(cloneDir, skillsDir, repo.Name, logger)
+		syncSkillsFromRepo(cloneDir, repo.Name, logger)
 	}
 	return changed, nil
 }
 
 // syncSkillsFromRepo deploys all skills from the skills/ tree in origin/main into
-// the local skills directory. Each skills/<name>/SKILL.md is extracted and written
-// to skillsDir/<name>/SKILL.md via skills.Deploy. Errors are logged but not fatal.
-func syncSkillsFromRepo(cloneDir, skillsDir, repoName string, logger *slog.Logger) {
+// ~/.cistern/skills/ via skills.Deploy. Errors are logged but not fatal.
+func syncSkillsFromRepo(cloneDir, repoName string, logger *slog.Logger) {
 	// List skill names directly inside origin/main:skills (colon syntax lists tree contents).
 	out, err := exec.Command("git", "-C", cloneDir, "ls-tree", "--name-only", "origin/main:skills").Output()
 	if err != nil {
