@@ -1,11 +1,11 @@
 ## Step 1 — Identify changed code
-Run: git log origin/main..HEAD --oneline
+Run: git log $(git merge-base HEAD origin/main)..HEAD --oneline
 If empty: signal pass immediately — nothing to simplify.
 
-Run: git diff origin/main..HEAD --name-only
+Run: git diff $(git merge-base HEAD origin/main)..HEAD --name-only
 These are the only files you may touch.
 
-Run: git diff origin/main..HEAD
+Run: git diff $(git merge-base HEAD origin/main)..HEAD
 Read the actual changes to understand what was implemented.
 (See cistern-git skill for git conventions.)
 
