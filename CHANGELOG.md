@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+### Test harness: fake provider binary + mock LLM HTTP server (ci-t3xo9)
+- Adds `internal/testutil/fakeagent` — a minimal Go binary that accepts the same flags as the `claude` CLI, reads the droplet ID from `CONTEXT.md`, sleeps 200 ms, then calls `ct droplet pass <id>`. Used in `session_test.go` to exercise the full `Spawn → isAlive → outcome` cycle without a real LLM CLI or API key.
+- Adds `internal/testutil/mockllm` — an `httptest.Server` that handles `POST /v1/messages` (Anthropic) and `POST /v1/chat/completions` (OpenAI-compatible). Returns a hardcoded `HardcodedProposalsJSON` payload; records all requests (method, path, headers, body) for test assertions. Both handlers return `405 Method Not Allowed` for non-POST requests.
+- Adds `TestClaudePresetBackwardCompat` — regression test asserting that the command built by `buildPresetCmd` with the built-in `claude` preset is byte-for-byte identical to `buildClaudeCmd`. Includes a `LookPath resolution` subtest that patches `claudePathFn` to verify parity when `CLAUDE_PATH` is not set.
+- `session.go`: adds `buildPresetCmd`, introduces `claudePathFn` indirection (allows test injection without modifying process environment), and forwards `CT_DB` into the tmux session environment.
+- All tests pass with `go test ./...` and no environment variables set.
+
 ### Provider presets: ProviderPreset struct and built-in registry (ci-x6rof)
 - Introduces `internal/provider` package with `ProviderPreset` — the data model describing how to launch any agent CLI (command, fixed args, env passthrough, model flag, resume style, instructions file, and more)
 - Built-in presets ship for five providers: `claude` (ANTHROPIC_API_KEY, `--model`, `--add-dir`, `CLAUDE.md`), `codex` (OPENAI_API_KEY, subcommand resume, `AGENTS.md`), `gemini` (GEMINI_API_KEY, `--model`, `GEMINI.md`), `copilot` (GH_TOKEN, 5 s ready delay, `AGENTS.md`), `opencode` (`AGENTS.md`)
