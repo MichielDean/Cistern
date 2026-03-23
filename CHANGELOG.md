@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+### Dashboard: filter active aqueduct steps by droplet complexity (ci-jefan)
+- Active aqueducts now show only the cataractae steps that will actually execute for the droplet's complexity level — steps whose `SkipFor` list includes the droplet's complexity are hidden
+- `TotalCataractae` and `CataractaeIndex` are both computed from the filtered step list, keeping progress calculations accurate when skipped steps precede the current step
+- Idle aqueducts continue to show all steps as a full-pipeline preview
+- `NoteCount` field removed from `CataractaeInfo` and `FlowActivity` JSON (unused by consumers)
+- `FlowActivity.RecentNotes` order changed to newest-first (last 3 notes, most recent at index 0)
+
 ### TUI dashboard: move droplet info to dedicated line below aqueduct name (ci-rxzft)
 - Droplet ID, elapsed time, and progress bar are now displayed on a dedicated info line below the aqueduct name/repo line — no longer embedded in the water channel animation
 - Name line (`lines[0]`): aqueduct name (green) + repo name (dim) on one line; info line (`lines[1]`): droplet ID + elapsed + 10-char progress bar in green; empty string when aqueduct is idle

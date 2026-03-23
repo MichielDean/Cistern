@@ -5,6 +5,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -163,8 +164,10 @@ func fetchDashboardData(cfgPath, dbPath string) *DashboardData {
 			ci.Step = item.CurrentCataractae
 			ci.Elapsed = time.Since(item.UpdatedAt)
 			wfCataractae := allSteps[ch.repo]
-			ci.TotalCataractae = len(wfCataractae)
-			ci.CataractaeIndex = cataractaeIndexInWorkflow(item.CurrentCataractae, wfCataractae)
+			activeSteps := activeStepNames(wfCataractae, item.Complexity)
+			ci.Steps = activeSteps
+			ci.TotalCataractae = len(activeSteps)
+			ci.CataractaeIndex = slices.Index(activeSteps, item.CurrentCataractae) + 1
 		}
 		cataractae[i] = ci
 	}
@@ -239,6 +242,19 @@ func stepNames(wf []aqueduct.WorkflowCataractae) []string {
 	names := make([]string, len(wf))
 	for i, s := range wf {
 		names[i] = s.Name
+	}
+	return names
+}
+
+// activeStepNames returns the names of workflow steps that will actually run
+// for the given complexity level, filtering out any step whose SkipFor list
+// contains that complexity.
+func activeStepNames(wf []aqueduct.WorkflowCataractae, complexity int) []string {
+	var names []string
+	for _, step := range wf {
+		if !slices.Contains(step.SkipFor, complexity) {
+			names = append(names, step.Name)
+		}
 	}
 	return names
 }
