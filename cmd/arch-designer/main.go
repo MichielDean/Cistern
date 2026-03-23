@@ -224,24 +224,17 @@ func renderArch(p archParams) []string {
 	result = append(result, dimStyle.Render(strings.Repeat("▀", n*colW)))
 
 	for lr := 0; lr < p.TaperRows+p.PierRows; lr++ {
-		bodyW := p.ArchTopW - lr*2
-		if bodyW < pierW {
-			bodyW = pierW
-		}
+		bodyW := max(p.ArchTopW-lr*2, pierW)
 		rowPadL := (colW - bodyW) / 2
 		gapW := colW - bodyW
 		offset := (p.BrickW / 2) * (lr % 2)
 
-		// Arch crown fill values.
-		tMort := math.Min(float64(lr)/float64(p.TaperRows), 1.0)
+		// Arch crown fill values (defaults = open gap for pier body rows).
 		lfM, ogM, rfM := 0, gapW, 0
-		if lr < p.TaperRows {
-			lfM, ogM, rfM = archCrownAtT(tMort, gapW)
-		}
-		tBrick := math.Min(float64(lr)+0.5, float64(p.TaperRows)) / float64(p.TaperRows)
 		lfB, ogB, rfB := 0, gapW, 0
 		if lr < p.TaperRows {
-			lfB, ogB, rfB = archCrownAtT(tBrick, gapW)
+			lfM, ogM, rfM = archCrownAtT(float64(lr)/float64(p.TaperRows), gapW)
+			lfB, ogB, rfB = archCrownAtT((float64(lr)+0.5)/float64(p.TaperRows), gapW)
 		}
 
 		var mortSB, brickSB strings.Builder
@@ -584,6 +577,7 @@ func newArchDesignerMux() http.Handler {
 
 		ptmx, err := pty.Start(cmd)
 		if err != nil {
+			fmt.Fprintf(os.Stderr, "arch-designer: pty.Start: %v\n", err)
 			return
 		}
 
@@ -622,10 +616,12 @@ func newArchDesignerMux() http.Handler {
 						} `json:"resize"`
 					}
 					if json.Unmarshal(payload, &msg) == nil && msg.Resize != nil {
-						_ = pty.Setsize(ptmx, &pty.Winsize{
-							Rows: msg.Resize.Rows,
-							Cols: msg.Resize.Cols,
-						})
+						if msg.Resize.Cols > 0 && msg.Resize.Rows > 0 {
+							_ = pty.Setsize(ptmx, &pty.Winsize{
+								Rows: msg.Resize.Rows,
+								Cols: msg.Resize.Cols,
+							})
+						}
 					} else {
 						// Forward keystrokes to PTY stdin.
 						ptmx.Write(payload) //nolint:errcheck
