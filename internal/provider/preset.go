@@ -98,14 +98,20 @@ var builtins = []ProviderPreset{
 	},
 }
 
+// cloneSliceFields deep-copies all slice fields of a ProviderPreset so the
+// copy does not alias the original's backing arrays.
+func cloneSliceFields(p *ProviderPreset) {
+	p.Args = slices.Clone(p.Args)
+	p.EnvPassthrough = slices.Clone(p.EnvPassthrough)
+	p.ProcessNames = slices.Clone(p.ProcessNames)
+}
+
 // Builtins returns a deep copy of the built-in provider preset slice.
 // Callers may safely modify the returned slice and its fields without affecting the originals.
 func Builtins() []ProviderPreset {
 	out := make([]ProviderPreset, len(builtins))
 	for i, p := range builtins {
-		p.Args = slices.Clone(p.Args)
-		p.EnvPassthrough = slices.Clone(p.EnvPassthrough)
-		p.ProcessNames = slices.Clone(p.ProcessNames)
+		cloneSliceFields(&p)
 		p.ExtraEnv = maps.Clone(p.ExtraEnv)
 		out[i] = p
 	}
@@ -118,18 +124,14 @@ func Builtins() []ProviderPreset {
 func MergePresets(base, overrides []ProviderPreset) []ProviderPreset {
 	result := make([]ProviderPreset, len(base))
 	for i, p := range base {
-		p.Args = slices.Clone(p.Args)
-		p.EnvPassthrough = slices.Clone(p.EnvPassthrough)
-		p.ProcessNames = slices.Clone(p.ProcessNames)
+		cloneSliceFields(&p)
 		result[i] = p
 	}
 	for _, u := range overrides {
 		idx := slices.IndexFunc(result, func(p ProviderPreset) bool {
 			return p.Name == u.Name
 		})
-		u.Args = slices.Clone(u.Args)
-		u.EnvPassthrough = slices.Clone(u.EnvPassthrough)
-		u.ProcessNames = slices.Clone(u.ProcessNames)
+		cloneSliceFields(&u)
 		if idx >= 0 {
 			result[idx] = u
 		} else {
