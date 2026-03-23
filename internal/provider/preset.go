@@ -98,18 +98,67 @@ var builtins = []ProviderPreset{
 	},
 }
 
+// cloneSliceFields deep-copies all slice fields of a ProviderPreset so the
+// copy does not alias the original's backing arrays.
+func cloneSliceFields(p *ProviderPreset) {
+	p.Args = slices.Clone(p.Args)
+	p.EnvPassthrough = slices.Clone(p.EnvPassthrough)
+	p.ProcessNames = slices.Clone(p.ProcessNames)
+}
+
 // Builtins returns a deep copy of the built-in provider preset slice.
 // Callers may safely modify the returned slice and its fields without affecting the originals.
 func Builtins() []ProviderPreset {
 	out := make([]ProviderPreset, len(builtins))
 	for i, p := range builtins {
-		p.Args = slices.Clone(p.Args)
-		p.EnvPassthrough = slices.Clone(p.EnvPassthrough)
-		p.ProcessNames = slices.Clone(p.ProcessNames)
+		cloneSliceFields(&p)
 		p.ExtraEnv = maps.Clone(p.ExtraEnv)
 		out[i] = p
 	}
 	return out
+}
+
+// MergePresets applies overrides on top of base and returns the merged slice.
+// Entries in overrides that match a base preset by Name replace it; entries
+// with unknown names are appended. Neither slice is modified.
+func MergePresets(base, overrides []ProviderPreset) []ProviderPreset {
+	result := make([]ProviderPreset, len(base))
+	for i, p := range base {
+		cloneSliceFields(&p)
+		result[i] = p
+	}
+	for _, u := range overrides {
+		idx := slices.IndexFunc(result, func(p ProviderPreset) bool {
+			return p.Name == u.Name
+		})
+		cloneSliceFields(&u)
+		if idx >= 0 {
+			result[idx] = u
+		} else {
+			result = append(result, u)
+		}
+	}
+	return result
+}
+
+// ResolvePreset returns the built-in preset matching name.
+// If name is empty or no preset matches, the "claude" preset is returned as
+// the default fallback.
+func ResolvePreset(name string) ProviderPreset {
+	builtins := Builtins()
+	for _, p := range builtins {
+		if p.Name == name {
+			return p
+		}
+	}
+	// Default: fall back to the claude preset by explicit name lookup.
+	for _, p := range builtins {
+		if p.Name == "claude" {
+			return p
+		}
+	}
+	// Unreachable: claude is always in the built-in set.
+	return builtins[0]
 }
 
 // LoadUserPresets reads a JSON array of ProviderPreset values from path and
@@ -117,11 +166,9 @@ func Builtins() []ProviderPreset {
 // matches a built-in replaces the built-in; entries with unknown names are
 // appended. If path does not exist the built-ins are returned unchanged.
 func LoadUserPresets(path string) ([]ProviderPreset, error) {
-	presets := Builtins()
-
 	data, err := os.ReadFile(path)
 	if os.IsNotExist(err) {
-		return presets, nil
+		return Builtins(), nil
 	}
 	if err != nil {
 		return nil, fmt.Errorf("provider: read %s: %w", path, err)
@@ -132,16 +179,5 @@ func LoadUserPresets(path string) ([]ProviderPreset, error) {
 		return nil, fmt.Errorf("provider: parse %s: %w", path, err)
 	}
 
-	for _, u := range user {
-		idx := slices.IndexFunc(presets, func(p ProviderPreset) bool {
-			return p.Name == u.Name
-		})
-		if idx >= 0 {
-			presets[idx] = u
-		} else {
-			presets = append(presets, u)
-		}
-	}
-
-	return presets, nil
+	return MergePresets(Builtins(), user), nil
 }
