@@ -405,8 +405,6 @@ func (m dashboardTUIModel) tuiAqueductRow(ch CataractaeInfo, frame int) []string
 		water = buildChanWater("  — idle —  ", wfDim)
 	}
 
-	sp := func(n int) string { return strings.Repeat(" ", n) }
-
 	// Waterfall brightness rotates with frame so ▓ appears to fall.
 	wfA := func(sub int) lipgloss.Style {
 		switch (sub + frame) % 3 {
@@ -420,20 +418,20 @@ func (m dashboardTUIModel) tuiAqueductRow(ch CataractaeInfo, frame int) []string
 	}
 
 	wfRows := [14]string{
-		sp(0) + wfMid.Render("▒") + wfA(0).Render("▓") + wfMid.Render("▒") + wfDim.Render("░"),
-		sp(0) + wfDim.Render("░") + wfA(1).Render("▓") + wfMid.Render("▒"),
-		sp(1) + wfMid.Render("▒") + wfA(2).Render("▓") + wfMid.Render("▒"),
-		sp(1) + wfDim.Render("░") + wfA(0).Render("▓") + wfMid.Render("▒"),
-		sp(2) + wfA(1).Render("▓") + wfMid.Render("▒"),
-		sp(2) + wfA(2).Render("▓") + wfMid.Render("▒"),
-		sp(2) + wfDim.Render("░") + wfMid.Render("▒") + wfA(0).Render("▓") + wfMid.Render("▒") + wfDim.Render("░"),
-		sp(0) + wfDim.Render("░≈") + wfMid.Render("▒▒") + wfA(1).Render("▓▓") + wfMid.Render("▒▒") + wfDim.Render("≈░"),
-		sp(0) + wfDim.Render("≈░") + wfMid.Render("▒▒") + wfA(2).Render("▓▓") + wfMid.Render("▒▒") + wfDim.Render("░≈"),
-		sp(1) + wfDim.Render("░") + wfMid.Render("▒") + wfA(0).Render("▓▓") + wfMid.Render("▒") + wfDim.Render("░"),
-		sp(1) + wfDim.Render("░") + wfMid.Render("▒") + wfA(1).Render("▓") + wfMid.Render("▒") + wfDim.Render("░"),
-		sp(2) + wfDim.Render("░") + wfA(2).Render("▓") + wfDim.Render("░"),
-		sp(2) + wfMid.Render("▒") + wfA(0).Render("▓") + wfMid.Render("▒"),
-		sp(2) + wfDim.Render("░") + wfA(1).Render("▒") + wfDim.Render("░"),
+		wfMid.Render("▒") + wfA(0).Render("▓") + wfMid.Render("▒") + wfDim.Render("░"),
+		wfDim.Render("░") + wfA(1).Render("▓") + wfMid.Render("▒"),
+		" " + wfMid.Render("▒") + wfA(2).Render("▓") + wfMid.Render("▒"),
+		" " + wfDim.Render("░") + wfA(0).Render("▓") + wfMid.Render("▒"),
+		"  " + wfA(1).Render("▓") + wfMid.Render("▒"),
+		"  " + wfA(2).Render("▓") + wfMid.Render("▒"),
+		"  " + wfDim.Render("░") + wfMid.Render("▒") + wfA(0).Render("▓") + wfMid.Render("▒") + wfDim.Render("░"),
+		wfDim.Render("░≈") + wfMid.Render("▒▒") + wfA(1).Render("▓▓") + wfMid.Render("▒▒") + wfDim.Render("≈░"),
+		wfDim.Render("≈░") + wfMid.Render("▒▒") + wfA(2).Render("▓▓") + wfMid.Render("▒▒") + wfDim.Render("░≈"),
+		" " + wfDim.Render("░") + wfMid.Render("▒") + wfA(0).Render("▓▓") + wfMid.Render("▒") + wfDim.Render("░"),
+		" " + wfDim.Render("░") + wfMid.Render("▒") + wfA(1).Render("▓") + wfMid.Render("▒") + wfDim.Render("░"),
+		"  " + wfDim.Render("░") + wfA(2).Render("▓") + wfDim.Render("░"),
+		"  " + wfMid.Render("▒") + wfA(0).Render("▓") + wfMid.Render("▒"),
+		"  " + wfDim.Render("░") + wfA(1).Render("▒") + wfDim.Render("░"),
 	}
 
 	wfExit := wfDim.Render("░") + wfMid.Render("▒") + wfA(0).Render("▓▓")
