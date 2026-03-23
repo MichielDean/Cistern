@@ -8,10 +8,10 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"os/exec"
 	"strings"
 	"time"
 
-	anthropic "github.com/anthropics/anthropic-sdk-go"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
@@ -63,45 +63,58 @@ In "depends_on", reference the exact "title" value of an earlier droplet in this
 array to express ordering (e.g. if droplet 2 requires droplet 1 to be delivered first).
 Keep each droplet focused and deliverable by a single engineer in a reasonable timeframe.`
 
-// callRefineAPI calls Claude with extended thinking to turn a rough idea into
-// one or more well-specified droplet proposals.
-func callRefineAPI(title, description string) ([]DropletProposal, error) {
-	if os.Getenv("ANTHROPIC_API_KEY") == "" {
-		return nil, fmt.Errorf("ANTHROPIC_API_KEY is not set\nHint: run 'pass anthropic/claude' to configure it")
+// runNonInteractive invokes the configured agent binary in non-interactive
+// (single-shot) mode to turn a rough idea into well-specified droplet
+// proposals. It builds the command from the preset's NonInteractive config,
+// passes a combined prompt via PromptFlag, and parses stdout via extractProposals.
+func runNonInteractive(preset provider.ProviderPreset, systemPrompt, userPrompt string) ([]DropletProposal, error) {
+	// Validate that required env vars from the preset are set.
+	for _, key := range preset.EnvPassthrough {
+		if os.Getenv(key) == "" {
+			return nil, fmt.Errorf("%s is not set", key)
+		}
 	}
 
-	client := anthropic.NewClient()
-
-	userPrompt := "Title: " + title
-	if description != "" {
-		userPrompt += "\nDescription: " + description
+	// Build the combined prompt (system + user).
+	combinedPrompt := systemPrompt
+	if userPrompt != "" {
+		combinedPrompt += "\n\n" + userPrompt
 	}
+
+	// Build args: [Subcommand] [preset.Args...] [PrintFlag] [PromptFlag combinedPrompt]
+	var args []string
+	if preset.NonInteractive.Subcommand != "" {
+		args = append(args, preset.NonInteractive.Subcommand)
+	}
+	args = append(args, preset.Args...)
+	if preset.NonInteractive.PrintFlag != "" {
+		args = append(args, preset.NonInteractive.PrintFlag)
+	}
+	if preset.NonInteractive.PromptFlag != "" {
+		args = append(args, preset.NonInteractive.PromptFlag)
+	}
+	args = append(args, combinedPrompt)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 	defer cancel()
 
-	resp, err := client.Messages.New(ctx, anthropic.MessageNewParams{
-		Model:     anthropic.ModelClaudeHaiku4_5,
-		MaxTokens: 4096,
-		System: []anthropic.TextBlockParam{
-			{Text: filterSystemPrompt},
-		},
-		Messages: []anthropic.MessageParam{
-			anthropic.NewUserMessage(anthropic.NewTextBlock(userPrompt)),
-		},
-	})
-	if err != nil {
-		return nil, fmt.Errorf("Claude API call failed: %w", err)
-	}
+	cmd := exec.CommandContext(ctx, preset.Command, args...)
 
-	var responseText strings.Builder
-	for _, block := range resp.Content {
-		if block.Type == "text" {
-			responseText.WriteString(block.Text)
+	// Inherit parent env; append any extra vars from the preset.
+	if len(preset.ExtraEnv) > 0 {
+		env := os.Environ()
+		for k, v := range preset.ExtraEnv {
+			env = append(env, k+"="+v)
 		}
+		cmd.Env = env
 	}
 
-	return extractProposals(responseText.String())
+	out, err := cmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("agent exec failed: %w", err)
+	}
+
+	return extractProposals(string(out))
 }
 
 // callRefineAPIWith calls the refine API using the given LLM provider config.

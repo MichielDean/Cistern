@@ -3,6 +3,8 @@ package main
 import (
 	"encoding/json"
 	"net/http"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -184,21 +186,43 @@ func TestComplexityToInt(t *testing.T) {
 	}
 }
 
-// --- callRefineAPI tests using mockllm ---
+// --- runNonInteractive tests ---
 
-// TestCallRefineAPI_ReturnsProposals verifies that callRefineAPI correctly
-// parses the Anthropic /v1/messages response returned by the mock server.
-// The mock is injected via ANTHROPIC_BASE_URL so no real network call is made.
-func TestCallRefineAPI_ReturnsProposals(t *testing.T) {
-	mock := mockllm.New()
-	defer mock.Close()
-
-	t.Setenv("ANTHROPIC_API_KEY", "test-key")
-	t.Setenv("ANTHROPIC_BASE_URL", mock.URL)
-
-	proposals, err := callRefineAPI("Fix login bug", "Handle edge case in login flow")
+// buildTestBin compiles the Go package at importPath into a temp directory
+// and returns the absolute path to the resulting binary.
+func buildTestBin(t *testing.T, name, importPath string) string {
+	t.Helper()
+	bin := filepath.Join(t.TempDir(), name)
+	out, err := exec.Command("go", "build", "-o", bin, importPath).CombinedOutput()
 	if err != nil {
-		t.Fatalf("callRefineAPI: unexpected error: %v", err)
+		t.Fatalf("build %s: %v\n%s", name, err, out)
+	}
+	return bin
+}
+
+// TestRunNonInteractive_ReturnsProposals verifies that runNonInteractive correctly
+// invokes the agent binary and parses the JSON proposal array from stdout.
+// Given a preset pointing at fakeagent, when called with -p, fakeagent prints
+// a hardcoded JSON array. Then the proposals are parsed and returned.
+func TestRunNonInteractive_ReturnsProposals(t *testing.T) {
+	fakeagentBin := buildTestBin(t, "fakeagent", "github.com/MichielDean/cistern/internal/testutil/fakeagent")
+
+	preset := provider.ProviderPreset{
+		Name:           "test",
+		Command:        fakeagentBin,
+		Args:           []string{"--dangerously-skip-permissions"},
+		EnvPassthrough: []string{"TEST_REQUIRED_KEY"},
+		NonInteractive: provider.NonInteractiveConfig{
+			PrintFlag:  "--print",
+			PromptFlag: "-p",
+		},
+	}
+
+	t.Setenv("TEST_REQUIRED_KEY", "test-value")
+
+	proposals, err := runNonInteractive(preset, filterSystemPrompt, "Title: Fix login bug\nDescription: Handle edge case")
+	if err != nil {
+		t.Fatalf("runNonInteractive: unexpected error: %v", err)
 	}
 
 	if len(proposals) != 1 {
@@ -215,40 +239,51 @@ func TestCallRefineAPI_ReturnsProposals(t *testing.T) {
 	}
 }
 
-// TestCallRefineAPI_SendsAuthHeader verifies that the request to the LLM
-// endpoint carries an auth credential (x-api-key or Authorization header).
-func TestCallRefineAPI_SendsAuthHeader(t *testing.T) {
-	mock := mockllm.New()
-	defer mock.Close()
+// TestRunNonInteractive_WithSubcommand verifies that a preset with a Subcommand
+// (e.g. codex "exec") is correctly handled: runNonInteractive inserts the
+// subcommand as the first positional arg, followed by Args, PrintFlag, and the
+// prompt. fakeagent detects non-interactive mode via --print.
+func TestRunNonInteractive_WithSubcommand(t *testing.T) {
+	fakeagentBin := buildTestBin(t, "fakeagent", "github.com/MichielDean/cistern/internal/testutil/fakeagent")
 
-	t.Setenv("ANTHROPIC_API_KEY", "sk-test-key-12345")
-	t.Setenv("ANTHROPIC_BASE_URL", mock.URL)
-
-	if _, err := callRefineAPI("Test title", ""); err != nil {
-		t.Fatalf("callRefineAPI: %v", err)
+	preset := provider.ProviderPreset{
+		Name:           "test-codex",
+		Command:        fakeagentBin,
+		EnvPassthrough: []string{"TEST_REQUIRED_KEY"},
+		NonInteractive: provider.NonInteractiveConfig{
+			Subcommand: "exec",
+			PrintFlag:  "--print",
+			PromptFlag: "-p",
+		},
 	}
 
-	reqs := mock.Requests()
-	if len(reqs) == 0 {
-		t.Fatal("mock received no requests")
-	}
-	req := reqs[0]
+	t.Setenv("TEST_REQUIRED_KEY", "test-value")
 
-	apiKey := req.Headers.Get("X-Api-Key")
-	authHeader := req.Headers.Get("Authorization")
-	if apiKey == "" && authHeader == "" {
-		t.Error("request missing auth header (X-Api-Key or Authorization)")
+	proposals, err := runNonInteractive(preset, filterSystemPrompt, "Title: Test subcommand")
+	if err != nil {
+		t.Fatalf("runNonInteractive with subcommand: unexpected error: %v", err)
+	}
+	if len(proposals) == 0 {
+		t.Fatal("expected proposals, got none")
 	}
 }
 
-// TestCallRefineAPI_MissingAPIKey verifies that callRefineAPI returns an error
-// when ANTHROPIC_API_KEY is not set, rather than making a network call.
-func TestCallRefineAPI_MissingAPIKey(t *testing.T) {
+// TestRunNonInteractive_MissingAuthKey verifies that runNonInteractive returns an
+// error when a required env var from EnvPassthrough is not set, without executing
+// the agent binary.
+func TestRunNonInteractive_MissingAuthKey(t *testing.T) {
+	preset := provider.ProviderPreset{
+		Name:           "test",
+		Command:        "true",
+		EnvPassthrough: []string{"ANTHROPIC_API_KEY"},
+		NonInteractive: provider.NonInteractiveConfig{PromptFlag: "-p"},
+	}
+
 	t.Setenv("ANTHROPIC_API_KEY", "")
 
-	_, err := callRefineAPI("title", "desc")
+	_, err := runNonInteractive(preset, "system", "user")
 	if err == nil {
-		t.Fatal("expected error when ANTHROPIC_API_KEY is empty, got nil")
+		t.Fatal("expected error when required env var is not set, got nil")
 	}
 }
 

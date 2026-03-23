@@ -15,7 +15,9 @@ import (
 	"text/tabwriter"
 	"time"
 
+	"github.com/MichielDean/cistern/internal/aqueduct"
 	"github.com/MichielDean/cistern/internal/cistern"
+	"github.com/MichielDean/cistern/internal/provider"
 	"github.com/spf13/cobra"
 )
 
@@ -59,7 +61,12 @@ var dropletAddCmd = &cobra.Command{
 		}
 
 		if addFilter {
-			proposals, err := callRefineAPI(addTitle, addDescription)
+			userPrompt := "Title: " + addTitle
+			if addDescription != "" {
+				userPrompt += "\nDescription: " + addDescription
+			}
+			preset := resolveFilterPreset(addRepo)
+			proposals, err := runNonInteractive(preset, filterSystemPrompt, userPrompt)
 			if err != nil {
 				return err
 			}
@@ -91,6 +98,26 @@ var dropletAddCmd = &cobra.Command{
 		fmt.Printf("Droplet added to cistern. %s: %s\n", item.ID, item.Title)
 		return nil
 	},
+}
+
+// resolveFilterPreset returns the ProviderPreset to use for filtration.
+// It tries to load the AqueductConfig and resolve the preset for repo.
+// On any error (missing config, unknown repo, etc.) it falls back to the
+// built-in claude preset.
+func resolveFilterPreset(repo string) provider.ProviderPreset {
+	cfgPath := resolveConfigPath()
+	if cfg, err := aqueduct.ParseAqueductConfig(cfgPath); err == nil {
+		if preset, err := cfg.ResolveProvider(repo); err == nil {
+			return preset
+		}
+	}
+	// Fallback: built-in claude preset.
+	for _, p := range provider.Builtins() {
+		if p.Name == "claude" {
+			return p
+		}
+	}
+	return provider.ProviderPreset{}
 }
 
 // --- cistern list ---

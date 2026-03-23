@@ -10,6 +10,20 @@ import (
 	"slices"
 )
 
+// NonInteractiveConfig describes how to invoke an agent CLI in single-shot
+// (non-interactive) mode, used by filtration. An empty struct means the preset
+// does not define non-interactive invocation.
+type NonInteractiveConfig struct {
+	// Subcommand is the positional subcommand inserted after Command
+	// (e.g. "exec" for codex, "run" for opencode). Empty means no subcommand.
+	Subcommand string `json:"subcommand,omitempty"`
+	// PrintFlag causes the agent to print its response to stdout and exit
+	// (e.g. "--print" for claude). Empty means no flag is needed.
+	PrintFlag string `json:"print_flag,omitempty"`
+	// PromptFlag is the flag used to pass the combined prompt (e.g. "-p").
+	PromptFlag string `json:"prompt_flag,omitempty"`
+}
+
 // ResumeStyle controls how a resumed session is expressed on the CLI.
 type ResumeStyle string
 
@@ -54,6 +68,9 @@ type ProviderPreset struct {
 	// DefaultModel is the model value passed via ModelFlag when launching the agent.
 	// An empty string means the agent's own default is used.
 	DefaultModel string `json:"default_model,omitempty"`
+	// NonInteractive describes how to invoke this agent in single-shot
+	// (non-interactive) mode for filtration.
+	NonInteractive NonInteractiveConfig `json:"non_interactive,omitempty"`
 }
 
 // builtins is the canonical set of provider presets shipped with Cistern.
@@ -66,6 +83,7 @@ var builtins = []ProviderPreset{
 		ModelFlag:        "--model",
 		AddDirFlag:       "--add-dir",
 		InstructionsFile: "CLAUDE.md",
+		NonInteractive:   NonInteractiveConfig{PrintFlag: "--print", PromptFlag: "-p"},
 	},
 	{
 		Name:             "codex",
@@ -74,6 +92,7 @@ var builtins = []ProviderPreset{
 		EnvPassthrough:   []string{"OPENAI_API_KEY"},
 		InstructionsFile: "AGENTS.md",
 		ResumeStyle:      ResumeStyleSubcommand,
+		NonInteractive:   NonInteractiveConfig{Subcommand: "exec", PromptFlag: "-p"},
 	},
 	{
 		Name:             "gemini",
@@ -82,6 +101,7 @@ var builtins = []ProviderPreset{
 		EnvPassthrough:   []string{"GEMINI_API_KEY"},
 		ModelFlag:        "--model",
 		InstructionsFile: "GEMINI.md",
+		NonInteractive:   NonInteractiveConfig{PromptFlag: "-p"},
 	},
 	{
 		Name:             "copilot",
@@ -90,11 +110,13 @@ var builtins = []ProviderPreset{
 		EnvPassthrough:   []string{"GH_TOKEN"},
 		InstructionsFile: "AGENTS.md",
 		ReadyDelayMs:     5000,
+		NonInteractive:   NonInteractiveConfig{PromptFlag: "-p"},
 	},
 	{
 		Name:             "opencode",
 		Command:          "opencode",
 		InstructionsFile: "AGENTS.md",
+		NonInteractive:   NonInteractiveConfig{Subcommand: "run", PromptFlag: "-p"},
 	},
 }
 

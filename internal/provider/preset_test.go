@@ -82,6 +82,30 @@ func TestBuiltins_OpencodePreset(t *testing.T) {
 	assertStr(t, "InstructionsFile", "AGENTS.md", got.InstructionsFile)
 }
 
+// TestBuiltins_NonInteractiveConfig verifies the NonInteractive fields for each built-in preset.
+func TestBuiltins_NonInteractiveConfig(t *testing.T) {
+	tests := []struct {
+		name       string
+		subcommand string
+		printFlag  string
+		promptFlag string
+	}{
+		{"claude", "", "--print", "-p"},
+		{"codex", "exec", "", "-p"},
+		{"gemini", "", "", "-p"},
+		{"copilot", "", "", "-p"},
+		{"opencode", "run", "", "-p"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p := builtinByName(t, tt.name)
+			assertStr(t, "NonInteractive.Subcommand", tt.subcommand, p.NonInteractive.Subcommand)
+			assertStr(t, "NonInteractive.PrintFlag", tt.printFlag, p.NonInteractive.PrintFlag)
+			assertStr(t, "NonInteractive.PromptFlag", tt.promptFlag, p.NonInteractive.PromptFlag)
+		})
+	}
+}
+
 // TestBuiltins_ReturnsCopy verifies that mutating the returned slice does not affect the built-ins.
 func TestBuiltins_ReturnsCopy(t *testing.T) {
 	t.Run("string field mutation is isolated", func(t *testing.T) {
