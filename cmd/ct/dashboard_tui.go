@@ -396,13 +396,23 @@ func (m dashboardTUIModel) tuiAqueductRow(ch CataractaeInfo, frame int) []string
 	}
 	n := len(steps)
 
-	prefix    := "  " + padRight(ch.Name, nameW) + "  "
+	// indent is the shared left padding for channel and arch rows (name/info on own lines above).
+	indent := "  " + strings.Repeat(" ", nameW) + "  "
+
+	// Name line: aqueduct name + repo name on the same line.
 	repoLabel := ch.RepoName
 	if len([]rune(repoLabel)) > nameW {
 		repoLabel = string([]rune(repoLabel)[:nameW-1]) + "…"
 	}
-	prefixRepo := "  " + tuiStyleDim.Render(padRight(repoLabel, nameW)) + "  "
-	indent     := strings.Repeat(" ", len([]rune(prefix)))
+	nameLine := "  " + g.Render(padRight(ch.Name, nameW)) + "  " + dim.Render(repoLabel)
+
+	// Info line: droplet ID, elapsed, progress bar — shown only when active.
+	var infoLine string
+	if ch.DropletID != "" {
+		bar     := progressBar(ch.CataractaeIndex, ch.TotalCataractae, 10)
+		info    := ch.DropletID + "  " + formatElapsed(ch.Elapsed) + "  " + bar
+		infoLine = indent + g.Render(info)
+	}
 	chanW      := n * pillarW
 
 	isActive := func(step string) bool {
@@ -428,7 +438,7 @@ func (m dashboardTUIModel) tuiAqueductRow(ch CataractaeInfo, frame int) []string
 
 	// Channel wall style: dim foreground on black background.
 	cStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#46465a")).Background(lipgloss.Color("0"))
-	l1     := prefix + cStyle.Render(strings.Repeat("▀", chanW))
+	l1     := indent + cStyle.Render(strings.Repeat("▀", chanW))
 
 	// Wave pattern: 6-char repeating unit animated each frame — water flows right.
 	type waveCell struct {
@@ -450,28 +460,6 @@ func (m dashboardTUIModel) tuiAqueductRow(ch CataractaeInfo, frame int) []string
 		return wb.String()
 	}
 
-	// buildChanWater builds wave-animated water content of width w,
-	// centering infoStr within it. If infoStr is wider than w it is truncated
-	// with an ellipsis so the result never exceeds w characters.
-	buildChanWater := func(infoStr string, infoStyle lipgloss.Style, w int) string {
-		if w <= 0 {
-			return ""
-		}
-		lbl := []rune(infoStr)
-		if len(lbl) > w {
-			if w > 1 {
-				lbl = append(lbl[:w-1], '…')
-			} else {
-				lbl = lbl[:w]
-			}
-		}
-		info    := infoStyle.Render(string(lbl))
-		infoViz := len(lbl)
-		sideW   := (w - infoViz) / 2
-		rightW  := w - infoViz - sideW
-		return renderWave(sideW) + info + renderWave(rightW)
-	}
-
 	// Pillar bg used for dry channel sections and blank pillar rows.
 	pillarBg := lipgloss.NewStyle().Background(lipgloss.Color("0"))
 
@@ -490,12 +478,11 @@ func (m dashboardTUIModel) tuiAqueductRow(ch CataractaeInfo, frame int) []string
 	}
 	dryInnerW := innerW - wetInnerW
 
-	// Build water: wet wave up to the active step, dry (empty) beyond.
+	// Build water: pure wave up to the active step, dry (empty) beyond.
+	// Droplet info is displayed on the info line above — not embedded here.
 	var water string
 	if wetInnerW > 0 {
-		bar     := progressBar(ch.CataractaeIndex, ch.TotalCataractae, 8)
-		infoStr := fmt.Sprintf("  %s  %s  %s  ", ch.DropletID, formatElapsed(ch.Elapsed), bar)
-		water = buildChanWater(infoStr, wfMid, wetInnerW)
+		water = renderWave(wetInnerW)
 		if dryInnerW > 0 {
 			water += pillarBg.Render(strings.Repeat(" ", dryInnerW))
 		}
@@ -534,7 +521,7 @@ func (m dashboardTUIModel) tuiAqueductRow(ch CataractaeInfo, frame int) []string
 	}
 
 	wfExit := wfDim.Render("░") + wfMid.Render("▒") + wfA(0).Render("▓▓")
-	l2 := prefixRepo + cStyle.Render("█") + water + cStyle.Render("█")
+	l2 := indent + cStyle.Render("█") + water + cStyle.Render("█")
 	if isLastStep {
 		l2 += wfExit
 	}
@@ -609,8 +596,8 @@ func (m dashboardTUIModel) tuiAqueductRow(ch CataractaeInfo, frame int) []string
 		}
 	}
 
-	// Return order: label → channel top → channel water → arch pillars.
-	result := []string{lblLine.String(), l1, l2}
+	// Return order: name → info → label → channel top → channel water → arch pillars.
+	result := []string{nameLine, infoLine, lblLine.String(), l1, l2}
 	result   = append(result, archLines...)
 	return result
 }

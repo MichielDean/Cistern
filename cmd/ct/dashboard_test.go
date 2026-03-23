@@ -577,9 +577,9 @@ func stripANSITest(s string) string {
 }
 
 // TestTuiAqueductRow_LabelRowAboveArch verifies that:
-// - lines[0] is the label row (contains all step names)
-// - lines[1] is the channel top row (▀ characters)
-// - lines[2] is the channel water row (█ walls)
+// - lines[2] is the label row (contains all step names)
+// - lines[3] is the channel top row (▀ characters)
+// - lines[4] is the channel water row (█ walls)
 func TestTuiAqueductRow_LabelRowAboveArch(t *testing.T) {
 	m := newDashboardTUIModel("", "")
 	steps := []string{"implement", "review", "merge"}
@@ -591,33 +591,33 @@ func TestTuiAqueductRow_LabelRowAboveArch(t *testing.T) {
 	}
 	lines := m.tuiAqueductRow(ch, 0)
 
-	if len(lines) < 3 {
-		t.Fatalf("expected at least 3 lines, got %d", len(lines))
+	if len(lines) < 5 {
+		t.Fatalf("expected at least 5 lines, got %d", len(lines))
 	}
 
-	// lines[0] is the label row — must contain all step names.
-	labelRow := stripANSITest(lines[0])
+	// lines[2] is the label row — must contain all step names.
+	labelRow := stripANSITest(lines[2])
 	for _, step := range steps {
 		if !strings.Contains(labelRow, step) {
 			t.Errorf("label row %q should contain step name %q", labelRow, step)
 		}
 	}
 
-	// lines[1] is the channel top row (▀ characters).
-	chanTop := stripANSITest(lines[1])
+	// lines[3] is the channel top row (▀ characters).
+	chanTop := stripANSITest(lines[3])
 	if !strings.Contains(chanTop, "▀") {
-		t.Errorf("lines[1] should be the channel top row (▀), got %q", chanTop)
+		t.Errorf("lines[3] should be the channel top row (▀), got %q", chanTop)
 	}
 
-	// lines[2] is the channel water row (█ walls).
-	chanWater := stripANSITest(lines[2])
+	// lines[4] is the channel water row (█ walls).
+	chanWater := stripANSITest(lines[4])
 	if !strings.Contains(chanWater, "█") {
-		t.Errorf("lines[2] should be the channel water row (█ walls), got %q", chanWater)
+		t.Errorf("lines[4] should be the channel water row (█ walls), got %q", chanWater)
 	}
 
-	// lines[2] must NOT contain ▀ (that belongs to the channel top, not water row).
+	// lines[4] must NOT contain ▀ (that belongs to the channel top, not water row).
 	if strings.Contains(chanWater, "▀") {
-		t.Errorf("channel water row (lines[2]) should not contain ▀: %q", chanWater)
+		t.Errorf("channel water row (lines[4]) should not contain ▀: %q", chanWater)
 	}
 }
 
@@ -679,8 +679,8 @@ func TestTuiAqueductRow_WaterFillsOnlyToActiveStep(t *testing.T) {
 			}
 			lines := m.tuiAqueductRow(ch, 0)
 
-			// lines[2] is the channel water row (label at [0], channel top at [1]).
-			chanWater := stripANSITest(lines[2])
+			// lines[4] is the channel water row (name[0], info[1], label[2], chan-top[3]).
+			chanWater := stripANSITest(lines[4])
 			runes := []rune(chanWater)
 
 			// Row must not overflow — catch buildChanWater returning more than wetInnerW chars.
@@ -728,8 +728,8 @@ func TestTuiAqueductRow_IdleAqueductHasNoWater(t *testing.T) {
 	}
 	lines := m.tuiAqueductRow(ch, 0)
 
-	// lines[2] is the channel water row.
-	chanWater := stripANSITest(lines[2])
+	// lines[4] is the channel water row (name[0], info[1], label[2], chan-top[3]).
+	chanWater := stripANSITest(lines[4])
 	runes := []rune(chanWater)
 
 	const (
@@ -755,8 +755,8 @@ func TestTuiAqueductRow_IdleAqueductHasNoWater(t *testing.T) {
 	}
 }
 
-// TestTuiAqueductRow_LineCount verifies tuiAqueductRow returns exactly 12 lines:
-// 1 label row + 2 channel rows + 9 pillar rows.
+// TestTuiAqueductRow_LineCount verifies tuiAqueductRow returns exactly 14 lines:
+// 1 name row + 1 info row + 1 label row + 2 channel rows + 9 pillar rows.
 func TestTuiAqueductRow_LineCount(t *testing.T) {
 	m := newDashboardTUIModel("", "")
 	tests := []struct {
@@ -775,7 +775,7 @@ func TestTuiAqueductRow_LineCount(t *testing.T) {
 			}
 			ch := CataractaeInfo{Name: "virgo", Steps: steps}
 			lines := m.tuiAqueductRow(ch, 0)
-			const wantLines = 12 // 2 channel + 9 pillar + 1 label
+			const wantLines = 14 // 1 name + 1 info + 1 label + 2 channel + 9 pillar
 			if len(lines) != wantLines {
 				t.Errorf("tuiAqueductRow() returned %d lines, want %d", len(lines), wantLines)
 			}
@@ -784,7 +784,7 @@ func TestTuiAqueductRow_LineCount(t *testing.T) {
 }
 
 // TestTuiAqueductRow_CrownRowIsSolidBlocks verifies that the arch crown row
-// (pillar row 5 = result[2]) contains N×28 ▒ characters in the pillar section.
+// (pillar row 5 = result[5]) contains N×28 ▒ characters in the pillar section.
 // This fails with the old brick arch (which used ▀/█/▌) and passes with the
 // new durdraw pillar template.
 func TestTuiAqueductRow_CrownRowIsSolidBlocks(t *testing.T) {
@@ -793,14 +793,14 @@ func TestTuiAqueductRow_CrownRowIsSolidBlocks(t *testing.T) {
 	ch := CataractaeInfo{Name: "virgo", Steps: steps}
 	lines := m.tuiAqueductRow(ch, 0)
 
-	if len(lines) < 3 {
+	if len(lines) < 6 {
 		t.Fatalf("not enough lines: got %d", len(lines))
 	}
 
-	// result[3] = archLines[0] = pillar row 5 (full-width crown, first rendered row).
-	// [0]=label, [1]=channel top, [2]=channel water, [3]=first arch row.
+	// result[5] = archLines[0] = pillar row 5 (full-width crown, first rendered row).
+	// [0]=name, [1]=info, [2]=label, [3]=channel top, [4]=channel water, [5]=first arch row.
 	// After stripping ANSI and prefix, the first N*28 runes must all be ▒.
-	crownLine := stripANSITest(lines[3])
+	crownLine := stripANSITest(lines[5])
 	runes := []rune(crownLine)
 
 	// Prefix visual width = "  " + nameW(10) + "  " = 14 chars.
@@ -820,7 +820,7 @@ func TestTuiAqueductRow_CrownRowIsSolidBlocks(t *testing.T) {
 }
 
 // TestTuiAqueductRow_PierBodyRowHasCorrectStructure verifies a pier body row
-// (pillar rows 9–13 = result[11..15]) has the expected 12sp+░+4▒+11sp structure
+// (pillar rows 9–13 = result[13..17]) has the expected 12sp+░+4▒+11sp structure
 // for each pillar, for a single-step aqueduct.
 func TestTuiAqueductRow_PierBodyRowHasCorrectStructure(t *testing.T) {
 	m := newDashboardTUIModel("", "")
@@ -828,10 +828,10 @@ func TestTuiAqueductRow_PierBodyRowHasCorrectStructure(t *testing.T) {
 	ch := CataractaeInfo{Name: "virgo", Steps: steps}
 	lines := m.tuiAqueductRow(ch, 0)
 
-	// result[7] = archLines[4] = pillar row 9 (first pier body row).
-	// [0]=label, [1]=chan top, [2]=chan water, [3..6]=arch rows 5-8, [7]=arch row 9.
+	// result[9] = archLines[4] = pillar row 9 (first pier body row).
+	// [0]=name, [1]=info, [2]=label, [3]=chan top, [4]=chan water, [5..8]=arch rows 5-8, [9]=arch row 9.
 	// After stripping ANSI and prefix: 12 spaces + ░ + 4 ▒ + 11 spaces (+ waterfall).
-	pierLine := stripANSITest(lines[7])
+	pierLine := stripANSITest(lines[9])
 	runes := []rune(pierLine)
 
 	const prefixLen = 14
@@ -1038,16 +1038,123 @@ func TestTuiAqueductRow_ActiveStepHasDifferentCrownColor(t *testing.T) {
 		Steps: steps,
 	}, 0)
 
-	// Crown row is result[3] (after label[0], chan-top[1], chan-water[2]).
+	// Crown row is result[5] (after name[0], info[1], label[2], chan-top[3], chan-water[4]).
 	// Active version must differ from idle (different color escape).
-	if active[3] == idle[3] {
+	if active[5] == idle[5] {
 		t.Error("active crown row should have different ANSI color than idle crown row")
 	}
 
 	// Both versions must have the same plain-text content (same ▒ chars, just different colors).
-	if stripANSITest(active[3]) != stripANSITest(idle[3]) {
+	if stripANSITest(active[5]) != stripANSITest(idle[5]) {
 		t.Errorf("active and idle crown rows should have same plain text\nactive: %q\nidle:   %q",
-			stripANSITest(active[3]), stripANSITest(idle[3]))
+			stripANSITest(active[5]), stripANSITest(idle[5]))
+	}
+}
+
+// TestTuiAqueductRow_NameLineShowsAqueductAndRepo verifies that lines[0] contains
+// both the aqueduct name and the repo name.
+func TestTuiAqueductRow_NameLineShowsAqueductAndRepo(t *testing.T) {
+	m := newDashboardTUIModel("", "")
+	steps := []string{"implement", "review", "merge"}
+	ch := CataractaeInfo{
+		Name:      "virgo",
+		RepoName:  "cistern",
+		DropletID: "ci-abc12",
+		Step:      "review",
+		Steps:     steps,
+	}
+	lines := m.tuiAqueductRow(ch, 0)
+
+	if len(lines) < 2 {
+		t.Fatalf("expected at least 2 lines, got %d", len(lines))
+	}
+	nameLine := stripANSITest(lines[0])
+	if !strings.Contains(nameLine, "virgo") {
+		t.Errorf("name line should contain aqueduct name 'virgo', got %q", nameLine)
+	}
+	if !strings.Contains(nameLine, "cistern") {
+		t.Errorf("name line should contain repo name 'cistern', got %q", nameLine)
+	}
+}
+
+// TestTuiAqueductRow_InfoLineShowsDropletInfo_WhenActive verifies that lines[1]
+// contains the droplet ID, elapsed time, and progress bar chars for active aqueducts.
+func TestTuiAqueductRow_InfoLineShowsDropletInfo_WhenActive(t *testing.T) {
+	m := newDashboardTUIModel("", "")
+	steps := []string{"implement", "review", "merge"}
+	ch := CataractaeInfo{
+		Name:            "virgo",
+		RepoName:        "cistern",
+		DropletID:       "ci-abc12",
+		Step:            "review",
+		Steps:           steps,
+		CataractaeIndex:  2,
+		TotalCataractae: 3,
+		Elapsed:         3*time.Minute + 7*time.Second,
+	}
+	lines := m.tuiAqueductRow(ch, 0)
+
+	if len(lines) < 2 {
+		t.Fatalf("expected at least 2 lines, got %d", len(lines))
+	}
+	infoLine := stripANSITest(lines[1])
+	if !strings.Contains(infoLine, "ci-abc12") {
+		t.Errorf("info line should contain droplet ID 'ci-abc12', got %q", infoLine)
+	}
+	if !strings.Contains(infoLine, "3m 7s") {
+		t.Errorf("info line should contain elapsed '3m 7s', got %q", infoLine)
+	}
+	if !strings.ContainsAny(infoLine, "░█") {
+		t.Errorf("info line should contain progress bar chars (░ or █), got %q", infoLine)
+	}
+}
+
+// TestTuiAqueductRow_InfoLineEmpty_WhenIdle verifies that lines[1] is empty
+// (no droplet info) for idle aqueducts.
+func TestTuiAqueductRow_InfoLineEmpty_WhenIdle(t *testing.T) {
+	m := newDashboardTUIModel("", "")
+	steps := []string{"implement", "review", "merge"}
+	ch := CataractaeInfo{
+		Name:  "virgo",
+		Steps: steps,
+	}
+	lines := m.tuiAqueductRow(ch, 0)
+
+	if len(lines) < 2 {
+		t.Fatalf("expected at least 2 lines, got %d", len(lines))
+	}
+	infoLine := stripANSITest(lines[1])
+	if strings.TrimSpace(infoLine) != "" {
+		t.Errorf("idle info line should be empty (all spaces), got %q", infoLine)
+	}
+}
+
+// TestTuiAqueductRow_WaterChannelPureWave_NoDropletInfo verifies that the channel
+// water row (lines[4]) does not contain the droplet ID or elapsed time — those
+// belong on the info line (lines[1]) only.
+func TestTuiAqueductRow_WaterChannelPureWave_NoDropletInfo(t *testing.T) {
+	m := newDashboardTUIModel("", "")
+	steps := []string{"implement", "review", "merge"}
+	ch := CataractaeInfo{
+		Name:            "virgo",
+		DropletID:       "ci-abc12",
+		Step:            "review",
+		Steps:           steps,
+		CataractaeIndex:  2,
+		TotalCataractae: 3,
+		Elapsed:         3*time.Minute + 7*time.Second,
+	}
+	lines := m.tuiAqueductRow(ch, 0)
+
+	if len(lines) < 5 {
+		t.Fatalf("expected at least 5 lines, got %d", len(lines))
+	}
+	chanWater := stripANSITest(lines[4])
+	if strings.Contains(chanWater, "ci-abc12") {
+		t.Errorf("channel water row should not contain droplet ID, got %q", chanWater)
+	}
+	if strings.Contains(chanWater, "3m") {
+		t.Errorf("channel water row should not contain elapsed time, got %q", chanWater)
 	}
 }
 
@@ -1112,8 +1219,8 @@ func TestTuiAqueductRow_WaterfallOnlyOnLastStep(t *testing.T) {
 			}
 			lines := m.tuiAqueductRow(ch, 0)
 
-			// lines[2] is the channel water row.
-			chanWater := stripANSITest(lines[2])
+			// lines[4] is the channel water row (name[0], info[1], label[2], chan-top[3]).
+			chanWater := stripANSITest(lines[4])
 			runes := []rune(chanWater)
 
 			wantLen := rowLenWithoutWF
