@@ -573,7 +573,7 @@ func (m dashboardTUIModel) tuiAqueductRow(ch CataractaeInfo, frame int) []string
 			sb.WriteString(buildPillarRow(r, isActive(step)))
 		}
 		if isLastStep {
-			sb.WriteString(wfRows[r])
+			sb.WriteString(wfRows[r-5])
 		}
 		archLines = append(archLines, sb.String())
 	}
