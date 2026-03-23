@@ -722,24 +722,9 @@ func TestViewDroughtArch_CrownRowContainsBlocks(t *testing.T) {
 	// lines[0] = drought label; lines[1..14] = pillar rows 0..13.
 	// Pillar row 5 (crown) = lines[6].
 	crownLine := stripANSITest(lines[6])
-	runes := []rune(crownLine)
 
 	const pillarW = 28
-	found := false
-	for i := 0; i <= len(runes)-pillarW; i++ {
-		all := true
-		for j := 0; j < pillarW; j++ {
-			if runes[i+j] != '▒' {
-				all = false
-				break
-			}
-		}
-		if all {
-			found = true
-			break
-		}
-	}
-	if !found {
+	if want := strings.Repeat("▒", pillarW); !strings.Contains(crownLine, want) {
 		t.Errorf("drought crown row should contain %d consecutive ▒ chars, got %q", pillarW, crownLine)
 	}
 }
