@@ -60,9 +60,18 @@ func GenerateCataractaeFiles(w *Workflow, cataractaeDir string) ([]string, error
 	for _, identity := range w.UniqueIdentities() {
 		dir := filepath.Join(cataractaeDir, identity)
 		personaData, personaErr := os.ReadFile(filepath.Join(dir, "PERSONA.md"))
+		if personaErr != nil {
+			if os.IsNotExist(personaErr) {
+				continue
+			}
+			return written, fmt.Errorf("read PERSONA.md for %s: %w", identity, personaErr)
+		}
 		instructionsData, instrErr := os.ReadFile(filepath.Join(dir, "INSTRUCTIONS.md"))
-		if personaErr != nil || instrErr != nil {
-			continue
+		if instrErr != nil {
+			if os.IsNotExist(instrErr) {
+				continue
+			}
+			return written, fmt.Errorf("read INSTRUCTIONS.md for %s: %w", identity, instrErr)
 		}
 
 		if err := os.MkdirAll(dir, 0o755); err != nil {

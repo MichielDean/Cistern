@@ -271,6 +271,49 @@ func TestResolveProvider_RepoLevelModelOverridesTopLevelModel(t *testing.T) {
 	}
 }
 
+// TestResolveProvider_TopLevelOverridesNotAppliedWhenRepoChangesProvider verifies
+// that top-level command/args/env/model overrides are NOT applied to the base preset
+// when the repo-level config selects a different provider name. A top-level
+// name:gemini + command:/opt/gemini must not bleed into a repo that uses name:codex.
+func TestResolveProvider_TopLevelOverridesNotAppliedWhenRepoChangesProvider(t *testing.T) {
+	cfg := &AqueductConfig{
+		Repos: []RepoConfig{
+			{Name: "r", Cataractae: 1, Provider: &ProviderConfig{Name: "codex"}},
+		},
+		Provider: &ProviderConfig{Name: "gemini", Command: "/opt/gemini"},
+	}
+	preset, err := cfg.ResolveProvider("r")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if preset.Name != "codex" {
+		t.Errorf("Name = %q, want %q", preset.Name, "codex")
+	}
+	// Codex's own command must be used, not /opt/gemini from top-level gemini config.
+	if preset.Command != "codex" {
+		t.Errorf("Command = %q, want %q (top-level gemini override must not contaminate codex)", preset.Command, "codex")
+	}
+}
+
+// TestResolveProvider_TopLevelGenericOverridesApplyRegardlessOfRepoProvider verifies
+// that when the top-level config has no explicit name (generic overrides), its
+// command/args/env/model overrides are applied even when the repo selects a named provider.
+func TestResolveProvider_TopLevelGenericOverridesApplyRegardlessOfRepoProvider(t *testing.T) {
+	cfg := &AqueductConfig{
+		Repos: []RepoConfig{
+			{Name: "r", Cataractae: 1, Provider: &ProviderConfig{Name: "gemini"}},
+		},
+		Provider: &ProviderConfig{Env: map[string]string{"GLOBAL_VAR": "val"}},
+	}
+	preset, err := cfg.ResolveProvider("r")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if preset.ExtraEnv["GLOBAL_VAR"] != "val" {
+		t.Errorf("ExtraEnv[GLOBAL_VAR] = %q, want %q (generic top-level env should apply)", preset.ExtraEnv["GLOBAL_VAR"], "val")
+	}
+}
+
 // --- ValidateModelForProvider tests ---
 
 // TestValidateModelForProvider_NoModelReturnsEmptyWarning verifies that a step

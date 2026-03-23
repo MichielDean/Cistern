@@ -57,8 +57,13 @@ func (cfg *AqueductConfig) ResolveProvider(repoName string) (provider.ProviderPr
 		}
 	}
 
-	// Apply top-level overrides onto the base preset.
-	if cfg.Provider != nil {
+	// Apply top-level overrides onto the base preset, but only when the
+	// top-level provider name matches the resolved name. If the top-level has
+	// no explicit name its overrides are treated as generic and always applied;
+	// if it names a specific provider (e.g. "gemini") but the repo has switched
+	// to a different one (e.g. "codex"), applying those overrides would silently
+	// contaminate the repo's preset with the wrong provider's settings.
+	if cfg.Provider != nil && (cfg.Provider.Name == "" || cfg.Provider.Name == name) {
 		applyProviderOverrides(&result, cfg.Provider)
 	}
 

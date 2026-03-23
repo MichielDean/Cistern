@@ -441,6 +441,59 @@ func TestGenerateCataractaeFiles_EmptyWorkflow(t *testing.T) {
 	}
 }
 
+// TestGenerateCataractaeFiles_ReturnsErrorOnUnreadablePersona verifies that a
+// non-ENOENT read error on PERSONA.md is surfaced as an error rather than silently
+// skipping the identity.
+func TestGenerateCataractaeFiles_ReturnsErrorOnUnreadablePersona(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("chmod 000 has no effect when running as root")
+	}
+	tmpDir := t.TempDir()
+	identityDir := filepath.Join(tmpDir, "implementer")
+	if err := os.MkdirAll(identityDir, 0o755); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+	personaPath := filepath.Join(identityDir, "PERSONA.md")
+	if err := os.WriteFile(personaPath, []byte("persona"), 0o000); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(personaPath, 0o644) })
+
+	w := workflowWithIdentity("implementer")
+	_, err := GenerateCataractaeFiles(w, tmpDir)
+	if err == nil {
+		t.Fatal("expected error for unreadable PERSONA.md, got nil")
+	}
+}
+
+// TestGenerateCataractaeFiles_ReturnsErrorOnUnreadableInstructions verifies that a
+// non-ENOENT read error on INSTRUCTIONS.md is surfaced as an error rather than
+// silently skipping the identity.
+func TestGenerateCataractaeFiles_ReturnsErrorOnUnreadableInstructions(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("chmod 000 has no effect when running as root")
+	}
+	tmpDir := t.TempDir()
+	identityDir := filepath.Join(tmpDir, "implementer")
+	if err := os.MkdirAll(identityDir, 0o755); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(identityDir, "PERSONA.md"), []byte("persona"), 0o644); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+	instrPath := filepath.Join(identityDir, "INSTRUCTIONS.md")
+	if err := os.WriteFile(instrPath, []byte("instructions"), 0o000); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(instrPath, 0o644) })
+
+	w := workflowWithIdentity("implementer")
+	_, err := GenerateCataractaeFiles(w, tmpDir)
+	if err == nil {
+		t.Fatal("expected error for unreadable INSTRUCTIONS.md, got nil")
+	}
+}
+
 // --- TitleCaseName tests ---
 
 func TestTitleCaseName(t *testing.T) {
