@@ -321,6 +321,50 @@ drought_hooks:
 
 See `cistern.yaml` in this repo for all options.
 
+## Provider Configuration
+
+Cistern supports multiple agent CLIs through a provider preset system. Configure the provider in `~/.cistern/cistern.yaml` using the top-level `provider:` block or on a per-repo basis.
+
+**Built-in presets:**
+
+| Name | CLI | Env variable required |
+|---|---|---|
+| `claude` *(default)* | `claude` | `ANTHROPIC_API_KEY` |
+| `codex` | `codex` | `OPENAI_API_KEY` |
+| `gemini` | `gemini` | `GEMINI_API_KEY` |
+| `copilot` | `copilot` | `GH_TOKEN` |
+| `opencode` | `opencode` | — |
+
+**Top-level provider (applies to all repos):**
+
+```yaml
+provider:
+  name: claude          # built-in preset name, or 'custom'
+  model: opus           # default model passed via the preset's model flag
+  command: ""           # override the executable (e.g. a wrapper script)
+  args: []              # extra args appended to the preset's fixed args
+  env: {}               # extra env vars injected into the agent process
+```
+
+**Per-repo override (overrides the top-level for that repo only):**
+
+```yaml
+repos:
+  - name: myproject
+    url: https://github.com/org/myproject
+    workflow_path: aqueduct/feature.yaml
+    cataractae: 2
+    names:
+      - virgo
+    provider:
+      name: gemini      # this repo uses gemini instead of claude
+      model: gemini-2.0-flash
+```
+
+**Resolution order:** built-in preset defaults → top-level `provider:` overrides → repo-level `provider:` overrides. When a repo specifies a different `name:` than the top-level, top-level field overrides are not applied — only the repo-level overrides take effect.
+
+If no `provider:` block is present, the `claude` preset is used. Existing configs work unchanged.
+
 ## Docker
 
 Cistern ships a multi-stage Dockerfile. The image includes `tmux`, `git`, `gh`, and both `ct` and `aqueduct` binaries.

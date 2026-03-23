@@ -9,6 +9,18 @@
 - `session.go`: adds `buildPresetCmd`, introduces `claudePathFn` indirection (allows test injection without modifying process environment), and forwards `CT_DB` into the tmux session environment.
 - All tests pass with `go test ./...` and no environment variables set.
 
+### Provider configuration in cistern.yaml: select provider globally or per-repo (ci-5o65q)
+- New `provider:` block in `cistern.yaml` selects which agent CLI Cistern uses — globally or per-repo
+- Five built-in presets: `claude` (default, ANTHROPIC_API_KEY), `codex` (OPENAI_API_KEY), `gemini` (GEMINI_API_KEY), `copilot` (GH_TOKEN), `opencode`
+- Top-level `provider:` applies to all repos; individual `repos[].provider:` overrides it for that repo only
+- `provider.model:` sets the default model passed via the preset's model flag at launch time
+- `provider.command:`, `provider.args:`, `provider.env:` override the executable, append extra args, and inject extra env vars
+- When a repo specifies a different `name:` than the top-level, top-level field overrides are not applied (prevents cross-provider contamination)
+- Backward compatible: configs without a `provider:` block continue to use the `claude` preset unchanged
+- Dispatch-loop recovery: git reset/clean errors are now detected — failed recovery no longer falsely clears the failure counter and claims success
+- Dispatch-loop recovery: worktree registration check uses exact path comparison, preventing false positives with prefix-sharing droplet IDs
+- `ct update`: copyBinary now surfaces close errors on the restore path, preventing silent binary corruption when disk is full during a failed build's restore
+
 ### Provider presets: ProviderPreset struct and built-in registry (ci-x6rof)
 - Introduces `internal/provider` package with `ProviderPreset` — the data model describing how to launch any agent CLI (command, fixed args, env passthrough, model flag, resume style, instructions file, and more)
 - Built-in presets ship for five providers: `claude` (ANTHROPIC_API_KEY, `--model`, `--add-dir`, `CLAUDE.md`), `codex` (OPENAI_API_KEY, subcommand resume, `AGENTS.md`), `gemini` (GEMINI_API_KEY, `--model`, `GEMINI.md`), `copilot` (GH_TOKEN, 5 s ready delay, `AGENTS.md`), `opencode` (`AGENTS.md`)
