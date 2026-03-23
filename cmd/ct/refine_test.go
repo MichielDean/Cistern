@@ -337,7 +337,6 @@ func postToMock(url string) (int, error) {
 //   - the correct model name is in the request body (non-Anthropic providers)
 func TestRefineWithMockServer(t *testing.T) {
 	for _, llm := range provider.LLMBuiltins() {
-		llm := llm // capture range variable
 		t.Run(llm.Name, func(t *testing.T) {
 			mock := mockllm.New()
 			defer mock.Close()

@@ -140,13 +140,14 @@ func MergePresets(base, overrides []ProviderPreset) []ProviderPreset {
 // If name is empty or no preset matches, the "claude" preset is returned as
 // the default fallback.
 func ResolvePreset(name string) ProviderPreset {
-	for _, p := range Builtins() {
+	builtins := Builtins()
+	for _, p := range builtins {
 		if p.Name == name {
 			return p
 		}
 	}
 	// Default: return the first built-in (claude).
-	return Builtins()[0]
+	return builtins[0]
 }
 
 // LoadUserPresets reads a JSON array of ProviderPreset values from path and

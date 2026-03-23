@@ -9,7 +9,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/MichielDean/cistern/internal/aqueduct"
 	"github.com/MichielDean/cistern/internal/cistern"
 	"github.com/MichielDean/cistern/internal/provider"
 )
@@ -267,11 +266,6 @@ func TestClaudePresetBackwardCompat(t *testing.T) {
 func TestClaudeDefaultFallback(t *testing.T) {
 	// Normalise claudePathFn so both code paths agree on the binary name.
 	t.Setenv("CLAUDE_PATH", "claude")
-
-	// Parse an AqueductConfig with no provider block.
-	// Zero-value AqueductConfig has no provider configured.
-	cfg := &aqueduct.AqueductConfig{}
-	_ = cfg // no provider field — verified by absence
 
 	// Resolve preset: empty provider name must return the "claude" built-in.
 	preset := provider.ResolvePreset("")
