@@ -519,3 +519,28 @@ stagnant, or open.
 This differs from `reopen` (which returns to `open` with the cataractae unchanged) and
 `recirculate` (which is an agent-issued signal during active processing). `restart` is for
 human-initiated recovery after something went wrong.
+
+## OpenClaw Integration
+
+An [AgentSkills](https://agentskills.io)-compatible skill lives in `openclaw/cistern/`. It teaches
+OpenClaw bots how to interact with a Cistern installation — vocabulary, `ct` commands, pipeline
+overview, and troubleshooting.
+
+**Install on any OpenClaw bot:**
+
+```bash
+cp -r openclaw/cistern ~/.openclaw/skills/cistern
+```
+
+The skill gates on `ct` being present on `PATH`, so it only surfaces when Cistern is installed.
+Once installed, your OpenClaw agent will automatically understand droplets, aqueducts, cataractae,
+and how to manage work through the pipeline.
+
+**Contents:**
+
+| File | Purpose |
+|------|---------|
+| `SKILL.md` | Core skill — vocabulary, key commands, pipeline overview |
+| `references/commands.md` | Full `ct` command reference |
+| `references/setup.md` | Install, config, and binary rebuild instructions |
+| `references/troubleshooting.md` | Daemon, stuck droplets, DB recovery |
