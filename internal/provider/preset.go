@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"slices"
 )
 
 // ResumeStyle controls how a resumed session is expressed on the CLI.
@@ -90,11 +91,16 @@ var builtins = []ProviderPreset{
 	},
 }
 
-// Builtins returns a copy of the built-in provider preset slice.
-// Callers may safely modify the returned slice without affecting the originals.
+// Builtins returns a deep copy of the built-in provider preset slice.
+// Callers may safely modify the returned slice and its fields without affecting the originals.
 func Builtins() []ProviderPreset {
 	out := make([]ProviderPreset, len(builtins))
-	copy(out, builtins)
+	for i, p := range builtins {
+		p.Args = slices.Clone(p.Args)
+		p.EnvPassthrough = slices.Clone(p.EnvPassthrough)
+		p.ProcessNames = slices.Clone(p.ProcessNames)
+		out[i] = p
+	}
 	return out
 }
 

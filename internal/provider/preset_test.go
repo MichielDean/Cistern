@@ -84,13 +84,26 @@ func TestBuiltins_OpencodePreset(t *testing.T) {
 
 // TestBuiltins_ReturnsCopy verifies that mutating the returned slice does not affect the built-ins.
 func TestBuiltins_ReturnsCopy(t *testing.T) {
-	first := Builtins()
-	first[0].Command = "mutated"
+	t.Run("string field mutation is isolated", func(t *testing.T) {
+		first := Builtins()
+		first[0].Command = "mutated"
 
-	second := Builtins()
-	if second[0].Command == "mutated" {
-		t.Error("Builtins() returned a reference to internal state, want an independent copy")
-	}
+		second := Builtins()
+		if second[0].Command == "mutated" {
+			t.Error("Builtins() returned a reference to internal state, want an independent copy")
+		}
+	})
+
+	t.Run("slice field mutation is isolated", func(t *testing.T) {
+		first := Builtins()
+		original := Builtins()[0].Args[0]
+		first[0].Args[0] = "mutated"
+
+		second := Builtins()
+		if second[0].Args[0] != original {
+			t.Errorf("Builtins() Args[0] = %q after mutation, want %q — slice field shares backing array with global state", second[0].Args[0], original)
+		}
+	})
 }
 
 // TestLoadUserPresets_NoFileReturnsBuiltins verifies that a missing file returns built-ins unchanged.
