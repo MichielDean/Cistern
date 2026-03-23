@@ -636,10 +636,9 @@ func TestTuiAqueductRow_WaterFillsOnlyToActiveStep(t *testing.T) {
 		nSteps    = 3
 		chanW     = nSteps * pillarW
 		innerW    = chanW - 2
-		wfExitLen = 4 // "░▒▓▓" — visible chars in wfExit
 	)
-	// Expected total visible width of the channel water row (line [2]).
-	const expectedRowLen = prefixLen + 1 + innerW + 1 + wfExitLen // 102
+	// Both cases are mid-pipeline (not the last step), so wfExit is absent.
+	const expectedRowLen = prefixLen + 1 + innerW + 1 // 98
 
 	cases := []struct {
 		name            string
@@ -690,8 +689,8 @@ func TestTuiAqueductRow_WaterFillsOnlyToActiveStep(t *testing.T) {
 					len(runes), expectedRowLen, chanWater)
 			}
 
-			// Visual layout:
-			//   prefix(14) + "█"(1) + inner(82) + "█"(1) + wfExit(4)
+			// Visual layout (no waterfall for mid-pipeline steps):
+			//   prefix(14) + "█"(1) + inner(82) + "█"(1)
 			//   wetInnerW = (activeIdx+1)*pillarW - 1  (off-by-one corrected)
 			wetInnerW := (tc.activeIdx+1)*pillarW - 1
 			dryInnerW := innerW - wetInnerW
@@ -1049,5 +1048,82 @@ func TestTuiAqueductRow_ActiveStepHasDifferentCrownColor(t *testing.T) {
 	if stripANSITest(active[3]) != stripANSITest(idle[3]) {
 		t.Errorf("active and idle crown rows should have same plain text\nactive: %q\nidle:   %q",
 			stripANSITest(active[3]), stripANSITest(idle[3]))
+	}
+}
+
+// TestTuiAqueductRow_WaterfallOnlyOnLastStep verifies that the waterfall animation
+// (wfExit on the channel water row, wfRows on arch lines) is only rendered when the
+// active step is the final step in the pipeline. For mid-pipeline steps and idle
+// aqueducts the waterfall must be absent.
+func TestTuiAqueductRow_WaterfallOnlyOnLastStep(t *testing.T) {
+	m := newDashboardTUIModel("", "")
+	steps := []string{"implement", "review", "merge"}
+
+	const (
+		prefixLen = 14
+		pillarW   = 28
+		nSteps    = 3
+		chanW     = nSteps * pillarW
+		innerW    = chanW - 2
+		wfExitLen = 4 // "░▒▓▓" — visible chars in wfExit
+	)
+	const rowLenWithWF    = prefixLen + 1 + innerW + 1 + wfExitLen // 102
+	const rowLenWithoutWF = prefixLen + 1 + innerW + 1             // 98
+
+	cases := []struct {
+		name      string
+		step      string
+		dropletID string
+		wantWF    bool
+	}{
+		{
+			name:      "last step active — waterfall visible",
+			step:      "merge",
+			dropletID: "ci-abc12",
+			wantWF:    true,
+		},
+		{
+			name:      "mid step active — no waterfall",
+			step:      "review",
+			dropletID: "ci-abc12",
+			wantWF:    false,
+		},
+		{
+			name:      "first step active — no waterfall",
+			step:      "implement",
+			dropletID: "ci-abc12",
+			wantWF:    false,
+		},
+		{
+			name:      "idle (no droplet) — no waterfall",
+			step:      "",
+			dropletID: "",
+			wantWF:    false,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			ch := CataractaeInfo{
+				Name:      "virgo",
+				DropletID: tc.dropletID,
+				Step:      tc.step,
+				Steps:     steps,
+			}
+			lines := m.tuiAqueductRow(ch, 0)
+
+			// lines[2] is the channel water row.
+			chanWater := stripANSITest(lines[2])
+			runes := []rune(chanWater)
+
+			wantLen := rowLenWithoutWF
+			if tc.wantWF {
+				wantLen = rowLenWithWF
+			}
+			if len(runes) != wantLen {
+				t.Errorf("channel water row visual width: got %d, want %d (wantWF=%v)\nrow: %q",
+					len(runes), wantLen, tc.wantWF, chanWater)
+			}
+		})
 	}
 }

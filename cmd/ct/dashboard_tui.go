@@ -418,6 +418,9 @@ func (m dashboardTUIModel) tuiAqueductRow(ch CataractaeInfo, frame int) []string
 		}
 	}
 
+	// Waterfall is visible only when the droplet is on the final step.
+	isLastStep := activeIdx == n-1 && activeIdx >= 0
+
 	// Waterfall / channel-water styles — three brightness levels, black background.
 	wfBright := lipgloss.NewStyle().Foreground(lipgloss.Color("#a8eeff")).Background(lipgloss.Color("0"))
 	wfMid    := lipgloss.NewStyle().Foreground(lipgloss.Color("#3ec8e8")).Background(lipgloss.Color("0"))
@@ -531,7 +534,10 @@ func (m dashboardTUIModel) tuiAqueductRow(ch CataractaeInfo, frame int) []string
 	}
 
 	wfExit := wfDim.Render("░") + wfMid.Render("▒") + wfA(0).Render("▓▓")
-	l2 := prefixRepo + cStyle.Render("█") + water + cStyle.Render("█") + wfExit
+	l2 := prefixRepo + cStyle.Render("█") + water + cStyle.Render("█")
+	if isLastStep {
+		l2 += wfExit
+	}
 
 	// Pillar styles: fg=color3/olive on bg=black; active uses bright green for ▒.
 	pillarFg     := lipgloss.NewStyle().Foreground(lipgloss.Color("3")).Background(lipgloss.Color("0"))
@@ -580,7 +586,9 @@ func (m dashboardTUIModel) tuiAqueductRow(ch CataractaeInfo, frame int) []string
 		for _, step := range steps {
 			sb.WriteString(buildPillarRow(r, isActive(step)))
 		}
-		sb.WriteString(wfRows[r])
+		if isLastStep {
+			sb.WriteString(wfRows[r])
+		}
 		archLines = append(archLines, sb.String())
 	}
 
