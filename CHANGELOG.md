@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+### Provider presets: smoke tests and bug fixes (ci-e014y)
+- Adds `TestProviderCommandStrings` — table-driven test covering all 5 built-in presets (`claude`, `codex`, `gemini`, `copilot`, `opencode`) plus a custom user preset loaded from JSON; validates command binary, fixed args, model flag, `--add-dir` flag, env passthrough, and instructions file for each
+- Adds `TestClaudeDefaultFallback` — regression gate that parses an `AqueductConfig` with no provider block, resolves the preset (must be `claude`), and asserts the built command is byte-for-byte identical to `buildClaudeCmd()` output
+- Adds `TestProviderConfigMerge`, `TestUserPresetsJSON`, `TestLLMProviderDefaults`, and `TestRefineWithMockServer` (multi-provider LLM calls against the mock server from ci-t3xo9); all pass with no env vars set
+- Adds `callRefineAPIWith(llm LLMProvider, ...)` — extends the filtration path to support OpenAI-compatible providers (OpenAI, OpenRouter, Ollama) via `/v1/chat/completions`; Anthropic delegates to the existing SDK path
+- Fixes OpenRouter `BaseURL` (`https://openrouter.ai/api/v1` → `https://openrouter.ai/api`) — the old value produced a double `/v1/v1/` path when URL construction appended `/v1/chat/completions`; regression guard `TestOpenRouterURL_NoDuplicateV1` added
+- Fixes `MergePresets` aliasing — override entries' `Args`, `EnvPassthrough`, and `ProcessNames` slices are now deep-copied before insertion, symmetric with base-entry handling
+- Fixes unbounded `io.ReadAll` on error response body in `refine.go` — wrapped with `io.LimitReader(resp.Body, 1<<20)` to cap at 1 MB
+- Fixes `ResolvePreset` fallback — replaced positional `builtins[0]` with an explicit `Name == "claude"` search so slice reordering cannot silently change the default
+
 ### Test harness: fake provider binary + mock LLM HTTP server (ci-t3xo9)
 - Adds `internal/testutil/fakeagent` — a minimal Go binary that accepts the same flags as the `claude` CLI, reads the droplet ID from `CONTEXT.md`, sleeps 200 ms, then calls `ct droplet pass <id>`. Used in `session_test.go` to exercise the full `Spawn → isAlive → outcome` cycle without a real LLM CLI or API key.
 - Adds `internal/testutil/mockllm` — an `httptest.Server` that handles `POST /v1/messages` (Anthropic) and `POST /v1/chat/completions` (OpenAI-compatible). Returns a hardcoded `HardcodedProposalsJSON` payload; records all requests (method, path, headers, body) for test assertions. Both handlers return `405 Method Not Allowed` for non-POST requests.
