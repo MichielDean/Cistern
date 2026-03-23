@@ -5,6 +5,7 @@ package provider
 import (
 	"encoding/json"
 	"fmt"
+	"maps"
 	"os"
 	"slices"
 )
@@ -102,13 +103,7 @@ func Builtins() []ProviderPreset {
 		p.Args = slices.Clone(p.Args)
 		p.EnvPassthrough = slices.Clone(p.EnvPassthrough)
 		p.ProcessNames = slices.Clone(p.ProcessNames)
-		if p.ExtraEnv != nil {
-			c := make(map[string]string, len(p.ExtraEnv))
-			for k, v := range p.ExtraEnv {
-				c[k] = v
-			}
-			p.ExtraEnv = c
-		}
+		p.ExtraEnv = maps.Clone(p.ExtraEnv)
 		out[i] = p
 	}
 	return out

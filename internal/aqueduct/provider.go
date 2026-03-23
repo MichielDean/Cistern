@@ -2,6 +2,7 @@ package aqueduct
 
 import (
 	"fmt"
+	"maps"
 
 	"github.com/MichielDean/cistern/internal/provider"
 )
@@ -83,11 +84,11 @@ func applyProviderOverrides(p *provider.ProviderPreset, cfg *ProviderConfig) {
 	if len(cfg.Args) > 0 {
 		p.Args = append(p.Args, cfg.Args...)
 	}
-	for k, v := range cfg.Env {
+	if len(cfg.Env) > 0 {
 		if p.ExtraEnv == nil {
-			p.ExtraEnv = make(map[string]string)
+			p.ExtraEnv = make(map[string]string, len(cfg.Env))
 		}
-		p.ExtraEnv[k] = v
+		maps.Copy(p.ExtraEnv, cfg.Env)
 	}
 }
 
