@@ -148,6 +148,21 @@ func goConstants(p archParams) string {
 	)
 }
 
+// ── Styles ─────────────────────────────────────────────────────────────────────
+
+var (
+	stoneStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#6b8cba"))
+	dimStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("#3d5a7a"))
+	titleStyle   = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#58a6ff"))
+	labelStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("#b1bac4"))
+	selStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("#58a6ff")).Bold(true)
+	paramDimStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#6e7681"))
+	valStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("#e6edf3"))
+	msgStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("#3fb950"))
+	constStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("#f0f6fc"))
+	hintStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("#484f58"))
+)
+
 // ── Arch rendering ────────────────────────────────────────────────────────────
 
 // archCrownAtT computes arch-crown fill at t in [0,1].
@@ -202,9 +217,6 @@ func renderArch(p archParams) []string {
 	}
 	n := p.NumPiers
 	colW := p.ColW
-
-	stoneStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#6b8cba"))
-	dimStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#3d5a7a"))
 
 	var result []string
 
@@ -338,15 +350,6 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m tuiModel) View() string {
 	var sb strings.Builder
 
-	titleStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#58a6ff"))
-	labelStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#b1bac4"))
-	selStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#58a6ff")).Bold(true)
-	dimStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#6e7681"))
-	valStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#e6edf3"))
-	msgStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#3fb950"))
-	constStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#f0f6fc"))
-	hintStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#484f58"))
-
 	sb.WriteString("\n")
 	sb.WriteString("  " + titleStyle.Render("Arch Designer") + "\n\n")
 
@@ -361,9 +364,9 @@ func (m tuiModel) View() string {
 	for i, name := range paramNames {
 		val := getParam(m.params, i)
 		cursor := "  "
-		nameStr := dimStyle.Render(fmt.Sprintf("%-12s", name))
+		nameStr := paramDimStyle.Render(fmt.Sprintf("%-12s", name))
 		valStr := valStyle.Render(fmt.Sprintf("%3d", val))
-		descStr := dimStyle.Render("  " + paramDescs[i])
+		descStr := paramDimStyle.Render("  " + paramDescs[i])
 		if i == m.selected {
 			cursor = "► "
 			nameStr = selStyle.Render(fmt.Sprintf("%-12s", name))
@@ -571,10 +574,13 @@ func newArchDesignerMux() http.Handler {
 		defer conn.Close()
 
 		cmd := exec.Command(exe)
-		cmd.Env = append(os.Environ(),
-			"TERM=xterm-256color",
-			"COLORTERM=truecolor",
-		)
+		var env []string
+		for _, e := range os.Environ() {
+			if !strings.HasPrefix(e, "TERM=") && !strings.HasPrefix(e, "COLORTERM=") {
+				env = append(env, e)
+			}
+		}
+		cmd.Env = append(env, "TERM=xterm-256color", "COLORTERM=truecolor")
 
 		ptmx, err := pty.Start(cmd)
 		if err != nil {
