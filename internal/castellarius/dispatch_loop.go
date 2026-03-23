@@ -131,14 +131,23 @@ func (s *Castellarius) recoverDispatchLoop(client CisternClient, item *cistern.D
 			)
 			reset := exec.Command("git", "reset", "--hard", "HEAD")
 			reset.Dir = worktreePath
-			_ = reset.Run()
+			resetErr := reset.Run()
 			clean := exec.Command("git", "clean", "-fd")
 			clean.Dir = worktreePath
-			_ = clean.Run()
-			_ = client.AddNote(item.ID, "dispatch-loop",
-				fmt.Sprintf("dispatch-loop recovery: %s — dirty worktree reset (attempt %s)",
-					item.ID, attempt))
-			return
+			cleanErr := clean.Run()
+			if resetErr != nil || cleanErr != nil {
+				s.logger.Warn("dispatch-loop recovery: reset/clean failed — falling through to worktree recreation",
+					"droplet", item.ID,
+					"reset_err", resetErr,
+					"clean_err", cleanErr,
+				)
+				// fall through to worktree-recreation recovery path
+			} else {
+				_ = client.AddNote(item.ID, "dispatch-loop",
+					fmt.Sprintf("dispatch-loop recovery: %s — dirty worktree reset (attempt %s)",
+						item.ID, attempt))
+				return
+			}
 		}
 	}
 
@@ -170,6 +179,19 @@ func (s *Castellarius) recoverDispatchLoop(client CisternClient, item *cistern.D
 			item.ID, attempt))
 }
 
+// worktreeInOutput reports whether out (from "git worktree list --porcelain")
+// contains an exact worktree line for path. Substring matching is intentionally
+// avoided to prevent false positives with prefix-sharing droplet IDs.
+func worktreeInOutput(out []byte, path string) bool {
+	target := "worktree " + path
+	for _, line := range strings.Split(string(out), "\n") {
+		if line == target {
+			return true
+		}
+	}
+	return false
+}
+
 // worktreeRegistered returns true if worktreePath is listed in git worktree list for primaryDir.
 func worktreeRegistered(primaryDir, worktreePath string) bool {
 	cmd := exec.Command("git", "worktree", "list", "--porcelain")
@@ -178,5 +200,5 @@ func worktreeRegistered(primaryDir, worktreePath string) bool {
 	if err != nil {
 		return false
 	}
-	return strings.Contains(string(out), worktreePath)
+	return worktreeInOutput(out, worktreePath)
 }

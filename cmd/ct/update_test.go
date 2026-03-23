@@ -275,3 +275,40 @@ func TestShortSHA_ShortInput(t *testing.T) {
 		t.Errorf("shortSHA(%q) = %q, want %q", sha, got, sha)
 	}
 }
+
+// --- copyBinary ---
+
+func TestCopyBinary_CopiesContentAndPermissions(t *testing.T) {
+	src := filepath.Join(t.TempDir(), "src")
+	if err := os.WriteFile(src, []byte("binary content"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	dst := filepath.Join(t.TempDir(), "dst")
+	if err := copyBinary(src, dst); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	got, err := os.ReadFile(dst)
+	if err != nil {
+		t.Fatalf("reading dst: %v", err)
+	}
+	if string(got) != "binary content" {
+		t.Errorf("content: got %q, want %q", got, "binary content")
+	}
+
+	info, err := os.Stat(dst)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode() != 0o755 {
+		t.Errorf("mode: got %v, want %v", info.Mode(), os.FileMode(0o755))
+	}
+}
+
+func TestCopyBinary_MissingSource_ReturnsError(t *testing.T) {
+	dst := filepath.Join(t.TempDir(), "dst")
+	if err := copyBinary("/nonexistent/source/path", dst); err == nil {
+		t.Fatal("expected error for missing source, got nil")
+	}
+}

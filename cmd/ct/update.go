@@ -244,8 +244,10 @@ func copyBinary(src, dst string) error {
 	if err != nil {
 		return err
 	}
-	defer out.Close()
 
-	_, err = io.Copy(out, in)
-	return err
+	_, copyErr := io.Copy(out, in)
+	if closeErr := out.Close(); closeErr != nil {
+		return closeErr
+	}
+	return copyErr
 }
