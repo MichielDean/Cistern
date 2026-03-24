@@ -534,6 +534,66 @@ func TestRecoverOpenPR_Unknown_Recirculates(t *testing.T) {
 	}
 }
 
+// --- defaultFindPR integration tests (requires a fake gh) ---
+
+// TestDefaultFindPR_IgnoresGhStderrWarnings verifies that when gh writes
+// warnings to stderr but valid JSON to stdout, defaultFindPR successfully
+// parses the PR data. CombinedOutput() would corrupt the JSON with the warning
+// prefix; Output() must be used instead.
+func TestDefaultFindPR_IgnoresGhStderrWarnings(t *testing.T) {
+	tmpDir := t.TempDir()
+	sandboxDir := t.TempDir()
+
+	ghScript := "#!/bin/sh\n" +
+		"echo 'warning: oauth scope missing' >&2\n" +
+		"echo '[{\"url\":\"https://github.com/o/r/pull/42\",\"state\":\"OPEN\",\"mergeStateStatus\":\"CLEAN\"}]'\n"
+	ghPath := filepath.Join(tmpDir, "gh")
+	if err := os.WriteFile(ghPath, []byte(ghScript), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Setenv("PATH", tmpDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	prURL, state, mergeState, err := defaultFindPR(context.Background(), "", "ci-test", sandboxDir)
+	if err != nil {
+		t.Fatalf("defaultFindPR returned unexpected error: %v", err)
+	}
+	if prURL != "https://github.com/o/r/pull/42" {
+		t.Errorf("prURL = %q, want %q", prURL, "https://github.com/o/r/pull/42")
+	}
+	if state != "OPEN" {
+		t.Errorf("state = %q, want %q", state, "OPEN")
+	}
+	if mergeState != "CLEAN" {
+		t.Errorf("mergeStateStatus = %q, want %q", mergeState, "CLEAN")
+	}
+}
+
+// TestDefaultFindPR_ErrorIncludesStderr verifies that when gh exits non-zero,
+// the returned error includes the stderr output so operators can diagnose the failure.
+func TestDefaultFindPR_ErrorIncludesStderr(t *testing.T) {
+	tmpDir := t.TempDir()
+	sandboxDir := t.TempDir()
+
+	ghScript := "#!/bin/sh\n" +
+		"echo 'error: not authenticated' >&2\n" +
+		"exit 1\n"
+	ghPath := filepath.Join(tmpDir, "gh")
+	if err := os.WriteFile(ghPath, []byte(ghScript), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Setenv("PATH", tmpDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	_, _, _, err := defaultFindPR(context.Background(), "", "ci-test", sandboxDir)
+	if err == nil {
+		t.Fatal("expected error from defaultFindPR, got nil")
+	}
+	if !strings.Contains(err.Error(), "not authenticated") {
+		t.Errorf("error %q does not contain stderr output 'not authenticated'", err.Error())
+	}
+}
+
 // --- defaultRebaseAndPush integration tests (requires git) ---
 
 func TestDefaultRebaseAndPush_SucceedsWhenBehind(t *testing.T) {
