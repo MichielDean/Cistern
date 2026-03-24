@@ -64,9 +64,20 @@ build_image() {
 }
 
 # start_container starts the installer-test container in the background.
+# Flags required for systemd to run as PID 1 on Linux 5.10+ with cgroupv2:
+#   --cgroupns=host: use host cgroup namespace so systemd can manage cgroups.
+#   -v /sys/fs/cgroup:/sys/fs/cgroup:rw: writable cgroup hierarchy for systemd.
+#   --tmpfs /run --tmpfs /run/lock: writable tmpfs for systemd runtime.
+#   --security-opt apparmor=unconfined: Docker's AppArmor profile blocks
+#     syscalls systemd needs; --privileged alone does not disable it.
 start_container() {
     docker run \
         --privileged \
+        --cgroupns=host \
+        -v /sys/fs/cgroup:/sys/fs/cgroup:rw \
+        --tmpfs /run \
+        --tmpfs /run/lock \
+        --security-opt apparmor=unconfined \
         --rm \
         --detach \
         --name "${CONTAINER_NAME}" \

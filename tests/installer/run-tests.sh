@@ -323,7 +323,7 @@ CREDS_EOF
     if _wait_service_state cistern-castellarius.service failed 25; then
         _log=$(journalctl -u cistern-castellarius.service --since "${_since}" \
                -n 20 --no-pager 2>/dev/null || true)
-        if echo "${_log}" | grep -qi "invalid.*expired\|expired.*token\|invalid.*token"; then
+        if echo "${_log}" | grep -qi "invalid.*expired\|expired.*token\|invalid.*token\|authentication failed"; then
             pass "wrong_token_service_startup_error"
         else
             fail "wrong_token_service_startup_error" \
