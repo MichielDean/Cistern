@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/MichielDean/cistern/internal/provider"
@@ -146,8 +147,6 @@ func (s *Session) buildPresetCmd(preset provider.ProviderPreset, skillsDir strin
 		return "", fmt.Errorf("preset %q has no command configured", preset.Name)
 	}
 
-	prompt := strings.ReplaceAll(s.buildPrompt(), "'", `'\''`)
-
 	parts := append([]string{preset.Command}, preset.Args...)
 
 	if preset.AddDirFlag != "" {
@@ -159,6 +158,7 @@ func (s *Session) buildPresetCmd(preset provider.ProviderPreset, skillsDir strin
 	}
 
 	if preset.PromptFlag != "" {
+		prompt := strings.ReplaceAll(s.buildPrompt(), "'", `'\''`)
 		parts = append(parts, preset.PromptFlag, "'"+prompt+"'")
 	}
 
@@ -271,12 +271,7 @@ func (s *Session) isAgentAlive() bool {
 	if err != nil {
 		return false
 	}
-	for _, name := range s.Preset.ProcessNames {
-		if current == name {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(s.Preset.ProcessNames, current)
 }
 
 // claudePathFn resolves the path to the claude executable. It is a variable so
