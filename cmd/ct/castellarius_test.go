@@ -1,10 +1,12 @@
 package main
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/MichielDean/cistern/internal/aqueduct"
 )
@@ -277,5 +279,90 @@ func TestValidateWorkflowSkills_ErrorMentionsInstallCommand(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "git_sync") {
 		t.Errorf("error should mention git_sync as primary recovery path; got: %v", err)
+	}
+}
+
+// --- checkStartupCredentials tests ---
+
+// writeOAuthCredentials writes a credentials file with the given OAuth expiry.
+func writeOAuthCredentials(t *testing.T, home string, expiresAt int64) {
+	t.Helper()
+	claudeDir := filepath.Join(home, ".claude")
+	if err := os.MkdirAll(claudeDir, 0o755); err != nil {
+		t.Fatalf("mkdir .claude: %v", err)
+	}
+	raw := map[string]any{
+		"claudeAiOauth": map[string]any{
+			"accessToken":  "sk-ant-test-invalid",
+			"refreshToken": "invalid-refresh-token",
+			"expiresAt":    expiresAt,
+		},
+	}
+	data, _ := json.Marshal(raw)
+	if err := os.WriteFile(filepath.Join(claudeDir, ".credentials.json"), data, 0o600); err != nil {
+		t.Fatalf("write credentials: %v", err)
+	}
+}
+
+func TestCheckStartupCredentials_KeyMissing_ReturnsError(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("ANTHROPIC_API_KEY", "")
+
+	err := checkStartupCredentials(home)
+	if err == nil {
+		t.Fatal("expected error when ANTHROPIC_API_KEY is not set, got nil")
+	}
+	if !strings.Contains(err.Error(), "ANTHROPIC_API_KEY not set") {
+		t.Errorf("error should mention ANTHROPIC_API_KEY not set; got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "~/.cistern/env") {
+		t.Errorf("error should name ~/.cistern/env; got: %v", err)
+	}
+}
+
+func TestCheckStartupCredentials_KeyPresent_NoCredentialsFile_ReturnsNil(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("ANTHROPIC_API_KEY", "sk-ant-test-key")
+
+	if err := checkStartupCredentials(home); err != nil {
+		t.Errorf("expected nil when key set and no credentials file, got: %v", err)
+	}
+}
+
+func TestCheckStartupCredentials_KeyPresent_FreshOAuth_ReturnsNil(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("ANTHROPIC_API_KEY", "sk-ant-test-key")
+	futureExpiry := time.Now().Add(24 * time.Hour).UnixMilli()
+	writeOAuthCredentials(t, home, futureExpiry)
+
+	if err := checkStartupCredentials(home); err != nil {
+		t.Errorf("expected nil for fresh OAuth token, got: %v", err)
+	}
+}
+
+func TestCheckStartupCredentials_KeyPresent_ExpiredOAuth_ReturnsError(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("ANTHROPIC_API_KEY", "sk-ant-test-key")
+	writeOAuthCredentials(t, home, 1000) // expires 1970-01-01 — definitely expired
+
+	err := checkStartupCredentials(home)
+	if err == nil {
+		t.Fatal("expected error for expired OAuth token, got nil")
+	}
+	if !strings.Contains(err.Error(), "authentication failed") {
+		t.Errorf("error should contain 'authentication failed'; got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "expired") {
+		t.Errorf("error should mention 'expired'; got: %v", err)
+	}
+}
+
+func TestCheckStartupCredentials_KeyPresent_ZeroExpiry_ReturnsNil(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("ANTHROPIC_API_KEY", "sk-ant-test-key")
+	writeOAuthCredentials(t, home, 0) // zero ExpiresAt = no expiry info → skip silently
+
+	if err := checkStartupCredentials(home); err != nil {
+		t.Errorf("expected nil when ExpiresAt is zero (no expiry info), got: %v", err)
 	}
 }

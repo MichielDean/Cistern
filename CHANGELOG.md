@@ -13,6 +13,12 @@
 - `sandbox.go` git clone, fetch, and worktree-add operations now emit `slog.Info` on success and `slog.Error` on failure with the operation duration
 - Security constraints enforced throughout: token values, API keys, and environment variable values are never logged — only variable names, session IDs, droplet IDs, durations, and exit codes
 
+### Credential error handling integration test cases (ci-1oswb)
+- Adds `checkStartupCredentials()` to `cmd/ct/castellarius.go` — called at `ct castellarius start` startup; returns an actionable error (non-zero exit) if `ANTHROPIC_API_KEY` is unset ("add it to `~/.cistern/env` and source it before starting") or the Claude OAuth token is expired ("run: `ct doctor --fix`"); prevents silent crashes on missing or stale credentials
+- Adds `test_missing_credentials` to `run-installer-tests.sh` — integration test for the missing-env path: `ct init` succeeds, `~/.cistern/env` is removed, then asserts `ct doctor` exits non-zero and names `~/.cistern/env` in its output, and that `ct castellarius start` exits non-zero with `ANTHROPIC_API_KEY` in the output
+- Adds `test_wrong_credentials` to `run-installer-tests.sh` — integration test for the expired-token path: writes a syntactically valid but rejected `ANTHROPIC_API_KEY` to `~/.cistern/env` and an expired OAuth credentials file (`expiresAt=1000`), then asserts `ct doctor` exits non-zero with an actionable error (`expired`/`invalid token`/`authentication failed`), and that `ct castellarius start` (with credentials exported via `set -a`) exits non-zero with `authentication failed` in its output
+- Total test count in `run-installer-tests.sh` reaches 10
+
 ### Fresh-install and upgrade integration test cases (ci-z1e9b)
 - Adds `test_fresh_install` to `run-installer-tests.sh` — end-to-end first-time install: asserts no `~/.cistern` exists before run, executes `ct init`, writes a minimal `cistern.yaml` (`repos: []`) and a placeholder `ANTHROPIC_API_KEY`, installs and starts `cistern-castellarius` as a system service, verifies the service is active, `claude` is on PATH, and `ct doctor` exits 0
 - Adds `test_upgrade` to `run-installer-tests.sh` — upgrade simulation: pre-populates `~/.cistern` with a stale config containing a removed key (`stale_old_key: removed_in_v2`), runs `ct init` again (existing files preserved via `writeFileIfAbsent`), verifies the service restarts cleanly (active) and `ct doctor` still exits 0; `yaml.Unmarshal` ignores the unknown key so no migration is needed

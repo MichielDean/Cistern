@@ -44,7 +44,7 @@ After=network.target
 
 [Service]
 Type=simple
-ExecStart=/usr/local/bin/ct castellarius start
+ExecStart=${HOME_DIR}/.cistern/start-castellarius.sh
 Restart=on-failure
 RestartSec=5
 TimeoutStopSec=10
@@ -245,6 +245,140 @@ test_upgrade() {
         >/dev/null 2>&1
 }
 
+# test_missing_credentials verifies that a missing ~/.cistern/env causes
+# ct doctor to exit non-zero with a message naming the missing file, and
+# that the service fails with a logged message rather than crashing silently.
+#
+# Given: ct init succeeds (exits 0), but ~/.cistern/env is then removed
+# When:  ct doctor runs
+# Then:  exits non-zero and output names "~/.cistern/env"
+# When:  ct castellarius start runs without ANTHROPIC_API_KEY in the environment
+# Then:  it exits non-zero and the output contains "ANTHROPIC_API_KEY"
+test_missing_credentials() {
+    local home_dir="/tmp/cistern-test-missing-creds"
+
+    # Given: isolated home directory, ct init succeeds.
+    exec_in_container bash -c "rm -rf '${home_dir}' && mkdir -p '${home_dir}'" || return 1
+    exec_in_container env HOME="${home_dir}" CT_NO_ASCII_LOGO=1 ct init \
+        >/dev/null 2>&1 || return 1
+
+    # Replace the default config with a minimal one (repos: []) to avoid
+    # failing on missing git repos during the service startup.
+    exec_in_container bash -c "
+        printf 'repos: []\nmax_cataractae: 2\nhandoff_token_threshold: 100000\n' \
+            > '${home_dir}/.cistern/cistern.yaml'
+    " || return 1
+
+    # Create cistern.db via ct doctor --fix so the service can open it.
+    exec_in_container env HOME="${home_dir}" CT_NO_ASCII_LOGO=1 ct doctor --fix \
+        >/dev/null 2>&1 || true
+
+    # Remove the env file so ANTHROPIC_API_KEY will be absent.
+    exec_in_container rm -f "${home_dir}/.cistern/env"
+
+    # Then: ct doctor exits non-zero.
+    local doctor_exit=0
+    exec_in_container env HOME="${home_dir}" CT_NO_ASCII_LOGO=1 ct doctor \
+        >/dev/null 2>&1 || doctor_exit=$?
+    if [[ "${doctor_exit}" -eq 0 ]]; then
+        return 1  # doctor should fail when env file is absent
+    fi
+
+    # Then: ct doctor output names the missing file.
+    local doctor_out
+    doctor_out=$(exec_in_container env HOME="${home_dir}" CT_NO_ASCII_LOGO=1 \
+        ct doctor 2>&1 || true)
+    if ! echo "${doctor_out}" | grep -q '\.cistern/env'; then
+        return 1  # doctor did not name the missing credential file
+    fi
+
+    # Then: the service (ct castellarius start without ANTHROPIC_API_KEY)
+    # exits non-zero and logs an actionable message — not a silent crash.
+    local service_out
+    service_out=$(exec_in_container bash -c "
+        env HOME='${home_dir}' CT_NO_ASCII_LOGO=1 \
+            timeout 5 ct castellarius start 2>&1
+    " || true)
+    if ! echo "${service_out}" | grep -q 'ANTHROPIC_API_KEY'; then
+        return 1  # service did not log an actionable message about missing credentials
+    fi
+
+    return 0
+}
+
+# test_wrong_credentials verifies that a syntactically valid but rejected API
+# key paired with an expired OAuth token causes ct doctor to exit non-zero with
+# an actionable error string, and that the service exits non-zero with a
+# logged message containing "authentication failed".
+#
+# Given: ~/.cistern/env has a syntactically valid (but wrong) ANTHROPIC_API_KEY
+#        and ~/.claude/.credentials.json has an expired OAuth token
+# When:  ct doctor runs
+# Then:  exits non-zero with output containing an actionable error string
+# When:  ct castellarius start runs with the wrong token sourced from env
+# Then:  exits non-zero and the output contains "authentication failed"
+test_wrong_credentials() {
+    local home_dir="/tmp/cistern-test-wrong-creds"
+
+    # Given: isolated home directory, ct init succeeds.
+    exec_in_container bash -c "rm -rf '${home_dir}' && mkdir -p '${home_dir}'" || return 1
+    exec_in_container env HOME="${home_dir}" CT_NO_ASCII_LOGO=1 ct init \
+        >/dev/null 2>&1 || return 1
+
+    # Replace the default config with a minimal one (repos: []).
+    exec_in_container bash -c "
+        printf 'repos: []\nmax_cataractae: 2\nhandoff_token_threshold: 100000\n' \
+            > '${home_dir}/.cistern/cistern.yaml'
+    " || return 1
+
+    # Create cistern.db so doctor and the service can open it.
+    exec_in_container env HOME="${home_dir}" CT_NO_ASCII_LOGO=1 ct doctor --fix \
+        >/dev/null 2>&1 || true
+
+    # Write a syntactically valid but rejected ANTHROPIC_API_KEY.
+    exec_in_container bash -c \
+        "printf 'ANTHROPIC_API_KEY=sk-ant-test-invalid-key\n' \
+            > '${home_dir}/.cistern/env' && chmod 600 '${home_dir}/.cistern/env'" || return 1
+
+    # Write an expired OAuth credentials file (expiresAt=1000 = 1970-01-01).
+    exec_in_container bash -c "
+        mkdir -p '${home_dir}/.claude' &&
+        printf '{\"claudeAiOauth\":{\"accessToken\":\"sk-ant-test-invalid-key\",\"refreshToken\":\"invalid-refresh\",\"expiresAt\":1000}}\n' \
+            > '${home_dir}/.claude/.credentials.json' &&
+        chmod 600 '${home_dir}/.claude/.credentials.json'
+    " || return 1
+
+    # Then: ct doctor exits non-zero (expired OAuth token check fails).
+    local doctor_exit=0
+    exec_in_container env HOME="${home_dir}" CT_NO_ASCII_LOGO=1 ct doctor \
+        >/dev/null 2>&1 || doctor_exit=$?
+    if [[ "${doctor_exit}" -eq 0 ]]; then
+        return 1  # doctor should fail for expired OAuth token
+    fi
+
+    # Then: ct doctor output contains an actionable error string.
+    local doctor_out
+    doctor_out=$(exec_in_container env HOME="${home_dir}" CT_NO_ASCII_LOGO=1 \
+        ct doctor 2>&1 || true)
+    if ! echo "${doctor_out}" | grep -qiE 'expired|invalid token|authentication failed'; then
+        return 1  # doctor did not log an actionable error about the wrong credentials
+    fi
+
+    # Then: ct castellarius start exits non-zero with "authentication failed"
+    # when started with the expired OAuth token in place.
+    local service_out
+    service_out=$(exec_in_container bash -c "
+        set -a; source '${home_dir}/.cistern/env' 2>/dev/null || true; set +a
+        env HOME='${home_dir}' CT_NO_ASCII_LOGO=1 \
+            timeout 5 ct castellarius start 2>&1
+    " || true)
+    if ! echo "${service_out}" | grep -q 'authentication failed'; then
+        return 1  # service did not log 'authentication failed' for the expired/wrong token
+    fi
+
+    return 0
+}
+
 # ─── Runner ───────────────────────────────────────────────────────────────────
 
 # run_test calls a test function and records pass/fail.
@@ -277,6 +411,8 @@ main() {
     run_test "service_status helper queries systemd"                   test_service_status_helper
     run_test "fresh install: service active and ct doctor exits 0"     test_fresh_install
     run_test "upgrade: stale config survives ct init, service active"  test_upgrade
+    run_test "missing credentials: doctor fails naming env file; service logs error"  test_missing_credentials
+    run_test "wrong credentials: doctor fails; service exits with authentication failed" test_wrong_credentials
 
     printf '\nResults: %d passed, %d failed\n' "${PASS_COUNT}" "${FAIL_COUNT}"
 

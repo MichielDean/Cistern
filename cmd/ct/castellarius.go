@@ -17,6 +17,7 @@ import (
 	"github.com/MichielDean/cistern/internal/cataractae"
 	"github.com/MichielDean/cistern/internal/castellarius"
 	"github.com/MichielDean/cistern/internal/cistern"
+	"github.com/MichielDean/cistern/internal/oauth"
 	"github.com/MichielDean/cistern/internal/skills"
 	"github.com/spf13/cobra"
 )
@@ -46,6 +47,14 @@ its cataractae (implement → review → qa → merge) until delivered.
 The Castellarius runs until Ctrl-C. As long as work is in the cistern it will
 keep dispatching droplets into aqueducts automatically.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return fmt.Errorf("startup: home dir: %w", err)
+		}
+		if err := checkStartupCredentials(home); err != nil {
+			return err
+		}
+
 		cfgPath := resolveConfigPath()
 		cfg, err := aqueduct.ParseAqueductConfig(cfgPath)
 		if err != nil {
@@ -499,6 +508,19 @@ func resolveConfigPath() string {
 		return "cistern.yaml"
 	}
 	return filepath.Join(home, ".cistern", "cistern.yaml")
+}
+
+// checkStartupCredentials returns an actionable error if ANTHROPIC_API_KEY is
+// unset or the Claude OAuth token is expired, preventing silent startup failures.
+func checkStartupCredentials(home string) error {
+	if os.Getenv("ANTHROPIC_API_KEY") == "" {
+		return fmt.Errorf("ANTHROPIC_API_KEY not set — add it to ~/.cistern/env and source it before starting")
+	}
+	creds := oauth.Read(home)
+	if creds != nil && creds.ExpiresAt > 0 && time.Now().After(time.UnixMilli(creds.ExpiresAt)) {
+		return fmt.Errorf("authentication failed: Claude OAuth token is expired — run: ct doctor --fix")
+	}
+	return nil
 }
 
 // repoWorkerNames returns the configured aqueduct names for a repo,
