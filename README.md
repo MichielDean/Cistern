@@ -311,7 +311,7 @@ chmod 600 ~/.cistern/env
 
 The file is added to `~/.cistern/.gitignore` by `ct init` so it is never accidentally committed.
 
-`ct doctor` checks that the file exists, is chmod 600 (warning if world-readable), and that `ANTHROPIC_API_KEY` is set. `ct doctor --fix` creates a missing file and, in an interactive terminal, prompts for the key value.
+`ct doctor` checks that the file exists, is chmod 600 (warning if world-readable), and that each environment variable required by the configured provider(s) is set. For new installs without a config yet, it defaults to requiring `ANTHROPIC_API_KEY`. `ct doctor --fix` creates a missing file and, in an interactive terminal, prompts for the required key values.
 
 ## Configuration
 

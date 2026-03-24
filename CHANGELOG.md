@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### Startup credentials and doctor checks: provider-aware instead of hardcoded to Anthropic (ci-hhj3d)
+- `checkStartupCredentials()` in `cmd/ct/castellarius.go` now parses the aqueduct config and checks only the environment variables required by each configured repo's provider preset, instead of always requiring `ANTHROPIC_API_KEY`. Falls back to `ANTHROPIC_API_KEY` when no config exists (new-install path).
+- `startupRequiredEnvVars()` now uses a `resolved` flag to distinguish between "providers resolved but need zero env vars" (e.g., opencode provider) and "no providers resolved at all", fixing a bug where opencode users were incorrectly blocked on missing `ANTHROPIC_API_KEY` and expired Claude OAuth tokens.
+- `ct doctor` env-file checks now validate provider-specific environment variables instead of hardcoding `ANTHROPIC_API_KEY`: checks each variable listed in the provider preset's `EnvPassthrough`, e.g., `OPENAI_API_KEY` for codex, `GEMINI_API_KEY` for gemini. Falls back to `ANTHROPIC_API_KEY` when no config exists.
+- `ct doctor` extended checks now include: (1) provider binary presence for each configured repo, with install hints; (2) required env vars set for each configured preset; (3) provider-specific instructions file integrity (CLAUDE.md, AGENTS.md, or GEMINI.md based on the active provider).
+- Claude OAuth token expiry checks (in `doctor.go` and startup) are skipped or downgraded to informational when no configured repo uses the claude provider, eliminating false alarms for non-Claude setups.
+- Tests added: `TestStartupRequiredEnvVars_OpencodeConfig_ReturnsEmptyVarsNotClaude` ensures opencode providers return empty env vars and not-uses-Claude correctly; `TestDoctorEnvCheck_GeminiProvider_*` verifies gemini env-var checking; integration test coverage for both claude and non-claude providers.
+
 ### CI job: installer integration tests on relevant file changes (ci-l8phc)
 - Adds `.github/workflows/installer-integration-tests.yml` — a GitHub Actions workflow named `installer-integration-tests` that triggers on pull requests touching `**/doctor.go`, `**/init.go`, `**/start-castellarius.sh`, or `tests/installer/**`
 - Builds the Docker test image and runs the container-based test suite; job fails if any scenario fails (exit code propagates)
