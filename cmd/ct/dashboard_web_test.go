@@ -13,6 +13,7 @@ import (
 	"net/http/httptest"
 	"runtime"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -1072,4 +1073,50 @@ func readWSTextFrame(br *bufio.Reader) (string, error) {
 		return "", err
 	}
 	return string(payload), nil
+}
+
+// --- TestDashboardWebMux_EventsSSE_AdaptiveBackoff ---
+
+// TestDashboardWebMux_EventsSSE_AdaptiveBackoff_PollCountDropsWhenIdle asserts
+// that the SSE event stream backs off to the slow interval after observing a
+// consistently idle state — mirroring the assertion in
+// TestRunDashboard_AdaptiveRate_PollCountDropsWhenIdle.
+//
+// Given: a fetcher that always returns idle state (FlowingCount=0, hash unchanged)
+// When:  a client connects to /api/dashboard/events for ~600ms with fast=50ms, slow=250ms
+// Then:  total fetch count is well below window/fastInterval (adaptive backoff working)
+func TestDashboardWebMux_EventsSSE_AdaptiveBackoff_PollCountDropsWhenIdle(t *testing.T) {
+	var callCount int32
+	idleFetcher := func(cfg, db string) *DashboardData {
+		atomic.AddInt32(&callCount, 1)
+		return &DashboardData{FlowingCount: 0, FetchedAt: time.Now()}
+	}
+
+	mux := newDashboardMuxWith(tempCfg(t), tempDB(t), idleFetcher, 50*time.Millisecond, 250*time.Millisecond)
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	const window = 600 * time.Millisecond
+	ctx, cancel := context.WithTimeout(context.Background(), window)
+	defer cancel()
+
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, srv.URL+"/api/dashboard/events", nil)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil && ctx.Err() == nil {
+		t.Fatalf("GET /api/dashboard/events: %v", err)
+	}
+	if resp != nil {
+		io.Copy(io.Discard, resp.Body) //nolint:errcheck
+		resp.Body.Close()
+	}
+
+	n := int(atomic.LoadInt32(&callCount))
+	// Without backoff: initial (1) + ~12 fast polls = ~13 calls.
+	// With backoff:    initial (1) + 1 fast + ~2 slow = ~4 calls.
+	// Assert strictly fewer than half the "no-backoff" count.
+	maxFastPolls := int(window/(50*time.Millisecond)) + 1 // 13
+	halfMax := maxFastPolls / 2                           // 6
+	if n >= halfMax {
+		t.Errorf("SSE fetch count = %d, want < %d (SSE adaptive backoff not working)", n, halfMax)
+	}
 }

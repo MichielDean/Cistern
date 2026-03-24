@@ -293,6 +293,12 @@ func wsUpgrade(w http.ResponseWriter, r *http.Request) (net.Conn, *bufio.ReadWri
 // newDashboardMux returns an http.Handler for the web dashboard.
 // Exposed for testing.
 func newDashboardMux(cfgPath, dbPath string) http.Handler {
+	return newDashboardMuxWith(cfgPath, dbPath, fetchDashboardData, refreshInterval, idleRefreshInterval)
+}
+
+// newDashboardMuxWith returns an http.Handler for the web dashboard with
+// injectable fetcher and refresh intervals. Exposed for testing.
+func newDashboardMuxWith(cfgPath, dbPath string, fetch func(string, string) *DashboardData, fastInterval, slowInterval time.Duration) http.Handler {
 	mux := http.NewServeMux()
 
 	// Cache the executable path once at mux creation time rather than
@@ -320,7 +326,7 @@ func newDashboardMux(cfgPath, dbPath string) http.Handler {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
-		data := fetchDashboardData(cfgPath, dbPath)
+		data := fetch(cfgPath, dbPath)
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(data) //nolint:errcheck
 	})
@@ -338,14 +344,14 @@ func newDashboardMux(cfgPath, dbPath string) http.Handler {
 		}
 
 		// Initial send — establishes the hash baseline for adaptive rate.
-		data := fetchDashboardData(cfgPath, dbPath)
+		data := fetch(cfgPath, dbPath)
 		if b, err := json.Marshal(data); err == nil {
 			fmt.Fprintf(w, "data: %s\n\n", b)
 			flusher.Flush()
 		}
 		lastHash := dashboardStateHash(data)
 
-		ticker := time.NewTicker(refreshInterval)
+		ticker := time.NewTicker(fastInterval)
 		defer ticker.Stop()
 
 		for {
@@ -353,7 +359,7 @@ func newDashboardMux(cfgPath, dbPath string) http.Handler {
 			case <-r.Context().Done():
 				return
 			case <-ticker.C:
-				data = fetchDashboardData(cfgPath, dbPath)
+				data = fetch(cfgPath, dbPath)
 				newHash := dashboardStateHash(data)
 				if b, err := json.Marshal(data); err == nil {
 					fmt.Fprintf(w, "data: %s\n\n", b)
@@ -362,9 +368,9 @@ func newDashboardMux(cfgPath, dbPath string) http.Handler {
 				// Adaptive backoff: slow down when Castellarius is idle.
 				idle := newHash == lastHash && data.FlowingCount == 0
 				lastHash = newHash
-				next := refreshInterval
+				next := fastInterval
 				if idle {
-					next = idleRefreshInterval
+					next = slowInterval
 				}
 				ticker.Reset(next)
 			}

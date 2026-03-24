@@ -1901,6 +1901,22 @@ func TestDashboardStateHash_NilSafe(t *testing.T) {
 	}
 }
 
+// TestDashboardStateHash_ChangesWhenFarmRunningChanges verifies that a change
+// in FarmRunning produces a different hash. Without this, a Castellarius
+// start/stop while FlowingCount==0 is invisible to the idle detector and the
+// dashboard stays in the slow 5s backoff mode instead of switching back fast.
+//
+// Given: two DashboardData structs with identical counts but different FarmRunning
+// When:  dashboardStateHash is called on each
+// Then:  the hashes are different
+func TestDashboardStateHash_ChangesWhenFarmRunningChanges(t *testing.T) {
+	d1 := &DashboardData{FlowingCount: 0, FarmRunning: false}
+	d2 := &DashboardData{FlowingCount: 0, FarmRunning: true}
+	if dashboardStateHash(d1) == dashboardStateHash(d2) {
+		t.Error("FarmRunning change should produce different hashes")
+	}
+}
+
 // --- TestRunDashboard_AdaptiveRate ---
 
 // TestRunDashboard_AdaptiveRate_PollCountDropsWhenIdle asserts that the polling

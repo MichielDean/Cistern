@@ -238,7 +238,7 @@ func dashboardStateHash(d *DashboardData) string {
 		return ""
 	}
 	var b strings.Builder
-	fmt.Fprintf(&b, "%d/%d/%d", d.FlowingCount, d.QueuedCount, d.DoneCount)
+	fmt.Fprintf(&b, "%d/%d/%d/%v", d.FlowingCount, d.QueuedCount, d.DoneCount, d.FarmRunning)
 	for _, ch := range d.Cataractae {
 		fmt.Fprintf(&b, "|%s:%s:%s", ch.Name, ch.DropletID, ch.Step)
 	}
