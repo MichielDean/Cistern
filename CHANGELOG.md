@@ -19,6 +19,14 @@
 - SSE event stream handler in the web dashboard also implements adaptive backoff with the same pattern, refactored to use the same fetcher and interval injection as the TUI for consistency.
 - Adaptive backoff is transparent to the user: the dashboard remains as responsive as before when there is activity, and consumes less CPU when idle.
 
+### Web dashboard: keep TUI child process alive across WebSocket reconnects (ci-8akf7)
+- The `/ws/tui` WebSocket endpoint now maintains a singleton `ct dashboard` child process that persists across client disconnects, instead of spawning a new child per connection and killing it on disconnect
+- When a WebSocket client disconnects (network switch, screen lock, tab backgrounded, brief network hiccup), the child PTY and its running TUI state remain alive; a reconnecting client reattaches to the same process and sees continuous state
+- The PTY output is buffered in a ring buffer (last N lines configurable via `tuiOutputBufChunks`, default 100 chunks); reconnecting clients receive an immediate snapshot before live streaming resumes — no visual "restart" on reconnect
+- The child process restarts only if it actually exits (e.g., the TUI is exited by the user), not on every client disconnect
+- Spawn failures (missing `ct` binary, PTY allocation failure) are now logged with exponential backoff (500ms → 30s), preventing silent busy-wait loops on permanent failures
+- Architecture: `DashboardTUI` struct (initialized once at web-server startup) owns the child process lifecycle, PTY, and ring buffer; a broadcast loop forwards PTY output to all connected WebSocket clients; attach/detach operations are atomic to prevent snapshot-vs-live gaps
+
 ### Startup credentials and doctor checks: provider-aware instead of hardcoded to Anthropic (ci-hhj3d)
 - `checkStartupCredentials()` in `cmd/ct/castellarius.go` now parses the aqueduct config and checks only the environment variables required by each configured repo's provider preset, instead of always requiring `ANTHROPIC_API_KEY`. Falls back to `ANTHROPIC_API_KEY` when no config exists (new-install path).
 - `startupRequiredEnvVars()` now uses a `resolved` flag to distinguish between "providers resolved but need zero env vars" (e.g., opencode provider) and "no providers resolved at all", fixing a bug where opencode users were incorrectly blocked on missing `ANTHROPIC_API_KEY` and expired Claude OAuth tokens.
