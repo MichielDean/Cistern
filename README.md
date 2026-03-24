@@ -206,7 +206,7 @@ cataractae:
     context: full_codebase
 ```
 
-Valid values are any string accepted by the `claude` CLI (e.g. `sonnet`, `opus`, `haiku`, `claude-opus-4-6`). If `model:` is omitted, the agent uses its default. `ct doctor` validates that the value is a non-empty string when present.
+Valid values are any string accepted by the configured provider's CLI (e.g. `sonnet`, `opus`, `haiku`, `claude-opus-4-6` for `claude`). If `model:` is omitted, the agent uses the `provider.model:` default from `cistern.yaml`, or the CLI's own default if neither is set. `ct doctor` validates that the value is a non-empty string when present.
 
 ## Skills
 

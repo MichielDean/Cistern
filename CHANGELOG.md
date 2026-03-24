@@ -22,6 +22,14 @@
 - Fixes unbounded `io.ReadAll` on error response body in `refine.go` — wrapped with `io.LimitReader(resp.Body, 1<<20)` to cap at 1 MB
 - Fixes `ResolvePreset` fallback — replaced positional `builtins[0]` with an explicit `Name == "claude"` search so slice reordering cannot silently change the default
 
+### Provider-agnostic agent spawner in session.go (ci-sc2wl)
+- `session.go` now uses `ProviderPreset` to build agent commands — replaces the hardcoded Claude-specific `buildClaudeCmd` with a generic `buildPresetCmd` driven by preset fields (`Command`, `Args`, `AddDirFlag`, `ModelFlag`, `PromptFlag`)
+- `GH_TOKEN` is now always forwarded as a platform-level env var regardless of provider, fixing a regression where the preset=claude path silently dropped it (legacy path forwarded it; preset path only forwarded `ANTHROPIC_API_KEY`)
+- `provider.model:` in `cistern.yaml` now works correctly: `resolveModelVal` falls back to `preset.DefaultModel` when a step does not specify a model; previously the config option was a no-op
+- `PromptFlag` field added to `ProviderPreset` — prompt delivery is no longer hardcoded to `-p`; presets that use a different flag or deliver prompts via stdin/instructions file set `PromptFlag` to the correct value or leave it empty
+- Empty `Preset.Command` is now validated at spawn time with a descriptive error (`preset %q has no command configured`) instead of producing a broken tmux command string
+- `isAgentAlive()` added to `Session`: queries `pane_current_command` and checks it against `preset.ProcessNames`, enabling the Castellarius to detect zombie sessions (tmux alive, agent exited); conservatively returns true when `ProcessNames` is empty
+
 ### Test harness: fake provider binary + mock LLM HTTP server (ci-t3xo9)
 - Adds `internal/testutil/fakeagent` — a minimal Go binary that accepts the same flags as the `claude` CLI, reads the droplet ID from `CONTEXT.md`, sleeps 200 ms, then calls `ct droplet pass <id>`. Used in `session_test.go` to exercise the full `Spawn → isAlive → outcome` cycle without a real LLM CLI or API key.
 - Adds `internal/testutil/mockllm` — an `httptest.Server` that handles `POST /v1/messages` (Anthropic) and `POST /v1/chat/completions` (OpenAI-compatible). Returns a hardcoded `HardcodedProposalsJSON` payload; records all requests (method, path, headers, body) for test assertions. Both handlers return `405 Method Not Allowed` for non-POST requests.
