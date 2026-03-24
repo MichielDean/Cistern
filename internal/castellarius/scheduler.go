@@ -452,10 +452,8 @@ func (s *Castellarius) logStartupCredentials() {
 		s.logger.Info("startup credentials: env vars set", "vars", setVars)
 	}
 
-	// Check gh authentication status. Log success or warn on failure.
 	// gh auth status output is NOT logged (may contain token fragments).
-	ghAuthOk := exec.Command("gh", "auth", "status").Run() == nil
-	if ghAuthOk {
+	if exec.Command("gh", "auth", "status").Run() == nil {
 		s.logger.Info("startup credentials: gh authenticated")
 	} else {
 		s.logger.Warn("startup credentials: gh auth status failed — sessions may fail on GitHub operations")
@@ -1228,7 +1226,7 @@ func prepareDropletWorktreeWithLogger(logger *slog.Logger, primaryDir, sandboxRo
 		_ = abortMerge.Run()
 
 		logger.Info("git checkout",
-			"op", "checkout", "path", worktreePath, "branch", branch)
+			"path", worktreePath, "branch", branch)
 		checkout := exec.Command("git", "checkout", branch)
 		checkout.Dir = worktreePath
 		if out, err := checkout.CombinedOutput(); err != nil {
@@ -1250,7 +1248,7 @@ func prepareDropletWorktreeWithLogger(logger *slog.Logger, primaryDir, sandboxRo
 	}
 
 	// Fetch latest before creating.
-	logger.Info("git fetch", "op", "fetch", "dir", primaryDir)
+	logger.Info("git fetch", "dir", primaryDir)
 	fetch := exec.Command("git", "fetch", "origin")
 	fetch.Dir = primaryDir
 	if out, err := fetch.CombinedOutput(); err != nil {
