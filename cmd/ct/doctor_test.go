@@ -684,6 +684,52 @@ max_cataractae: 1
 	}
 }
 
+// TestRunDoctorExtendedChecks_UnknownProvider_FailsProviderCheck verifies that
+// when the configured provider name is unknown, the doctor reports a check
+// failure instead of silently defaulting to CLAUDE.md.
+func TestRunDoctorExtendedChecks_UnknownProvider_FailsProviderCheck(t *testing.T) {
+	home := t.TempDir()
+
+	cisternDir := filepath.Join(home, ".cistern")
+	aqueductDir := filepath.Join(cisternDir, "aqueduct")
+	for _, d := range []string{aqueductDir, filepath.Join(cisternDir, "cataractae"), filepath.Join(cisternDir, "skills")} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", d, err)
+		}
+	}
+
+	wfPath := filepath.Join(aqueductDir, "workflow.yaml")
+	if err := os.WriteFile(wfPath, []byte(minimalWorkflowYAML), 0o644); err != nil {
+		t.Fatalf("write workflow: %v", err)
+	}
+
+	unknownProviderConfigYAML := `repos:
+  - name: testrepo
+    url: https://github.com/example/testrepo
+    workflow_path: aqueduct/workflow.yaml
+    cataractae: 1
+    prefix: ct
+provider:
+  name: unknownprovider
+max_cataractae: 1
+`
+	cfgPath := filepath.Join(cisternDir, "cistern.yaml")
+	if err := os.WriteFile(cfgPath, []byte(unknownProviderConfigYAML), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	cfg, err := aqueduct.ParseAqueductConfig(cfgPath)
+	if err != nil {
+		t.Fatalf("parse config: %v", err)
+	}
+
+	dbPath := filepath.Join(cisternDir, "cistern.db")
+	result := runDoctorExtendedChecks(cfg, cfgPath, home, dbPath)
+	if result {
+		t.Error("expected extended checks to fail when provider name is unknown")
+	}
+}
+
 func TestRunDoctorExtendedChecks_FailsWhenWorkflowInvalid(t *testing.T) {
 	home := t.TempDir()
 

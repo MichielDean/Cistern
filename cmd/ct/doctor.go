@@ -210,6 +210,10 @@ func runDoctorExtendedChecks(cfg *aqueduct.AqueductConfig, cfgPath, home, dbPath
 		}
 
 		// Determine the active InstructionsFile for this repo's provider.
+		// If the provider name is unknown or invalid, report it as a check failure
+		// rather than silently defaulting to CLAUDE.md.
+		presErrCopy := presErr
+		ok = checkWithFix(fmt.Sprintf("provider: %s", repo.Name), func() error { return presErrCopy }, nil) && ok
 		instrFile := preset.InstrFile()
 
 		// Check 6: InstructionsFile integrity (deduplicated by identity across all repos).
