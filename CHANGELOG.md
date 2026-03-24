@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### Agent file compatibility: provider-appropriate instruction files (ci-5lmz1)
+- `ct cataractae generate` now writes the provider-specific instructions file (`CLAUDE.md` for claude, `AGENTS.md` for codex/copilot/opencode, `GEMINI.md` for gemini) — filename is determined by the active provider preset
+- When the active provider uses a different filename than `CLAUDE.md`, the new file is generated alongside any existing `CLAUDE.md` — `CLAUDE.md` is not deleted in case users switch providers
+- `ct doctor` warns when `CLAUDE.md` exists in a cataractae directory but the active provider uses a different instructions file — prevents silent staleness after a provider change
+- `ct doctor` reports a check failure when the configured provider name is unknown or invalid (e.g. a misspelling in `cistern.yaml`), instead of silently defaulting to checking `CLAUDE.md`
+- Providers without `--add-dir` support (codex, gemini, copilot, opencode) now receive the cataractae instructions file + `PERSONA.md` + `INSTRUCTIONS.md` + referenced skill content concatenated into the prompt preamble, enabling full agent compatibility across all providers
+- `SupportsAddDir` bool added to `ProviderPreset` — explicitly marks which providers support filesystem-based context injection; when `false`, Cistern falls back to prompt-text injection
+
 ### Refactor filtration: use provider preset for non-interactive LLM invocation (ci-4w2z0)
 - Removed `github.com/anthropics/anthropic-sdk-go` — filtration no longer calls the Anthropic API directly; it uses the same agent binary as cataractae
 - Added `NonInteractiveConfig` struct to `ProviderPreset` (fields: `Subcommand`, `PrintFlag`, `PromptFlag`) — describes how to invoke each agent CLI in single-shot (exec) mode

@@ -42,7 +42,7 @@ ct castellarius start
 
 # After rebuilding ct (go build), restart the Castellarius to pick up changes:
 # ct binary changes → restart required (long-running process uses old binary)
-# feature.yaml / CLAUDE.md / skills changes → no restart (read per spawn)
+# feature.yaml / CLAUDE.md / AGENTS.md / GEMINI.md / skills changes → no restart (read per spawn)
 
 # See the overall picture
 ct status
@@ -169,19 +169,19 @@ cataractae/
   implementer/
     PERSONA.md        # Who this cataractae is — role, guardrails (hand-authored, stable)
     INSTRUCTIONS.md   # Task protocol and steps (hand-authored)
-    CLAUDE.md         # Generated: concatenated from PERSONA.md + INSTRUCTIONS.md
+    CLAUDE.md         # Generated: concatenated from PERSONA.md + INSTRUCTIONS.md (filename depends on provider)
   reviewer/
   qa/
   ...
 ```
 
-`CLAUDE.md` is a generated artifact — edit `PERSONA.md` and `INSTRUCTIONS.md` directly and regenerate.
+The generated instructions file is a generated artifact — edit `PERSONA.md` and `INSTRUCTIONS.md` directly and regenerate. The filename matches the active provider: `CLAUDE.md` for claude, `AGENTS.md` for codex/copilot/opencode, `GEMINI.md` for gemini.
 
 ```bash
-ct cataractae add <name>            # Scaffold a new cataractae directory with template files; auto-generates CLAUDE.md
+ct cataractae add <name>            # Scaffold a new cataractae directory with template files; auto-generates the provider's instructions file
 ct cataractae list                  # See all cataractae definitions and how to edit them
-ct cataractae edit implementer      # Open INSTRUCTIONS.md in $EDITOR, save, CLAUDE.md regenerates
-ct cataractae generate              # Regenerate all CLAUDE.md files from source files
+ct cataractae edit implementer      # Open INSTRUCTIONS.md in $EDITOR, save, instructions file regenerates
+ct cataractae generate              # Regenerate provider instructions files (CLAUDE.md, AGENTS.md, or GEMINI.md) from source files
 ct cataractae status                # Show which cataractae are actively processing droplets
 ```
 
@@ -210,7 +210,7 @@ Valid values are any string accepted by the configured provider's CLI (e.g. `son
 
 ## Skills
 
-Skills are reusable knowledge packages injected into cataractae via `--add-dir`. They keep cataractae prompts concise by factoring out shared conventions.
+Skills are reusable knowledge packages injected into cataractae at spawn time. Providers with `--add-dir` support (`claude`) receive skills via filesystem injection; providers without it (codex, gemini, copilot, opencode) receive skill content as text in the prompt preamble. Either way, skills keep cataractae prompts concise by factoring out shared conventions.
 
 ```bash
 ct skills install <name> <url>   Install a skill from a URL
@@ -267,7 +267,7 @@ drought_hooks:
 | Action | What it does |
 |---|---|
 | `git_sync` | Fetches `origin/main` and deploys `aqueduct.yaml` + `cataractae/<role>/PERSONA.md` + `cataractae/<role>/INSTRUCTIONS.md` to `~/.cistern/`. Skips files that are already up to date. |
-| `cataractae_generate` | Regenerates `CLAUDE.md` for each cataractae from its `PERSONA.md` + `INSTRUCTIONS.md`. Run after `git_sync` to pick up new source files. |
+| `cataractae_generate` | Regenerates the provider-specific instructions file (`CLAUDE.md`, `AGENTS.md`, or `GEMINI.md`) for each cataractae from its `PERSONA.md` + `INSTRUCTIONS.md`. Run after `git_sync` to pick up new source files. |
 | `worktree_prune` | Runs `git worktree prune` on each repo's primary clone to remove stale worktree registrations. |
 | `db_vacuum` | Compacts the SQLite cistern database. |
 | `shell` | Runs an arbitrary shell command. Use for custom maintenance. |
@@ -327,13 +327,13 @@ Cistern supports multiple agent CLIs through a provider preset system. Configure
 
 **Built-in presets:**
 
-| Name | CLI | Env variable required |
-|---|---|---|
-| `claude` *(default)* | `claude` | `ANTHROPIC_API_KEY` |
-| `codex` | `codex` | `OPENAI_API_KEY` |
-| `gemini` | `gemini` | `GEMINI_API_KEY` |
-| `copilot` | `copilot` | `GH_TOKEN` |
-| `opencode` | `opencode` | — |
+| Name | CLI | Env variable required | Instructions file |
+|---|---|---|---|
+| `claude` *(default)* | `claude` | `ANTHROPIC_API_KEY` | `CLAUDE.md` |
+| `codex` | `codex` | `OPENAI_API_KEY` | `AGENTS.md` |
+| `gemini` | `gemini` | `GEMINI_API_KEY` | `GEMINI.md` |
+| `copilot` | `copilot` | `GH_TOKEN` | `AGENTS.md` |
+| `opencode` | `opencode` | — | `AGENTS.md` |
 
 **Top-level provider (applies to all repos):**
 
@@ -468,11 +468,11 @@ ct droplet issue resolve <issue-id> --evidence "..."              Resolve with p
 ct droplet issue reject <issue-id> --evidence "..."               Reject as still present (reviewer only)
 
 # Cataractae — manage cataractae definitions
-ct cataractae add <name>             Scaffold a new cataractae directory with PERSONA.md and INSTRUCTIONS.md; auto-generates CLAUDE.md
+ct cataractae add <name>             Scaffold a new cataractae directory with PERSONA.md and INSTRUCTIONS.md; auto-generates the provider's instructions file
 ct cataractae list                   See all cataractae definitions
 ct cataractae status                 Show which cataractae are active and what they're processing
 ct cataractae edit <cataractae>       Edit cataractae definition in $EDITOR
-ct cataractae generate               Regenerate CLAUDE.md files from source files
+ct cataractae generate               Regenerate provider instructions files (CLAUDE.md/AGENTS.md/GEMINI.md) from source files
 
 # Skills — manage cataractae skills
 ct skills install <name> <url>       Install a skill from a URL
@@ -482,7 +482,7 @@ ct skills update                     Re-fetch all skills
 ct skills remove <name>              Remove a skill
 
 # Utilities
-ct doctor                      Full health check (prerequisites, config, CLAUDE.md integrity, skills)
+ct doctor                      Full health check (prerequisites, config, instructions file integrity, skills)
 ct doctor --fix                Auto-repair common issues
 ct version                     Print version string
 ct version --json              Machine-readable: {"version":"...","commit":"..."}
