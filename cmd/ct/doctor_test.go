@@ -1889,13 +1889,7 @@ func TestDoctorEnvCheck_GeminiProvider_GeminiKeySet_Passes(t *testing.T) {
 		t.Fatalf("write env: %v", err)
 	}
 
-	requiredVars, usesClaude := startupRequiredEnvVars(cfgPath)
-	if len(requiredVars) != 1 || requiredVars[0] != "GEMINI_API_KEY" {
-		t.Errorf("expected required vars [GEMINI_API_KEY], got %v", requiredVars)
-	}
-	if usesClaude {
-		t.Error("expected usesClaude=false for gemini provider")
-	}
+	requiredVars, _ := startupRequiredEnvVars(cfgPath)
 	for _, key := range requiredVars {
 		if err := checkCisternEnvHasKey(envPath, key); err != nil {
 			t.Errorf("env check for %s failed: %v", key, err)

@@ -541,33 +541,36 @@ func checkStartupCredentials(home, cfgPath string) error {
 // ["ANTHROPIC_API_KEY"] and usesClaude=true as a safe default so that existing
 // setups without a config continue to work.
 func startupRequiredEnvVars(cfgPath string) (requiredVars []string, usesClaude bool) {
-	if cfgPath != "" {
-		if cfg, err := aqueduct.ParseAqueductConfig(cfgPath); err == nil {
-			seen := map[string]bool{}
-			resolved := false
-			for _, repo := range cfg.Repos {
-				preset, presErr := cfg.ResolveProvider(repo.Name)
-				if presErr != nil {
-					continue
-				}
-				resolved = true
-				if preset.Name == "claude" {
-					usesClaude = true
-				}
-				for _, envVar := range preset.EnvPassthrough {
-					if !seen[envVar] {
-						seen[envVar] = true
-						requiredVars = append(requiredVars, envVar)
-					}
-				}
-			}
-			if resolved {
-				return requiredVars, usesClaude
+	if cfgPath == "" {
+		return []string{"ANTHROPIC_API_KEY"}, true
+	}
+	cfg, err := aqueduct.ParseAqueductConfig(cfgPath)
+	if err != nil {
+		return []string{"ANTHROPIC_API_KEY"}, true
+	}
+	seen := map[string]bool{}
+	resolved := false
+	for _, repo := range cfg.Repos {
+		preset, presErr := cfg.ResolveProvider(repo.Name)
+		if presErr != nil {
+			continue
+		}
+		resolved = true
+		if preset.Name == "claude" {
+			usesClaude = true
+		}
+		for _, envVar := range preset.EnvPassthrough {
+			if !seen[envVar] {
+				seen[envVar] = true
+				requiredVars = append(requiredVars, envVar)
 			}
 		}
 	}
-	// Fallback: no config or no repos resolved — default to claude.
-	return []string{"ANTHROPIC_API_KEY"}, true
+	if !resolved {
+		// No repos resolved (empty list or all failed) — default to claude.
+		return []string{"ANTHROPIC_API_KEY"}, true
+	}
+	return requiredVars, usesClaude
 }
 
 // repoWorkerNames returns the configured aqueduct names for a repo,
