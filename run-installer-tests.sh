@@ -155,9 +155,6 @@ test_fresh_install() {
 
     # Given: isolated, empty home directory — no .cistern present.
     exec_in_container bash -c "rm -rf '${home_dir}' && mkdir -p '${home_dir}'" || return 1
-    if exec_in_container test -d "${home_dir}/.cistern" 2>/dev/null; then
-        return 1  # pre-condition violated: .cistern must not exist before init
-    fi
 
     # When: ct init bootstraps the installation.
     exec_in_container env HOME="${home_dir}" CT_NO_ASCII_LOGO=1 ct init \
