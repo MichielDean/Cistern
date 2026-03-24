@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### Arch renderer: static pixel map + semantic color roles (ci-mj0h3)
+- Replaces the inline switch-case arch-shape logic with a static `archPixelMap` (`[14][28]rune`) — pillar shape is now compiler-enforced and visually readable in source
+- Extracts named color-role variables (`archRoleBackground`, `archRoleEdge`, `archRoleIdle`, `archRoleActive`, `archRoleDrought`, `archRoleChannelWall`, `archRoleWaterBright/Mid/Dim`) replacing scattered inline hex literals — palette is now easy to retheme from one place
+- Introduces `archPillarW = 28` / `archPillarH = 14` constants; removes duplicate local `pillarW = 28` from `tuiAqueductRow`, eliminating a silent-divergence hazard
+- Visual output of `ct dashboard` is unchanged — color roles match the previously inlined values exactly
+
 ### Agent file compatibility: provider-appropriate instruction files (ci-5lmz1)
 - `ct cataractae generate` now writes the provider-specific instructions file (`CLAUDE.md` for claude, `AGENTS.md` for codex/copilot/opencode, `GEMINI.md` for gemini) — filename is determined by the active provider preset
 - When the active provider uses a different filename than `CLAUDE.md`, the new file is generated alongside any existing `CLAUDE.md` — `CLAUDE.md` is not deleted in case users switch providers
