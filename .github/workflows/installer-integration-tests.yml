@@ -26,6 +26,7 @@ jobs:
     # Docker are not available to forked PRs.
     if: github.event.pull_request.head.repo.full_name == github.repository
     runs-on: [self-hosted, linux, x64]
+    timeout-minutes: 15
 
     env:
       # Unique names per run to avoid collisions on shared self-hosted runners.
@@ -36,7 +37,7 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           fetch-depth: 0
-          persist-credentials: true
+          persist-credentials: false
 
       - name: Build installer test image
         # CISTERN_TEST_IMAGE overrides the default tag so concurrent runs on the
@@ -55,8 +56,9 @@ jobs:
           # Capture output while preserving run-tests.sh exit code.
           # The script exits 0 on full pass, 1 if any test fails.
           set +e
+          OUTPUT_FILE="/tmp/installer-test-output-${GITHUB_RUN_ID}.txt"
           docker exec "${CONTAINER_NAME}" /usr/local/bin/run-tests.sh \
-            | tee /tmp/installer-test-output.txt
+            | tee "${OUTPUT_FILE}"
           TEST_EXIT_CODE=${PIPESTATUS[0]}
           set -e
 
@@ -69,7 +71,7 @@ jobs:
               detail="${line#\[FAIL\] }"
               echo "::error::${detail}"
             fi
-          done < /tmp/installer-test-output.txt
+          done < "${OUTPUT_FILE}"
 
           exit ${TEST_EXIT_CODE}
 
