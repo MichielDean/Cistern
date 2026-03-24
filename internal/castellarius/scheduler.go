@@ -463,6 +463,15 @@ func (s *Castellarius) logStartupCredentials(ctx context.Context) {
 	}
 }
 
+// addNote writes a note via client.AddNote and logs a warning if the write fails.
+// Used throughout dispatch, recovery, and observe paths where AddNote failure
+// should not derail the primary operation.
+func (s *Castellarius) addNote(client CisternClient, dropletID, source, msg string) {
+	if err := client.AddNote(dropletID, source, msg); err != nil {
+		s.logger.Warn("AddNote failed", "droplet", dropletID, "source", source, "error", err)
+	}
+}
+
 // purgeOldItems deletes closed/escalated items older than retention_days across all repos.
 func (s *Castellarius) purgeOldItems() {
 	retentionDays := s.config.RetentionDays
@@ -650,9 +659,7 @@ func (s *Castellarius) observeRepo(_ context.Context, repo aqueduct.RepoConfig) 
 					)
 					s.logger.Warn("Phantom commit detected — recirculating to implement",
 						"droplet", item.ID, "commit", lastCommit)
-					if noteErr := client.AddNote(item.ID, "scheduler", note); noteErr != nil {
-						s.logger.Warn("scheduler: AddNote failed", "droplet", item.ID, "error", noteErr)
-					}
+					s.addNote(client, item.ID, "scheduler", note)
 					if err := client.Assign(item.ID, "", "implement"); err != nil {
 						s.logger.Error("observe: phantom commit recirculate failed", "droplet", item.ID, "error", err)
 					}
@@ -831,10 +838,8 @@ func (s *Castellarius) dispatchRepo(ctx context.Context, repo aqueduct.RepoConfi
 					s.logger.Error("dirty check: git status failed — recirculating conservatively",
 						"droplet", req.Item.ID, "error", dirtyErr)
 					s.dispatchLoop.recordFailure(req.Item.ID)
-					if noteErr := client.AddNote(req.Item.ID, "scheduler",
-						fmt.Sprintf("Dispatch blocked: could not check worktree state: %v", dirtyErr)); noteErr != nil {
-						s.logger.Warn("scheduler: AddNote failed", "droplet", req.Item.ID, "error", noteErr)
-					}
+					s.addNote(client, req.Item.ID, "scheduler",
+						fmt.Sprintf("Dispatch blocked: could not check worktree state: %v", dirtyErr))
 					if err2 := client.Assign(req.Item.ID, "", req.Step.Name); err2 != nil {
 						s.logger.Error("reset after dirty-check error", "droplet", req.Item.ID, "error", err2)
 					}
@@ -852,9 +857,7 @@ func (s *Castellarius) dispatchRepo(ctx context.Context, repo aqueduct.RepoConfi
 						"files", dirtyFiles,
 					)
 					s.dispatchLoop.recordFailure(req.Item.ID)
-					if noteErr := client.AddNote(req.Item.ID, "scheduler", note); noteErr != nil {
-						s.logger.Warn("scheduler: AddNote failed", "droplet", req.Item.ID, "error", noteErr)
-					}
+					s.addNote(client, req.Item.ID, "scheduler", note)
 					if err2 := client.Assign(req.Item.ID, "", req.Step.Name); err2 != nil {
 						s.logger.Error("reset after dirty check", "droplet", req.Item.ID, "error", err2)
 					}
