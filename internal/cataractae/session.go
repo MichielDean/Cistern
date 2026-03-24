@@ -172,7 +172,7 @@ func (s *Session) buildClaudeCmd(skillsDir string) string {
 	prompt := strings.ReplaceAll(s.buildPrompt(), "'", `'\''`)
 	var flagsStr string
 	if s.Model != "" {
-		flagsStr = "--model " + s.Model + " "
+		flagsStr = "--model " + shellQuote(s.Model) + " "
 	}
 	return fmt.Sprintf("%s --dangerously-skip-permissions --add-dir %s %s-p '%s'",
 		claudePathFn(), shellQuote(skillsDir), flagsStr, prompt)
@@ -209,7 +209,7 @@ func (s *Session) buildPresetCmd(preset provider.ProviderPreset, skillsDir strin
 	}
 
 	if s.Model != "" && preset.ModelFlag != "" {
-		parts = append(parts, preset.ModelFlag, s.Model)
+		parts = append(parts, preset.ModelFlag, shellQuote(s.Model))
 	}
 
 	if preset.PromptFlag != "" {
@@ -239,7 +239,7 @@ func (s *Session) buildContinueCmd(preset provider.ProviderPreset, skillsDir str
 	}
 
 	if s.Model != "" && preset.ModelFlag != "" {
-		parts = append(parts, preset.ModelFlag, s.Model)
+		parts = append(parts, preset.ModelFlag, shellQuote(s.Model))
 	}
 
 	parts = append(parts, preset.ContinueFlag)

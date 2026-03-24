@@ -49,8 +49,8 @@ func TestBuildClaudeCmd_QuotesPathWithSpaces(t *testing.T) {
 func TestBuildClaudeCmd_WithModel(t *testing.T) {
 	s := &Session{ID: "test", WorkDir: "/tmp", Model: "haiku"}
 	cmd := s.buildClaudeCmd("/home/user/.cistern/skills")
-	if !strings.Contains(cmd, "--model haiku") {
-		t.Errorf("claudeCmd missing --model flag: %s", cmd)
+	if !strings.Contains(cmd, "--model 'haiku'") {
+		t.Errorf("claudeCmd missing shell-quoted --model flag: %s", cmd)
 	}
 }
 
@@ -701,6 +701,56 @@ func TestIsAgentAlive_TmuxError_ReturnsFalse(t *testing.T) {
 	}
 	if s.isAgentAlive() {
 		t.Error("isAgentAlive() = true, want false when tmux command errors")
+	}
+}
+
+// TestBuildPresetCmd_ModelWithSpaces_IsShellQuoted verifies that a model value
+// containing spaces is shell-quoted before being interpolated into the tmux
+// command string. An unquoted model with spaces would split in /bin/sh -c.
+func TestBuildPresetCmd_ModelWithSpaces_IsShellQuoted(t *testing.T) {
+	s := &Session{ID: "test", WorkDir: "/tmp", Model: "claude opus 4.6"}
+	preset := provider.ProviderPreset{
+		Name:      "myagent",
+		Command:   "myagent",
+		ModelFlag: "--model",
+	}
+	cmd, err := s.buildPresetCmd(preset, "/skills")
+	if err != nil {
+		t.Fatalf("buildPresetCmd: %v", err)
+	}
+	// Unquoted form must not appear — it would split at spaces in the shell.
+	if strings.Contains(cmd, "--model claude opus") {
+		t.Errorf("buildPresetCmd contains unquoted model with space — will break shell: %s", cmd)
+	}
+	// Shell-quoted form must be present.
+	want := "--model 'claude opus 4.6'"
+	if !strings.Contains(cmd, want) {
+		t.Errorf("buildPresetCmd missing shell-quoted model\nwant substring: %s\ngot: %s", want, cmd)
+	}
+}
+
+// TestBuildContinueCmd_ModelWithSpaces_IsShellQuoted verifies that a model value
+// containing spaces is shell-quoted in buildContinueCmd, consistent with buildPresetCmd.
+func TestBuildContinueCmd_ModelWithSpaces_IsShellQuoted(t *testing.T) {
+	s := &Session{ID: "test", WorkDir: "/tmp", Model: "claude opus 4.6"}
+	preset := provider.ProviderPreset{
+		Name:         "myagent",
+		Command:      "myagent",
+		ModelFlag:    "--model",
+		ContinueFlag: "--continue",
+	}
+	cmd, err := s.buildContinueCmd(preset, "/skills")
+	if err != nil {
+		t.Fatalf("buildContinueCmd: %v", err)
+	}
+	// Unquoted form must not appear.
+	if strings.Contains(cmd, "--model claude opus") {
+		t.Errorf("buildContinueCmd contains unquoted model with space — will break shell: %s", cmd)
+	}
+	// Shell-quoted form must be present.
+	want := "--model 'claude opus 4.6'"
+	if !strings.Contains(cmd, want) {
+		t.Errorf("buildContinueCmd missing shell-quoted model\nwant substring: %s\ngot: %s", want, cmd)
 	}
 }
 

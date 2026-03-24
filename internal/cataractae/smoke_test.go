@@ -184,7 +184,7 @@ func TestProviderCommandStrings(t *testing.T) {
 				if err != nil {
 					t.Fatalf("buildPresetCmd error: %v", err)
 				}
-				wantModelSubstr := tt.wantModelFlag + " test-model"
+				wantModelSubstr := tt.wantModelFlag + " 'test-model'"
 				if !strings.Contains(cmdWithModel, wantModelSubstr) {
 					t.Errorf("cmd missing model flag %q:\n  got: %s", wantModelSubstr, cmdWithModel)
 				}
