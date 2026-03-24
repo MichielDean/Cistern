@@ -2,6 +2,8 @@ package main
 
 import (
 	"fmt"
+	"os"
+	"os/exec"
 	"strings"
 	"time"
 
@@ -10,6 +12,19 @@ import (
 
 	"github.com/MichielDean/cistern/internal/cistern"
 )
+
+// insideTmux reports whether the process is running inside a tmux session.
+// Replaced in tests to control environment without requiring a real tmux session.
+var insideTmux = func() bool {
+	return os.Getenv("TMUX") != ""
+}
+
+// tmuxNewWindowFunc opens a new tmux window attaching read-only to the named session.
+// Replaced in tests to capture the call without running tmux.
+var tmuxNewWindowFunc = func(dropletID, session string) error {
+	attachCmd := "tmux attach-session -t " + session + " -r"
+	return exec.Command("tmux", "new-window", "-n", "peek:"+dropletID, attachCmd).Run()
+}
 
 // --- Lip Gloss styles ---
 
@@ -89,17 +104,33 @@ func activeAqueducts(cataractae []CataractaeInfo) []CataractaeInfo {
 	return active
 }
 
-// openPeekOn transitions the model into peek mode for the given aqueduct.
-func (m dashboardTUIModel) openPeekOn(ch CataractaeInfo) dashboardTUIModel {
+// openPeekOn transitions to peek mode for the given aqueduct, returning the
+// updated model and a tea.Cmd to execute. When running inside a tmux session,
+// a new tmux window is opened for live attach and the dashboard continues
+// running undisturbed. When not inside tmux, the inline capture-pane overlay
+// is used as a fallback.
+func (m dashboardTUIModel) openPeekOn(ch CataractaeInfo) (dashboardTUIModel, tea.Cmd) {
 	session := ch.RepoName + "-" + ch.Name
-	header := fmt.Sprintf("[%s] %s — flowing %s", ch.DropletID, ch.Step, formatElapsed(ch.Elapsed))
+
+	if insideTmux() {
+		// Spawn a new tmux window for live read-only attach; dashboard stays open.
+		dropletID := ch.DropletID
+		return m, func() tea.Msg {
+			_ = tmuxNewWindowFunc(dropletID, session)
+			return nil
+		}
+	}
+
+	// Not inside tmux: fall back to inline capture-pane peek overlay.
+	header := fmt.Sprintf("[%s] %s — flowing %s\nnot inside tmux — for live view: tmux attach-session -t %s -r",
+		ch.DropletID, ch.Step, formatElapsed(ch.Elapsed), session)
 	pk := newPeekModel(defaultCapturer, session, header, 0)
 	pk.width = m.width
 	pk.height = m.height
 	m.peek = pk
 	m.peekActive = true
 	m.peekSelectMode = false
-	return m
+	return m, m.peek.Init()
 }
 
 func (m dashboardTUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -170,8 +201,9 @@ func (m dashboardTUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			case "enter":
 				if m.peekSelectIndex < len(active) {
-					m = m.openPeekOn(active[m.peekSelectIndex])
-					return m, m.peek.Init()
+					var cmd tea.Cmd
+					m, cmd = m.openPeekOn(active[m.peekSelectIndex])
+					return m, cmd
 				}
 			}
 			return m, nil
@@ -227,8 +259,9 @@ func (m dashboardTUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				active := activeAqueducts(m.data.Cataractae)
 				switch {
 				case len(active) == 1:
-					m = m.openPeekOn(active[0])
-					return m, m.peek.Init()
+					var cmd tea.Cmd
+					m, cmd = m.openPeekOn(active[0])
+					return m, cmd
 				case len(active) > 1:
 					m.peekSelectMode = true
 					m.peekSelectIndex = 0

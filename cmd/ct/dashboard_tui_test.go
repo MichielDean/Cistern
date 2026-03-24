@@ -3,7 +3,75 @@ package main
 import (
 	"strings"
 	"testing"
+
+	tea "github.com/charmbracelet/bubbletea"
 )
+
+// TestDashboard_PeekKey_InTmux_SpawnsNewWindow verifies that when 'p' is pressed
+// inside a tmux session with one active aqueduct, a new tmux window is spawned
+// targeting the correct session rather than opening the inline peek overlay.
+//
+// Given: a dashboard model with one active aqueduct (Name="virgo", RepoName="myrepo",
+//
+//	DropletID="ci-test01") and insideTmux() returning true
+//
+// When:  the 'p' key is pressed and the returned tea.Cmd is executed
+// Then:  tmuxNewWindowFunc is called with dropletID="ci-test01" and session="myrepo-virgo",
+//
+//	and peekActive remains false (dashboard is not interrupted)
+func TestDashboard_PeekKey_InTmux_SpawnsNewWindow(t *testing.T) {
+	// Inject insideTmux to simulate running inside a tmux session.
+	origInsideTmux := insideTmux
+	insideTmux = func() bool { return true }
+	defer func() { insideTmux = origInsideTmux }()
+
+	// Capture the new-window call.
+	var gotDropletID, gotSession string
+	origNewWindow := tmuxNewWindowFunc
+	tmuxNewWindowFunc = func(dropletID, session string) error {
+		gotDropletID = dropletID
+		gotSession = session
+		return nil
+	}
+	defer func() { tmuxNewWindowFunc = origNewWindow }()
+
+	// Build a dashboard model with one active aqueduct.
+	m := newDashboardTUIModel("", "")
+	m.data = &DashboardData{
+		Cataractae: []CataractaeInfo{
+			{
+				Name:      "virgo",
+				RepoName:  "myrepo",
+				DropletID: "ci-test01",
+				Step:      "implement",
+				Steps:     []string{"implement", "review"},
+			},
+		},
+	}
+
+	// Press 'p' to trigger peek.
+	updatedModel, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'p'}})
+
+	// Execute the returned cmd to trigger tmuxNewWindowFunc.
+	if cmd != nil {
+		cmd()
+	}
+
+	// The dashboard should NOT have entered inline peek mode.
+	um := updatedModel.(dashboardTUIModel)
+	if um.peekActive {
+		t.Error("peekActive should be false when spawning a new tmux window")
+	}
+
+	// Verify the new-window was called with the correct identifiers.
+	if gotDropletID != "ci-test01" {
+		t.Errorf("tmuxNewWindowFunc dropletID = %q, want %q", gotDropletID, "ci-test01")
+	}
+	wantSession := "myrepo-virgo"
+	if gotSession != wantSession {
+		t.Errorf("tmuxNewWindowFunc session = %q, want %q", gotSession, wantSession)
+	}
+}
 
 // TestTuiAqueductRow_WaterfallIndex_WidePoolRowsAtBottom verifies that when a
 // droplet is on the final step the wide-pool waterfall rows (containing "≈")

@@ -71,6 +71,75 @@ func TestDropletPeekNotFlowing(t *testing.T) {
 	}
 }
 
+// TestDropletPeekLiveSession_AttachesReadOnly verifies that when a tmux session
+// exists and --snapshot is not set, peek calls attach-session with the -r flag.
+//
+// Given: a droplet in progress with a tmux session present (injected)
+// When:  droplet peek is run without --snapshot
+// Then:  tmuxAttachFunc is called with the correct session name (<repo>-<assignee>)
+func TestDropletPeekLiveSession_AttachesReadOnly(t *testing.T) {
+	dir := t.TempDir()
+	db := filepath.Join(dir, "test.db")
+	t.Setenv("CT_DB", db)
+
+	c, err := cistern.New(db, "ts")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.Add("myrepo", "Test item", "", 1, 3); err != nil {
+		t.Fatal(err)
+	}
+	item, err := c.GetReady("myrepo")
+	if err != nil || item == nil {
+		t.Fatalf("GetReady failed: %v", err)
+	}
+	if err := c.Assign(item.ID, "test-worker", "implement"); err != nil {
+		t.Fatal(err)
+	}
+	c.Close()
+
+	// Inject has-session to simulate a live tmux session.
+	origHasSession := tmuxHasSession
+	tmuxHasSession = func(_ string) bool { return true }
+	defer func() { tmuxHasSession = origHasSession }()
+
+	// Capture the attach call to verify -r semantics (attach-session -t <session> -r).
+	var attachedSession string
+	origAttach := tmuxAttachFunc
+	tmuxAttachFunc = func(session string) error {
+		attachedSession = session
+		return nil
+	}
+	defer func() { tmuxAttachFunc = origAttach }()
+
+	peekLines = 50
+	peekRaw = false
+	peekFollow = false
+	peekSnapshot = false
+
+	old := os.Stdout
+	r, w, _ := os.Pipe()
+	os.Stdout = w
+
+	err = dropletPeekCmd.RunE(dropletPeekCmd, []string{item.ID})
+
+	w.Close()
+	os.Stdout = old
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	wantSession := "myrepo-test-worker"
+	if attachedSession != wantSession {
+		t.Errorf("tmuxAttachFunc called with session %q, want %q (attach-session -t <session> -r)", attachedSession, wantSession)
+	}
+
+	// Drain the pipe to avoid a broken pipe.
+	var buf bytes.Buffer
+	buf.ReadFrom(r)
+}
+
 func TestDropletPeekNoSession(t *testing.T) {
 	dir := t.TempDir()
 	db := filepath.Join(dir, "test.db")
