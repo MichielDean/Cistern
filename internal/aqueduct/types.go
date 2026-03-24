@@ -179,6 +179,24 @@ type RateLimitConfig struct {
 	Window string `yaml:"window"`
 }
 
+// LLMConfig configures the LLM API backend used for AI-assisted Cistern
+// features such as ct droplet add --filter. This is separate from the agent
+// CLI provider (Provider), which controls interactive agent sessions.
+type LLMConfig struct {
+	// Provider is the LLM API provider name.
+	// Known values: "anthropic", "openai", "openrouter", "ollama", "custom".
+	// Defaults to "anthropic" when omitted.
+	Provider string `yaml:"provider,omitempty"`
+	// BaseURL overrides the provider's default API base URL.
+	// Required when Provider is "custom".
+	BaseURL string `yaml:"base_url,omitempty"`
+	// Model overrides the provider's default model.
+	Model string `yaml:"model,omitempty"`
+	// APIKeyEnv is the environment variable name holding the API key.
+	// When empty, the provider's standard key variable is used.
+	APIKeyEnv string `yaml:"api_key_env,omitempty"`
+}
+
 // AqueductConfig is the top-level configuration for a Cistern instance.
 type AqueductConfig struct {
 	Repos                 []RepoConfig     `yaml:"repos"`
@@ -201,4 +219,7 @@ type AqueductConfig struct {
 	// may override this with their own provider block.
 	// When omitted, the "claude" built-in preset is used.
 	Provider              *ProviderConfig  `yaml:"provider,omitempty"`
+	// LLM configures the LLM API backend for AI-assisted features such as
+	// ct droplet add --filter. When omitted, the default anthropic preset is used.
+	LLM                   *LLMConfig       `yaml:"llm,omitempty"`
 }

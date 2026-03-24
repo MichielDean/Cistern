@@ -302,6 +302,73 @@ const minimalCisternConfigYAML = `repos:
 max_cataractae: 1
 `
 
+// minimalCisternConfigWithCodexYAML is a valid config using the codex provider (InstructionsFile=AGENTS.md).
+const minimalCisternConfigWithCodexYAML = `repos:
+  - name: testrepo
+    url: https://github.com/example/testrepo
+    workflow_path: aqueduct/workflow.yaml
+    cataractae: 1
+    prefix: ct
+provider:
+  name: codex
+max_cataractae: 1
+`
+
+// minimalCisternConfigWithCustomLLMYAML is a config with llm.provider=custom and no base_url set.
+const minimalCisternConfigWithCustomLLMYAML = `repos:
+  - name: testrepo
+    url: https://github.com/example/testrepo
+    workflow_path: aqueduct/workflow.yaml
+    cataractae: 1
+    prefix: ct
+max_cataractae: 1
+llm:
+  provider: custom
+`
+
+// minimalCisternConfigWithCustomLLMAndBaseURLYAML is a config with llm.provider=custom and base_url set.
+const minimalCisternConfigWithCustomLLMAndBaseURLYAML = `repos:
+  - name: testrepo
+    url: https://github.com/example/testrepo
+    workflow_path: aqueduct/workflow.yaml
+    cataractae: 1
+    prefix: ct
+max_cataractae: 1
+llm:
+  provider: custom
+  base_url: https://llm.example.com
+`
+
+// minimalCisternConfigWithMismatchYAML has agent provider=codex but llm.provider=anthropic.
+const minimalCisternConfigWithMismatchYAML = `repos:
+  - name: testrepo
+    url: https://github.com/example/testrepo
+    workflow_path: aqueduct/workflow.yaml
+    cataractae: 1
+    prefix: ct
+provider:
+  name: codex
+llm:
+  provider: anthropic
+max_cataractae: 1
+`
+
+// setupFakeBinAndAPIKey creates a fake binary named binName in a temp dir,
+// prepends that dir to PATH, and sets apiKeyEnv to a dummy value.
+// It registers cleanup via t.Setenv and t.TempDir.
+func setupFakeBinAndAPIKey(t *testing.T, binName, apiKeyEnv string) {
+	t.Helper()
+	binDir := t.TempDir()
+	fakeBin := filepath.Join(binDir, binName)
+	if err := os.WriteFile(fakeBin, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatalf("create fake %s binary: %v", binName, err)
+	}
+	t.Setenv("PATH", binDir+":"+os.Getenv("PATH"))
+	if apiKeyEnv != "" {
+		t.Setenv(apiKeyEnv, "test-key")
+	}
+}
+
 func TestRunDoctorExtendedChecks_PassesWithValidSetup(t *testing.T) {
 	home := t.TempDir()
 
@@ -315,6 +382,9 @@ func TestRunDoctorExtendedChecks_PassesWithValidSetup(t *testing.T) {
 			t.Fatalf("mkdir %s: %v", d, err)
 		}
 	}
+
+	// Provide a fake 'claude' binary and API key so binary+env checks pass.
+	setupFakeBinAndAPIKey(t, "claude", "ANTHROPIC_API_KEY")
 
 	// Write workflow.yaml.
 	wfPath := filepath.Join(aqueductDir, "workflow.yaml")
@@ -395,6 +465,9 @@ func TestRunDoctorExtendedChecks_FixRegeneratesClaudeMd(t *testing.T) {
 			t.Fatalf("mkdir %s: %v", d, err)
 		}
 	}
+
+	// Provide a fake 'claude' binary and API key so binary+env checks pass.
+	setupFakeBinAndAPIKey(t, "claude", "ANTHROPIC_API_KEY")
 
 	wfPath := filepath.Join(aqueductDir, "workflow.yaml")
 	if err := os.WriteFile(wfPath, []byte(minimalWorkflowYAML), 0o644); err != nil {
@@ -526,5 +599,380 @@ func TestRunDoctorExtendedChecks_FailsWhenWorkflowInvalid(t *testing.T) {
 	result := runDoctorExtendedChecks(cfg, cfgPath, home, dbPath)
 	if result {
 		t.Error("expected extended checks to fail when workflow YAML is invalid")
+	}
+}
+
+// --- Provider binary checks (check 1) ---
+
+func TestRunDoctorExtendedChecks_ProviderBinaryMissing_Fails(t *testing.T) {
+	home := t.TempDir()
+
+	cisternDir := filepath.Join(home, ".cistern")
+	aqueductDir := filepath.Join(cisternDir, "aqueduct")
+	cataractaeDir := filepath.Join(cisternDir, "cataractae")
+	for _, d := range []string{aqueductDir, cataractaeDir, filepath.Join(cisternDir, "skills")} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", d, err)
+		}
+	}
+
+	// Redirect PATH so 'claude' won't be found.
+	emptyBinDir := t.TempDir()
+	t.Setenv("PATH", emptyBinDir)
+	t.Setenv("ANTHROPIC_API_KEY", "test-key")
+
+	wfPath := filepath.Join(aqueductDir, "workflow.yaml")
+	if err := os.WriteFile(wfPath, []byte(minimalWorkflowYAML), 0o644); err != nil {
+		t.Fatalf("write workflow: %v", err)
+	}
+
+	cfgPath := filepath.Join(cisternDir, "cistern.yaml")
+	if err := os.WriteFile(cfgPath, []byte(minimalCisternConfigYAML), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	testerDir := filepath.Join(cataractaeDir, "tester")
+	if err := os.MkdirAll(testerDir, 0o755); err != nil {
+		t.Fatalf("mkdir tester: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(testerDir, "CLAUDE.md"), []byte("ct droplet pass"), 0o644); err != nil {
+		t.Fatalf("write CLAUDE.md: %v", err)
+	}
+
+	cfg, err := aqueduct.ParseAqueductConfig(cfgPath)
+	if err != nil {
+		t.Fatalf("parse config: %v", err)
+	}
+
+	dbPath := filepath.Join(cisternDir, "cistern.db")
+	result := runDoctorExtendedChecks(cfg, cfgPath, home, dbPath)
+	if result {
+		t.Error("expected extended checks to fail when provider binary is not in PATH")
+	}
+}
+
+func TestProviderInstallHint_KnownPreset_ReturnsHint(t *testing.T) {
+	tests := []struct {
+		name     string
+		wantHint bool
+	}{
+		{"claude", true},
+		{"codex", true},
+		{"gemini", true},
+		{"opencode", false},
+		{"copilot", false},
+		{"unknown", false},
+	}
+	for _, tc := range tests {
+		got := providerInstallHint(tc.name)
+		if tc.wantHint && got == "" {
+			t.Errorf("providerInstallHint(%q) = empty, want non-empty hint", tc.name)
+		}
+		if !tc.wantHint && got != "" {
+			t.Errorf("providerInstallHint(%q) = %q, want empty", tc.name, got)
+		}
+	}
+}
+
+// --- Env var checks (check 2) ---
+
+func TestRunDoctorExtendedChecks_EnvVarMissing_Fails(t *testing.T) {
+	home := t.TempDir()
+
+	cisternDir := filepath.Join(home, ".cistern")
+	aqueductDir := filepath.Join(cisternDir, "aqueduct")
+	cataractaeDir := filepath.Join(cisternDir, "cataractae")
+	for _, d := range []string{aqueductDir, cataractaeDir, filepath.Join(cisternDir, "skills")} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", d, err)
+		}
+	}
+
+	// Fake binary present, but API key explicitly unset.
+	setupFakeBinAndAPIKey(t, "claude", "")
+	t.Setenv("ANTHROPIC_API_KEY", "")
+
+	wfPath := filepath.Join(aqueductDir, "workflow.yaml")
+	if err := os.WriteFile(wfPath, []byte(minimalWorkflowYAML), 0o644); err != nil {
+		t.Fatalf("write workflow: %v", err)
+	}
+
+	cfgPath := filepath.Join(cisternDir, "cistern.yaml")
+	if err := os.WriteFile(cfgPath, []byte(minimalCisternConfigYAML), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	testerDir := filepath.Join(cataractaeDir, "tester")
+	if err := os.MkdirAll(testerDir, 0o755); err != nil {
+		t.Fatalf("mkdir tester: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(testerDir, "CLAUDE.md"), []byte("ct droplet pass"), 0o644); err != nil {
+		t.Fatalf("write CLAUDE.md: %v", err)
+	}
+
+	cfg, err := aqueduct.ParseAqueductConfig(cfgPath)
+	if err != nil {
+		t.Fatalf("parse config: %v", err)
+	}
+
+	dbPath := filepath.Join(cisternDir, "cistern.db")
+	result := runDoctorExtendedChecks(cfg, cfgPath, home, dbPath)
+	if result {
+		t.Error("expected extended checks to fail when required env var is not set")
+	}
+}
+
+// --- Agent file mismatch checks (check 3) ---
+
+func TestRunDoctorExtendedChecks_AgentFileMismatch_OnlyClaudeMd_Fails(t *testing.T) {
+	// Codex provider wants AGENTS.md, but only CLAUDE.md is present.
+	home := t.TempDir()
+
+	cisternDir := filepath.Join(home, ".cistern")
+	aqueductDir := filepath.Join(cisternDir, "aqueduct")
+	cataractaeDir := filepath.Join(cisternDir, "cataractae")
+	for _, d := range []string{aqueductDir, cataractaeDir, filepath.Join(cisternDir, "skills")} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", d, err)
+		}
+	}
+
+	setupFakeBinAndAPIKey(t, "codex", "OPENAI_API_KEY")
+
+	wfPath := filepath.Join(aqueductDir, "workflow.yaml")
+	if err := os.WriteFile(wfPath, []byte(minimalWorkflowYAML), 0o644); err != nil {
+		t.Fatalf("write workflow: %v", err)
+	}
+
+	cfgPath := filepath.Join(cisternDir, "cistern.yaml")
+	if err := os.WriteFile(cfgPath, []byte(minimalCisternConfigWithCodexYAML), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	testerDir := filepath.Join(cataractaeDir, "tester")
+	if err := os.MkdirAll(testerDir, 0o755); err != nil {
+		t.Fatalf("mkdir tester: %v", err)
+	}
+	// Only CLAUDE.md — codex needs AGENTS.md.
+	if err := os.WriteFile(filepath.Join(testerDir, "CLAUDE.md"), []byte("ct droplet pass"), 0o644); err != nil {
+		t.Fatalf("write CLAUDE.md: %v", err)
+	}
+
+	cfg, err := aqueduct.ParseAqueductConfig(cfgPath)
+	if err != nil {
+		t.Fatalf("parse config: %v", err)
+	}
+
+	dbPath := filepath.Join(cisternDir, "cistern.db")
+	result := runDoctorExtendedChecks(cfg, cfgPath, home, dbPath)
+	if result {
+		t.Error("expected extended checks to fail when provider needs AGENTS.md but only CLAUDE.md exists")
+	}
+}
+
+func TestRunDoctorExtendedChecks_AgentFileCorrect_Passes(t *testing.T) {
+	// Codex provider with AGENTS.md correctly present.
+	home := t.TempDir()
+
+	cisternDir := filepath.Join(home, ".cistern")
+	aqueductDir := filepath.Join(cisternDir, "aqueduct")
+	cataractaeDir := filepath.Join(cisternDir, "cataractae")
+	for _, d := range []string{aqueductDir, cataractaeDir, filepath.Join(cisternDir, "skills")} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", d, err)
+		}
+	}
+
+	setupFakeBinAndAPIKey(t, "codex", "OPENAI_API_KEY")
+
+	wfPath := filepath.Join(aqueductDir, "workflow.yaml")
+	if err := os.WriteFile(wfPath, []byte(minimalWorkflowYAML), 0o644); err != nil {
+		t.Fatalf("write workflow: %v", err)
+	}
+
+	cfgPath := filepath.Join(cisternDir, "cistern.yaml")
+	if err := os.WriteFile(cfgPath, []byte(minimalCisternConfigWithCodexYAML), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	testerDir := filepath.Join(cataractaeDir, "tester")
+	if err := os.MkdirAll(testerDir, 0o755); err != nil {
+		t.Fatalf("mkdir tester: %v", err)
+	}
+	// AGENTS.md — correct for codex.
+	if err := os.WriteFile(filepath.Join(testerDir, "AGENTS.md"), []byte("ct droplet pass"), 0o644); err != nil {
+		t.Fatalf("write AGENTS.md: %v", err)
+	}
+
+	cfg, err := aqueduct.ParseAqueductConfig(cfgPath)
+	if err != nil {
+		t.Fatalf("parse config: %v", err)
+	}
+
+	dbPath := filepath.Join(cisternDir, "cistern.db")
+	result := runDoctorExtendedChecks(cfg, cfgPath, home, dbPath)
+	if !result {
+		t.Error("expected extended checks to pass when correct instructions file is present")
+	}
+}
+
+// --- LLM block validation (check 4) ---
+
+func TestRunDoctorExtendedChecks_LLMCustomWithoutBaseURL_Fails(t *testing.T) {
+	home := t.TempDir()
+
+	cisternDir := filepath.Join(home, ".cistern")
+	aqueductDir := filepath.Join(cisternDir, "aqueduct")
+	cataractaeDir := filepath.Join(cisternDir, "cataractae")
+	for _, d := range []string{aqueductDir, cataractaeDir, filepath.Join(cisternDir, "skills")} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", d, err)
+		}
+	}
+
+	setupFakeBinAndAPIKey(t, "claude", "ANTHROPIC_API_KEY")
+
+	wfPath := filepath.Join(aqueductDir, "workflow.yaml")
+	if err := os.WriteFile(wfPath, []byte(minimalWorkflowYAML), 0o644); err != nil {
+		t.Fatalf("write workflow: %v", err)
+	}
+
+	cfgPath := filepath.Join(cisternDir, "cistern.yaml")
+	// llm.provider=custom but no base_url.
+	if err := os.WriteFile(cfgPath, []byte(minimalCisternConfigWithCustomLLMYAML), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	testerDir := filepath.Join(cataractaeDir, "tester")
+	if err := os.MkdirAll(testerDir, 0o755); err != nil {
+		t.Fatalf("mkdir tester: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(testerDir, "CLAUDE.md"), []byte("ct droplet pass"), 0o644); err != nil {
+		t.Fatalf("write CLAUDE.md: %v", err)
+	}
+
+	cfg, err := aqueduct.ParseAqueductConfig(cfgPath)
+	if err != nil {
+		t.Fatalf("parse config: %v", err)
+	}
+
+	dbPath := filepath.Join(cisternDir, "cistern.db")
+	result := runDoctorExtendedChecks(cfg, cfgPath, home, dbPath)
+	if result {
+		t.Error("expected extended checks to fail when llm.provider=custom but base_url is not set")
+	}
+}
+
+func TestRunDoctorExtendedChecks_LLMCustomWithBaseURL_Passes(t *testing.T) {
+	home := t.TempDir()
+
+	cisternDir := filepath.Join(home, ".cistern")
+	aqueductDir := filepath.Join(cisternDir, "aqueduct")
+	cataractaeDir := filepath.Join(cisternDir, "cataractae")
+	for _, d := range []string{aqueductDir, cataractaeDir, filepath.Join(cisternDir, "skills")} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", d, err)
+		}
+	}
+
+	setupFakeBinAndAPIKey(t, "claude", "ANTHROPIC_API_KEY")
+
+	wfPath := filepath.Join(aqueductDir, "workflow.yaml")
+	if err := os.WriteFile(wfPath, []byte(minimalWorkflowYAML), 0o644); err != nil {
+		t.Fatalf("write workflow: %v", err)
+	}
+
+	cfgPath := filepath.Join(cisternDir, "cistern.yaml")
+	// llm.provider=custom with base_url set.
+	if err := os.WriteFile(cfgPath, []byte(minimalCisternConfigWithCustomLLMAndBaseURLYAML), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	testerDir := filepath.Join(cataractaeDir, "tester")
+	if err := os.MkdirAll(testerDir, 0o755); err != nil {
+		t.Fatalf("mkdir tester: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(testerDir, "CLAUDE.md"), []byte("ct droplet pass"), 0o644); err != nil {
+		t.Fatalf("write CLAUDE.md: %v", err)
+	}
+
+	cfg, err := aqueduct.ParseAqueductConfig(cfgPath)
+	if err != nil {
+		t.Fatalf("parse config: %v", err)
+	}
+
+	dbPath := filepath.Join(cisternDir, "cistern.db")
+	result := runDoctorExtendedChecks(cfg, cfgPath, home, dbPath)
+	if !result {
+		t.Error("expected extended checks to pass when llm.provider=custom and base_url is set")
+	}
+}
+
+// --- Provider + LLM mismatch advisory (check 5) ---
+
+func TestRunDoctorExtendedChecks_ProviderLLMMismatch_Advisory_NoCrash(t *testing.T) {
+	// codex agent + anthropic LLM — advisory note, does not fail the check.
+	home := t.TempDir()
+
+	cisternDir := filepath.Join(home, ".cistern")
+	aqueductDir := filepath.Join(cisternDir, "aqueduct")
+	cataractaeDir := filepath.Join(cisternDir, "cataractae")
+	for _, d := range []string{aqueductDir, cataractaeDir, filepath.Join(cisternDir, "skills")} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", d, err)
+		}
+	}
+
+	setupFakeBinAndAPIKey(t, "codex", "OPENAI_API_KEY")
+
+	wfPath := filepath.Join(aqueductDir, "workflow.yaml")
+	if err := os.WriteFile(wfPath, []byte(minimalWorkflowYAML), 0o644); err != nil {
+		t.Fatalf("write workflow: %v", err)
+	}
+
+	cfgPath := filepath.Join(cisternDir, "cistern.yaml")
+	if err := os.WriteFile(cfgPath, []byte(minimalCisternConfigWithMismatchYAML), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	testerDir := filepath.Join(cataractaeDir, "tester")
+	if err := os.MkdirAll(testerDir, 0o755); err != nil {
+		t.Fatalf("mkdir tester: %v", err)
+	}
+	// codex provider needs AGENTS.md.
+	if err := os.WriteFile(filepath.Join(testerDir, "AGENTS.md"), []byte("ct droplet pass"), 0o644); err != nil {
+		t.Fatalf("write AGENTS.md: %v", err)
+	}
+
+	cfg, err := aqueduct.ParseAqueductConfig(cfgPath)
+	if err != nil {
+		t.Fatalf("parse config: %v", err)
+	}
+
+	// Mismatch advisory must not cause a crash and must not affect the ok result.
+	dbPath := filepath.Join(cisternDir, "cistern.db")
+	result := runDoctorExtendedChecks(cfg, cfgPath, home, dbPath)
+	if !result {
+		t.Error("expected provider+LLM mismatch advisory to be informational only (should not fail ok)")
+	}
+}
+
+func TestInferLLMProviderFromPreset_KnownPresets(t *testing.T) {
+	tests := []struct {
+		presetName string
+		want       string
+	}{
+		{"claude", "anthropic"},
+		{"codex", "openai"},
+		{"gemini", "gemini"},
+		{"copilot", ""},
+		{"opencode", ""},
+		{"unknown", ""},
+	}
+	for _, tc := range tests {
+		got := inferLLMProviderFromPreset(tc.presetName)
+		if got != tc.want {
+			t.Errorf("inferLLMProviderFromPreset(%q) = %q, want %q", tc.presetName, got, tc.want)
+		}
 	}
 }

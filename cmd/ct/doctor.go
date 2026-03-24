@@ -133,11 +133,16 @@ func fixCisternDB(dbFile string) error {
 
 // runDoctorExtendedChecks performs the extended runtime checks that depend on
 // the Cistern config being present and valid:
-//  1. CLAUDE.md integrity for each agent identity in the workflow
-//  2. Skills installed at ~/.cistern/skills/<name>/SKILL.md
-//  3. Aqueduct YAML validity (one check per repo)
-//  4. Castellarius process (informational, does not fail the check)
-//  5. Stalled in_progress droplets (warnings only, does not fail the check)
+//  1. Provider binary present for each configured repo preset
+//  2. Required env vars set for each configured preset
+//  3. Agent instructions file present; warn on CLAUDE.md/AGENTS.md mismatch
+//  4. LLM block: llm.provider=custom requires base_url
+//  5. Provider + LLM mismatch advisory (informational)
+//  6. CLAUDE.md integrity for each agent identity in the workflow
+//  7. Skills installed at ~/.cistern/skills/<name>/SKILL.md
+//  8. Aqueduct YAML validity (one check per repo)
+//  9. Castellarius process (informational, does not fail the check)
+// 10. Stalled in_progress droplets (warnings only, does not fail the check)
 func runDoctorExtendedChecks(cfg *aqueduct.AqueductConfig, cfgPath, home, dbPath string) bool {
 	ok := true
 	cfgDir := filepath.Dir(cfgPath)
@@ -146,6 +151,9 @@ func runDoctorExtendedChecks(cfg *aqueduct.AqueductConfig, cfgPath, home, dbPath
 
 	seenIdentities := map[string]bool{}
 	seenSkills := map[string]bool{}
+	seenBinaries := map[string]bool{}
+	seenEnvVars := map[string]bool{}
+	seenMismatch := map[string]bool{}
 
 	for _, repo := range cfg.Repos {
 		wfPath := repo.WorkflowPath
@@ -153,7 +161,43 @@ func runDoctorExtendedChecks(cfg *aqueduct.AqueductConfig, cfgPath, home, dbPath
 			wfPath = filepath.Join(cfgDir, wfPath)
 		}
 
-		// Check 3: aqueduct YAML valid.
+		// Resolve the effective provider preset for this repo.
+		preset, presErr := cfg.ResolveProvider(repo.Name)
+		if presErr == nil {
+			// Check 1: provider binary present (deduplicated by command across repos).
+			if !seenBinaries[preset.Command] {
+				seenBinaries[preset.Command] = true
+				cmd := preset.Command
+				name := preset.Name
+				ok = checkWithFix("provider binary: "+cmd, func() error {
+					if _, lookErr := exec.LookPath(cmd); lookErr != nil {
+						hint := providerInstallHint(name)
+						if hint != "" {
+							return fmt.Errorf("not found in PATH — run: %s", hint)
+						}
+						return fmt.Errorf("not found in PATH")
+					}
+					return nil
+				}, nil) && ok
+
+				// Check 2: required env vars set (deduplicated across repos).
+				for _, envVar := range preset.EnvPassthrough {
+					if seenEnvVars[envVar] {
+						continue
+					}
+					seenEnvVars[envVar] = true
+					key := envVar
+					ok = checkWithFix("env: "+key, func() error {
+						if os.Getenv(key) == "" {
+							return fmt.Errorf("not set")
+						}
+						return nil
+					}, nil) && ok
+				}
+			}
+		}
+
+		// Check 8: aqueduct YAML valid.
 		wf, wfErr := aqueduct.ParseWorkflow(wfPath)
 		wfLabel := fmt.Sprintf("aqueduct: %s", wfPath)
 		if wfErr == nil {
@@ -165,7 +209,10 @@ func runDoctorExtendedChecks(cfg *aqueduct.AqueductConfig, cfgPath, home, dbPath
 			continue
 		}
 
-		// Check 1: CLAUDE.md integrity (deduplicated by identity across all repos).
+		// Check 6: CLAUDE.md integrity (deduplicated by identity across all repos).
+		// Skipped for providers whose InstructionsFile is not CLAUDE.md — check 3
+		// handles the correct file for those providers.
+		usesCLAUDEMd := presErr != nil || preset.InstructionsFile == "" || preset.InstructionsFile == "CLAUDE.md"
 		for _, step := range wf.Cataractae {
 			if step.Type != aqueduct.CataractaeTypeAgent || step.Identity == "" {
 				continue
@@ -174,6 +221,10 @@ func runDoctorExtendedChecks(cfg *aqueduct.AqueductConfig, cfgPath, home, dbPath
 				continue
 			}
 			seenIdentities[step.Identity] = true
+
+			if !usesCLAUDEMd {
+				continue // check 3 validates the provider-specific instructions file
+			}
 
 			identity := step.Identity
 			mdPath := filepath.Join(cataractaeDir, identity, "CLAUDE.md")
@@ -193,7 +244,7 @@ func runDoctorExtendedChecks(cfg *aqueduct.AqueductConfig, cfgPath, home, dbPath
 			}, claudeFix) && ok
 		}
 
-		// Check 2: Skills installed at ~/.cistern/skills/<name>/SKILL.md.
+		// Check 7: Skills installed at ~/.cistern/skills/<name>/SKILL.md.
 		// All skills must be present in ~/.cistern/skills/ — in-repo skills are
 		// deployed there automatically by the git_sync drought hook.
 		for _, step := range wf.Cataractae {
@@ -214,21 +265,109 @@ func runDoctorExtendedChecks(cfg *aqueduct.AqueductConfig, cfgPath, home, dbPath
 				}, nil) && ok
 			}
 		}
+
+		// Check 3: agent instructions file mismatch.
+		// For providers that use a file other than CLAUDE.md, verify the correct
+		// file exists. If only CLAUDE.md exists, report a provider mismatch.
+		if presErr == nil {
+			instrFile := preset.InstructionsFile
+			if instrFile != "" && instrFile != "CLAUDE.md" {
+				for _, step := range wf.Cataractae {
+					if step.Type != aqueduct.CataractaeTypeAgent || step.Identity == "" {
+						continue
+					}
+					identity := step.Identity
+					mismatchKey := identity + ":" + instrFile
+					if seenMismatch[mismatchKey] {
+						continue
+					}
+					seenMismatch[mismatchKey] = true
+
+					identityDir := filepath.Join(cataractaeDir, identity)
+					instrPath := filepath.Join(identityDir, instrFile)
+					claudeMdPath := filepath.Join(identityDir, "CLAUDE.md")
+					instrPathCopy := instrPath
+					claudeMdPathCopy := claudeMdPath
+					identityCopy := identity
+					instrFileCopy := instrFile
+					presetNameCopy := preset.Name
+
+					ok = checkWithFix(identityCopy+" "+instrFileCopy, func() error {
+						if _, statErr := os.Stat(instrPathCopy); statErr != nil {
+							if _, cErr := os.Stat(claudeMdPathCopy); cErr == nil {
+								return fmt.Errorf("not found — provider %q uses %s but only CLAUDE.md exists — run: ct cataractae generate", presetNameCopy, instrFileCopy)
+							}
+							return fmt.Errorf("not found — run: ct cataractae generate")
+						}
+						return nil
+					}, nil) && ok
+				}
+			}
+		}
 	}
 
-	// Check 4: Castellarius process (informational — does not affect ok).
+	// Check 4: LLM block validation — custom provider requires base_url.
+	if cfg.LLM != nil && cfg.LLM.Provider == "custom" {
+		baseURL := cfg.LLM.BaseURL
+		ok = checkWithFix("llm: custom provider requires base_url", func() error {
+			if baseURL == "" {
+				return fmt.Errorf("llm.provider=custom but llm.base_url is not set")
+			}
+			return nil
+		}, nil) && ok
+	}
+
+	// Check 5: Provider + LLM mismatch advisory (informational — does not affect ok).
+	if cfg.Provider != nil && cfg.LLM != nil && cfg.Provider.Name != "" && cfg.LLM.Provider != "" {
+		inferredLLM := inferLLMProviderFromPreset(cfg.Provider.Name)
+		if inferredLLM != "" && inferredLLM != cfg.LLM.Provider {
+			fmt.Printf("⚠ provider mismatch: agent CLI=%s (typically uses %s), llm.provider=%s — filtration and agent sessions use different backends (valid but unusual)\n",
+				cfg.Provider.Name, inferredLLM, cfg.LLM.Provider)
+		}
+	}
+
+	// Check 9: Castellarius process (informational — does not affect ok).
 	checkCastellariusProcess()
 
-	// Check 5: Systemd service health (only on systemd systems).
+	// Check 10: Systemd service health (only on systemd systems).
 	checkSystemdService()
 
-	// Check 6: Repo sandbox health — one check per configured repo.
+	// Check 11: Repo sandbox health — one check per configured repo.
 	checkRepoSandboxes(cfg)
 
-	// Check 7: Stalled droplets (warnings only — does not affect ok).
+	// Check 12: Stalled droplets (warnings only — does not affect ok).
 	checkStalledDroplets(dbPath)
 
 	return ok
+}
+
+// providerInstallHint returns a suggested install command for a known provider.
+// Returns an empty string if no hint is available.
+func providerInstallHint(presetName string) string {
+	switch presetName {
+	case "claude":
+		return "npm install -g @anthropic-ai/claude-code"
+	case "codex":
+		return "npm install -g @openai/codex"
+	case "gemini":
+		return "npm install -g @google/gemini-cli"
+	}
+	return ""
+}
+
+// inferLLMProviderFromPreset returns the expected LLM API provider name for a
+// given agent CLI preset name, based on its typical API key usage.
+// Returns an empty string for presets with no clear LLM backend mapping.
+func inferLLMProviderFromPreset(presetName string) string {
+	switch presetName {
+	case "claude":
+		return "anthropic"
+	case "codex":
+		return "openai"
+	case "gemini":
+		return "gemini"
+	}
+	return ""
 }
 
 // checkClaudeMdIntegrity verifies that a CLAUDE.md exists and contains the
