@@ -828,3 +828,56 @@ func TestIsAgentAlive_PassesSessionIDToDisplayMessage(t *testing.T) {
 		t.Errorf("tmuxDisplayMessage called with id = %q, want %q", capturedID, "myrepo-alice")
 	}
 }
+
+// TestResolveIdentityDir_CisternDirWithInstrFile verifies that when the cistern
+// directory exists and contains the instrFile, resolveIdentityDir returns the cistern path.
+func TestResolveIdentityDir_CisternDirWithInstrFile(t *testing.T) {
+	dir := t.TempDir()
+	identityDir := filepath.Join(dir, ".cistern", "cataractae", "implementer")
+	if err := os.MkdirAll(identityDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(identityDir, "CLAUDE.md"), []byte("# Implementer"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HOME", dir)
+
+	s := &Session{Identity: "implementer"}
+	got := s.resolveIdentityDir()
+	if got != identityDir {
+		t.Errorf("resolveIdentityDir = %q, want %q", got, identityDir)
+	}
+}
+
+// TestResolveIdentityDir_CisternDirWithoutInstrFile verifies that when the cistern
+// directory exists but the instrFile is absent, resolveIdentityDir still returns the
+// cistern path — directory existence, not file presence, is the resolution condition.
+func TestResolveIdentityDir_CisternDirWithoutInstrFile(t *testing.T) {
+	dir := t.TempDir()
+	identityDir := filepath.Join(dir, ".cistern", "cataractae", "implementer")
+	if err := os.MkdirAll(identityDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// Intentionally no instrFile in this directory.
+	t.Setenv("HOME", dir)
+
+	s := &Session{Identity: "implementer"}
+	got := s.resolveIdentityDir()
+	if got != identityDir {
+		t.Errorf("resolveIdentityDir = %q, want %q", got, identityDir)
+	}
+}
+
+// TestResolveIdentityDir_FallbackSandbox verifies that when the cistern directory
+// does not exist, resolveIdentityDir returns the sandbox-relative path.
+func TestResolveIdentityDir_FallbackSandbox(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", dir) // no cistern identity dir
+
+	s := &Session{Identity: "implementer"}
+	got := s.resolveIdentityDir()
+	want := filepath.Join("cataractae", "implementer")
+	if got != want {
+		t.Errorf("resolveIdentityDir = %q, want %q", got, want)
+	}
+}

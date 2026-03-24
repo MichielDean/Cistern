@@ -279,24 +279,14 @@ func buildContextPreamble(identityDir string, preset provider.ProviderPreset) st
 	return strings.Join(parts, "\n\n")
 }
 
-// resolveIdentityPath returns the path to the cataractae identity's instructions file.
-// Uses preset.InstructionsFile (defaults to "CLAUDE.md" when empty).
-// Checks ~/.cistern/cataractae/<identity>/<file> first, then the sandbox-relative path.
-func (s *Session) resolveIdentityPath() string {
-	instrFile := s.Preset.InstrFile()
-	home, err := os.UserHomeDir()
-	if err == nil {
-		cisternPath := filepath.Join(home, ".cistern", "cataractae", s.Identity, instrFile)
-		if _, err := os.Stat(cisternPath); err == nil {
-			return cisternPath
-		}
-	}
-	return "cataractae/" + s.Identity + "/" + instrFile
-}
-
-// resolveIdentityDir returns the directory containing the cataractae identity files.
-// Checks ~/.cistern/cataractae/<identity>/ first, then the sandbox-relative path.
-func (s *Session) resolveIdentityDir() string {
+// resolveIdentityBase returns the base directory for the cataractae identity files.
+// Checks ~/.cistern/cataractae/<identity>/ (directory existence) first; falls back
+// to the sandbox-relative path when the cistern directory is absent.
+//
+// Both resolveIdentityPath and resolveIdentityDir delegate here so they always
+// agree on which location to use — preventing the divergence that occurs when the
+// cistern directory exists but a provider-specific instructions file does not.
+func (s *Session) resolveIdentityBase() string {
 	home, err := os.UserHomeDir()
 	if err == nil {
 		cisternDir := filepath.Join(home, ".cistern", "cataractae", s.Identity)
@@ -305,6 +295,18 @@ func (s *Session) resolveIdentityDir() string {
 		}
 	}
 	return filepath.Join("cataractae", s.Identity)
+}
+
+// resolveIdentityPath returns the path to the cataractae identity's instructions file.
+// Delegates to resolveIdentityBase for location resolution.
+func (s *Session) resolveIdentityPath() string {
+	return filepath.Join(s.resolveIdentityBase(), s.Preset.InstrFile())
+}
+
+// resolveIdentityDir returns the directory containing the cataractae identity files.
+// Delegates to resolveIdentityBase for location resolution.
+func (s *Session) resolveIdentityDir() string {
+	return s.resolveIdentityBase()
 }
 
 // kill terminates the tmux session if it exists.

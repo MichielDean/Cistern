@@ -380,7 +380,10 @@ func hookCataractaeGenerate(cfg *aqueduct.AqueductConfig, logger *slog.Logger) e
 				logger.Warn("cataractae_generate: parse workflow failed", "path", wfPath, "error", err)
 				continue
 			}
-			preset, _ := cfg.ResolveProvider(repo.Name)
+			preset, err := cfg.ResolveProvider(repo.Name)
+			if err != nil {
+				logger.Warn("cataractae_generate: resolve provider failed, defaulting to CLAUDE.md", "repo", repo.Name, "error", err)
+			}
 			written, err := aqueduct.GenerateCataractaeFiles(w, cataractaeDir, preset.InstrFile())
 			if err != nil {
 				return fmt.Errorf("generate role files: %w", err)
