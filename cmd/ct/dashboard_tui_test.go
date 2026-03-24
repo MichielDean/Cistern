@@ -135,6 +135,58 @@ func TestDashboard_PeekKey_InTmux_NewWindowError_FallsBackToInline(t *testing.T)
 	}
 }
 
+// TestDashboard_PeekSelect_InTmux_Success_ClearsPeekSelectMode verifies that
+// when openPeekOn is called from the peekSelectMode picker (peekSelectMode=true)
+// and insideTmux() is true and the new-window call succeeds, the returned model
+// has peekSelectMode=false so the picker overlay does not persist.
+//
+// Given: a dashboard model with peekSelectMode=true, two active aqueducts,
+//
+//	insideTmux() returning true, and tmuxNewWindowFunc succeeding
+//
+// When:  'enter' is pressed to confirm the picker selection
+// Then:  the returned model has peekSelectMode=false
+func TestDashboard_PeekSelect_InTmux_Success_ClearsPeekSelectMode(t *testing.T) {
+	origInsideTmux := insideTmux
+	insideTmux = func() bool { return true }
+	defer func() { insideTmux = origInsideTmux }()
+
+	origNewWindow := tmuxNewWindowFunc
+	tmuxNewWindowFunc = func(_, _ string) error { return nil }
+	defer func() { tmuxNewWindowFunc = origNewWindow }()
+
+	m := newDashboardTUIModel("", "")
+	m.data = &DashboardData{
+		Cataractae: []CataractaeInfo{
+			{
+				Name:      "virgo",
+				RepoName:  "myrepo",
+				DropletID: "ci-test01",
+				Step:      "implement",
+				Steps:     []string{"implement", "review"},
+			},
+			{
+				Name:      "scorpio",
+				RepoName:  "myrepo",
+				DropletID: "ci-test02",
+				Step:      "review",
+				Steps:     []string{"implement", "review"},
+			},
+		},
+	}
+	// Simulate being in the picker overlay with first aqueduct selected.
+	m.peekSelectMode = true
+	m.peekSelectIndex = 0
+
+	// Press 'enter' to confirm selection from the peekSelectMode picker.
+	updatedModel, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+
+	um := updatedModel.(dashboardTUIModel)
+	if um.peekSelectMode {
+		t.Error("peekSelectMode should be false after successful new-window spawn from picker")
+	}
+}
+
 // TestTuiAqueductRow_WaterfallIndex_WidePoolRowsAtBottom verifies that when a
 // droplet is on the final step the wide-pool waterfall rows (containing "≈")
 // appear at the bottom of the arch, not near the top.

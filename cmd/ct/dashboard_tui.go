@@ -119,6 +119,7 @@ func (m dashboardTUIModel) openPeekOn(ch CataractaeInfo) (dashboardTUIModel, tea
 	session := ch.RepoName + "-" + ch.Name
 
 	if insideTmux() {
+		m.peekSelectMode = false
 		// Spawn a new tmux window for live read-only attach; dashboard stays open.
 		return m, func() tea.Msg {
 			if err := tmuxNewWindowFunc(ch.DropletID, session); err != nil {
