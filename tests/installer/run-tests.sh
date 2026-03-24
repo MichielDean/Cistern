@@ -153,7 +153,7 @@ _reset_scenario_state() {
     systemctl stop cistern-castellarius.service 2>/dev/null || true
     systemctl reset-failed cistern-castellarius.service 2>/dev/null || true
     rm -rf "${HOME}/.cistern"
-    rm -f "${HOME}/.claude/.credentials.json"
+    rm -rf "${HOME}/.claude"
 }
 
 # _install_skill_stubs — create stub SKILL.md files for skills referenced in
@@ -271,7 +271,7 @@ else
 
     # Then: ct doctor exits non-zero with a credential-related error.
     # Run without ANTHROPIC_API_KEY in the environment so the env-var check fires.
-    _doctor_out=$(CT_NO_ASCII_LOGO=1 ct doctor 2>&1) && _doctor_exit=0 || _doctor_exit=$?
+    _doctor_out=$(env -u ANTHROPIC_API_KEY CT_NO_ASCII_LOGO=1 ct doctor 2>&1) && _doctor_exit=0 || _doctor_exit=$?
     if echo "${_doctor_out}" | grep -qi "ANTHROPIC_API_KEY\|missing credentials"; then
         pass "missing_creds_ct_doctor_message"
     else
