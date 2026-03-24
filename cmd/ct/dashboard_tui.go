@@ -2,6 +2,8 @@ package main
 
 import (
 	"fmt"
+	"os"
+	"os/exec"
 	"strings"
 	"time"
 
@@ -10,6 +12,18 @@ import (
 
 	"github.com/MichielDean/cistern/internal/cistern"
 )
+
+// insideTmux reports whether the process is running inside a tmux session.
+// Replaced in tests to control environment without requiring a real tmux session.
+var insideTmux = func() bool {
+	return os.Getenv("TMUX") != ""
+}
+
+// tmuxNewWindowFunc opens a new tmux window attaching read-only to the named session.
+// Replaced in tests to capture the call without running tmux.
+var tmuxNewWindowFunc = func(dropletID, session string) error {
+	return exec.Command("tmux", "new-window", "-n", "peek:"+dropletID, "--", "tmux", "attach-session", "-t", session, "-r").Run()
+}
 
 // --- Lip Gloss styles ---
 
@@ -27,6 +41,13 @@ var (
 type tuiTickMsg  time.Time
 type tuiAnimMsg  time.Time
 type tuiDataMsg  *DashboardData
+
+// tuiPeekNewWindowErrMsg is sent when tmuxNewWindowFunc fails, triggering a
+// fallback to the inline capture-pane overlay.
+type tuiPeekNewWindowErrMsg struct {
+	ch  CataractaeInfo
+	err error
+}
 
 const animInterval = 150 * time.Millisecond // water animation speed
 
@@ -89,17 +110,48 @@ func activeAqueducts(cataractae []CataractaeInfo) []CataractaeInfo {
 	return active
 }
 
-// openPeekOn transitions the model into peek mode for the given aqueduct.
-func (m dashboardTUIModel) openPeekOn(ch CataractaeInfo) dashboardTUIModel {
+// openPeekOn transitions to peek mode for the given aqueduct, returning the
+// updated model and a tea.Cmd to execute. When running inside a tmux session,
+// a new tmux window is opened for live attach and the dashboard continues
+// running undisturbed. When not inside tmux, the inline capture-pane overlay
+// is used as a fallback.
+func (m dashboardTUIModel) openPeekOn(ch CataractaeInfo) (dashboardTUIModel, tea.Cmd) {
 	session := ch.RepoName + "-" + ch.Name
-	header := fmt.Sprintf("[%s] %s — flowing %s", ch.DropletID, ch.Step, formatElapsed(ch.Elapsed))
+
+	if insideTmux() {
+		m.peekSelectMode = false
+		// Spawn a new tmux window for live read-only attach; dashboard stays open.
+		return m, func() tea.Msg {
+			if err := tmuxNewWindowFunc(ch.DropletID, session); err != nil {
+				return tuiPeekNewWindowErrMsg{ch: ch, err: err}
+			}
+			return nil
+		}
+	}
+
+	// Not inside tmux: fall back to inline capture-pane peek overlay.
+	return m.openInlinePeek(ch, nil)
+}
+
+// openInlinePeek sets up the inline capture-pane overlay for the given aqueduct.
+// If err is non-nil, the header notes the tmux failure instead of the "not inside tmux" hint.
+func (m dashboardTUIModel) openInlinePeek(ch CataractaeInfo, err error) (dashboardTUIModel, tea.Cmd) {
+	session := ch.RepoName + "-" + ch.Name
+	var header string
+	if err != nil {
+		header = fmt.Sprintf("[%s] %s — flowing %s\ntmux new-window failed (%v) — showing capture-pane snapshot",
+			ch.DropletID, ch.Step, formatElapsed(ch.Elapsed), err)
+	} else {
+		header = fmt.Sprintf("[%s] %s — flowing %s\nnot inside tmux — for live view: tmux attach-session -t %s -r",
+			ch.DropletID, ch.Step, formatElapsed(ch.Elapsed), session)
+	}
 	pk := newPeekModel(defaultCapturer, session, header, 0)
 	pk.width = m.width
 	pk.height = m.height
 	m.peek = pk
 	m.peekActive = true
 	m.peekSelectMode = false
-	return m
+	return m, m.peek.Init()
 }
 
 func (m dashboardTUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -170,8 +222,7 @@ func (m dashboardTUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			case "enter":
 				if m.peekSelectIndex < len(active) {
-					m = m.openPeekOn(active[m.peekSelectIndex])
-					return m, m.peek.Init()
+					return m.openPeekOn(active[m.peekSelectIndex])
 				}
 			}
 			return m, nil
@@ -193,6 +244,8 @@ func (m dashboardTUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.peekSelectIndex = len(active) - 1
 			}
 			return m, nil
+		case tuiPeekNewWindowErrMsg:
+			return m.openInlinePeek(msg.ch, msg.err)
 		}
 		return m, nil
 	}
@@ -214,6 +267,9 @@ func (m dashboardTUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.data = (*DashboardData)(msg)
 		return m, nil
 
+	case tuiPeekNewWindowErrMsg:
+		return m.openInlinePeek(msg.ch, msg.err)
+
 	case tea.KeyMsg:
 		switch msg.String() {
 		case "q", "Q", "ctrl+c":
@@ -227,8 +283,7 @@ func (m dashboardTUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				active := activeAqueducts(m.data.Cataractae)
 				switch {
 				case len(active) == 1:
-					m = m.openPeekOn(active[0])
-					return m, m.peek.Init()
+					return m.openPeekOn(active[0])
 				case len(active) > 1:
 					m.peekSelectMode = true
 					m.peekSelectIndex = 0

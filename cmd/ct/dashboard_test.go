@@ -1492,6 +1492,11 @@ func makeModelWithNActive(n int) dashboardTUIModel {
 }
 
 func TestPeekSelect_OneActive_OpensPeekDirectly(t *testing.T) {
+	// Force non-tmux path so the inline peek overlay is used (not new-window).
+	origInsideTmux := insideTmux
+	insideTmux = func() bool { return false }
+	defer func() { insideTmux = origInsideTmux }()
+
 	m := makeModelWithNActive(1)
 
 	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'p'}})
@@ -1617,6 +1622,11 @@ func TestPeekSelect_IndexClampedAtMax(t *testing.T) {
 }
 
 func TestPeekSelect_Enter_OpensPeekOnSelected(t *testing.T) {
+	// Force non-tmux path so the inline peek overlay is used (not new-window).
+	origInsideTmux := insideTmux
+	insideTmux = func() bool { return false }
+	defer func() { insideTmux = origInsideTmux }()
+
 	m := makeModelWithNActive(2)
 	m.peekSelectMode = true
 	m.peekSelectIndex = 1 // select second active aqueduct

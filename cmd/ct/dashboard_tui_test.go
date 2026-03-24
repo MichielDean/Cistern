@@ -1,9 +1,191 @@
 package main
 
 import (
+	"errors"
 	"strings"
 	"testing"
+
+	tea "github.com/charmbracelet/bubbletea"
 )
+
+// TestDashboard_PeekKey_InTmux_SpawnsNewWindow verifies that when 'p' is pressed
+// inside a tmux session with one active aqueduct, a new tmux window is spawned
+// targeting the correct session rather than opening the inline peek overlay.
+//
+// Given: a dashboard model with one active aqueduct (Name="virgo", RepoName="myrepo",
+//
+//	DropletID="ci-test01") and insideTmux() returning true
+//
+// When:  the 'p' key is pressed and the returned tea.Cmd is executed
+// Then:  tmuxNewWindowFunc is called with dropletID="ci-test01" and session="myrepo-virgo",
+//
+//	and peekActive remains false (dashboard is not interrupted)
+func TestDashboard_PeekKey_InTmux_SpawnsNewWindow(t *testing.T) {
+	// Inject insideTmux to simulate running inside a tmux session.
+	origInsideTmux := insideTmux
+	insideTmux = func() bool { return true }
+	defer func() { insideTmux = origInsideTmux }()
+
+	// Capture the new-window call.
+	var gotDropletID, gotSession string
+	origNewWindow := tmuxNewWindowFunc
+	tmuxNewWindowFunc = func(dropletID, session string) error {
+		gotDropletID = dropletID
+		gotSession = session
+		return nil
+	}
+	defer func() { tmuxNewWindowFunc = origNewWindow }()
+
+	// Build a dashboard model with one active aqueduct.
+	m := newDashboardTUIModel("", "")
+	m.data = &DashboardData{
+		Cataractae: []CataractaeInfo{
+			{
+				Name:      "virgo",
+				RepoName:  "myrepo",
+				DropletID: "ci-test01",
+				Step:      "implement",
+				Steps:     []string{"implement", "review"},
+			},
+		},
+	}
+
+	// Press 'p' to trigger peek.
+	updatedModel, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'p'}})
+
+	// Execute the returned cmd to trigger tmuxNewWindowFunc.
+	if cmd != nil {
+		cmd()
+	}
+
+	// The dashboard should NOT have entered inline peek mode.
+	um := updatedModel.(dashboardTUIModel)
+	if um.peekActive {
+		t.Error("peekActive should be false when spawning a new tmux window")
+	}
+
+	// Verify the new-window was called with the correct identifiers.
+	if gotDropletID != "ci-test01" {
+		t.Errorf("tmuxNewWindowFunc dropletID = %q, want %q", gotDropletID, "ci-test01")
+	}
+	wantSession := "myrepo-virgo"
+	if gotSession != wantSession {
+		t.Errorf("tmuxNewWindowFunc session = %q, want %q", gotSession, wantSession)
+	}
+}
+
+// TestDashboard_PeekKey_InTmux_NewWindowError_FallsBackToInline verifies that
+// when tmuxNewWindowFunc returns an error, the dashboard falls back to the
+// inline capture-pane overlay and sets peekActive.
+//
+// Given: a dashboard model with one active aqueduct and insideTmux() = true
+// When:  the 'p' key is pressed and tmuxNewWindowFunc returns an error
+// Then:  the returned tea.Cmd yields a tuiPeekNewWindowErrMsg which, when
+//
+//	processed, causes peekActive to be true (inline overlay opened)
+func TestDashboard_PeekKey_InTmux_NewWindowError_FallsBackToInline(t *testing.T) {
+	origInsideTmux := insideTmux
+	insideTmux = func() bool { return true }
+	defer func() { insideTmux = origInsideTmux }()
+
+	simulatedErr := errors.New("tmux: no server running")
+	origNewWindow := tmuxNewWindowFunc
+	tmuxNewWindowFunc = func(_, _ string) error { return simulatedErr }
+	defer func() { tmuxNewWindowFunc = origNewWindow }()
+
+	m := newDashboardTUIModel("", "")
+	m.data = &DashboardData{
+		Cataractae: []CataractaeInfo{
+			{
+				Name:      "virgo",
+				RepoName:  "myrepo",
+				DropletID: "ci-test01",
+				Step:      "implement",
+				Steps:     []string{"implement", "review"},
+			},
+		},
+	}
+
+	// Press 'p': returns a cmd that will call tmuxNewWindowFunc.
+	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'p'}})
+	if cmd == nil {
+		t.Fatal("expected a tea.Cmd, got nil")
+	}
+
+	// Execute the cmd; it should return a tuiPeekNewWindowErrMsg.
+	msg := cmd()
+	errMsg, ok := msg.(tuiPeekNewWindowErrMsg)
+	if !ok {
+		t.Fatalf("cmd returned %T, want tuiPeekNewWindowErrMsg", msg)
+	}
+	if errMsg.err != simulatedErr {
+		t.Errorf("errMsg.err = %v, want %v", errMsg.err, simulatedErr)
+	}
+
+	// Process the error message; the model should activate the inline overlay.
+	updatedModel, _ := m.Update(errMsg)
+	um := updatedModel.(dashboardTUIModel)
+	if !um.peekActive {
+		t.Error("peekActive should be true after new-window error fallback to inline overlay")
+	}
+
+	// The peek header should mention the failure.
+	if !strings.Contains(um.peek.header, "tmux new-window failed") {
+		t.Errorf("peek header should mention failure, got: %q", um.peek.header)
+	}
+}
+
+// TestDashboard_PeekSelect_InTmux_Success_ClearsPeekSelectMode verifies that
+// when openPeekOn is called from the peekSelectMode picker (peekSelectMode=true)
+// and insideTmux() is true and the new-window call succeeds, the returned model
+// has peekSelectMode=false so the picker overlay does not persist.
+//
+// Given: a dashboard model with peekSelectMode=true, two active aqueducts,
+//
+//	insideTmux() returning true, and tmuxNewWindowFunc succeeding
+//
+// When:  'enter' is pressed to confirm the picker selection
+// Then:  the returned model has peekSelectMode=false
+func TestDashboard_PeekSelect_InTmux_Success_ClearsPeekSelectMode(t *testing.T) {
+	origInsideTmux := insideTmux
+	insideTmux = func() bool { return true }
+	defer func() { insideTmux = origInsideTmux }()
+
+	origNewWindow := tmuxNewWindowFunc
+	tmuxNewWindowFunc = func(_, _ string) error { return nil }
+	defer func() { tmuxNewWindowFunc = origNewWindow }()
+
+	m := newDashboardTUIModel("", "")
+	m.data = &DashboardData{
+		Cataractae: []CataractaeInfo{
+			{
+				Name:      "virgo",
+				RepoName:  "myrepo",
+				DropletID: "ci-test01",
+				Step:      "implement",
+				Steps:     []string{"implement", "review"},
+			},
+			{
+				Name:      "scorpio",
+				RepoName:  "myrepo",
+				DropletID: "ci-test02",
+				Step:      "review",
+				Steps:     []string{"implement", "review"},
+			},
+		},
+	}
+	// Simulate being in the picker overlay with first aqueduct selected.
+	m.peekSelectMode = true
+	m.peekSelectIndex = 0
+
+	// Press 'enter' to confirm selection from the peekSelectMode picker.
+	updatedModel, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+
+	um := updatedModel.(dashboardTUIModel)
+	if um.peekSelectMode {
+		t.Error("peekSelectMode should be false after successful new-window spawn from picker")
+	}
+}
 
 // TestTuiAqueductRow_WaterfallIndex_WidePoolRowsAtBottom verifies that when a
 // droplet is on the final step the wide-pool waterfall rows (containing "≈")

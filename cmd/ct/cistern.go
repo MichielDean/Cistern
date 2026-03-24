@@ -1092,10 +1092,27 @@ var dropletApproveCmd = &cobra.Command{
 // --- cistern peek ---
 
 var (
-	peekLines  int
-	peekRaw    bool
-	peekFollow bool
+	peekLines    int
+	peekRaw      bool
+	peekFollow   bool
+	peekSnapshot bool
 )
+
+// tmuxHasSession reports whether the named tmux session exists.
+// Replaced in tests to avoid requiring a live tmux installation.
+var tmuxHasSession = func(session string) bool {
+	return exec.Command("tmux", "has-session", "-t", session).Run() == nil
+}
+
+// tmuxAttachFunc attaches read-only to the named tmux session, taking over the terminal.
+// Replaced in tests to capture the call without running tmux.
+var tmuxAttachFunc = func(session string) error {
+	cmd := exec.Command("tmux", "attach-session", "-t", session, "-r")
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	return cmd.Run()
+}
 
 var ansiRE = regexp.MustCompile(`\x1b\[[0-9;]*m`)
 
@@ -1145,19 +1162,37 @@ var dropletPeekCmd = &cobra.Command{
 		session := item.Repo + "-" + item.Assignee
 		fmt.Printf("[%s] %s — flowing %s\n", item.ID, item.Title, formatElapsed(time.Since(item.UpdatedAt)))
 
-		printCapture := func() {
-			if err := exec.Command("tmux", "has-session", "-t", session).Run(); err != nil {
-				fmt.Printf("No active tmux session found for %s — may have just completed\n", id)
-				// Fall back to last 10 lines of the most recent note.
-				notes, nerr := c.GetNotes(id)
-				if nerr == nil && len(notes) > 0 {
-					last := notes[0]
-					lines := strings.Split(last.Content, "\n")
-					if len(lines) > 10 {
-						lines = lines[len(lines)-10:]
-					}
-					fmt.Println(strings.Join(lines, "\n"))
+		// notesHint prints a no-session message and falls back to the last note.
+		notesHint := func() {
+			fmt.Printf("No active tmux session found for %s — may have just completed\n", id)
+			notes, nerr := c.GetNotes(id)
+			if nerr == nil && len(notes) > 0 {
+				last := notes[0]
+				lines := strings.Split(last.Content, "\n")
+				if len(lines) > 10 {
+					lines = lines[len(lines)-10:]
 				}
+				fmt.Println(strings.Join(lines, "\n"))
+			}
+		}
+
+		// Default: live attach — takes over the terminal read-only.
+		// --snapshot retains capture-pane polling for non-interactive use.
+		if !peekSnapshot {
+			if peekFollow {
+				return fmt.Errorf("--follow requires --snapshot; re-run with: ct droplet peek --snapshot --follow %s", id)
+			}
+			if !tmuxHasSession(session) {
+				notesHint()
+				return nil
+			}
+			return tmuxAttachFunc(session)
+		}
+
+		// --snapshot mode: static capture-pane with optional --follow polling.
+		printCapture := func() {
+			if !tmuxHasSession(session) {
+				notesHint()
 				return
 			}
 			out, cerr := capturePane(session, peekLines)
@@ -1176,7 +1211,7 @@ var dropletPeekCmd = &cobra.Command{
 			return nil
 		}
 
-		// --follow: re-capture every 3 seconds until Ctrl-C.
+		// --snapshot --follow: re-capture every 3 seconds until Ctrl-C.
 		printCapture()
 		ticker := time.NewTicker(3 * time.Second)
 		defer ticker.Stop()
@@ -1302,7 +1337,8 @@ func init() {
 
 	dropletPeekCmd.Flags().IntVar(&peekLines, "lines", 50, "number of lines to capture")
 	dropletPeekCmd.Flags().BoolVar(&peekRaw, "raw", false, "do not strip ANSI codes")
-	dropletPeekCmd.Flags().BoolVar(&peekFollow, "follow", false, "re-capture every 3 seconds (Ctrl-C to stop)")
+	dropletPeekCmd.Flags().BoolVar(&peekFollow, "follow", false, "re-capture every 3 seconds (Ctrl-C to stop); use with --snapshot")
+	dropletPeekCmd.Flags().BoolVar(&peekSnapshot, "snapshot", false, "capture a static snapshot instead of attaching read-only to the live session")
 
 	dropletIssueResolveCmd.Flags().StringVar(&issueResolveEvidence, "evidence", "", "command + output proving resolution")
 	dropletIssueRejectCmd.Flags().StringVar(&issueRejectEvidence, "evidence", "", "command + output proving issue still present")
