@@ -63,7 +63,7 @@ func runInit(cmd *cobra.Command, args []string) error {
 	if err := initCataractaeDir(w, cataractaeDir); err != nil {
 		return fmt.Errorf("init cataractae dir: %w", err)
 	}
-	if _, err := aqueduct.GenerateCataractaeFiles(w, cataractaeDir); err != nil {
+	if _, err := aqueduct.GenerateCataractaeFiles(w, cataractaeDir, ""); err != nil {
 		return fmt.Errorf("generate cataractae: %w", err)
 	}
 

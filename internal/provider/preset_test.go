@@ -107,6 +107,29 @@ func TestBuiltins_NonInteractiveConfig(t *testing.T) {
 	}
 }
 
+// TestBuiltins_SupportsAddDir verifies that only the claude preset has SupportsAddDir=true.
+// Other providers lack --add-dir support and must inject context via prompt preamble.
+func TestBuiltins_SupportsAddDir(t *testing.T) {
+	tests := []struct {
+		name           string
+		wantSupportsAddDir bool
+	}{
+		{"claude", true},
+		{"codex", false},
+		{"gemini", false},
+		{"copilot", false},
+		{"opencode", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p := builtinByName(t, tt.name)
+			if p.SupportsAddDir != tt.wantSupportsAddDir {
+				t.Errorf("SupportsAddDir = %v, want %v", p.SupportsAddDir, tt.wantSupportsAddDir)
+			}
+		})
+	}
+}
+
 // TestBuiltins_ReturnsCopy verifies that mutating the returned slice does not affect the built-ins.
 func TestBuiltins_ReturnsCopy(t *testing.T) {
 	t.Run("string field mutation is isolated", func(t *testing.T) {

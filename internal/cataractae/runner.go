@@ -243,6 +243,10 @@ func (r *Runner) SpawnStep(w *Worker, item *cistern.Droplet, step *aqueduct.Work
 
 	// 3. Spawn agent session in tmux. Returns immediately.
 	modelVal := resolveModelVal(step.Model, r.preset)
+	skillNames := make([]string, len(step.Skills))
+	for i, sk := range step.Skills {
+		skillNames[i] = sk.Name
+	}
 	sess := &Session{
 		ID:             w.SessionID,
 		WorkDir:        ctxDir,
@@ -250,6 +254,7 @@ func (r *Runner) SpawnStep(w *Worker, item *cistern.Droplet, step *aqueduct.Work
 		Identity:       step.Identity,
 		TimeoutMinutes: step.TimeoutMinutes,
 		Preset:         r.preset,
+		Skills:         skillNames,
 	}
 	if err := sess.Spawn(); err != nil {
 		cleanup()

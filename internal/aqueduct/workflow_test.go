@@ -332,7 +332,7 @@ func TestGenerateCataractaeFiles_WithPersonaAndInstructions(t *testing.T) {
 	}
 
 	w := workflowWithIdentity("reviewer")
-	written, err := GenerateCataractaeFiles(w, tmpDir)
+	written, err := GenerateCataractaeFiles(w, tmpDir, "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -361,7 +361,7 @@ func TestGenerateCataractaeFiles_SkipsWhenNeitherFileExists(t *testing.T) {
 	tmpDir := t.TempDir()
 	w := workflowWithIdentity("implementer")
 
-	written, err := GenerateCataractaeFiles(w, tmpDir)
+	written, err := GenerateCataractaeFiles(w, tmpDir, "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -383,7 +383,7 @@ func TestGenerateCataractaeFiles_SkipsWhenInstructionsMissing(t *testing.T) {
 	// No INSTRUCTIONS.md written.
 
 	w := workflowWithIdentity("qa")
-	written, err := GenerateCataractaeFiles(w, tmpDir)
+	written, err := GenerateCataractaeFiles(w, tmpDir, "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -416,7 +416,7 @@ func TestGenerateCataractaeFiles_DeduplicatesIdentities(t *testing.T) {
 			{Name: "review2", Type: CataractaeTypeAgent, Identity: "reviewer", OnPass: "done"},
 		},
 	}
-	written, err := GenerateCataractaeFiles(w, tmpDir)
+	written, err := GenerateCataractaeFiles(w, tmpDir, "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -432,7 +432,7 @@ func TestGenerateCataractaeFiles_EmptyWorkflow(t *testing.T) {
 		Name:       "test",
 		Cataractae: []WorkflowCataractae{{Name: "gate", Type: CataractaeTypeGate, OnPass: "done"}},
 	}
-	written, err := GenerateCataractaeFiles(w, tmpDir)
+	written, err := GenerateCataractaeFiles(w, tmpDir, "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -460,7 +460,7 @@ func TestGenerateCataractaeFiles_ReturnsErrorOnUnreadablePersona(t *testing.T) {
 	t.Cleanup(func() { _ = os.Chmod(personaPath, 0o644) })
 
 	w := workflowWithIdentity("implementer")
-	_, err := GenerateCataractaeFiles(w, tmpDir)
+	_, err := GenerateCataractaeFiles(w, tmpDir, "")
 	if err == nil {
 		t.Fatal("expected error for unreadable PERSONA.md, got nil")
 	}
@@ -488,9 +488,123 @@ func TestGenerateCataractaeFiles_ReturnsErrorOnUnreadableInstructions(t *testing
 	t.Cleanup(func() { _ = os.Chmod(instrPath, 0o644) })
 
 	w := workflowWithIdentity("implementer")
-	_, err := GenerateCataractaeFiles(w, tmpDir)
+	_, err := GenerateCataractaeFiles(w, tmpDir, "")
 	if err == nil {
 		t.Fatal("expected error for unreadable INSTRUCTIONS.md, got nil")
+	}
+}
+
+// TestGenerateCataractaeFiles_WritesProviderInstructionsFile verifies that a
+// non-default instructionsFile is written instead of CLAUDE.md.
+func TestGenerateCataractaeFiles_WritesProviderInstructionsFile(t *testing.T) {
+	tmpDir := t.TempDir()
+	identityDir := filepath.Join(tmpDir, "implementer")
+	if err := os.MkdirAll(identityDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(identityDir, "PERSONA.md"), []byte("# Role: Implementer\n\nI implement."), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(identityDir, "INSTRUCTIONS.md"), []byte("Do the work. ct droplet pass <id>"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	w := workflowWithIdentity("implementer")
+	written, err := GenerateCataractaeFiles(w, tmpDir, "AGENTS.md")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(written) != 1 {
+		t.Fatalf("expected 1 file written, got %d", len(written))
+	}
+	if written[0] != filepath.Join(identityDir, "AGENTS.md") {
+		t.Errorf("written path = %q, want AGENTS.md path", written[0])
+	}
+
+	// AGENTS.md must exist with expected content.
+	data, err := os.ReadFile(filepath.Join(identityDir, "AGENTS.md"))
+	if err != nil {
+		t.Fatalf("AGENTS.md not created: %v", err)
+	}
+	if !strings.Contains(string(data), "I implement.") {
+		t.Error("AGENTS.md missing persona content")
+	}
+
+	// CLAUDE.md must NOT be created.
+	if _, statErr := os.Stat(filepath.Join(identityDir, "CLAUDE.md")); statErr == nil {
+		t.Error("CLAUDE.md should not be created when instructionsFile is AGENTS.md")
+	}
+}
+
+// TestGenerateCataractaeFiles_PreservesExistingClaudeMd verifies that a pre-existing
+// CLAUDE.md is left untouched when generating a different InstructionsFile — backward
+// compatibility for repos that have CLAUDE.md and switch to another provider.
+func TestGenerateCataractaeFiles_PreservesExistingClaudeMd(t *testing.T) {
+	tmpDir := t.TempDir()
+	identityDir := filepath.Join(tmpDir, "reviewer")
+	if err := os.MkdirAll(identityDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(identityDir, "PERSONA.md"), []byte("# Role: Reviewer\n\nI review."), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(identityDir, "INSTRUCTIONS.md"), []byte("Review carefully. ct droplet pass <id>"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// Pre-existing CLAUDE.md from a previous claude-preset run.
+	if err := os.WriteFile(filepath.Join(identityDir, "CLAUDE.md"), []byte("old content"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	w := workflowWithIdentity("reviewer")
+	written, err := GenerateCataractaeFiles(w, tmpDir, "GEMINI.md")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(written) != 1 {
+		t.Fatalf("expected 1 file written, got %d", len(written))
+	}
+
+	// GEMINI.md is written.
+	if _, statErr := os.Stat(filepath.Join(identityDir, "GEMINI.md")); statErr != nil {
+		t.Error("GEMINI.md was not created")
+	}
+
+	// CLAUDE.md preserved with original content.
+	data, err := os.ReadFile(filepath.Join(identityDir, "CLAUDE.md"))
+	if err != nil {
+		t.Fatal("CLAUDE.md was unexpectedly deleted")
+	}
+	if string(data) != "old content" {
+		t.Errorf("CLAUDE.md content changed: got %q, want %q", string(data), "old content")
+	}
+}
+
+// TestGenerateCataractaeFiles_EmptyInstructionsFileDefaultsToClaude verifies that
+// passing "" for instructionsFile defaults to writing CLAUDE.md.
+func TestGenerateCataractaeFiles_EmptyInstructionsFileDefaultsToClaude(t *testing.T) {
+	tmpDir := t.TempDir()
+	identityDir := filepath.Join(tmpDir, "qa")
+	if err := os.MkdirAll(identityDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(identityDir, "PERSONA.md"), []byte("# Role: QA\n\nI test."), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(identityDir, "INSTRUCTIONS.md"), []byte("Test all things. ct droplet pass <id>"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	w := workflowWithIdentity("qa")
+	written, err := GenerateCataractaeFiles(w, tmpDir, "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(written) != 1 {
+		t.Fatalf("expected 1 file written, got %d", len(written))
+	}
+	if _, statErr := os.Stat(filepath.Join(identityDir, "CLAUDE.md")); statErr != nil {
+		t.Error("empty instructionsFile should default to writing CLAUDE.md")
 	}
 }
 

@@ -153,7 +153,7 @@ func runDoctorExtendedChecks(cfg *aqueduct.AqueductConfig, cfgPath, home, dbPath
 	seenSkills := map[string]bool{}
 	seenBinaries := map[string]bool{}
 	seenEnvVars := map[string]bool{}
-	seenMismatch := map[string]bool{}
+
 
 	for _, repo := range cfg.Repos {
 		wfPath := repo.WorkflowPath
@@ -209,10 +209,14 @@ func runDoctorExtendedChecks(cfg *aqueduct.AqueductConfig, cfgPath, home, dbPath
 			continue
 		}
 
-		// Check 6: CLAUDE.md integrity (deduplicated by identity across all repos).
-		// Skipped for providers whose InstructionsFile is not CLAUDE.md — check 3
-		// handles the correct file for those providers.
-		usesCLAUDEMd := presErr != nil || preset.InstructionsFile == "" || preset.InstructionsFile == "CLAUDE.md"
+		// Determine the active InstructionsFile for this repo's provider.
+		// If the provider name is unknown or invalid, report it as a check failure
+		// rather than silently defaulting to CLAUDE.md.
+		presErrCopy := presErr
+		ok = checkWithFix(fmt.Sprintf("provider: %s", repo.Name), func() error { return presErrCopy }, nil) && ok
+		instrFile := preset.InstrFile()
+
+		// Check 6: InstructionsFile integrity (deduplicated by identity across all repos).
 		for _, step := range wf.Cataractae {
 			if step.Type != aqueduct.CataractaeTypeAgent || step.Identity == "" {
 				continue
@@ -222,26 +226,32 @@ func runDoctorExtendedChecks(cfg *aqueduct.AqueductConfig, cfgPath, home, dbPath
 			}
 			seenIdentities[step.Identity] = true
 
-			if !usesCLAUDEMd {
-				continue // check 3 validates the provider-specific instructions file
-			}
-
 			identity := step.Identity
-			mdPath := filepath.Join(cataractaeDir, identity, "CLAUDE.md")
+			mdPath := filepath.Join(cataractaeDir, identity, instrFile)
 			mdPathCopy := mdPath
 
 			var claudeFix func() error
 			if doctorFix {
 				wfCopy := wf
 				dirCopy := cataractaeDir
+				instrFileCopy := instrFile
 				claudeFix = func() error {
-					_, err := aqueduct.GenerateCataractaeFiles(wfCopy, dirCopy)
+					_, err := aqueduct.GenerateCataractaeFiles(wfCopy, dirCopy, instrFileCopy)
 					return err
 				}
 			}
-			ok = checkWithFix(identity+" CLAUDE.md", func() error {
+			ok = checkWithFix(identity+" "+instrFile, func() error {
 				return checkClaudeMdIntegrity(mdPathCopy)
 			}, claudeFix) && ok
+
+			// Note if CLAUDE.md exists but the active provider uses a different filename.
+			// This is informational — CLAUDE.md is preserved for easy provider switching.
+			if instrFile != "CLAUDE.md" {
+				claudeMdPath := filepath.Join(cataractaeDir, identity, "CLAUDE.md")
+				if _, statErr := os.Stat(claudeMdPath); statErr == nil {
+					fmt.Printf("\u2139 %s: CLAUDE.md exists but active provider uses %s\n", identity, instrFile)
+				}
+			}
 		}
 
 		// Check 7: Skills installed at ~/.cistern/skills/<name>/SKILL.md.
@@ -266,44 +276,6 @@ func runDoctorExtendedChecks(cfg *aqueduct.AqueductConfig, cfgPath, home, dbPath
 			}
 		}
 
-		// Check 3: agent instructions file mismatch.
-		// For providers that use a file other than CLAUDE.md, verify the correct
-		// file exists. If only CLAUDE.md exists, report a provider mismatch.
-		if presErr == nil {
-			instrFile := preset.InstructionsFile
-			if instrFile != "" && instrFile != "CLAUDE.md" {
-				for _, step := range wf.Cataractae {
-					if step.Type != aqueduct.CataractaeTypeAgent || step.Identity == "" {
-						continue
-					}
-					identity := step.Identity
-					mismatchKey := identity + ":" + instrFile
-					if seenMismatch[mismatchKey] {
-						continue
-					}
-					seenMismatch[mismatchKey] = true
-
-					identityDir := filepath.Join(cataractaeDir, identity)
-					instrPath := filepath.Join(identityDir, instrFile)
-					claudeMdPath := filepath.Join(identityDir, "CLAUDE.md")
-					instrPathCopy := instrPath
-					claudeMdPathCopy := claudeMdPath
-					identityCopy := identity
-					instrFileCopy := instrFile
-					presetNameCopy := preset.Name
-
-					ok = checkWithFix(identityCopy+" "+instrFileCopy, func() error {
-						if _, statErr := os.Stat(instrPathCopy); statErr != nil {
-							if _, cErr := os.Stat(claudeMdPathCopy); cErr == nil {
-								return fmt.Errorf("not found — provider %q uses %s but only CLAUDE.md exists — run: ct cataractae generate", presetNameCopy, instrFileCopy)
-							}
-							return fmt.Errorf("not found — run: ct cataractae generate")
-						}
-						return nil
-					}, nil) && ok
-				}
-			}
-		}
 	}
 
 	// Check 4: LLM block validation — custom provider requires base_url.

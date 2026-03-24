@@ -16,6 +16,21 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// resolveInstructionsFile returns the InstructionsFile from the resolved provider
+// preset for the first configured repo, or "CLAUDE.md" as the default fallback.
+func resolveInstructionsFile() string {
+	cfgPath := resolveConfigPath()
+	cfg, err := aqueduct.ParseAqueductConfig(cfgPath)
+	if err != nil || len(cfg.Repos) == 0 {
+		return "CLAUDE.md"
+	}
+	preset, err := cfg.ResolveProvider(cfg.Repos[0].Name)
+	if err != nil {
+		return "CLAUDE.md"
+	}
+	return preset.InstrFile()
+}
+
 var cataractaeCmd = &cobra.Command{
 	Use:   "cataractae",
 	Short: "Manage cataractae definitions",
@@ -77,7 +92,8 @@ func runCataractaeGenerate(cmd *cobra.Command, args []string) error {
 	// Derive cataractae dir from the workflow location: <repo>/cataractae/ sits one level
 	// above the aqueduct dir that contains the workflow file.
 	cataractaeDir := cisternCataractaeDir(wfPath)
-	written, err := aqueduct.GenerateCataractaeFiles(w, cataractaeDir)
+	instrFile := resolveInstructionsFile()
+	written, err := aqueduct.GenerateCataractaeFiles(w, cataractaeDir, instrFile)
 	if err != nil {
 		return err
 	}
@@ -201,8 +217,9 @@ func runCataractaeEdit(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("editor: %w", err)
 	}
 
-	// Regenerate CLAUDE.md.
-	written, err := aqueduct.GenerateCataractaeFiles(w, cataractaeDir)
+	// Regenerate instructions file.
+	instrFile := resolveInstructionsFile()
+	written, err := aqueduct.GenerateCataractaeFiles(w, cataractaeDir, instrFile)
 	if err != nil {
 		return err
 	}

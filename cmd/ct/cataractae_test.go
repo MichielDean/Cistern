@@ -97,6 +97,17 @@ func replaceStdin(t *testing.T, input string) {
 	w.Close()
 }
 
+// --- resolveInstructionsFile ---
+
+func TestResolveInstructionsFile_DefaultsToClaudeWhenNoConfig(t *testing.T) {
+	// Point HOME to a temp dir so no real ~/.cistern/cistern.yaml is found.
+	t.Setenv("HOME", t.TempDir())
+	got := resolveInstructionsFile()
+	if got != "CLAUDE.md" {
+		t.Errorf("resolveInstructionsFile() = %q, want %q when no config present", got, "CLAUDE.md")
+	}
+}
+
 // --- cisternCataractaeDir ---
 
 func TestCisternCataractaeDir_DerivedFromWorkflowPath(t *testing.T) {

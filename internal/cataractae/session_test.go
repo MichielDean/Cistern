@@ -405,6 +405,224 @@ func TestFakeagent_SpawnOutcomeCycle(t *testing.T) {
 	}
 }
 
+// TestResolveIdentityPath_UsesPresetInstructionsFile verifies that resolveIdentityPath
+// returns the preset's InstructionsFile rather than always CLAUDE.md.
+func TestResolveIdentityPath_UsesPresetInstructionsFile(t *testing.T) {
+	dir := t.TempDir()
+	identityDir := filepath.Join(dir, ".cistern", "cataractae", "implementer")
+	if err := os.MkdirAll(identityDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// Create AGENTS.md (not CLAUDE.md) — codex-style preset.
+	if err := os.WriteFile(filepath.Join(identityDir, "AGENTS.md"), []byte("# Implementer"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HOME", dir)
+
+	s := &Session{
+		Identity: "implementer",
+		Preset:   provider.ProviderPreset{InstructionsFile: "AGENTS.md"},
+	}
+	got := s.resolveIdentityPath()
+	want := filepath.Join(identityDir, "AGENTS.md")
+	if got != want {
+		t.Errorf("resolveIdentityPath = %q, want %q", got, want)
+	}
+}
+
+// TestResolveIdentityPath_FallbackSandbox_WithPreset verifies that when the cistern
+// path does not exist, the sandbox-relative path uses the preset's InstructionsFile.
+func TestResolveIdentityPath_FallbackSandbox_WithPreset(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", dir) // no identity dir at cistern path
+
+	s := &Session{
+		Identity: "reviewer",
+		Preset:   provider.ProviderPreset{InstructionsFile: "GEMINI.md"},
+	}
+	got := s.resolveIdentityPath()
+	want := "cataractae/reviewer/GEMINI.md"
+	if got != want {
+		t.Errorf("resolveIdentityPath = %q, want %q", got, want)
+	}
+}
+
+// TestBuildContextPreamble_ReadsInstructionsFile verifies that buildContextPreamble
+// returns the content of the preset's InstructionsFile when it exists.
+func TestBuildContextPreamble_ReadsInstructionsFile(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "AGENTS.md"), []byte("# Codex Role\n\nDo work."), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	preset := provider.ProviderPreset{InstructionsFile: "AGENTS.md"}
+	got := buildContextPreamble(dir, preset)
+	if got != "# Codex Role\n\nDo work." {
+		t.Errorf("buildContextPreamble = %q, want %q", got, "# Codex Role\n\nDo work.")
+	}
+}
+
+// TestBuildContextPreamble_FallsBackToSourceFiles verifies that when InstructionsFile
+// is missing, PERSONA.md + INSTRUCTIONS.md are concatenated as fallback.
+func TestBuildContextPreamble_FallsBackToSourceFiles(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "PERSONA.md"), []byte("# Role: Coder"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "INSTRUCTIONS.md"), []byte("Write tests."), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// No AGENTS.md — forces fallback.
+	preset := provider.ProviderPreset{InstructionsFile: "AGENTS.md"}
+	got := buildContextPreamble(dir, preset)
+	if !strings.Contains(got, "# Role: Coder") {
+		t.Error("fallback preamble missing PERSONA.md content")
+	}
+	if !strings.Contains(got, "Write tests.") {
+		t.Error("fallback preamble missing INSTRUCTIONS.md content")
+	}
+}
+
+// TestBuildContextPreamble_EmptyWhenAllMissing verifies that buildContextPreamble
+// returns empty string when neither InstructionsFile nor source files exist.
+func TestBuildContextPreamble_EmptyWhenAllMissing(t *testing.T) {
+	dir := t.TempDir() // no files
+	preset := provider.ProviderPreset{InstructionsFile: "AGENTS.md"}
+	got := buildContextPreamble(dir, preset)
+	if got != "" {
+		t.Errorf("buildContextPreamble = %q, want empty string when all files missing", got)
+	}
+}
+
+// TestBuildContextPreamble_DefaultsToClaude verifies that empty InstructionsFile
+// defaults to reading CLAUDE.md.
+func TestBuildContextPreamble_DefaultsToClaude(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "CLAUDE.md"), []byte("Claude role content"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	preset := provider.ProviderPreset{} // InstructionsFile is empty
+	got := buildContextPreamble(dir, preset)
+	if got != "Claude role content" {
+		t.Errorf("buildContextPreamble = %q, want %q", got, "Claude role content")
+	}
+}
+
+// TestBuildPrompt_NonAddDirProvider_InjectsContextPreamble verifies that for a preset
+// without SupportsAddDir, buildPrompt injects the InstructionsFile content via
+// buildContextPreamble.
+func TestBuildPrompt_NonAddDirProvider_InjectsContextPreamble(t *testing.T) {
+	dir := t.TempDir()
+	identityDir := filepath.Join(dir, ".cistern", "cataractae", "implementer")
+	if err := os.MkdirAll(identityDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(identityDir, "AGENTS.md"),
+		[]byte("# Implementer (codex)\n\nYou write code."), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HOME", dir)
+
+	s := &Session{
+		ID:       "test",
+		WorkDir:  dir,
+		Identity: "implementer",
+		Preset: provider.ProviderPreset{
+			Name:             "codex",
+			InstructionsFile: "AGENTS.md",
+			SupportsAddDir:   false,
+		},
+	}
+	prompt := s.buildPrompt()
+
+	if !strings.Contains(prompt, "## Your Role") {
+		t.Error("prompt missing '## Your Role' section")
+	}
+	if !strings.Contains(prompt, "You write code.") {
+		t.Error("prompt missing AGENTS.md content")
+	}
+	if !strings.Contains(prompt, baseCataractaePrompt) {
+		t.Error("prompt missing constitutional base")
+	}
+}
+
+// TestBuildPrompt_NonAddDirProvider_InjectsSkills verifies that for a preset without
+// SupportsAddDir, skill content is injected into the prompt when Skills is set.
+func TestBuildPrompt_NonAddDirProvider_InjectsSkills(t *testing.T) {
+	dir := t.TempDir()
+	// Create skill SKILL.md.
+	skillDir := filepath.Join(dir, ".cistern", "skills", "my-skill")
+	if err := os.MkdirAll(skillDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte("# My Skill\n\nDo the skill thing."), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HOME", dir)
+
+	s := &Session{
+		ID:      "test",
+		WorkDir: dir,
+		Preset: provider.ProviderPreset{
+			Name:           "codex",
+			SupportsAddDir: false,
+		},
+		Skills: []string{"my-skill"},
+	}
+	prompt := s.buildPrompt()
+
+	if !strings.Contains(prompt, "my-skill") {
+		t.Error("prompt missing skill name")
+	}
+	if !strings.Contains(prompt, "Do the skill thing.") {
+		t.Error("prompt missing skill content")
+	}
+}
+
+// TestBuildPrompt_AddDirProvider_SkillsNotInjectedInPrompt verifies that for
+// providers with SupportsAddDir=true, skills are NOT injected in the prompt
+// (they are available via --add-dir instead).
+func TestBuildPrompt_AddDirProvider_SkillsNotInjectedInPrompt(t *testing.T) {
+	dir := t.TempDir()
+	identityDir := filepath.Join(dir, ".cistern", "cataractae", "implementer")
+	if err := os.MkdirAll(identityDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(identityDir, "CLAUDE.md"),
+		[]byte("# Implementer\n\nYou implement."), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	skillDir := filepath.Join(dir, ".cistern", "skills", "my-skill")
+	if err := os.MkdirAll(skillDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte("# My Skill\n\nSkill content."), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HOME", dir)
+
+	s := &Session{
+		ID:       "test",
+		WorkDir:  dir,
+		Identity: "implementer",
+		Preset: provider.ProviderPreset{
+			Name:             "claude",
+			InstructionsFile: "CLAUDE.md",
+			SupportsAddDir:   true,
+		},
+		Skills: []string{"my-skill"},
+	}
+	prompt := s.buildPrompt()
+
+	// Role content is injected (via SupportsAddDir=true path).
+	if !strings.Contains(prompt, "## Your Role") {
+		t.Error("prompt missing '## Your Role'")
+	}
+	// Skill content must NOT be in the prompt for AddDir providers.
+	if strings.Contains(prompt, "Skill content.") {
+		t.Error("prompt must not contain injected skill content for AddDir providers — skills available via --add-dir")
+	}
+}
+
 // TestIsAgentAlive_ProcessNameMatches_ReturnsTrue verifies that isAgentAlive
 // returns true when the pane's current command matches one of the preset's
 // ProcessNames.
@@ -608,5 +826,58 @@ func TestIsAgentAlive_PassesSessionIDToDisplayMessage(t *testing.T) {
 	s.isAgentAlive()
 	if capturedID != "myrepo-alice" {
 		t.Errorf("tmuxDisplayMessage called with id = %q, want %q", capturedID, "myrepo-alice")
+	}
+}
+
+// TestResolveIdentityDir_CisternDirWithInstrFile verifies that when the cistern
+// directory exists and contains the instrFile, resolveIdentityDir returns the cistern path.
+func TestResolveIdentityDir_CisternDirWithInstrFile(t *testing.T) {
+	dir := t.TempDir()
+	identityDir := filepath.Join(dir, ".cistern", "cataractae", "implementer")
+	if err := os.MkdirAll(identityDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(identityDir, "CLAUDE.md"), []byte("# Implementer"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HOME", dir)
+
+	s := &Session{Identity: "implementer"}
+	got := s.resolveIdentityDir()
+	if got != identityDir {
+		t.Errorf("resolveIdentityDir = %q, want %q", got, identityDir)
+	}
+}
+
+// TestResolveIdentityDir_CisternDirWithoutInstrFile verifies that when the cistern
+// directory exists but the instrFile is absent, resolveIdentityDir still returns the
+// cistern path — directory existence, not file presence, is the resolution condition.
+func TestResolveIdentityDir_CisternDirWithoutInstrFile(t *testing.T) {
+	dir := t.TempDir()
+	identityDir := filepath.Join(dir, ".cistern", "cataractae", "implementer")
+	if err := os.MkdirAll(identityDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// Intentionally no instrFile in this directory.
+	t.Setenv("HOME", dir)
+
+	s := &Session{Identity: "implementer"}
+	got := s.resolveIdentityDir()
+	if got != identityDir {
+		t.Errorf("resolveIdentityDir = %q, want %q", got, identityDir)
+	}
+}
+
+// TestResolveIdentityDir_FallbackSandbox verifies that when the cistern directory
+// does not exist, resolveIdentityDir returns the sandbox-relative path.
+func TestResolveIdentityDir_FallbackSandbox(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", dir) // no cistern identity dir
+
+	s := &Session{Identity: "implementer"}
+	got := s.resolveIdentityDir()
+	want := filepath.Join("cataractae", "implementer")
+	if got != want {
+		t.Errorf("resolveIdentityDir = %q, want %q", got, want)
 	}
 }

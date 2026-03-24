@@ -568,6 +568,168 @@ cataractae:
 	}
 }
 
+// TestRunDoctorExtendedChecks_ProviderInstructionsFile verifies that the doctor
+// checks the provider's InstructionsFile (e.g., AGENTS.md for codex) rather than
+// always CLAUDE.md.
+func TestRunDoctorExtendedChecks_ProviderInstructionsFile(t *testing.T) {
+	home := t.TempDir()
+
+	cisternDir := filepath.Join(home, ".cistern")
+	aqueductDir := filepath.Join(cisternDir, "aqueduct")
+	cataractaeDir := filepath.Join(cisternDir, "cataractae")
+	for _, d := range []string{aqueductDir, cataractaeDir, filepath.Join(cisternDir, "skills")} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", d, err)
+		}
+	}
+
+	setupFakeBinAndAPIKey(t, "codex", "OPENAI_API_KEY")
+
+	wfPath := filepath.Join(aqueductDir, "workflow.yaml")
+	if err := os.WriteFile(wfPath, []byte(minimalWorkflowYAML), 0o644); err != nil {
+		t.Fatalf("write workflow: %v", err)
+	}
+
+	// Config specifying codex provider (InstructionsFile = AGENTS.md).
+	codexConfigYAML := `repos:
+  - name: testrepo
+    url: https://github.com/example/testrepo
+    workflow_path: aqueduct/workflow.yaml
+    cataractae: 1
+    prefix: ct
+provider:
+  name: codex
+max_cataractae: 1
+`
+	cfgPath := filepath.Join(cisternDir, "cistern.yaml")
+	if err := os.WriteFile(cfgPath, []byte(codexConfigYAML), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	// Write AGENTS.md (codex InstructionsFile) for tester.
+	testerDir := filepath.Join(cataractaeDir, "tester")
+	if err := os.MkdirAll(testerDir, 0o755); err != nil {
+		t.Fatalf("mkdir tester: %v", err)
+	}
+	agentsContent := "# Role: Tester\n\nct droplet pass <id> --notes \"...\"\n"
+	if err := os.WriteFile(filepath.Join(testerDir, "AGENTS.md"), []byte(agentsContent), 0o644); err != nil {
+		t.Fatalf("write AGENTS.md: %v", err)
+	}
+
+	cfg, err := aqueduct.ParseAqueductConfig(cfgPath)
+	if err != nil {
+		t.Fatalf("parse config: %v", err)
+	}
+
+	dbPath := filepath.Join(cisternDir, "cistern.db")
+	result := runDoctorExtendedChecks(cfg, cfgPath, home, dbPath)
+	if !result {
+		t.Error("expected extended checks to pass when AGENTS.md is present for codex provider")
+	}
+}
+
+// TestRunDoctorExtendedChecks_ProviderInstructionsFile_MissingFails verifies that the
+// doctor fails when the provider's InstructionsFile (e.g., AGENTS.md) is missing,
+// even when CLAUDE.md exists.
+func TestRunDoctorExtendedChecks_ProviderInstructionsFile_MissingFails(t *testing.T) {
+	home := t.TempDir()
+
+	cisternDir := filepath.Join(home, ".cistern")
+	aqueductDir := filepath.Join(cisternDir, "aqueduct")
+	cataractaeDir := filepath.Join(cisternDir, "cataractae")
+	for _, d := range []string{aqueductDir, cataractaeDir, filepath.Join(cisternDir, "skills")} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", d, err)
+		}
+	}
+
+	wfPath := filepath.Join(aqueductDir, "workflow.yaml")
+	if err := os.WriteFile(wfPath, []byte(minimalWorkflowYAML), 0o644); err != nil {
+		t.Fatalf("write workflow: %v", err)
+	}
+
+	codexConfigYAML := `repos:
+  - name: testrepo
+    url: https://github.com/example/testrepo
+    workflow_path: aqueduct/workflow.yaml
+    cataractae: 1
+    prefix: ct
+provider:
+  name: codex
+max_cataractae: 1
+`
+	cfgPath := filepath.Join(cisternDir, "cistern.yaml")
+	if err := os.WriteFile(cfgPath, []byte(codexConfigYAML), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	// Write CLAUDE.md but NOT AGENTS.md — provider is codex so AGENTS.md is checked.
+	testerDir := filepath.Join(cataractaeDir, "tester")
+	if err := os.MkdirAll(testerDir, 0o755); err != nil {
+		t.Fatalf("mkdir tester: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(testerDir, "CLAUDE.md"), []byte("ct droplet pass"), 0o644); err != nil {
+		t.Fatalf("write CLAUDE.md: %v", err)
+	}
+
+	cfg, err := aqueduct.ParseAqueductConfig(cfgPath)
+	if err != nil {
+		t.Fatalf("parse config: %v", err)
+	}
+
+	dbPath := filepath.Join(cisternDir, "cistern.db")
+	result := runDoctorExtendedChecks(cfg, cfgPath, home, dbPath)
+	if result {
+		t.Error("expected extended checks to fail when AGENTS.md is missing for codex provider")
+	}
+}
+
+// TestRunDoctorExtendedChecks_UnknownProvider_FailsProviderCheck verifies that
+// when the configured provider name is unknown, the doctor reports a check
+// failure instead of silently defaulting to CLAUDE.md.
+func TestRunDoctorExtendedChecks_UnknownProvider_FailsProviderCheck(t *testing.T) {
+	home := t.TempDir()
+
+	cisternDir := filepath.Join(home, ".cistern")
+	aqueductDir := filepath.Join(cisternDir, "aqueduct")
+	for _, d := range []string{aqueductDir, filepath.Join(cisternDir, "cataractae"), filepath.Join(cisternDir, "skills")} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", d, err)
+		}
+	}
+
+	wfPath := filepath.Join(aqueductDir, "workflow.yaml")
+	if err := os.WriteFile(wfPath, []byte(minimalWorkflowYAML), 0o644); err != nil {
+		t.Fatalf("write workflow: %v", err)
+	}
+
+	unknownProviderConfigYAML := `repos:
+  - name: testrepo
+    url: https://github.com/example/testrepo
+    workflow_path: aqueduct/workflow.yaml
+    cataractae: 1
+    prefix: ct
+provider:
+  name: unknownprovider
+max_cataractae: 1
+`
+	cfgPath := filepath.Join(cisternDir, "cistern.yaml")
+	if err := os.WriteFile(cfgPath, []byte(unknownProviderConfigYAML), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	cfg, err := aqueduct.ParseAqueductConfig(cfgPath)
+	if err != nil {
+		t.Fatalf("parse config: %v", err)
+	}
+
+	dbPath := filepath.Join(cisternDir, "cistern.db")
+	result := runDoctorExtendedChecks(cfg, cfgPath, home, dbPath)
+	if result {
+		t.Error("expected extended checks to fail when provider name is unknown")
+	}
+}
+
 func TestRunDoctorExtendedChecks_FailsWhenWorkflowInvalid(t *testing.T) {
 	home := t.TempDir()
 
