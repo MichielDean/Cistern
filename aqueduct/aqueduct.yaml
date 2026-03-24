@@ -33,7 +33,7 @@ cataractae:
   - name: simplify
     type: agent
     identity: simplifier
-    model: opus         # stronger model for deep refactoring
+    model: sonnet       # pattern recognition + refactoring — Sonnet 4.6 is sufficient, Opus is overkill
     context: full_codebase
     skills:
       - name: cistern-droplet-state
@@ -49,7 +49,7 @@ cataractae:
   - name: adversarial-review
     type: agent
     identity: reviewer
-    model: opus         # adversarial reviewer benefits from the strongest available model
+    model: opus         # strongest reasoning needed — must find non-obvious bugs across full codebase
     context: full_codebase
     skills:
       - name: cistern-droplet-state
@@ -81,7 +81,7 @@ cataractae:
   - name: security-review
     type: agent
     identity: security
-    model: sonnet
+    model: opus         # context-isolated adversarial role — no safety net, must catch vulns from diff alone
     context: diff_only
     skills:
       - name: cistern-droplet-state
@@ -95,7 +95,7 @@ cataractae:
   - name: docs
     type: agent
     identity: docs_writer
-    model: sonnet
+    model: haiku        # mechanical copy-editing task — read diff, update .md files, no deep reasoning needed
     context: full_codebase
     skills:
       - name: cistern-droplet-state
@@ -110,6 +110,7 @@ cataractae:
   - name: delivery
     type: agent
     identity: delivery
+    model: haiku        # scripted PR creation checklist — mechanical, no reasoning required
     skills:
       - name: cistern-github
       - name: cistern-droplet-state
