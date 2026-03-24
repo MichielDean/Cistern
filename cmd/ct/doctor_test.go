@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -1785,5 +1786,73 @@ func TestInstallSystemdService_ServiceFileHasNoAnthropicAPIKey(t *testing.T) {
 	}
 	if strings.Contains(string(data), "ANTHROPIC_API_KEY") {
 		t.Error("service file must not contain ANTHROPIC_API_KEY — credentials are loaded by the wrapper script")
+	}
+}
+
+// TestInstallSystemdService_WrapperStatError_ReturnsError verifies that when
+// os.Stat on the wrapper path returns a non-IsNotExist error (e.g. EACCES),
+// installSystemdService propagates the error instead of silently continuing.
+func TestInstallSystemdService_WrapperStatError_ReturnsError(t *testing.T) {
+	home := setupInstallSystemdServiceTest(t)
+	_ = home
+
+	// Pre-create the .cistern directory so MkdirAll does not fail before we reach the stat.
+	cisternDir := filepath.Join(home, ".cistern")
+	if err := os.MkdirAll(cisternDir, 0o755); err != nil {
+		t.Fatalf("mkdir cisternDir: %v", err)
+	}
+
+	// Inject a stat function that returns a non-IsNotExist error for the wrapper path.
+	origStatFn := osStatFn
+	t.Cleanup(func() { osStatFn = origStatFn })
+	syntheticErr := fmt.Errorf("permission denied")
+	osStatFn = func(name string) (os.FileInfo, error) {
+		if strings.HasSuffix(name, "start-castellarius.sh") {
+			return nil, syntheticErr
+		}
+		return os.Stat(name)
+	}
+
+	err := installSystemdService()
+	if err == nil {
+		t.Fatal("expected error when stat returns a non-IsNotExist error, got nil")
+	}
+	if !strings.Contains(err.Error(), "stat wrapper script") {
+		t.Errorf("expected error to contain 'stat wrapper script', got: %v", err)
+	}
+}
+
+// TestCheckSystemdServiceEnv_NoAPIKeyCheck verifies that checkSystemdServiceEnv
+// does NOT produce a warning about ANTHROPIC_API_KEY being absent from the
+// service environment. ANTHROPIC_API_KEY is now loaded at runtime by the wrapper
+// script sourcing ~/.cistern/env, so it will never appear in systemd's
+// Environment property — reporting its absence as a failure would be a false positive.
+func TestCheckSystemdServiceEnv_NoAPIKeyCheck(t *testing.T) {
+	// Inject a fake systemctl that returns a service env with no ANTHROPIC_API_KEY.
+	origFn := checkSystemdEnvFn
+	t.Cleanup(func() { checkSystemdEnvFn = origFn })
+	checkSystemdEnvFn = func(_ string) ([]byte, error) {
+		return []byte("Environment=PATH=/usr/local/bin:/usr/bin:/bin\n"), nil
+	}
+
+	// Capture stdout to verify no ANTHROPIC_API_KEY warning is emitted.
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("os.Pipe: %v", err)
+	}
+	origStdout := os.Stdout
+	os.Stdout = w
+
+	checkSystemdServiceEnv("cistern-castellarius", nil)
+
+	w.Close()
+	os.Stdout = origStdout
+
+	var buf bytes.Buffer
+	buf.ReadFrom(r)
+	output := buf.String()
+
+	if strings.Contains(output, "ANTHROPIC_API_KEY") {
+		t.Errorf("checkSystemdServiceEnv emitted an ANTHROPIC_API_KEY warning; output:\n%s", output)
 	}
 }

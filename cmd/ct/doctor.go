@@ -515,7 +515,7 @@ func checkSystemdService(cfg *aqueduct.AqueductConfig) {
 // ~/.local/bin (or similar) is missing from the systemd service PATH.
 func checkSystemdServiceEnv(serviceName string, cfg *aqueduct.AqueductConfig) {
 	// Read the service's effective environment from systemd.
-	out, err := exec.Command("systemctl", "--user", "show", serviceName, "--property=Environment").Output()
+	out, err := checkSystemdEnvFn(serviceName)
 	if err != nil {
 		return // can't read env — skip silently
 	}
@@ -566,18 +566,13 @@ func checkSystemdServiceEnv(serviceName string, cfg *aqueduct.AqueductConfig) {
 		}
 	}
 
-	// Check ANTHROPIC_API_KEY is set in service env (not just the current shell).
-	if !strings.Contains(serviceEnv, "ANTHROPIC_API_KEY=") {
-		fmt.Printf("✗ service env: ANTHROPIC_API_KEY not set in service environment\n" +
-			"  Fix: add Environment=ANTHROPIC_API_KEY=<key> to the service drop-in at\n" +
-			"  ~/.config/systemd/user/cistern-castellarius.service.d/env.conf\n")
-	} else {
-		fmt.Printf("✓ service env: ANTHROPIC_API_KEY set\n")
-	}
 }
 
 // resolveGoBinFn wraps resolveGoBin to allow injection in tests.
 var resolveGoBinFn = resolveGoBin
+
+// osStatFn wraps os.Stat to allow injection in tests.
+var osStatFn = os.Stat
 
 // installSystemdService writes the cistern-castellarius.service file and enables it.
 // It also writes ~/.cistern/start-castellarius.sh, creates ~/.cistern/env if absent,
@@ -599,10 +594,12 @@ func installSystemdService() error {
 
 	// Write start-castellarius.sh wrapper if not present (chmod 755).
 	wrapperPath := filepath.Join(cisternDir, "start-castellarius.sh")
-	if _, statErr := os.Stat(wrapperPath); os.IsNotExist(statErr) {
+	if _, statErr := osStatFn(wrapperPath); os.IsNotExist(statErr) {
 		if err := os.WriteFile(wrapperPath, defaultStartCastellarius, 0o755); err != nil {
 			return fmt.Errorf("write wrapper script: %w", err)
 		}
+	} else if statErr != nil {
+		return fmt.Errorf("stat wrapper script: %w", statErr)
 	}
 
 	// Create ~/.cistern/env credential stub if absent.
@@ -775,6 +772,12 @@ var doctorOAuthTokenURL = oauth.DefaultTokenURL
 
 // execCommandFn wraps exec.Command to allow injection in tests.
 var execCommandFn = exec.Command
+
+// checkSystemdEnvFn reads the effective environment of a systemd user service.
+// It is a variable to allow injection in tests.
+var checkSystemdEnvFn = func(serviceName string) ([]byte, error) {
+	return exec.Command("systemctl", "--user", "show", serviceName, "--property=Environment").Output()
+}
 
 // fixOAuthToken refreshes the Claude OAuth access token using the stored refresh
 // token and writes the new access token to ~/.claude/.credentials.json and the
