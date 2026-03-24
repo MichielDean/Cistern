@@ -1,0 +1,33 @@
+name: Installer integration tests
+
+on:
+  pull_request:
+    paths:
+      - '**/doctor.go'
+      - '**/init.go'
+      - '**/start-castellarius.sh'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.head.ref || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  installer-tests:
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: [self-hosted, linux, x64]
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+
+      - name: Run installer integration tests
+        run: |
+          set -o pipefail
+          ./run-installer-tests.sh 2>&1 | tee /tmp/installer-test.log
+
+      - name: Upload container logs on failure
+        if: failure()
+        uses: actions/upload-artifact@0b2256b8c012f0828dc542b3febcab082c67f72b # v4.3.1
+        with:
+          name: installer-test-logs
+          path: /tmp/installer-test.log
