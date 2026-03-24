@@ -8,6 +8,7 @@
 # Pre-flight: checks that ~/.cistern/env exists and ANTHROPIC_API_KEY is set
 # to a non-empty value. Exits 1 with an actionable error message so that
 # systemd captures a useful log entry rather than a silent process exit.
+set -euo pipefail
 
 CISTERN_ENV="${HOME}/.cistern/env"
 
