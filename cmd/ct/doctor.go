@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -309,6 +310,12 @@ func runDoctorExtendedChecks(cfg *aqueduct.AqueductConfig, cfgPath, home, dbPath
 
 	// Check 12: Stalled droplets (warnings only — does not affect ok).
 	checkStalledDroplets(dbPath)
+
+	// Check 13: Claude OAuth token expiry.
+	ok = checkOAuthTokenExpiry(home) && ok
+
+	// Check 14: Service env ANTHROPIC_API_KEY matches current credentials token.
+	ok = checkServiceTokenFreshness(home) && ok
 
 	return ok
 }
@@ -684,6 +691,99 @@ func checkStalledDroplets(dbPath string) {
 			fmt.Printf("\u26A0 %s in_progress for %dm \u2014 may be stalled\n", d.ID, int(elapsed.Minutes()))
 		}
 	}
+}
+
+// claudeCredentials holds the fields we need from ~/.claude/.credentials.json.
+type claudeCredentials struct {
+	ExpiresAt   int64
+	AccessToken string
+}
+
+// readClaudeCredentials reads and parses ~/.claude/.credentials.json.
+// Returns nil if the file is absent, unreadable, or malformed.
+func readClaudeCredentials(home string) *claudeCredentials {
+	data, err := os.ReadFile(filepath.Join(home, ".claude", ".credentials.json"))
+	if err != nil {
+		return nil
+	}
+	var raw struct {
+		ClaudeAiOauth struct {
+			ExpiresAt   int64  `json:"expiresAt"`
+			AccessToken string `json:"accessToken"`
+		} `json:"claudeAiOauth"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return nil
+	}
+	return &claudeCredentials{
+		ExpiresAt:   raw.ClaudeAiOauth.ExpiresAt,
+		AccessToken: raw.ClaudeAiOauth.AccessToken,
+	}
+}
+
+// checkOAuthTokenExpiry reports whether the Claude OAuth token is fresh,
+// expiring within 24h (warning), or expired (fail).
+// Skipped silently when the credentials file is absent or has no expiry.
+func checkOAuthTokenExpiry(home string) bool {
+	creds := readClaudeCredentials(home)
+	if creds == nil || creds.ExpiresAt == 0 {
+		return true
+	}
+
+	expiresAt := time.UnixMilli(creds.ExpiresAt)
+	now := time.Now()
+
+	if now.After(expiresAt) {
+		fmt.Printf("✗ Claude OAuth token: expired %s ago — run 'claude' interactively to refresh\n",
+			now.Sub(expiresAt).Truncate(time.Minute))
+		return false
+	}
+
+	remaining := expiresAt.Sub(now)
+	if remaining < 24*time.Hour {
+		fmt.Printf("⚠ Claude OAuth token: expiring in %s — run 'claude' interactively to refresh\n",
+			remaining.Truncate(time.Minute))
+		return true
+	}
+
+	fmt.Printf("✓ Claude OAuth token: fresh (expires %s)\n", expiresAt.Format(time.RFC3339))
+	return true
+}
+
+// checkServiceTokenFreshness compares the ANTHROPIC_API_KEY in the systemd
+// service drop-in against the current OAuth access token.
+// Skipped silently when either file is absent or ANTHROPIC_API_KEY is not set.
+func checkServiceTokenFreshness(home string) bool {
+	envConfPath := filepath.Join(home, ".config", "systemd", "user",
+		"cistern-castellarius.service.d", "env.conf")
+	envData, err := os.ReadFile(envConfPath)
+	if err != nil {
+		return true // no drop-in — skip silently
+	}
+
+	var serviceToken string
+	for _, line := range strings.Split(string(envData), "\n") {
+		if after, ok := strings.CutPrefix(strings.TrimSpace(line), "Environment=ANTHROPIC_API_KEY="); ok {
+			serviceToken = after
+			break
+		}
+	}
+	if serviceToken == "" {
+		return true
+	}
+
+	creds := readClaudeCredentials(home)
+	if creds == nil || creds.AccessToken == "" {
+		return true
+	}
+
+	if serviceToken != creds.AccessToken {
+		fmt.Printf("✗ service ANTHROPIC_API_KEY: stale — update env.conf with the current token and restart\n")
+		return false
+	}
+
+	fmt.Printf("✓ service ANTHROPIC_API_KEY: matches current credentials\n")
+	return true
 }
 
 // checkWithFix runs fn. If fn fails and fix is non-nil, it runs fix then

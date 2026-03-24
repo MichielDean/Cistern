@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/MichielDean/cistern/internal/aqueduct"
 	"github.com/MichielDean/cistern/internal/cistern"
@@ -1136,5 +1137,166 @@ func TestInferLLMProviderFromPreset_KnownPresets(t *testing.T) {
 		if got != tc.want {
 			t.Errorf("inferLLMProviderFromPreset(%q) = %q, want %q", tc.presetName, got, tc.want)
 		}
+	}
+}
+
+// --- checkOAuthTokenExpiry tests ---
+
+func writeCredentials(t *testing.T, home string, expiresAtMs int64, accessToken string) {
+	t.Helper()
+	claudeDir := filepath.Join(home, ".claude")
+	if err := os.MkdirAll(claudeDir, 0o755); err != nil {
+		t.Fatalf("mkdir .claude: %v", err)
+	}
+	content := fmt.Sprintf(`{"claudeAiOauth":{"accessToken":%q,"expiresAt":%d}}`, accessToken, expiresAtMs)
+	if err := os.WriteFile(filepath.Join(claudeDir, ".credentials.json"), []byte(content), 0o644); err != nil {
+		t.Fatalf("write credentials: %v", err)
+	}
+}
+
+func TestCheckOAuthTokenExpiry_FreshToken_ReturnsTrue(t *testing.T) {
+	home := t.TempDir()
+	// Token expiring in 48 hours — well within fresh range.
+	expiresAt := time.Now().Add(48 * time.Hour).UnixMilli()
+	writeCredentials(t, home, expiresAt, "tok-fresh")
+
+	result := checkOAuthTokenExpiry(home)
+	if !result {
+		t.Error("expected true for a fresh OAuth token")
+	}
+}
+
+func TestCheckOAuthTokenExpiry_ExpiringSoon_ReturnsTrue(t *testing.T) {
+	home := t.TempDir()
+	// Token expiring in 12 hours — within 24h warn window but not expired.
+	expiresAt := time.Now().Add(12 * time.Hour).UnixMilli()
+	writeCredentials(t, home, expiresAt, "tok-soon")
+
+	result := checkOAuthTokenExpiry(home)
+	if !result {
+		t.Error("expected true (warning only) when token expires within 24h")
+	}
+}
+
+func TestCheckOAuthTokenExpiry_ExpiredToken_ReturnsFalse(t *testing.T) {
+	home := t.TempDir()
+	// Token that expired 1 hour ago.
+	expiresAt := time.Now().Add(-1 * time.Hour).UnixMilli()
+	writeCredentials(t, home, expiresAt, "tok-expired")
+
+	result := checkOAuthTokenExpiry(home)
+	if result {
+		t.Error("expected false for an already-expired OAuth token")
+	}
+}
+
+func TestCheckOAuthTokenExpiry_MissingFile_SkipsSilently(t *testing.T) {
+	home := t.TempDir()
+	// No .credentials.json — should return true (not a failure).
+	result := checkOAuthTokenExpiry(home)
+	if !result {
+		t.Error("expected true when credentials file is absent (skip silently)")
+	}
+}
+
+func TestCheckOAuthTokenExpiry_MalformedJSON_SkipsSilently(t *testing.T) {
+	home := t.TempDir()
+	claudeDir := filepath.Join(home, ".claude")
+	if err := os.MkdirAll(claudeDir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(claudeDir, ".credentials.json"), []byte("not-json{{{"), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	result := checkOAuthTokenExpiry(home)
+	if !result {
+		t.Error("expected true (skip silently) when credentials JSON is malformed")
+	}
+}
+
+func TestCheckOAuthTokenExpiry_ZeroExpiresAt_SkipsSilently(t *testing.T) {
+	home := t.TempDir()
+	writeCredentials(t, home, 0, "tok-noexpiry")
+
+	result := checkOAuthTokenExpiry(home)
+	if !result {
+		t.Error("expected true (skip silently) when expiresAt is zero")
+	}
+}
+
+// --- checkServiceTokenFreshness tests ---
+
+func writeEnvConf(t *testing.T, home, apiKey string) {
+	t.Helper()
+	dropInDir := filepath.Join(home, ".config", "systemd", "user",
+		"cistern-castellarius.service.d")
+	if err := os.MkdirAll(dropInDir, 0o755); err != nil {
+		t.Fatalf("mkdir drop-in dir: %v", err)
+	}
+	content := fmt.Sprintf("[Service]\nEnvironment=ANTHROPIC_API_KEY=%s\n", apiKey)
+	if err := os.WriteFile(filepath.Join(dropInDir, "env.conf"), []byte(content), 0o644); err != nil {
+		t.Fatalf("write env.conf: %v", err)
+	}
+}
+
+func TestCheckServiceTokenFreshness_MatchingTokens_ReturnsTrue(t *testing.T) {
+	home := t.TempDir()
+	token := "sk-ant-matching-token"
+	writeEnvConf(t, home, token)
+	writeCredentials(t, home, time.Now().Add(48*time.Hour).UnixMilli(), token)
+
+	result := checkServiceTokenFreshness(home)
+	if !result {
+		t.Error("expected true when service env token matches credentials token")
+	}
+}
+
+func TestCheckServiceTokenFreshness_StaleToken_ReturnsFalse(t *testing.T) {
+	home := t.TempDir()
+	writeEnvConf(t, home, "sk-ant-old-token")
+	writeCredentials(t, home, time.Now().Add(48*time.Hour).UnixMilli(), "sk-ant-new-token")
+
+	result := checkServiceTokenFreshness(home)
+	if result {
+		t.Error("expected false when service env token differs from credentials token")
+	}
+}
+
+func TestCheckServiceTokenFreshness_NoEnvConf_SkipsSilently(t *testing.T) {
+	home := t.TempDir()
+	// No env.conf — skip silently.
+	result := checkServiceTokenFreshness(home)
+	if !result {
+		t.Error("expected true (skip silently) when env.conf is absent")
+	}
+}
+
+func TestCheckServiceTokenFreshness_NoAPIKeyInConf_SkipsSilently(t *testing.T) {
+	home := t.TempDir()
+	dropInDir := filepath.Join(home, ".config", "systemd", "user",
+		"cistern-castellarius.service.d")
+	if err := os.MkdirAll(dropInDir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	// env.conf without ANTHROPIC_API_KEY.
+	if err := os.WriteFile(filepath.Join(dropInDir, "env.conf"), []byte("[Service]\nEnvironment=PATH=/usr/bin\n"), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	result := checkServiceTokenFreshness(home)
+	if !result {
+		t.Error("expected true (skip silently) when env.conf has no ANTHROPIC_API_KEY")
+	}
+}
+
+func TestCheckServiceTokenFreshness_NoCredentialsFile_SkipsSilently(t *testing.T) {
+	home := t.TempDir()
+	writeEnvConf(t, home, "sk-ant-some-token")
+	// No credentials file.
+
+	result := checkServiceTokenFreshness(home)
+	if !result {
+		t.Error("expected true (skip silently) when credentials file is absent")
 	}
 }
