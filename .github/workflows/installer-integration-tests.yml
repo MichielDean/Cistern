@@ -46,12 +46,30 @@ jobs:
 
       - name: Run installer integration tests
         run: |
+          # --cgroupns=host is required for systemd to manage cgroups on
+          # cgroupv2 hosts (Linux 5.10+); without it systemd exits immediately.
           docker run \
             --privileged \
-            --rm \
+            --cgroupns=host \
             -d \
             --name "${CONTAINER_NAME}" \
             "${IMAGE_TAG}"
+
+          # Wait up to 10 s for the container to stabilise after startup.
+          # If it exits before we can exec (e.g. systemd crash), capture logs
+          # and surface them as an actionable ::error:: annotation.
+          for _i in $(seq 1 10); do
+            _status=$(docker inspect "${CONTAINER_NAME}" \
+                        --format '{{.State.Status}}' 2>/dev/null || echo gone)
+            if [ "${_status}" = "running" ]; then
+              break
+            elif [ "${_status}" = "exited" ] || [ "${_status}" = "gone" ]; then
+              echo "::error::container exited before tests ran (status: ${_status})"
+              docker logs "${CONTAINER_NAME}" 2>&1 || true
+              exit 1
+            fi
+            sleep 1
+          done
 
           # Capture output while preserving run-tests.sh exit code.
           # The script exits 0 on full pass, 1 if any test fails.
@@ -79,5 +97,6 @@ jobs:
         if: always()
         run: |
           docker stop "${CONTAINER_NAME}" 2>/dev/null || true
+          docker rm "${CONTAINER_NAME}" 2>/dev/null || true
           docker rmi "${IMAGE_TAG}" 2>/dev/null || true
           rm -f "/tmp/installer-test-output-${GITHUB_RUN_ID}.txt"

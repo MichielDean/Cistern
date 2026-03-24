@@ -28,7 +28,7 @@ echo ""
 echo "=== Starting test container ==="
 docker run \
     --privileged \
-    --rm \
+    --cgroupns=host \
     -d \
     --name "${CONTAINER_NAME}" \
     "${IMAGE_TAG}"
