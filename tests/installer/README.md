@@ -35,7 +35,17 @@ The build uses a multi-stage Dockerfile:
 1. **builder** (`golang:1.26`) — compiles `ct` and `fakeagent`
 2. **runtime** (`jrei/systemd-ubuntu:24.04`) — copies binaries in, no pass/GPG
 
-## Run the smoke tests
+## Run the full test suite
+
+The preferred way to run all installer tests (smoke tests + integration tests) is the top-level harness from the repository root:
+
+```bash
+./run-installer-tests.sh
+```
+
+This builds the image, starts the container, runs all 10 tests (including the credential-error and upgrade scenarios), captures container logs, and cleans up on exit.  Results are printed in GitHub Actions annotation format and the script exits 1 if any test fails.
+
+## Run the smoke tests manually
 
 ```bash
 # 1. Build the image
@@ -66,6 +76,10 @@ docker stop cistern-installer-test
 
 No additional volume mounts or tmpfs flags are required: `jrei/systemd-ubuntu`
 pre-configures the cgroup mounts and tmpfs overlays that systemd needs.
+
+## CI integration
+
+`.github/workflows/installer-tests.yml` runs the full test suite automatically on PRs that touch the installer surface area (`cmd/ct/doctor.go`, `cmd/ct/init.go`, `start-castellarius.sh`, `run-installer-tests.sh`, `tests/installer/**`, `internal/testutil/fakeagent/**`).  On failure, the container log is uploaded as a workflow artifact (`installer-test-container.log`) for inspection without a local re-run.
 
 ## Test output format
 
