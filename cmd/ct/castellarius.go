@@ -544,11 +544,13 @@ func startupRequiredEnvVars(cfgPath string) (requiredVars []string, usesClaude b
 	if cfgPath != "" {
 		if cfg, err := aqueduct.ParseAqueductConfig(cfgPath); err == nil {
 			seen := map[string]bool{}
+			resolved := false
 			for _, repo := range cfg.Repos {
 				preset, presErr := cfg.ResolveProvider(repo.Name)
 				if presErr != nil {
 					continue
 				}
+				resolved = true
 				if preset.Name == "claude" {
 					usesClaude = true
 				}
@@ -559,12 +561,12 @@ func startupRequiredEnvVars(cfgPath string) (requiredVars []string, usesClaude b
 					}
 				}
 			}
-			if len(requiredVars) > 0 {
+			if resolved {
 				return requiredVars, usesClaude
 			}
 		}
 	}
-	// Fallback: no config or no repos configured — default to claude.
+	// Fallback: no config or no repos resolved — default to claude.
 	return []string{"ANTHROPIC_API_KEY"}, true
 }
 

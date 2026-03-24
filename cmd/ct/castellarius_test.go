@@ -497,3 +497,16 @@ func TestStartupRequiredEnvVars_ClaudeConfig_ReturnsAnthropicKey(t *testing.T) {
 		t.Error("expected usesClaude=true for claude provider")
 	}
 }
+
+func TestStartupRequiredEnvVars_OpencodeConfig_ReturnsEmptyVarsNotClaude(t *testing.T) {
+	// opencode has no EnvPassthrough — resolved repos with zero required vars
+	// must NOT fall back to the claude default.
+	cfgPath := writeMinimalConfig(t, t.TempDir(), "opencode")
+	vars, usesClaude := startupRequiredEnvVars(cfgPath)
+	if len(vars) != 0 {
+		t.Errorf("expected no required vars for opencode, got %v", vars)
+	}
+	if usesClaude {
+		t.Error("expected usesClaude=false for opencode provider")
+	}
+}
