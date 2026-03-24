@@ -1,9 +1,11 @@
 package castellarius
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -15,6 +17,11 @@ import (
 	"github.com/MichielDean/cistern/internal/cistern"
 	"github.com/MichielDean/cistern/internal/aqueduct"
 )
+
+// newTestLogger creates a slog.Logger backed by buf for test inspection.
+func newTestLogger(buf *bytes.Buffer) *slog.Logger {
+	return slog.New(slog.NewTextHandler(buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
+}
 
 // --- mocks ---
 
@@ -1828,5 +1835,223 @@ func TestDispatch_DiffOnlyStepGetsSandboxDir(t *testing.T) {
 	if runner.calls[0].SandboxDir != sandboxDir {
 		t.Errorf("SandboxDir = %q, want %q (diff_only step must get per-droplet worktree path)",
 			runner.calls[0].SandboxDir, sandboxDir)
+	}
+}
+
+// --- heartbeat logging tests ---
+
+// TestHeartbeatRepo_LogsNoAssigneeReset verifies that heartbeatRepo logs a
+// structured slog entry with "reason=no_assignee" when a stalled droplet has
+// no assignee set.
+func TestHeartbeatRepo_LogsNoAssigneeReset(t *testing.T) {
+	var buf bytes.Buffer
+	client := newMockClient()
+
+	// Stalled droplet: in_progress, no assignee, no outcome.
+	item := &cistern.Droplet{
+		ID:                "hb-no-assignee",
+		CurrentCataractae: "implement",
+		Status:            "in_progress",
+		Assignee:          "",
+		UpdatedAt:         time.Now().Add(-5 * time.Minute),
+	}
+	client.items[item.ID] = item
+
+	config := testConfig()
+	workflows := map[string]*aqueduct.Workflow{"test-repo": testWorkflow()}
+	clients := map[string]CisternClient{"test-repo": client}
+	runner := newMockRunner(client)
+	sched := NewFromParts(config, workflows, clients, runner,
+		WithLogger(newTestLogger(&buf)))
+
+	sched.heartbeatRepo(context.Background(), config.Repos[0])
+
+	out := buf.String()
+	if !strings.Contains(out, "hb-no-assignee") {
+		t.Errorf("heartbeat log missing droplet ID; got: %s", out)
+	}
+	if !strings.Contains(out, "reason=no_assignee") {
+		t.Errorf("heartbeat log missing reason=no_assignee; got: %s", out)
+	}
+}
+
+// TestHeartbeatRepo_LogsTmuxDeadReset verifies that heartbeatRepo logs
+// "reason=tmux_dead" when the assigned tmux session is no longer alive.
+func TestHeartbeatRepo_LogsTmuxDeadReset(t *testing.T) {
+	var buf bytes.Buffer
+	client := newMockClient()
+
+	// Stalled droplet: has assignee, but tmux session is dead (non-existent).
+	item := &cistern.Droplet{
+		ID:                "hb-tmux-dead",
+		CurrentCataractae: "implement",
+		Status:            "in_progress",
+		Assignee:          "alpha", // alpha is a valid pool name in testConfig()
+		UpdatedAt:         time.Now().Add(-10 * time.Minute),
+	}
+	client.items[item.ID] = item
+
+	config := testConfig()
+	workflows := map[string]*aqueduct.Workflow{"test-repo": testWorkflow()}
+	clients := map[string]CisternClient{"test-repo": client}
+	runner := newMockRunner(client)
+	sched := NewFromParts(config, workflows, clients, runner,
+		WithLogger(newTestLogger(&buf)))
+
+	// Mark alpha as flowing so the pool check falls through to the tmux check.
+	pool := sched.pools["test-repo"]
+	if w := pool.FindByName("alpha"); w != nil {
+		pool.Assign(w, item.ID, "implement")
+	}
+
+	// The tmux session "test-repo-alpha" does not exist — isTmuxAlive returns false.
+	sched.heartbeatRepo(context.Background(), config.Repos[0])
+
+	out := buf.String()
+	if !strings.Contains(out, "hb-tmux-dead") {
+		t.Errorf("heartbeat log missing droplet ID; got: %s", out)
+	}
+	if !strings.Contains(out, "reason=tmux_dead") {
+		t.Errorf("heartbeat log missing reason=tmux_dead; got: %s", out)
+	}
+}
+
+// TestHeartbeatRepo_LogsSessionDuration verifies that the heartbeat reset log
+// includes a session_duration field derived from item.UpdatedAt.
+func TestHeartbeatRepo_LogsSessionDuration(t *testing.T) {
+	var buf bytes.Buffer
+	client := newMockClient()
+
+	item := &cistern.Droplet{
+		ID:                "hb-duration",
+		CurrentCataractae: "implement",
+		Status:            "in_progress",
+		Assignee:          "",
+		UpdatedAt:         time.Now().Add(-7 * time.Minute),
+	}
+	client.items[item.ID] = item
+
+	config := testConfig()
+	workflows := map[string]*aqueduct.Workflow{"test-repo": testWorkflow()}
+	clients := map[string]CisternClient{"test-repo": client}
+	runner := newMockRunner(client)
+	sched := NewFromParts(config, workflows, clients, runner,
+		WithLogger(newTestLogger(&buf)))
+
+	sched.heartbeatRepo(context.Background(), config.Repos[0])
+
+	out := buf.String()
+	if !strings.Contains(out, "session_duration=") {
+		t.Errorf("heartbeat log missing session_duration field; got: %s", out)
+	}
+}
+
+// --- worktree lifecycle logging tests ---
+
+// TestPrepareDropletWorktree_LogsWorktreeCreated verifies that prepareDropletWorktree
+// emits a slog.Info entry containing "worktree created" when a new worktree is made.
+func TestPrepareDropletWorktree_LogsWorktreeCreated(t *testing.T) {
+	var buf bytes.Buffer
+	l := newTestLogger(&buf)
+
+	// makeBareAndClone provides a primary with origin/main available for fetch.
+	primary := makeBareAndClone(t)
+	sandboxRoot := t.TempDir()
+	repoName := "logrepo"
+
+	_, err := prepareDropletWorktreeWithLogger(l, primary, sandboxRoot, repoName, "ci-wt-create")
+	if err != nil {
+		t.Fatalf("prepareDropletWorktree: %v", err)
+	}
+
+	out := buf.String()
+	if !strings.Contains(out, "worktree created") {
+		t.Errorf("log missing 'worktree created'; got: %s", out)
+	}
+	if !strings.Contains(out, "ci-wt-create") {
+		t.Errorf("log missing droplet ID; got: %s", out)
+	}
+	if !strings.Contains(out, "duration=") {
+		t.Errorf("log missing duration field; got: %s", out)
+	}
+}
+
+// TestPrepareDropletWorktree_LogsWorktreeResumed verifies that prepareDropletWorktree
+// emits a slog.Info entry containing "worktree resumed" on subsequent calls.
+func TestPrepareDropletWorktree_LogsWorktreeResumed(t *testing.T) {
+	var buf bytes.Buffer
+	l := newTestLogger(&buf)
+
+	primary := makeBareAndClone(t)
+	sandboxRoot := t.TempDir()
+	repoName := "logrepo"
+
+	// First call: create.
+	if _, err := prepareDropletWorktreeWithLogger(l, primary, sandboxRoot, repoName, "ci-wt-resume"); err != nil {
+		t.Fatalf("first prepareDropletWorktree: %v", err)
+	}
+	buf.Reset()
+
+	// Second call: resume.
+	if _, err := prepareDropletWorktreeWithLogger(l, primary, sandboxRoot, repoName, "ci-wt-resume"); err != nil {
+		t.Fatalf("second prepareDropletWorktree: %v", err)
+	}
+
+	out := buf.String()
+	if !strings.Contains(out, "worktree resumed") {
+		t.Errorf("log missing 'worktree resumed'; got: %s", out)
+	}
+}
+
+// TestRemoveDropletWorktree_LogsWorktreeDeleted verifies that removeDropletWorktree
+// emits a slog.Info entry containing "worktree deleted" when the removal succeeds.
+func TestRemoveDropletWorktree_LogsWorktreeDeleted(t *testing.T) {
+	var buf bytes.Buffer
+	l := newTestLogger(&buf)
+
+	primary := makeBareAndClone(t)
+	sandboxRoot := t.TempDir()
+	repoName := "logrepo"
+
+	if _, err := prepareDropletWorktreeWithLogger(l, primary, sandboxRoot, repoName, "ci-wt-del"); err != nil {
+		t.Fatalf("prepareDropletWorktree: %v", err)
+	}
+	buf.Reset()
+
+	removeDropletWorktreeWithLogger(l, primary, sandboxRoot, repoName, "ci-wt-del")
+
+	out := buf.String()
+	if !strings.Contains(out, "worktree deleted") {
+		t.Errorf("log missing 'worktree deleted'; got: %s", out)
+	}
+	if !strings.Contains(out, "ci-wt-del") {
+		t.Errorf("log missing droplet ID; got: %s", out)
+	}
+}
+
+// TestRemoveDropletWorktree_LogsWarn_WhenWorktreeMissing verifies that when the
+// worktree does not exist, removeDropletWorktreeWithLogger emits a Warn-level
+// entry rather than a false "worktree deleted" success message.
+func TestRemoveDropletWorktree_LogsWarn_WhenWorktreeMissing(t *testing.T) {
+	var buf bytes.Buffer
+	l := newTestLogger(&buf)
+
+	primary := makeBareAndClone(t)
+	sandboxRoot := t.TempDir()
+	repoName := "logrepo"
+	dropletID := "ci-wt-missing"
+
+	// Do NOT create the worktree — removal should fail.
+	removeDropletWorktreeWithLogger(l, primary, sandboxRoot, repoName, dropletID)
+
+	out := buf.String()
+	if strings.Contains(out, "worktree deleted") {
+		t.Errorf("unexpected 'worktree deleted' success log when worktree was missing; got: %s", out)
+	}
+	if !strings.Contains(out, "worktree deletion failed") {
+		t.Errorf("expected 'worktree deletion failed' Warn log; got: %s", out)
+	}
+	if !strings.Contains(out, dropletID) {
+		t.Errorf("log missing droplet ID; got: %s", out)
 	}
 }

@@ -2,7 +2,7 @@ package cataractae
 
 import (
 	"fmt"
-	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/exec"
@@ -15,6 +15,11 @@ import (
 	"github.com/MichielDean/cistern/internal/oauth"
 	"github.com/MichielDean/cistern/internal/provider"
 )
+
+// quickExitWindow is the duration after a spawn within which, if the session
+// dies, a warning is logged as a possible auth failure or binary-not-found.
+// Exposed as a variable so tests can shorten it without waiting 30 seconds.
+var quickExitWindow = 30 * time.Second
 
 // Session manages an agent execution inside a tmux session.
 type Session struct {
@@ -44,6 +49,17 @@ type Session struct {
 	// that do not support AddDirFlag. Skills are read from ~/.cistern/skills/<name>/SKILL.md.
 	// Providers with SupportsAddDir=true receive skill files automatically via --add-dir.
 	Skills []string
+
+	// DropletSignaledOutcome, if non-nil, is called by the quick-exit goroutine
+	// before emitting a warning. If it returns true the session has already signaled
+	// an outcome (pass/recirculate/block) and the warning is suppressed —
+	// preventing false positives when a fast agent task completes within the window.
+	DropletSignaledOutcome func() bool
+
+	// done is closed by kill() to cancel the quick-exit goroutine so it does
+	// not emit a spurious warning when the session is intentionally stopped.
+	done     chan struct{}
+	killOnce sync.Once
 }
 
 // Spawn creates a new tmux session running the agent and returns immediately.
@@ -61,6 +77,11 @@ func (s *Session) spawn() error {
 	// Kill any stale tmux session with the same name before creating a new one.
 	s.kill()
 
+	// Reset the done channel and killOnce for this spawn so the quick-exit
+	// goroutine below can be cancelled via a fresh kill() call.
+	s.killOnce = sync.Once{}
+	s.done = make(chan struct{})
+
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return fmt.Errorf("spawn: cannot determine home directory: %w", err)
@@ -76,7 +97,18 @@ func (s *Session) spawn() error {
 	args := []string{"new-session", "-d", "-s", s.ID, "-c", s.WorkDir}
 
 	// Decide whether to continue a prior session or start fresh.
-	resume := s.Preset.ContinueFlag != "" && hasPriorSession(home, s.WorkDir)
+	sessionCount := priorSessionCount(home, s.WorkDir)
+	resume := s.Preset.ContinueFlag != "" && sessionCount > 0
+
+	if resume {
+		escaped := strings.ReplaceAll(s.WorkDir, "/", "-")
+		projectDir := filepath.Join(home, ".claude", "projects", escaped)
+		slog.Default().Info("session: resuming prior context",
+			"session", s.ID,
+			"project_dir", projectDir,
+			"prior_session_count", sessionCount,
+		)
+	}
 
 	var agentCmd string
 	if s.Preset.Name != "" {
@@ -93,6 +125,25 @@ func (s *Session) spawn() error {
 		agentCmd = s.buildClaudeCmd(skillsDir)
 	}
 
+	// Resolve the command path for the spawn log.
+	cmdPath := claudePathFn()
+	if s.Preset.Name != "" {
+		cmdPath = resolveCommandFn(s.Preset.Command)
+	}
+
+	contextType := "fresh"
+	if resume {
+		contextType = "resume"
+	}
+	slog.Default().Info("session: spawning",
+		"session", s.ID,
+		"work_dir", s.WorkDir,
+		"command", cmdPath,
+		"model", s.Model,
+		"preset", s.Preset.Name,
+		"context_type", contextType,
+	)
+
 	args = append(args, s.collectEnvArgs()...)
 	args = append(args, agentCmd)
 	cmd := exec.Command("tmux", args...)
@@ -100,23 +151,56 @@ func (s *Session) spawn() error {
 		return fmt.Errorf("tmux new-session %s: %w: %s", s.ID, err, out)
 	}
 
-	if resume {
-		log.Printf("session %s: resumed in %s", s.ID, s.WorkDir)
-	} else {
-		log.Printf("session %s: spawned in %s", s.ID, s.WorkDir)
-	}
+	// Quick-exit detection: warn if the session dies within quickExitWindow of
+	// spawning — a possible auth failure, missing binary, or prompt error.
+	// The goroutine can be cancelled via the done channel (closed by kill()) to
+	// avoid false positives on intentional kills and graceful shutdown.
+	spawnedAt := time.Now()
+	sessionID := s.ID
+	done := s.done
+	checkOutcome := s.DropletSignaledOutcome
+	window := quickExitWindow // capture at spawn time to avoid concurrent access with test overrides
+	go func() {
+		select {
+		case <-time.After(window):
+		case <-done:
+			return // session killed intentionally — suppress warning
+		}
+		if isSessionAlive(sessionID) {
+			return
+		}
+		if checkOutcome != nil && checkOutcome() {
+			return // session signaled an outcome — not an auth failure
+		}
+		elapsed := time.Since(spawnedAt).Round(time.Second)
+		slog.Default().Warn("session exited quickly — possible auth failure or binary not found",
+			"session", sessionID,
+			"elapsed", elapsed.String(),
+		)
+	}()
+
 	return nil
 }
 
-// hasPriorSession reports whether the agent has prior session state for workDir.
-// Claude stores sessions under ~/.claude/projects/<escaped-path>/.
-// We consider a prior session to exist if that directory is non-empty.
-func hasPriorSession(home, workDir string) bool {
+// priorSessionCount returns the number of prior session files Claude has stored
+// for workDir. Claude stores sessions under ~/.claude/projects/<escaped-path>/.
+// Returns 0 when the directory does not exist or cannot be read.
+func priorSessionCount(home, workDir string) int {
 	// Claude encodes the absolute path by replacing '/' with '-'.
 	escaped := strings.ReplaceAll(workDir, "/", "-")
 	projectDir := filepath.Join(home, ".claude", "projects", escaped)
 	entries, err := os.ReadDir(projectDir)
-	return err == nil && len(entries) > 0
+	if err != nil {
+		return 0
+	}
+	return len(entries)
+}
+
+// isSessionAlive returns true if a tmux session with the given ID is running.
+// Extracted as a package-level function so the quick-exit goroutine can call
+// it without holding a *Session reference.
+func isSessionAlive(sessionID string) bool {
+	return exec.Command("tmux", "has-session", "-t", sessionID).Run() == nil
 }
 
 // collectEnvArgs builds the tmux -e env argument pairs for the session.
@@ -316,18 +400,22 @@ func (s *Session) buildPrompt() string {
 	// Layer 3: Skills — injected as text for providers without AddDirFlag support.
 	// Providers with SupportsAddDir receive skill files automatically via --add-dir.
 	if !s.Preset.SupportsAddDir && len(s.Skills) > 0 {
-		home, _ := os.UserHomeDir()
-		skillsDir := filepath.Join(home, ".cistern", "skills")
-		var sb strings.Builder
-		for _, name := range s.Skills {
-			skillPath := filepath.Join(skillsDir, name, "SKILL.md")
-			if data, err := os.ReadFile(skillPath); err == nil {
-				sb.WriteString("\n## Skill: " + name + "\n\n")
-				sb.WriteString(string(data))
+		home, err := os.UserHomeDir()
+		if err != nil {
+			slog.Default().Warn("buildPrompt: cannot determine home directory — skills not injected", "error", err)
+		} else {
+			skillsDir := filepath.Join(home, ".cistern", "skills")
+			var sb strings.Builder
+			for _, name := range s.Skills {
+				skillPath := filepath.Join(skillsDir, name, "SKILL.md")
+				if data, err := os.ReadFile(skillPath); err == nil {
+					sb.WriteString("\n## Skill: " + name + "\n\n")
+					sb.WriteString(string(data))
+				}
 			}
-		}
-		if sb.Len() > 0 {
-			prompt += "\n## Skills\n" + sb.String()
+			if sb.Len() > 0 {
+				prompt += "\n## Skills\n" + sb.String()
+			}
 		}
 	}
 
@@ -380,9 +468,14 @@ func (s *Session) resolveIdentityPath() string {
 	return filepath.Join(s.resolveIdentityDir(), s.Preset.InstrFile())
 }
 
-// kill terminates the tmux session if it exists.
+// kill terminates the tmux session if it exists and cancels the quick-exit goroutine.
 func (s *Session) kill() {
 	exec.Command("tmux", "kill-session", "-t", s.ID).Run()
+	s.killOnce.Do(func() {
+		if s.done != nil {
+			close(s.done)
+		}
+	})
 }
 
 // isAlive checks whether the tmux session still exists.
@@ -463,7 +556,7 @@ func ensureClaudeOAuthFresh(home string) error {
 	}
 
 	if err := oauth.WriteAccessToken(home, result.AccessToken, result.ExpiresAt); err != nil {
-		log.Printf("session: warning: could not write refreshed OAuth token: %v", err)
+		slog.Default().Warn("session: could not write refreshed OAuth token", "error", err)
 	}
 
 	// Update env.conf for persistence across service restarts (best-effort).
@@ -471,14 +564,14 @@ func ensureClaudeOAuthFresh(home string) error {
 		"cistern-castellarius.service.d", "env.conf")
 	if _, statErr := os.Stat(envConfPath); statErr == nil {
 		if err := oauth.UpdateEnvConf(envConfPath, result.AccessToken); err != nil {
-			log.Printf("session: warning: could not update env.conf with refreshed token: %v", err)
+			slog.Default().Warn("session: could not update env.conf with refreshed token", "error", err)
 		}
 	}
 
 	// Inject into current process so collectEnvArgs picks up the new token.
 	os.Setenv("ANTHROPIC_API_KEY", result.AccessToken) //nolint:errcheck
 
-	log.Printf("session: Claude OAuth token refreshed successfully")
+	slog.Default().Info("session: Claude OAuth token refreshed successfully")
 	return nil
 }
 

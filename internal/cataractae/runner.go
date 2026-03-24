@@ -4,7 +4,7 @@ package cataractae
 
 import (
 	"fmt"
-	"log"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -190,7 +190,12 @@ func (r *Runner) findWorkerByName(name string) *Worker {
 // sandboxDirOverride, if non-empty, is used as the sandbox directory instead of
 // w.SandboxDir. The Castellarius sets this to the per-droplet worktree path.
 func (r *Runner) SpawnStep(w *Worker, item *cistern.Droplet, step *aqueduct.WorkflowCataractae, sandboxDirOverride string) error {
-	log.Printf("cataractae: %s/%s: spawning step %q for item %s", r.repo.Name, w.Name, step.Name, item.ID)
+	slog.Default().Info("cataractae: spawning step",
+		"repo", r.repo.Name,
+		"worker", w.Name,
+		"step", step.Name,
+		"droplet", item.ID,
+	)
 
 	sandboxDir := w.SandboxDir
 	if sandboxDirOverride != "" {
@@ -210,12 +215,12 @@ func (r *Runner) SpawnStep(w *Worker, item *cistern.Droplet, step *aqueduct.Work
 	// Branch setup is owned by the Castellarius and happens before this call.
 	notes, err := r.queue.GetNotes(item.ID)
 	if err != nil {
-		log.Printf("cataractae: warning: could not fetch notes for %s: %v", item.ID, err)
+		slog.Default().Warn("cataractae: could not fetch notes", "droplet", item.ID, "error", err)
 	}
 
 	openIssues, err := r.queue.ListIssues(item.ID, true)
 	if err != nil {
-		log.Printf("cataractae: warning: could not fetch open issues for %s: %v", item.ID, err)
+		slog.Default().Warn("cataractae: could not fetch open issues", "droplet", item.ID, "error", err)
 	}
 
 	ctxDir, cleanup, err := PrepareContext(ContextParams{
@@ -247,6 +252,7 @@ func (r *Runner) SpawnStep(w *Worker, item *cistern.Droplet, step *aqueduct.Work
 	for i, sk := range step.Skills {
 		skillNames[i] = sk.Name
 	}
+	itemID := item.ID
 	sess := &Session{
 		ID:             w.SessionID,
 		WorkDir:        ctxDir,
@@ -255,6 +261,10 @@ func (r *Runner) SpawnStep(w *Worker, item *cistern.Droplet, step *aqueduct.Work
 		TimeoutMinutes: step.TimeoutMinutes,
 		Preset:         r.preset,
 		Skills:         skillNames,
+		DropletSignaledOutcome: func() bool {
+			d, err := r.queue.Get(itemID)
+			return err == nil && d.Outcome != ""
+		},
 	}
 	if err := sess.Spawn(); err != nil {
 		cleanup()

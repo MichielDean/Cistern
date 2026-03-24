@@ -1,6 +1,8 @@
 package castellarius
 
 import (
+	"bytes"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -233,5 +235,91 @@ func TestRecoverDispatchLoop_ResetFails_DoesNotWriteSuccessNote(t *testing.T) {
 		if n.id == itemID && strings.Contains(n.notes, "dirty worktree reset") {
 			t.Errorf("must not write dirty-worktree-reset success note when reset/clean failed; got note: %q", n.notes)
 		}
+	}
+}
+
+// TestRecoverDispatchLoop_WorktreeRecreateFails_DoesNotWriteSuccessNote verifies
+// that when prepareDropletWorktree fails during Recovery 2, the success note
+// "worktree recreated" is NOT emitted, and a failure note IS written instead.
+func TestRecoverDispatchLoop_WorktreeRecreateFails_DoesNotWriteSuccessNote(t *testing.T) {
+	sandboxRoot := t.TempDir()
+
+	const itemID = "dl-recreate-fail-1"
+	// primaryDir exists but is not a git repo — git commands will fail.
+	primaryDir := filepath.Join(sandboxRoot, "test-repo", "_primary")
+	if err := os.MkdirAll(primaryDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// worktreePath does not exist → worktreeRegistered returns false → triggers Recovery 2.
+	// (os.Stat on worktreePath also fails → Recovery 1 is skipped.)
+
+	client := newMockClient()
+	item := &cistern.Droplet{ID: itemID, CurrentCataractae: "implement", Status: "in_progress"}
+	client.items[itemID] = item
+
+	config := testConfig()
+	workflows := map[string]*aqueduct.Workflow{"test-repo": testWorkflow()}
+	clients := map[string]CisternClient{"test-repo": client}
+	runner := newMockRunner(client)
+	sched := NewFromParts(config, workflows, clients, runner, WithSandboxRoot(sandboxRoot))
+
+	sched.recoverDispatchLoop(client, item, config.Repos[0])
+
+	client.mu.Lock()
+	defer client.mu.Unlock()
+
+	// Success note must NOT have been written.
+	for _, n := range client.attached {
+		if n.id == itemID && strings.Contains(n.notes, "worktree recreated") {
+			t.Errorf("must not write 'worktree recreated' success note when recreation failed; got: %q", n.notes)
+		}
+	}
+
+	// A failure note must have been written.
+	var hasFailureNote bool
+	for _, n := range client.attached {
+		if n.id == itemID && strings.Contains(n.notes, "worktree recreate failed") {
+			hasFailureNote = true
+			break
+		}
+	}
+	if !hasFailureNote {
+		t.Error("expected a failure note for worktree recreation failure, got none")
+	}
+}
+
+// TestRecoverDispatchLoop_AddNoteError_EscalationPath_LogsWarn verifies that
+// when AddNote returns an error during the escalation path (fixAttempt >
+// dispatchMaxSelfFix), the error is logged at Warn level rather than silently
+// discarded.
+func TestRecoverDispatchLoop_AddNoteError_EscalationPath_LogsWarn(t *testing.T) {
+	const itemID = "dl-note-err-1"
+
+	client := newMockClient()
+	client.addNoteErr = errors.New("db write error")
+	item := &cistern.Droplet{ID: itemID, CurrentCataractae: "implement", Status: "in_progress"}
+	client.items[itemID] = item
+
+	config := testConfig()
+	workflows := map[string]*aqueduct.Workflow{"test-repo": testWorkflow()}
+	clients := map[string]CisternClient{"test-repo": client}
+	runner := newMockRunner(client)
+
+	var buf bytes.Buffer
+	logger := newTestLogger(&buf)
+	sched := NewFromParts(config, workflows, clients, runner,
+		WithLogger(logger),
+		WithSandboxRoot(t.TempDir()),
+	)
+
+	// Push fix attempt count above dispatchMaxSelfFix to trigger the escalation path.
+	for range dispatchMaxSelfFix + 1 {
+		sched.dispatchLoop.incrementFix(itemID)
+	}
+
+	sched.recoverDispatchLoop(client, item, config.Repos[0])
+
+	if !strings.Contains(buf.String(), "WARN") {
+		t.Errorf("expected WARN log when AddNote fails during escalation; log: %q", buf.String())
 	}
 }

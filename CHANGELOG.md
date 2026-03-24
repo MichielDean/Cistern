@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+### Observability pass: structured logging throughout Castellarius and cataractae (ci-jgllb)
+- Session spawn now logs resolved command path, model, preset name, and context type (fresh vs resume) via structured `slog` key=value fields
+- Session resume logs the project directory and prior-session file count so operators can track session continuity
+- Quick-exit warning (`session exited quickly — possible auth failure or binary not found`) fires only when the session did not signal a droplet outcome and the exit was not intentional — false positives on fast successful tasks eliminated via a done channel and `DropletSignaledOutcome` check
+- Heartbeat stall-reset logs reason (`no_assignee`, `pool_idle`, `tmux_dead`) and `session_duration` so operators can distinguish stuck sessions from idle pool slots
+- Dispatch-loop threshold now logs a warning at `Warn` level with the droplet ID and failure count when 5 failures occur within 2 minutes; each recovery attempt logs the specific failure reason (worktree dirty, worktree missing, spawn error)
+- Startup credential check (`logStartupCredentials`) logs which required env var names are set, runs `gh auth status` with a 10-second context timeout, and logs whether GitHub authentication succeeded — token values are never logged
+- Worktree operations log each git operation (clone, fetch, checkout, worktree add) with duration and outcome; worktree created, resumed, and deleted events each emit a structured log entry; deletion failure logs at `Warn` with the error rather than silently claiming success
+- `sandbox.go` git clone, fetch, and worktree-add operations now emit `slog.Info` on success and `slog.Error` on failure with the operation duration
+- Security constraints enforced throughout: token values, API keys, and environment variable values are never logged — only variable names, session IDs, droplet IDs, durations, and exit codes
+
 ### Fresh-install and upgrade integration test cases (ci-z1e9b)
 - Adds `test_fresh_install` to `run-installer-tests.sh` — end-to-end first-time install: asserts no `~/.cistern` exists before run, executes `ct init`, writes a minimal `cistern.yaml` (`repos: []`) and a placeholder `ANTHROPIC_API_KEY`, installs and starts `cistern-castellarius` as a system service, verifies the service is active, `claude` is on PATH, and `ct doctor` exits 0
 - Adds `test_upgrade` to `run-installer-tests.sh` — upgrade simulation: pre-populates `~/.cistern` with a stale config containing a removed key (`stale_old_key: removed_in_v2`), runs `ct init` again (existing files preserved via `writeFileIfAbsent`), verifies the service restarts cleanly (active) and `ct doctor` still exits 0; `yaml.Unmarshal` ignores the unknown key so no migration is needed

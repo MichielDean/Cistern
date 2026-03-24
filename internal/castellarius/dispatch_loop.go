@@ -104,7 +104,7 @@ func (s *Castellarius) recoverDispatchLoop(client CisternClient, item *cistern.D
 		s.logger.Error("dispatch-loop recovery: escalating after max self-fix attempts",
 			"droplet", item.ID,
 		)
-		_ = client.AddNote(item.ID, "dispatch-loop", reason)
+		s.addNote(client, item.ID, "dispatch-loop", reason)
 		if err := client.Escalate(item.ID, reason); err != nil {
 			s.logger.Error("dispatch-loop recovery: escalate failed", "droplet", item.ID, "error", err)
 		}
@@ -143,7 +143,7 @@ func (s *Castellarius) recoverDispatchLoop(client CisternClient, item *cistern.D
 				)
 				// fall through to worktree-recreation recovery path
 			} else {
-				_ = client.AddNote(item.ID, "dispatch-loop",
+				s.addNote(client, item.ID, "dispatch-loop",
 					fmt.Sprintf("dispatch-loop recovery: %s — dirty worktree reset (attempt %s)",
 						item.ID, attempt))
 				return
@@ -161,10 +161,14 @@ func (s *Castellarius) recoverDispatchLoop(client CisternClient, item *cistern.D
 		if _, err := prepareDropletWorktree(primaryDir, s.sandboxRoot, repo.Name, item.ID); err != nil {
 			s.logger.Error("dispatch-loop recovery: recreate worktree failed",
 				"droplet", item.ID, "error", err)
+			s.addNote(client, item.ID, "dispatch-loop",
+				fmt.Sprintf("dispatch-loop recovery: %s — worktree recreate failed (attempt %s): %v",
+					item.ID, attempt, err))
+		} else {
+			s.addNote(client, item.ID, "dispatch-loop",
+				fmt.Sprintf("dispatch-loop recovery: %s — worktree recreated (attempt %s)",
+					item.ID, attempt))
 		}
-		_ = client.AddNote(item.ID, "dispatch-loop",
-			fmt.Sprintf("dispatch-loop recovery: %s — worktree recreated (attempt %s)",
-				item.ID, attempt))
 		return
 	}
 
@@ -174,7 +178,7 @@ func (s *Castellarius) recoverDispatchLoop(client CisternClient, item *cistern.D
 		"droplet", item.ID,
 		"attempt", attempt,
 	)
-	_ = client.AddNote(item.ID, "dispatch-loop",
+	s.addNote(client, item.ID, "dispatch-loop",
 		fmt.Sprintf("dispatch-loop recovery: %s — no applicable recovery (attempt %s), will retry",
 			item.ID, attempt))
 }

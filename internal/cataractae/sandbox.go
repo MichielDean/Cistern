@@ -2,10 +2,12 @@ package cataractae
 
 import (
 	"fmt"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 // EnsurePrimaryClone guarantees a full git clone exists at primaryDir.
@@ -19,9 +21,25 @@ func EnsurePrimaryClone(primaryDir, repoURL string) error {
 		if err := os.RemoveAll(primaryDir); err != nil && !os.IsNotExist(err) {
 			return fmt.Errorf("remove stale dir %s: %w", primaryDir, err)
 		}
-		return cloneSandbox(primaryDir, repoURL)
+		t0 := time.Now()
+		if err := cloneSandbox(primaryDir, repoURL); err != nil {
+			slog.Default().Error("git clone failed",
+				"dir", primaryDir, "duration", time.Since(t0).Round(time.Millisecond).String(), "error", err)
+			return err
+		}
+		slog.Default().Info("git clone completed",
+			"dir", primaryDir, "duration", time.Since(t0).Round(time.Millisecond).String())
+		return nil
 	}
-	return fetchSandbox(primaryDir)
+	t0 := time.Now()
+	if err := fetchSandbox(primaryDir); err != nil {
+		slog.Default().Error("git fetch failed",
+			"dir", primaryDir, "duration", time.Since(t0).Round(time.Millisecond).String(), "error", err)
+		return err
+	}
+	slog.Default().Info("git fetch completed",
+		"dir", primaryDir, "duration", time.Since(t0).Round(time.Millisecond).String())
+	return nil
 }
 
 // EnsureWorktree ensures a git worktree exists at worktreeDir backed by primaryDir.
@@ -62,11 +80,16 @@ func EnsureWorktree(primaryDir, worktreeDir string) error {
 		}
 	}
 
+	t0 := time.Now()
 	add := exec.Command("git", "worktree", "add", "--detach", worktreeDir)
 	add.Dir = primaryDir
 	if addOut, err := add.CombinedOutput(); err != nil {
+		slog.Default().Error("git worktree add failed",
+			"dir", worktreeDir, "duration", time.Since(t0).Round(time.Millisecond).String(), "error", err)
 		return fmt.Errorf("git worktree add --detach %s: %w: %s", worktreeDir, err, addOut)
 	}
+	slog.Default().Info("git worktree created",
+		"dir", worktreeDir, "duration", time.Since(t0).Round(time.Millisecond).String())
 	return nil
 }
 

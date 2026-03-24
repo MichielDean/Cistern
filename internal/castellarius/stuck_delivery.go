@@ -1,6 +1,7 @@
 package castellarius
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -256,9 +257,11 @@ func defaultFindPR(ctx context.Context, _ string, dropletID, sandboxDir string) 
 		"--limit", "1",
 	)
 	cmd.Dir = sandboxDir
-	out, cmdErr := cmd.CombinedOutput()
+	var stderrBuf bytes.Buffer
+	cmd.Stderr = &stderrBuf
+	out, cmdErr := cmd.Output()
 	if cmdErr != nil {
-		return "", "", "", fmt.Errorf("gh pr list --head %s: %w: %s", branch, cmdErr, out)
+		return "", "", "", fmt.Errorf("gh pr list --head %s: %w: %s", branch, cmdErr, stderrBuf.String())
 	}
 	var prs []struct {
 		URL             string `json:"url"`
