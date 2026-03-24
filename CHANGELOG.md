@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+### Refactor filtration: use provider preset for non-interactive LLM invocation (ci-4w2z0)
+- Removed `github.com/anthropics/anthropic-sdk-go` — filtration no longer calls the Anthropic API directly; it uses the same agent binary as cataractae
+- Added `NonInteractiveConfig` struct to `ProviderPreset` (fields: `Subcommand`, `PrintFlag`, `PromptFlag`) — describes how to invoke each agent CLI in single-shot (exec) mode
+- Built-in presets updated: `claude` (`--print -p`), `codex` (`exec -p`), `gemini` (`-p`), `copilot` (`-p`), `opencode` (`run -p`)
+- Replaced `callRefineAPI()` with `runNonInteractive(preset, systemPrompt, userPrompt)` — builds the command from the preset's `NonInteractive` config, passes a combined prompt via `PromptFlag`, and captures stdout via the unchanged `extractProposals()`
+- `runNonInteractive` validates required env vars from `preset.EnvPassthrough` before executing; forwards `preset.ExtraEnv` into the subprocess environment
+- On exec failure, type-asserts `*exec.ExitError` to include stderr output in the error message — agent failures are diagnosable
+- Adds `internal/testutil/failagent` — a test binary that exits 1 with a known stderr message; used in `TestRunNonInteractive_AgentExecFailure` to verify that exec failure stderr is surfaced in the returned error
+- Backward compatible: default is the `claude` preset; the built command is `claude --dangerously-skip-permissions --print -p '<prompt>'`; `ANTHROPIC_API_KEY` must be set (same requirement as before)
+
 ### Provider presets: smoke tests and bug fixes (ci-e014y)
 - Adds `TestProviderCommandStrings` — table-driven test covering all 5 built-in presets (`claude`, `codex`, `gemini`, `copilot`, `opencode`) plus a custom user preset loaded from JSON; validates command binary, fixed args, model flag, `--add-dir` flag, env passthrough, and instructions file for each
 - Adds `TestClaudeDefaultFallback` — regression gate that parses an `AqueductConfig` with no provider block, resolves the preset (must be `claude`), and asserts the built command is byte-for-byte identical to `buildClaudeCmd()` output

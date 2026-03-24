@@ -365,6 +365,8 @@ repos:
 
 If no `provider:` block is present, the `claude` preset is used. Existing configs work unchanged.
 
+The configured provider is also used for **filtration** (`ct droplet add --filter`). There is no separate API key or config for filtration — the same preset, binary, and env var requirements apply to both cataractae sessions and the filtration pass.
+
 ## Docker
 
 Cistern ships a multi-stage Dockerfile. The image includes `tmux`, `git`, `gh`, and both `ct` and `aqueduct` binaries.
