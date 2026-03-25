@@ -1228,7 +1228,7 @@ func (s *Castellarius) heartbeatRepo(_ context.Context, repo aqueduct.RepoConfig
 				"provider", providerName,
 			)
 			if justDegraded {
-				s.logger.Warn("provider appears degraded — fast-forwarding to max backoff for all queued droplets",
+				s.logger.Warn("provider appears degraded — queued droplets will be held at max backoff on next dispatch",
 					"provider", providerName,
 					"max_backoff", s.quickExitBackoff.maxBackoff.String(),
 				)

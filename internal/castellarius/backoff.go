@@ -102,7 +102,7 @@ func (t *quickExitTracker) computeBackoff(n int) time.Duration {
 		shift = 62
 	}
 	delay := t.quickExitThreshold * time.Duration(uint64(1)<<shift)
-	if delay > t.maxBackoff || delay < 0 { // < 0 catches multiplication overflow
+	if delay > t.maxBackoff || delay <= 0 { // <= 0 catches both negative and zero-wrap overflow
 		delay = t.maxBackoff
 	}
 	return delay
@@ -234,6 +234,7 @@ func (t *quickExitTracker) resetDroplet(dropletID, provider string) (providerRec
 	if t.providerDegraded[provider] {
 		delete(t.providerDegraded, provider)
 		delete(t.providerEvents, provider)
+		delete(t.providerLastLog, provider)
 		return true
 	}
 	return false

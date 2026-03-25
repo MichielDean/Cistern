@@ -46,6 +46,24 @@ func TestQuickExitTracker_ComputeBackoff_CapsAtMax(t *testing.T) {
 	}
 }
 
+// TestQuickExitTracker_ComputeBackoff_OverflowProtection verifies that extreme
+// consecutive-exit counts (shift > 62) do not produce wrapped/negative values
+// and always return maxBackoff instead.
+func TestQuickExitTracker_ComputeBackoff_OverflowProtection(t *testing.T) {
+	maxBackoff := 30 * time.Minute
+	tracker := newQuickExitTracker(30*time.Second, maxBackoff)
+
+	for _, n := range []int{63, 64, 100, 1000} {
+		got := tracker.computeBackoff(n)
+		if got != maxBackoff {
+			t.Errorf("computeBackoff(%d) = %v, want maxBackoff %v (overflow guard failed)", n, got, maxBackoff)
+		}
+		if got < 0 {
+			t.Errorf("computeBackoff(%d) = %v, must never be negative", n, got)
+		}
+	}
+}
+
 // TestQuickExitTracker_IsQuickExit verifies the threshold boundary.
 func TestQuickExitTracker_IsQuickExit_ThresholdBoundary(t *testing.T) {
 	tracker := newQuickExitTracker(30*time.Second, 30*time.Minute)
