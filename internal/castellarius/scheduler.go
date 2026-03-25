@@ -163,10 +163,6 @@ func New(config aqueduct.AqueductConfig, dbPath string, runner CataractaeRunner,
 		}
 	}
 
-	// Resolve quick-exit backoff configuration — fall back to defaults when zero.
-	quickExitThreshold := time.Duration(config.QuickExitThresholdSeconds) * time.Second
-	maxBackoff := time.Duration(config.MaxBackoffMinutes) * time.Minute
-
 	s := &Castellarius{
 		config:             config,
 		workflows:          make(map[string]*aqueduct.Workflow),
@@ -185,7 +181,10 @@ func New(config aqueduct.AqueductConfig, dbPath string, runner CataractaeRunner,
 		rebaseAndPushFn:    defaultRebaseAndPush,
 		ghMergeFn:          defaultGhMerge,
 		dispatchLoop:       newDispatchLoopTracker(),
-		quickExitBackoff:   newQuickExitTracker(quickExitThreshold, maxBackoff),
+		quickExitBackoff: newQuickExitTracker(
+			time.Duration(config.QuickExitThresholdSeconds)*time.Second,
+			time.Duration(config.MaxBackoffMinutes)*time.Minute,
+		),
 	}
 	for _, o := range opts {
 		o(s)
@@ -259,9 +258,6 @@ func NewFromParts(
 	runner CataractaeRunner,
 	opts ...Option,
 ) *Castellarius {
-	quickExitThreshold := time.Duration(config.QuickExitThresholdSeconds) * time.Second
-	maxBackoff := time.Duration(config.MaxBackoffMinutes) * time.Minute
-
 	s := &Castellarius{
 		config:            config,
 		workflows:         workflows,
@@ -276,7 +272,10 @@ func NewFromParts(
 		rebaseAndPushFn:   defaultRebaseAndPush,
 		ghMergeFn:         defaultGhMerge,
 		dispatchLoop:      newDispatchLoopTracker(),
-		quickExitBackoff:  newQuickExitTracker(quickExitThreshold, maxBackoff),
+		quickExitBackoff: newQuickExitTracker(
+			time.Duration(config.QuickExitThresholdSeconds)*time.Second,
+			time.Duration(config.MaxBackoffMinutes)*time.Minute,
+		),
 	}
 	for _, o := range opts {
 		o(s)
