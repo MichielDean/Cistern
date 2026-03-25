@@ -554,12 +554,14 @@ func TestTick_NotesForwarding(t *testing.T) {
 	}
 }
 
-func TestTick_NoRoute(t *testing.T) {
+func TestTick_RecirculateAutoPromotesToPass(t *testing.T) {
+	// implement has OnPass="review" but no OnRecirculate.
+	// Signaling recirculate should auto-promote to pass and route to "review".
 	client := newMockClient()
 	client.readyItems = []*cistern.Droplet{{ID: "b1"}}
 
 	runner := newMockRunner(client)
-	runner.outcomes["implement"] = "recirculate" // implement has no OnRecirculate
+	runner.outcomes["implement"] = "recirculate"
 
 	sched := testScheduler(client, runner)
 	sched.Tick(context.Background())
@@ -573,9 +575,59 @@ func TestTick_NoRoute(t *testing.T) {
 
 	client.mu.Lock()
 	defer client.mu.Unlock()
-	// implement step has no OnRecirculate → empty route → escalate.
-	if _, ok := client.escalated["b1"]; !ok {
-		t.Error("expected escalation when no route exists")
+
+	// Should route via on_pass → "review", not escalate.
+	if client.steps["b1"] != "review" {
+		t.Errorf("expected auto-promote to route to review, got %q", client.steps["b1"])
+	}
+	if _, ok := client.escalated["b1"]; ok {
+		t.Error("expected no escalation when recirculate auto-promotes via on_pass")
+	}
+	// Warning note must be attached.
+	var hasNote bool
+	for _, n := range client.attached {
+		if n.id == "b1" && strings.Contains(n.notes, "Auto-promoted") && strings.Contains(n.notes, "recirculate") {
+			hasNote = true
+			break
+		}
+	}
+	if !hasNote {
+		t.Error("expected auto-promote warning note attached to droplet")
+	}
+}
+
+func TestTick_RecirculateNoPassRoute_StillEscalates(t *testing.T) {
+	// A step with neither on_recirculate nor on_pass: recirculate cannot be promoted,
+	// so the droplet must still escalate.
+	wf := &aqueduct.Workflow{
+		Name: "test",
+		Cataractae: []aqueduct.WorkflowCataractae{
+			{
+				Name:   "implement",
+				Type:   aqueduct.CataractaeTypeAgent,
+				OnFail: "blocked",
+				// OnPass and OnRecirculate intentionally omitted.
+			},
+		},
+	}
+	cfg := testConfig()
+	client := newMockClient()
+	client.readyItems = []*cistern.Droplet{{ID: "b2"}}
+	runner := newMockRunner(client)
+	runner.outcomes["implement"] = "recirculate"
+	sched := NewFromParts(cfg, map[string]*aqueduct.Workflow{"test-repo": wf}, map[string]CisternClient{"test-repo": client}, runner)
+
+	sched.Tick(context.Background())
+	if !runner.waitCalls(1, time.Second) {
+		t.Fatal("timed out")
+	}
+	sched.Tick(context.Background())
+	time.Sleep(10 * time.Millisecond)
+
+	client.mu.Lock()
+	defer client.mu.Unlock()
+	if _, ok := client.escalated["b2"]; !ok {
+		t.Error("expected escalation when neither on_recirculate nor on_pass exists")
 	}
 }
 

@@ -564,6 +564,88 @@ func newDashboardMux(cfgPath, dbPath string) http.Handler {
 	return newDashboardMuxInternal(cfgPath, dbPath, nil)
 }
 
+// newDashboardMuxWith returns an http.Handler for the web dashboard with custom
+// data fetcher and poll intervals for testing. Exposed for testing only.
+func newDashboardMuxWith(cfgPath, dbPath string, fetcher func(string, string) *DashboardData, fastInterval, slowInterval time.Duration) http.Handler {
+	mux := http.NewServeMux()
+
+	// Serve bundled xterm.js assets so the dashboard works in airgapped environments.
+	staticSub, err := fs.Sub(staticAssets, "assets/static")
+	if err != nil {
+		panic("embedded static assets not found: " + err.Error())
+	}
+	mux.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.FS(staticSub))))
+
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/" {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		fmt.Fprint(w, dashboardHTML)
+	})
+
+	mux.HandleFunc("/api/dashboard", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		data := fetcher(cfgPath, dbPath)
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(data) //nolint:errcheck
+	})
+
+	mux.HandleFunc("/api/dashboard/events", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.Header().Set("Cache-Control", "no-cache")
+		w.Header().Set("Connection", "keep-alive")
+		w.Header().Set("X-Accel-Buffering", "no")
+
+		flusher, ok := w.(http.Flusher)
+		if !ok {
+			http.Error(w, "streaming unsupported", http.StatusInternalServerError)
+			return
+		}
+
+		sendEvent := func(d *DashboardData) {
+			if b, err := json.Marshal(d); err == nil {
+				fmt.Fprintf(w, "data: %s\n\n", b)
+				flusher.Flush()
+			}
+		}
+
+		// Initial send — establishes the hash baseline for adaptive rate.
+		data := fetcher(cfgPath, dbPath)
+		sendEvent(data)
+		lastHash := dashboardStateHash(data)
+
+		ticker := time.NewTicker(fastInterval)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-r.Context().Done():
+				return
+			case <-ticker.C:
+				data = fetcher(cfgPath, dbPath)
+				newHash := dashboardStateHash(data)
+				sendEvent(data)
+				// Adaptive backoff: slow down when Castellarius is idle.
+				idle := newHash == lastHash && data.FlowingCount == 0
+				lastHash = newHash
+				next := fastInterval
+				if idle {
+					next = slowInterval
+				}
+				ticker.Reset(next)
+			}
+		}
+	})
+
+
+	return mux
+}
+
 // newDashboardMuxInternal returns an http.Handler for the web dashboard.
 // tui may be nil; if so the /ws/tui endpoint closes connections immediately.
 func newDashboardMuxInternal(cfgPath, dbPath string, tui *DashboardTUI) http.Handler {
