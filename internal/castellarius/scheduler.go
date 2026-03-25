@@ -679,7 +679,7 @@ func (s *Castellarius) observeRepo(_ context.Context, repo aqueduct.RepoConfig) 
 		// Auto-promote: when a step signals recirculate but has no on_recirculate route,
 		// treat it as pass. The work is almost certainly complete — the agent chose the
 		// wrong signal. Log at WARN so the pattern is visible without failing anything.
-		if next == "" && result == ResultRecirculate && recirculateTo == "" {
+		if next == "" && result == ResultRecirculate {
 			if passNext := route(*step, ResultPass); passNext != "" {
 				note := fmt.Sprintf(
 					"Auto-promoted: cataractae %q signaled recirculate but has no on_recirculate route — treated as pass. Review agent behavior if this recurs.",
