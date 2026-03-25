@@ -33,8 +33,6 @@ func statusCode(dStatus string) string {
 		return colorRed
 	case "delivered", "cancelled":
 		return colorDim
-	case "cancelled":
-		return colorDim
 	default:
 		return ""
 	}
