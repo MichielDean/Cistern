@@ -146,9 +146,22 @@ func (s *Session) spawn() error {
 
 	args = append(args, s.collectEnvArgs()...)
 	args = append(args, agentCmd)
-	cmd := exec.Command("tmux", args...)
-	if out, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("tmux new-session %s: %w: %s", s.ID, err, out)
+	out, spawnErr := execTmuxNewSession(args)
+	if spawnErr != nil {
+		if !isTmuxServerDeadError(out) {
+			return fmt.Errorf("tmux new-session %s: %w: %s", s.ID, spawnErr, out)
+		}
+		// The tmux server is dead — attempt recovery: clear stale state then retry.
+		slog.Default().Info("session: dead tmux server detected — attempting restart",
+			"session", s.ID)
+		execTmuxKillServer()
+		if out, spawnErr = execTmuxNewSession(args); spawnErr != nil {
+			slog.Default().Error("session: tmux server recovery failed — spawn aborted",
+				"session", s.ID, "error", spawnErr)
+			return fmt.Errorf("tmux new-session %s: server dead, recovery failed: %w: %s", s.ID, spawnErr, out)
+		}
+		slog.Default().Info("session: recovered from dead tmux server — retried spawn successfully",
+			"session", s.ID)
 	}
 
 	// Quick-exit detection: warn if the session dies within quickExitWindow of
@@ -266,6 +279,31 @@ func (s *Session) buildClaudeCmd(skillsDir string) string {
 // variable so tests can substitute a deterministic resolver without requiring the
 // real agent binaries to be installed on the test machine.
 var resolveCommandFn = resolveCommand
+
+// execTmuxNewSession runs "tmux" with the given args (which begin with "new-session")
+// and returns the combined output and any error. It is a variable so tests can
+// substitute a fake implementation without requiring a real tmux server.
+var execTmuxNewSession = func(args []string) ([]byte, error) {
+	return exec.Command("tmux", args...).CombinedOutput()
+}
+
+// execTmuxKillServer runs "tmux kill-server" to clear any stale tmux server state.
+// Errors are silently ignored because the server may already be gone.
+// It is a variable so tests can substitute a no-op without requiring tmux.
+var execTmuxKillServer = func() {
+	exec.Command("tmux", "kill-server").Run() //nolint:errcheck
+}
+
+// isTmuxServerDeadError reports whether the combined output of a failed tmux
+// command indicates that the server is not running or unreachable — as opposed
+// to an auth failure or missing binary, which manifest as quick-exit sessions
+// rather than failed new-session invocations.
+func isTmuxServerDeadError(output []byte) bool {
+	msg := strings.ToLower(string(output))
+	return strings.Contains(msg, "no server running") ||
+		strings.Contains(msg, "failed to connect to server") ||
+		strings.Contains(msg, "error connecting to")
+}
 
 // resolveCommand resolves preset.Command to an absolute path using exec.LookPath,
 // falling back to the raw value if lookup fails. This ensures the agent binary is
