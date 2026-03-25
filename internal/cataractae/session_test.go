@@ -1672,6 +1672,64 @@ func TestSpawn_TmuxError_NonServer_NoRecovery(t *testing.T) {
 	}
 }
 
+// TestSpawn_TmuxServerDead_ConcurrentRecoveryIsSerializedByMutex verifies that
+// when two goroutines simultaneously detect a dead tmux server, their recovery
+// blocks are serialized — execTmuxKillServer is never called concurrently.
+// This guards against the interleaving where goroutine B calls execTmuxKillServer
+// and destroys the server that goroutine A just recovered.
+func TestSpawn_TmuxServerDead_ConcurrentRecoveryIsSerializedByMutex(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("CLAUDE_PATH", "true")
+
+	origSpawn := execTmuxNewSession
+	origKill := execTmuxKillServer
+	t.Cleanup(func() {
+		execTmuxNewSession = origSpawn
+		execTmuxKillServer = origKill
+	})
+
+	orig := quickExitWindow
+	quickExitWindow = 10 * time.Second
+	t.Cleanup(func() { quickExitWindow = orig })
+
+	// Both spawns always fail with a dead-server error so both enter the recovery
+	// block. The test is about serialization, not recovery success.
+	execTmuxNewSession = func(_ []string) ([]byte, error) {
+		return []byte("no server running on /tmp/tmux-1000/default"), fmt.Errorf("exit status 1")
+	}
+
+	var concurrent int64  // current number of goroutines inside execTmuxKillServer
+	var raceDetected int64 // set non-zero if concurrent > 1 is ever observed
+	execTmuxKillServer = func() {
+		n := atomic.AddInt64(&concurrent, 1)
+		if n > 1 {
+			atomic.StoreInt64(&raceDetected, 1)
+		}
+		time.Sleep(20 * time.Millisecond) // hold long enough to detect overlap
+		atomic.AddInt64(&concurrent, -1)
+	}
+
+	workDir := t.TempDir()
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	for i := range 2 {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			<-start // release both goroutines simultaneously
+			s := &Session{ID: fmt.Sprintf("concurrent-recovery-%d", i), WorkDir: workDir}
+			s.spawn() //nolint:errcheck // error expected — only testing serialization
+		}(i)
+	}
+	close(start)
+	wg.Wait()
+
+	if atomic.LoadInt64(&raceDetected) != 0 {
+		t.Error("execTmuxKillServer was called concurrently — tmuxRecoveryMu did not serialize recovery")
+	}
+}
+
 // TestSpawn_QuickExit_SuppressedWhenOutcomeSignaled verifies that when
 // DropletSignaledOutcome returns true the goroutine does not emit a warning —
 // a fast agent that completed successfully should not be flagged as a possible

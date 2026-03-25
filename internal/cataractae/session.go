@@ -152,6 +152,12 @@ func (s *Session) spawn() error {
 			return fmt.Errorf("tmux new-session %s: %w: %s", s.ID, spawnErr, out)
 		}
 		// The tmux server is dead — attempt recovery: clear stale state then retry.
+		// Serialize this block so concurrent spawns do not interleave: one goroutine
+		// must complete the full kill→retry cycle before another begins, preventing
+		// a second goroutine from calling execTmuxKillServer on a server the first
+		// goroutine just recovered.
+		tmuxRecoveryMu.Lock()
+		defer tmuxRecoveryMu.Unlock()
 		slog.Default().Info("session: dead tmux server detected — attempting restart",
 			"session", s.ID)
 		execTmuxKillServer()
@@ -563,6 +569,14 @@ var oauthTokenURL = oauth.DefaultTokenURL
 // oauthHTTPDo is the HTTP transport used for pre-spawn token refresh.
 // Replaced in tests with a test server client.
 var oauthHTTPDo func(*http.Request) (*http.Response, error) = http.DefaultClient.Do
+
+// tmuxRecoveryMu serializes dead-tmux-server recovery across concurrent spawn
+// goroutines (scheduler.go dispatches spawns in parallel). Without serialization,
+// two goroutines that both detect a dead server can interleave: A recovers and
+// starts a session, then B calls execTmuxKillServer and destroys A's server.
+// Holding this lock during the detect→kill→retry block ensures only one goroutine
+// restarts the tmux server at a time.
+var tmuxRecoveryMu sync.Mutex
 
 // ensureClaudeOAuthFreshMu guards ensureClaudeOAuthFresh against concurrent calls
 // from parallel spawn goroutines. This prevents concurrent read-modify-write races
