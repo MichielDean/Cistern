@@ -1055,6 +1055,7 @@ func TestDashboardHTML_EscHint(t *testing.T) {
 		{`ws.send('\x1b')`, "ESC byte forwarding"},
 		{`addEventListener('keydown'`, "capture-phase keydown listener"},
 		{`e.key === 'Escape'`, "Escape key check"},
+		{"preventDefault()", "preventDefault to suppress browser default Escape behavior"},
 		{"stopPropagation()", "stopPropagation to prevent double-send"},
 		{"capture", "capture:true to intercept before xterm.js"},
 	}

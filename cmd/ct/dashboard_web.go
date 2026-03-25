@@ -966,6 +966,7 @@ function sendEsc() {
    same event, which would cause a double-send of \x1b to the PTY. */
 document.addEventListener('keydown', function(e) {
   if (e.key === 'Escape') {
+    e.preventDefault();
     e.stopPropagation();
     sendEsc();
   }
