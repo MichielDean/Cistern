@@ -366,28 +366,26 @@ func TestDropletCancel(t *testing.T) {
 	}
 	c.Close()
 
-	t.Run("cancels droplet and prints confirmation", func(t *testing.T) {
-		cancelNotes = ""
-		out := captureStdout(t, func() {
-			if err := dropletCancelCmd.RunE(dropletCancelCmd, []string{item.ID}); err != nil {
-				t.Fatalf("unexpected error: %v", err)
-			}
-		})
-		if !strings.Contains(out, "cancelled") {
-			t.Errorf("expected 'cancelled' in output, got: %q", out)
-		}
-
-		// Verify status is cancelled in the DB.
-		c2, _ := cistern.New(db, "")
-		defer c2.Close()
-		got, err := c2.Get(item.ID)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if got.Status != "cancelled" {
-			t.Errorf("status = %q, want %q", got.Status, "cancelled")
+	cancelNotes = ""
+	out := captureStdout(t, func() {
+		if err := dropletCancelCmd.RunE(dropletCancelCmd, []string{item.ID}); err != nil {
+			t.Fatalf("unexpected error: %v", err)
 		}
 	})
+	if !strings.Contains(out, "cancelled") {
+		t.Errorf("expected 'cancelled' in output, got: %q", out)
+	}
+
+	// Verify status is cancelled in the DB.
+	c2, _ := cistern.New(db, "")
+	defer c2.Close()
+	got, err := c2.Get(item.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Status != "cancelled" {
+		t.Errorf("status = %q, want %q", got.Status, "cancelled")
+	}
 }
 
 func TestDropletCancel_WithNotes(t *testing.T) {
