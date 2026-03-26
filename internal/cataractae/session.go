@@ -144,6 +144,17 @@ func (s *Session) spawn() error {
 		"context_type", contextType,
 	)
 
+	// Session output log: tee the agent command's stdout+stderr to a file so
+	// we can read the last few lines when diagnosing quick-exit failures.
+	// The log is written to ~/.cistern/session-logs/<sessionID>.log and is
+	// cleaned up after a successful run (or after being read on quick-exit).
+	sessionLogPath := filepath.Join(home, ".cistern", "session-logs", s.ID+".log")
+	if err := os.MkdirAll(filepath.Dir(sessionLogPath), 0o750); err == nil {
+		// Wrap the agent command: ( agentCmd ) 2>&1 | tee /path/to/log
+		// Use exec to replace the shell so exit code propagates correctly.
+		agentCmd = "( " + agentCmd + " ) 2>&1 | tee " + shellQuote(sessionLogPath) + "; exit ${PIPESTATUS[0]}"
+	}
+
 	args = append(args, s.collectEnvArgs()...)
 	args = append(args, agentCmd)
 	out, spawnErr := execTmuxNewSession(args)
@@ -183,6 +194,7 @@ func (s *Session) spawn() error {
 	// avoid false positives on intentional kills and graceful shutdown.
 	spawnedAt := time.Now()
 	sessionID := s.ID
+	logPath := sessionLogPath
 	done := s.done
 	checkOutcome := s.DropletSignaledOutcome
 	window := quickExitWindow // capture at spawn time to avoid concurrent access with test overrides
@@ -190,19 +202,36 @@ func (s *Session) spawn() error {
 		select {
 		case <-time.After(window):
 		case <-done:
-			return // session killed intentionally — suppress warning
+			// Session killed intentionally — clean up log and suppress warning.
+			os.Remove(logPath) //nolint:errcheck
+			return
 		}
 		if isSessionAlive(sessionID) {
 			return
 		}
 		if checkOutcome != nil && checkOutcome() {
-			return // session signaled an outcome — not an auth failure
+			// Session signaled an outcome (completed successfully) — clean up log.
+			os.Remove(logPath) //nolint:errcheck
+			return
 		}
 		elapsed := time.Since(spawnedAt).Round(time.Second)
-		slog.Default().Warn("session exited quickly — possible auth failure or binary not found",
-			"session", sessionID,
-			"elapsed", elapsed.String(),
-		)
+
+		// Read the last 20 lines of the session log for diagnostics.
+		tail := sessionLogTail(logPath, 20)
+		os.Remove(logPath) //nolint:errcheck
+
+		if tail != "" {
+			slog.Default().Warn("session exited quickly — last output follows",
+				"session", sessionID,
+				"elapsed", elapsed.String(),
+				"output", tail,
+			)
+		} else {
+			slog.Default().Warn("session exited quickly — possible auth failure or binary not found",
+				"session", sessionID,
+				"elapsed", elapsed.String(),
+			)
+		}
 	}()
 
 	return nil
@@ -562,6 +591,23 @@ func (s *Session) isAgentAlive() bool {
 		return false
 	}
 	return slices.Contains(s.Preset.ProcessNames, current)
+}
+
+// sessionLogTail reads up to maxLines lines from the end of the named file.
+// Returns an empty string if the file cannot be read or is empty.
+// Used to capture the last output of a quick-exit session for diagnostics.
+func sessionLogTail(path string, maxLines int) string {
+	data, err := os.ReadFile(path)
+	if err != nil || len(data) == 0 {
+		return ""
+	}
+	// Strip trailing newline before splitting so we don't count a phantom empty line.
+	text := strings.TrimRight(string(data), "\n")
+	lines := strings.Split(text, "\n")
+	if len(lines) > maxLines {
+		lines = lines[len(lines)-maxLines:]
+	}
+	return strings.Join(lines, "\n")
 }
 
 // claudePathFn resolves the path to the claude executable. It is a variable so
