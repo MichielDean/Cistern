@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/MichielDean/cistern/internal/aqueduct"
+	"github.com/MichielDean/cistern/internal/cistern"
 )
 
 func TestStatusWatchFlagRegistered(t *testing.T) {
@@ -635,5 +636,122 @@ func TestStartupRequiredEnvVars_OpencodeConfig_ReturnsEmptyVarsNotClaude(t *test
 	}
 	if usesClaude {
 		t.Error("expected usesClaude=false for opencode provider")
+	}
+}
+
+// --- repoQueueSummary tests ---
+
+func TestRepoQueueSummary_NoItems_ReturnsZeroZero(t *testing.T) {
+	got := repoQueueSummary("cistern", nil)
+	want := "cistern: 0 queued, 0 flowing"
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+func TestRepoQueueSummary_EmptyList_ReturnsZeroZero(t *testing.T) {
+	got := repoQueueSummary("cistern", []*cistern.Droplet{})
+	want := "cistern: 0 queued, 0 flowing"
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+func TestRepoQueueSummary_OnlyOpenItems_CountsQueued(t *testing.T) {
+	items := []*cistern.Droplet{
+		{ID: "ct-aaa", Repo: "cistern", Status: "open"},
+		{ID: "ct-bbb", Repo: "cistern", Status: "open"},
+	}
+	got := repoQueueSummary("cistern", items)
+	want := "cistern: 2 queued, 0 flowing"
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+func TestRepoQueueSummary_OnlyFlowing_ShowsParenthetical(t *testing.T) {
+	items := []*cistern.Droplet{
+		{ID: "sc-abc123", Repo: "cistern", Status: "in_progress", Assignee: "julia", CurrentCataractae: "implement"},
+	}
+	got := repoQueueSummary("cistern", items)
+	want := "cistern: 0 queued, 1 flowing (julia: sc-abc123/implement)"
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+func TestRepoQueueSummary_MixedItems_ShowsBoth(t *testing.T) {
+	items := []*cistern.Droplet{
+		{ID: "ct-aaa", Repo: "cistern", Status: "open"},
+		{ID: "ct-bbb", Repo: "cistern", Status: "open"},
+		{ID: "sc-abc123", Repo: "cistern", Status: "in_progress", Assignee: "julia", CurrentCataractae: "implement"},
+	}
+	got := repoQueueSummary("cistern", items)
+	want := "cistern: 2 queued, 1 flowing (julia: sc-abc123/implement)"
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+func TestRepoQueueSummary_FiltersOtherRepos(t *testing.T) {
+	items := []*cistern.Droplet{
+		{ID: "ct-aaa", Repo: "other-repo", Status: "open"},
+		{ID: "ct-bbb", Repo: "other-repo", Status: "in_progress", Assignee: "worker1", CurrentCataractae: "review"},
+		{ID: "ct-ccc", Repo: "cistern", Status: "open"},
+	}
+	got := repoQueueSummary("cistern", items)
+	want := "cistern: 1 queued, 0 flowing"
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+func TestRepoQueueSummary_MultipleFlowing_ListsAllCommaJoined(t *testing.T) {
+	items := []*cistern.Droplet{
+		{ID: "sc-aaa", Repo: "cistern", Status: "in_progress", Assignee: "julia", CurrentCataractae: "implement"},
+		{ID: "sc-bbb", Repo: "cistern", Status: "in_progress", Assignee: "rex", CurrentCataractae: "review"},
+	}
+	got := repoQueueSummary("cistern", items)
+	if !strings.Contains(got, "cistern: 0 queued, 2 flowing") {
+		t.Errorf("expected count prefix; got %q", got)
+	}
+	if !strings.Contains(got, "julia: sc-aaa/implement") {
+		t.Errorf("expected julia entry in parenthetical; got %q", got)
+	}
+	if !strings.Contains(got, "rex: sc-bbb/review") {
+		t.Errorf("expected rex entry in parenthetical; got %q", got)
+	}
+}
+
+func TestRepoQueueSummary_FlowingWithoutAssignee_ShowsIDAndCataractae(t *testing.T) {
+	items := []*cistern.Droplet{
+		{ID: "sc-xyz", Repo: "cistern", Status: "in_progress", Assignee: "", CurrentCataractae: "implement"},
+	}
+	got := repoQueueSummary("cistern", items)
+	want := "cistern: 0 queued, 1 flowing (sc-xyz/implement)"
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+func TestRepoQueueSummary_StagnantItems_NotCounted(t *testing.T) {
+	items := []*cistern.Droplet{
+		{ID: "ct-aaa", Repo: "cistern", Status: "stagnant"},
+		{ID: "ct-bbb", Repo: "cistern", Status: "delivered"},
+	}
+	got := repoQueueSummary("cistern", items)
+	want := "cistern: 0 queued, 0 flowing"
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+func TestRepoQueueSummary_ZeroFlowing_NoParenthetical(t *testing.T) {
+	items := []*cistern.Droplet{
+		{ID: "ct-aaa", Repo: "cistern", Status: "open"},
+	}
+	got := repoQueueSummary("cistern", items)
+	if strings.Contains(got, "(") {
+		t.Errorf("expected no parenthetical when 0 flowing; got %q", got)
 	}
 }

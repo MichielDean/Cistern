@@ -212,6 +212,11 @@ var castellariusStatusCmd = &cobra.Command{
 			totalWorkers += len(repoWorkerNames(repo))
 		}
 		fmt.Printf("\n%d of %d aqueducts flowing\n", totalBusy, totalWorkers)
+
+		fmt.Println()
+		for _, repo := range cfg.Repos {
+			fmt.Printf("  %s\n", repoQueueSummary(repo.Name, allItems))
+		}
 		return nil
 	},
 }
@@ -624,6 +629,48 @@ func startupRequiredEnvVars(cfgPath string) (requiredVars []string, usesClaude b
 		return []string{"ANTHROPIC_API_KEY"}, true
 	}
 	return requiredVars, usesClaude
+}
+
+// repoQueueSummary returns a one-line summary of queue depth and active
+// sessions for a single repo, given the full list of droplets from the cistern.
+//
+// Format:
+//
+//	"<repo>: N queued, M flowing"
+//	"<repo>: N queued, M flowing (assignee: id/cataractae, ...)"
+//
+// "queued" counts droplets with status "open".
+// "flowing" counts droplets with status "in_progress".
+// Other statuses (stagnant, delivered, cancelled, …) are ignored.
+func repoQueueSummary(repoName string, allItems []*cistern.Droplet) string {
+	queued := 0
+	var flowing []*cistern.Droplet
+	for _, item := range allItems {
+		if item.Repo != repoName {
+			continue
+		}
+		switch item.Status {
+		case "open":
+			queued++
+		case "in_progress":
+			flowing = append(flowing, item)
+		}
+	}
+
+	summary := fmt.Sprintf("%s: %d queued, %d flowing", repoName, queued, len(flowing))
+	if len(flowing) == 0 {
+		return summary
+	}
+
+	parts := make([]string, 0, len(flowing))
+	for _, item := range flowing {
+		entry := item.ID + "/" + item.CurrentCataractae
+		if item.Assignee != "" {
+			entry = item.Assignee + ": " + entry
+		}
+		parts = append(parts, entry)
+	}
+	return summary + " (" + strings.Join(parts, ", ") + ")"
 }
 
 // repoWorkerNames returns the configured aqueduct names for a repo,
