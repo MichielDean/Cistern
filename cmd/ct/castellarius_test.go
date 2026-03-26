@@ -2,9 +2,6 @@ package main
 
 import (
 	"encoding/json"
-	"fmt"
-	"io"
-	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -288,15 +285,6 @@ func TestValidateWorkflowSkills_ErrorMentionsInstallCommand(t *testing.T) {
 
 // --- checkStartupCredentials tests ---
 
-// setStartupHTTPDo overrides startupOAuthHTTPDo for the duration of a test and
-// restores the original value when the test completes.
-func setStartupHTTPDo(t *testing.T, do func(*http.Request) (*http.Response, error)) {
-	t.Helper()
-	orig := startupOAuthHTTPDo
-	startupOAuthHTTPDo = do
-	t.Cleanup(func() { startupOAuthHTTPDo = orig })
-}
-
 // writeOAuthCredentials writes a credentials file with the given OAuth expiry.
 func writeOAuthCredentials(t *testing.T, home string, expiresAt int64) {
 	t.Helper()
@@ -354,25 +342,21 @@ func TestCheckStartupCredentials_KeyPresent_FreshOAuth_ReturnsNil(t *testing.T) 
 	}
 }
 
-func TestCheckStartupCredentials_KeyPresent_ExpiredOAuth_ReturnsError(t *testing.T) {
+func TestCheckStartupCredentials_KeyPresent_ExpiredOAuth_InjectsTokenAnyway(t *testing.T) {
+	// We no longer fail on expired tokens — we inject the token and let the agent
+	// try it. The session log capture will tell us if auth fails. The Claude CLI
+	// manages its own refresh; if the token is expired, running claude interactively
+	// will refresh it and we pick it up on the next spawn.
 	home := t.TempDir()
-	t.Setenv("ANTHROPIC_API_KEY", "sk-ant-test-key")
+	t.Setenv("ANTHROPIC_API_KEY", "")
 	writeOAuthCredentials(t, home, 1000) // expires 1970-01-01 — definitely expired
 
-	// Inject a failing HTTP do to avoid real network calls during the refresh attempt.
-	setStartupHTTPDo(t, func(r *http.Request) (*http.Response, error) {
-		return nil, fmt.Errorf("test: no network")
-	})
-
 	err := checkStartupCredentials(home, filepath.Join(home, "nonexistent.yaml"))
-	if err == nil {
-		t.Fatal("expected error for expired OAuth token, got nil")
+	if err != nil {
+		t.Errorf("expected nil even for expired token (inject and try), got: %v", err)
 	}
-	if !strings.Contains(err.Error(), "authentication failed") {
-		t.Errorf("error should contain 'authentication failed'; got: %v", err)
-	}
-	if !strings.Contains(err.Error(), "expired") {
-		t.Errorf("error should mention 'expired'; got: %v", err)
+	if got := os.Getenv("ANTHROPIC_API_KEY"); got != "sk-ant-test-invalid" {
+		t.Errorf("ANTHROPIC_API_KEY = %q, want sk-ant-test-invalid", got)
 	}
 }
 
@@ -480,56 +464,43 @@ func TestCheckStartupCredentials_OAuthFreshToken_NoEnvKey_ReturnsNil(t *testing.
 }
 
 // TestCheckStartupCredentials_OAuthExpired_RefreshSucceeds_NoEnvKey_ReturnsNil
-// verifies that an expired OAuth token is refreshed at startup and the new token
-// is injected, even when ANTHROPIC_API_KEY is absent from the environment.
-func TestCheckStartupCredentials_OAuthExpired_RefreshSucceeds_NoEnvKey_ReturnsNil(t *testing.T) {
+// verifies that an expired OAuth token is still injected (not refreshed) —
+// we read it as-is and let the agent try it. Claude CLI handles its own refresh.
+func TestCheckStartupCredentials_OAuthExpired_StillInjectsToken_ReturnsNil(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("ANTHROPIC_API_KEY", "")
 	writeOAuthCredentials(t, home, 1000) // expired
 
-	setStartupHTTPDo(t, func(r *http.Request) (*http.Response, error) {
-		body := `{"access_token":"sk-ant-refreshed","expires_in":3600}`
-		return &http.Response{
-			StatusCode: http.StatusOK,
-			Body:       io.NopCloser(strings.NewReader(body)),
-			Header:     http.Header{"Content-Type": []string{"application/json"}},
-		}, nil
-	})
+	if err := checkStartupCredentials(home, filepath.Join(home, "nonexistent.yaml")); err != nil {
+		t.Errorf("expected nil even for expired token, got: %v", err)
+	}
+	if got := os.Getenv("ANTHROPIC_API_KEY"); got != "sk-ant-test-invalid" {
+		t.Errorf("ANTHROPIC_API_KEY = %q, want sk-ant-test-invalid (injected from credentials)", got)
+	}
+}
+
+// TestCheckStartupCredentials_OAuthExpired_InjectsFromFile_NotFromEnv verifies
+// that when credentials file has a (possibly expired) token, it takes precedence
+// over whatever is in ANTHROPIC_API_KEY env — ensuring we always use the latest
+// token the Claude CLI has written.
+func TestCheckStartupCredentials_OAuthExpired_InjectsFromFile_NotFromEnv(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("ANTHROPIC_API_KEY", "sk-ant-stale-env-key")
+	writeOAuthCredentials(t, home, 1000) // expired token in credentials file
 
 	if err := checkStartupCredentials(home, filepath.Join(home, "nonexistent.yaml")); err != nil {
-		t.Errorf("expected nil after successful OAuth refresh, got: %v", err)
+		t.Errorf("expected nil, got: %v", err)
 	}
-	if got := os.Getenv("ANTHROPIC_API_KEY"); got != "sk-ant-refreshed" {
-		t.Errorf("ANTHROPIC_API_KEY = %q, want sk-ant-refreshed (injected from refreshed token)", got)
-	}
-}
-
-// TestCheckStartupCredentials_OAuthExpired_RefreshFails_ReturnsError verifies
-// that when an OAuth token is expired and refresh fails, startup returns an
-// error even if ANTHROPIC_API_KEY is set in the environment. The OAuth credential
-// file signals intent to use OAuth auth; falling back to a potentially-stale env
-// var would mask the problem.
-func TestCheckStartupCredentials_OAuthExpired_RefreshFails_ReturnsError(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("ANTHROPIC_API_KEY", "sk-ant-env-key")
-	writeOAuthCredentials(t, home, 1000) // expired
-
-	setStartupHTTPDo(t, func(r *http.Request) (*http.Response, error) {
-		return nil, fmt.Errorf("test: simulated refresh failure")
-	})
-
-	err := checkStartupCredentials(home, filepath.Join(home, "nonexistent.yaml"))
-	if err == nil {
-		t.Fatal("expected error when OAuth refresh fails, got nil")
-	}
-	if !strings.Contains(err.Error(), "authentication failed") {
-		t.Errorf("error should contain 'authentication failed'; got: %v", err)
+	// Token from credentials file should win over stale env var.
+	if got := os.Getenv("ANTHROPIC_API_KEY"); got != "sk-ant-test-invalid" {
+		t.Errorf("ANTHROPIC_API_KEY = %q, want token from credentials file", got)
 	}
 }
 
-// TestCheckStartupCredentials_OAuthExpired_NoRefreshFails_ReturnsError verifies
-// that when an OAuth token is expired and has no refresh token, startup fails.
-func TestCheckStartupCredentials_OAuthExpired_NoRefreshToken_ReturnsError(t *testing.T) {
+// TestCheckStartupCredentials_OAuthExpired_NoRefreshToken_StillInjects verifies
+// that an expired token with no refresh token is still injected. We don't refresh
+// tokens — we just read and inject whatever Claude CLI last wrote.
+func TestCheckStartupCredentials_OAuthExpired_NoRefreshToken_StillInjects(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("ANTHROPIC_API_KEY", "")
 	// Write credentials with expired token and no refresh token.
@@ -537,17 +508,16 @@ func TestCheckStartupCredentials_OAuthExpired_NoRefreshToken_ReturnsError(t *tes
 	if err := os.MkdirAll(claudeDir, 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
-	content := `{"claudeAiOauth":{"accessToken":"tok-expired","refreshToken":"","expiresAt":1000}}`
-	if err := os.WriteFile(filepath.Join(claudeDir, ".credentials.json"), []byte(content), 0o600); err != nil {
+	creds := `{"claudeAiOauth":{"accessToken":"tok-expired","refreshToken":"","expiresAt":1000}}`
+	if err := os.WriteFile(filepath.Join(claudeDir, ".credentials.json"), []byte(creds), 0o600); err != nil {
 		t.Fatalf("write credentials: %v", err)
 	}
 
-	err := checkStartupCredentials(home, filepath.Join(home, "nonexistent.yaml"))
-	if err == nil {
-		t.Fatal("expected error when OAuth token is expired and no refresh token, got nil")
+	if err := checkStartupCredentials(home, filepath.Join(home, "nonexistent.yaml")); err != nil {
+		t.Errorf("expected nil — expired token still injected, got: %v", err)
 	}
-	if !strings.Contains(err.Error(), "authentication failed") {
-		t.Errorf("error should contain 'authentication failed'; got: %v", err)
+	if got := os.Getenv("ANTHROPIC_API_KEY"); got != "tok-expired" {
+		t.Errorf("ANTHROPIC_API_KEY = %q, want tok-expired", got)
 	}
 }
 
