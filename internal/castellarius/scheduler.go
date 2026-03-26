@@ -498,20 +498,7 @@ func (s *Castellarius) drainInFlight() error {
 // countInFlight returns the number of in-progress droplets that have not yet
 // signaled an outcome (i.e. agents still actively running).
 func (s *Castellarius) countInFlight() int {
-	n := 0
-	for _, repo := range s.config.Repos {
-		client := s.clients[repo.Name]
-		items, err := client.List(repo.Name, "in_progress")
-		if err != nil {
-			continue
-		}
-		for _, item := range items {
-			if item.Outcome == "" {
-				n++
-			}
-		}
-	}
-	return n
+	return len(s.stuckSessionIDs())
 }
 
 // stuckSessionIDs returns the IDs of in-progress droplets with no outcome set.

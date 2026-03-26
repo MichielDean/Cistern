@@ -38,16 +38,6 @@ func waitBlockingCall(br *blockingRunner, timeout time.Duration) bool {
 	}
 }
 
-// signalOutcome sets the outcome on an in-progress droplet, simulating an agent
-// calling `ct droplet pass/recirculate/block`.
-func signalOutcome(client *mockClient, id, outcome string) {
-	client.mu.Lock()
-	defer client.mu.Unlock()
-	if item, ok := client.items[id]; ok {
-		item.Outcome = outcome
-	}
-}
-
 // TestGracefulShutdown_ZeroInFlight_ExitsImmediately verifies that when there
 // are no in-progress droplets at shutdown time, the Castellarius exits without
 // logging a drain message.
@@ -107,7 +97,7 @@ func TestGracefulShutdown_CleanDrain_CompletesBeforeTimeout(t *testing.T) {
 
 	// After a brief pause, the session signals its outcome (simulating `ct droplet pass`).
 	time.Sleep(30 * time.Millisecond)
-	signalOutcome(client, "d1", "pass")
+	client.SetOutcome("d1", "pass")
 
 	select {
 	case err := <-done:
