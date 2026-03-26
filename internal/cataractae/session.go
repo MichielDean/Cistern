@@ -174,7 +174,7 @@ func (s *Session) spawn() error {
 	out, spawnErr := execTmuxNewSession(args)
 	if spawnErr != nil {
 		if !isTmuxServerDeadError(out) {
-			return fmt.Errorf("tmux new-session %s: %w: %s", s.ID, spawnErr, out)
+			return fmt.Errorf("tmux new-session %s [args: %v]: %w: %s", s.ID, redactArgs(args), spawnErr, out)
 		}
 		// The tmux server is dead — attempt recovery with double-checked locking.
 		// Serialize recovery so concurrent spawns do not interleave: one goroutine
@@ -186,7 +186,7 @@ func (s *Session) spawn() error {
 		defer tmuxRecoveryMu.Unlock()
 		if out, spawnErr = execTmuxNewSession(args); spawnErr != nil {
 			if !isTmuxServerDeadError(out) {
-				return fmt.Errorf("tmux new-session %s: %w: %s", s.ID, spawnErr, out)
+				return fmt.Errorf("tmux new-session %s [args: %v]: %w: %s", s.ID, redactArgs(args), spawnErr, out)
 			}
 			// Server is still dead — kill stale state and retry.
 			slog.Default().Info("session: dead tmux server detected — attempting restart",
@@ -195,7 +195,7 @@ func (s *Session) spawn() error {
 			if out, spawnErr = execTmuxNewSession(args); spawnErr != nil {
 				slog.Default().Error("session: tmux server recovery failed — spawn aborted",
 					"session", s.ID, "error", spawnErr)
-				return fmt.Errorf("tmux new-session %s: server dead, recovery failed: %w: %s", s.ID, spawnErr, out)
+				return fmt.Errorf("tmux new-session %s [args: %v]: server dead, recovery failed: %w: %s", s.ID, redactArgs(args), spawnErr, out)
 			}
 			slog.Default().Info("session: recovered from dead tmux server — retried spawn successfully",
 				"session", s.ID)
@@ -302,6 +302,22 @@ var execTmuxNewSession = func(args []string) ([]byte, error) {
 // It is a variable so tests can substitute a no-op without requiring tmux.
 var execTmuxKillServer = func() {
 	exec.Command("tmux", "kill-server").Run() //nolint:errcheck
+}
+
+// redactArgs returns a copy of args with the value portion of any -e KEY=VALUE
+// pair replaced by [REDACTED], preventing secrets from appearing in error messages.
+// Structural args (session ID, workdir, flags) are preserved for operator diagnostics.
+func redactArgs(args []string) []string {
+	out := make([]string, len(args))
+	copy(out, args)
+	for i := 1; i < len(out); i++ {
+		if args[i-1] == "-e" {
+			if idx := strings.IndexByte(out[i], '='); idx >= 0 {
+				out[i] = out[i][:idx+1] + "[REDACTED]"
+			}
+		}
+	}
+	return out
 }
 
 // isTmuxServerDeadError reports whether the combined output of a failed tmux
