@@ -1227,6 +1227,7 @@ func (s *Castellarius) heartbeatRepo(_ context.Context, repo aqueduct.RepoConfig
 				"cataractae", item.CurrentCataractae,
 				"reason", stallReason,
 				"session_duration", sessionDuration.String(),
+				"updated_at", item.UpdatedAt.Format(time.RFC3339),
 				"last_output", logTail,
 			)
 		} else {
@@ -1236,6 +1237,7 @@ func (s *Castellarius) heartbeatRepo(_ context.Context, repo aqueduct.RepoConfig
 				"cataractae", item.CurrentCataractae,
 				"reason", stallReason,
 				"session_duration", sessionDuration.String(),
+				"updated_at", item.UpdatedAt.Format(time.RFC3339),
 			)
 		}
 

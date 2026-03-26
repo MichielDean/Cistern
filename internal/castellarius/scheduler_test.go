@@ -2070,6 +2070,38 @@ func TestHeartbeatRepo_LogsSessionDuration(t *testing.T) {
 	}
 }
 
+// TestHeartbeatRepo_LogsUpdatedAt verifies that the heartbeat reset log
+// includes an updated_at field formatted as RFC3339.
+func TestHeartbeatRepo_LogsUpdatedAt(t *testing.T) {
+	var buf bytes.Buffer
+	client := newMockClient()
+
+	updatedAt := time.Now().Add(-8 * time.Minute).Truncate(time.Second)
+	item := &cistern.Droplet{
+		ID:                "hb-updated-at",
+		CurrentCataractae: "implement",
+		Status:            "in_progress",
+		Assignee:          "",
+		UpdatedAt:         updatedAt,
+	}
+	client.items[item.ID] = item
+
+	config := testConfig()
+	workflows := map[string]*aqueduct.Workflow{"test-repo": testWorkflow()}
+	clients := map[string]CisternClient{"test-repo": client}
+	runner := newMockRunner(client)
+	sched := NewFromParts(config, workflows, clients, runner,
+		WithLogger(newTestLogger(&buf)))
+
+	sched.heartbeatRepo(context.Background(), config.Repos[0])
+
+	out := buf.String()
+	want := updatedAt.Format(time.RFC3339)
+	if !strings.Contains(out, "updated_at="+want) {
+		t.Errorf("heartbeat log missing updated_at=%s; got: %s", want, out)
+	}
+}
+
 // --- worktree lifecycle logging tests ---
 
 // TestPrepareDropletWorktree_LogsWorktreeCreated verifies that prepareDropletWorktree
