@@ -877,7 +877,7 @@ func (s *Castellarius) dispatchRepo(ctx context.Context, repo aqueduct.RepoConfi
 				return
 			}
 			if remaining := s.quickExitBackoff.currentBackoff(req.Item.ID); remaining > 0 {
-				s.logger.Debug("droplet in backoff — skipping dispatch",
+				s.logger.Info("droplet in backoff — skipping dispatch",
 					"droplet", req.Item.ID,
 					"remaining", remaining.Round(time.Second).String(),
 					"consecutive_exits", s.quickExitBackoff.consecutiveExits(req.Item.ID),

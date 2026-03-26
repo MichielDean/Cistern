@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"sort"
@@ -117,11 +118,43 @@ keep dispatching droplets into aqueducts automatically.`,
 
 		ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 		defer cancel()
+
+		// Tmux keepalive: ensure the tmux server stays running for the lifetime of
+		// the Castellarius. If the server dies (socket cleaned up, idle timeout, etc.)
+		// all subsequent session spawns fail silently. We maintain a dedicated
+		// keepalive session so the server is always available, and restart it if it dies.
+		go func() {
+			const keepaliveSession = "castellarius-keepalive"
+			ensureTmuxKeepalive(keepaliveSession)
+			ticker := time.NewTicker(10 * time.Second)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-ctx.Done():
+					// Clean up keepalive session on shutdown (best-effort).
+					exec.Command("tmux", "kill-session", "-t", keepaliveSession).Run() //nolint:errcheck
+					return
+				case <-ticker.C:
+					ensureTmuxKeepalive(keepaliveSession)
+				}
+			}
+		}()
+
 		if err := sched.Run(ctx); errors.Is(err, context.Canceled) {
 			return nil
 		}
 		return err
 	},
+}
+
+// ensureTmuxKeepalive creates the named tmux session if it does not exist,
+// starting the tmux server in the process. This prevents the server from
+// dying when all agent sessions have exited.
+func ensureTmuxKeepalive(sessionName string) {
+	if exec.Command("tmux", "has-session", "-t", sessionName).Run() == nil {
+		return // already alive
+	}
+	exec.Command("tmux", "new-session", "-d", "-s", sessionName).Run() //nolint:errcheck
 }
 
 // ct castellarius status — aqueduct-centric view
