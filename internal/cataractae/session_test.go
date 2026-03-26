@@ -1846,3 +1846,212 @@ func TestSpawn_NoExistingSession_SpawnsNormally(t *testing.T) {
 		t.Errorf("unexpected 'killing zombie' log for fresh spawn; got: %s", out)
 	}
 }
+
+// --- redactArgs tests ---
+
+// TestRedactArgs_RedactsEnvValues verifies that redactArgs masks the value portion
+// of -e KEY=VALUE pairs while preserving structural args and key names.
+func TestRedactArgs_RedactsEnvValues(t *testing.T) {
+	tests := []struct {
+		name  string
+		input []string
+		want  []string
+	}{
+		{
+			name:  "empty slice",
+			input: []string{},
+			want:  []string{},
+		},
+		{
+			name:  "no env args",
+			input: []string{"new-session", "-d", "-s", "my-session", "-c", "/work"},
+			want:  []string{"new-session", "-d", "-s", "my-session", "-c", "/work"},
+		},
+		{
+			name:  "single env arg is redacted",
+			input: []string{"-e", "ANTHROPIC_API_KEY=sk-secret"},
+			want:  []string{"-e", "ANTHROPIC_API_KEY=[REDACTED]"},
+		},
+		{
+			name:  "multiple env args all redacted",
+			input: []string{"-e", "ANTHROPIC_API_KEY=tok123", "-e", "GH_TOKEN=ghp_abc", "-e", "CT_DB=postgres://user:pass@host/db"},
+			want:  []string{"-e", "ANTHROPIC_API_KEY=[REDACTED]", "-e", "GH_TOKEN=[REDACTED]", "-e", "CT_DB=[REDACTED]"},
+		},
+		{
+			name: "structural args preserved alongside env args",
+			input: []string{
+				"new-session", "-d", "-s", "my-session", "-c", "/work",
+				"-e", "ANTHROPIC_API_KEY=sk-secret",
+				"-e", "PATH=/usr/bin:/bin",
+				"-e", "CT_CATARACTA_NAME=implementer",
+				"claude --dangerously-skip-permissions -p 'do work'",
+			},
+			want: []string{
+				"new-session", "-d", "-s", "my-session", "-c", "/work",
+				"-e", "ANTHROPIC_API_KEY=[REDACTED]",
+				"-e", "PATH=[REDACTED]",
+				"-e", "CT_CATARACTA_NAME=[REDACTED]",
+				"claude --dangerously-skip-permissions -p 'do work'",
+			},
+		},
+		{
+			name:  "env arg without equals sign left as-is",
+			input: []string{"-e", "NOEQUALS"},
+			want:  []string{"-e", "NOEQUALS"},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := redactArgs(tc.input)
+			if len(got) != len(tc.want) {
+				t.Fatalf("redactArgs(%v) len = %d, want %d", tc.input, len(got), len(tc.want))
+			}
+			for i := range got {
+				if got[i] != tc.want[i] {
+					t.Errorf("redactArgs(%v)[%d] = %q, want %q", tc.input, i, got[i], tc.want[i])
+				}
+			}
+		})
+	}
+}
+
+// TestRedactArgs_DoesNotMutateInput verifies that redactArgs returns a new slice
+// and does not modify the original args.
+func TestRedactArgs_DoesNotMutateInput(t *testing.T) {
+	input := []string{"-e", "SECRET=plaintext"}
+	original := make([]string, len(input))
+	copy(original, input)
+
+	redactArgs(input)
+
+	for i, v := range input {
+		if v != original[i] {
+			t.Errorf("input[%d] was mutated: got %q, want %q", i, v, original[i])
+		}
+	}
+}
+
+// TestSpawn_TmuxError_SecretsNotLeaked_InitialFailure verifies that when the
+// initial spawn fails, env var values (ANTHROPIC_API_KEY, GH_TOKEN) do not
+// appear in plaintext in the returned error message.
+func TestSpawn_TmuxError_SecretsNotLeaked_InitialFailure(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("CLAUDE_PATH", "true")
+	t.Setenv("ANTHROPIC_API_KEY", "sk-very-secret-api-key")
+	t.Setenv("GH_TOKEN", "ghp_very-secret-gh-token")
+
+	origSpawn := execTmuxNewSession
+	t.Cleanup(func() { execTmuxNewSession = origSpawn })
+
+	execTmuxNewSession = func(_ []string) ([]byte, error) {
+		return []byte("invalid option: -Z"), fmt.Errorf("exit status 1")
+	}
+
+	s := &Session{ID: "secrets-test", WorkDir: t.TempDir()}
+
+	err := s.spawn()
+
+	if err == nil {
+		t.Fatal("spawn should have returned an error")
+	}
+	errMsg := err.Error()
+	if strings.Contains(errMsg, "sk-very-secret-api-key") {
+		t.Errorf("error message leaks ANTHROPIC_API_KEY value in plaintext: %v", errMsg)
+	}
+	if strings.Contains(errMsg, "ghp_very-secret-gh-token") {
+		t.Errorf("error message leaks GH_TOKEN value in plaintext: %v", errMsg)
+	}
+	// Structural args must still be present for diagnostics.
+	if !strings.Contains(errMsg, "[args:") {
+		t.Errorf("error should still contain [args: ...] for diagnostics; got: %v", errMsg)
+	}
+	if !strings.Contains(errMsg, s.ID) {
+		t.Errorf("error should contain session ID %q; got: %v", s.ID, errMsg)
+	}
+}
+
+// TestSpawn_TmuxServerDead_SecretsNotLeaked_RecoveryFails verifies that when
+// all three spawn attempts fail (including post-kill retry), the error message
+// does not contain env var secret values.
+func TestSpawn_TmuxServerDead_SecretsNotLeaked_RecoveryFails(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("CLAUDE_PATH", "true")
+	t.Setenv("ANTHROPIC_API_KEY", "sk-very-secret-api-key")
+	t.Setenv("GH_TOKEN", "ghp_very-secret-gh-token")
+
+	origSpawn := execTmuxNewSession
+	origKill := execTmuxKillServer
+	t.Cleanup(func() {
+		execTmuxNewSession = origSpawn
+		execTmuxKillServer = origKill
+	})
+
+	execTmuxNewSession = func(_ []string) ([]byte, error) {
+		return []byte("no server running on /tmp/tmux-1000/default"), fmt.Errorf("exit status 1")
+	}
+	execTmuxKillServer = func() {}
+
+	s := &Session{ID: "secrets-recovery-fail", WorkDir: t.TempDir()}
+
+	err := s.spawn()
+
+	if err == nil {
+		t.Fatal("spawn should have returned an error")
+	}
+	errMsg := err.Error()
+	if strings.Contains(errMsg, "sk-very-secret-api-key") {
+		t.Errorf("error message leaks ANTHROPIC_API_KEY value in recovery-fail path: %v", errMsg)
+	}
+	if strings.Contains(errMsg, "ghp_very-secret-gh-token") {
+		t.Errorf("error message leaks GH_TOKEN value in recovery-fail path: %v", errMsg)
+	}
+	if !strings.Contains(errMsg, "server dead, recovery failed") {
+		t.Errorf("error should describe recovery failure; got: %v", errMsg)
+	}
+}
+
+// TestSpawn_TmuxServerDead_SecretsNotLeaked_DoubleCheckFailure verifies that
+// when the double-check retry fails with a non-dead-server error, the returned
+// error does not contain env var secret values.
+func TestSpawn_TmuxServerDead_SecretsNotLeaked_DoubleCheckFailure(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("CLAUDE_PATH", "true")
+	t.Setenv("ANTHROPIC_API_KEY", "sk-very-secret-api-key")
+	t.Setenv("GH_TOKEN", "ghp_very-secret-gh-token")
+
+	origSpawn := execTmuxNewSession
+	origKill := execTmuxKillServer
+	t.Cleanup(func() {
+		execTmuxNewSession = origSpawn
+		execTmuxKillServer = origKill
+	})
+
+	callCount := 0
+	execTmuxNewSession = func(_ []string) ([]byte, error) {
+		callCount++
+		if callCount == 1 {
+			return []byte("no server running on /tmp/tmux-1000/default"), fmt.Errorf("exit status 1")
+		}
+		return []byte("invalid option: -Z"), fmt.Errorf("exit status 1")
+	}
+	execTmuxKillServer = func() {}
+
+	s := &Session{ID: "secrets-doublecheck", WorkDir: t.TempDir()}
+
+	err := s.spawn()
+
+	if err == nil {
+		t.Fatal("spawn should have returned an error")
+	}
+	errMsg := err.Error()
+	if strings.Contains(errMsg, "sk-very-secret-api-key") {
+		t.Errorf("error message leaks ANTHROPIC_API_KEY value in double-check path: %v", errMsg)
+	}
+	if strings.Contains(errMsg, "ghp_very-secret-gh-token") {
+		t.Errorf("error message leaks GH_TOKEN value in double-check path: %v", errMsg)
+	}
+}
