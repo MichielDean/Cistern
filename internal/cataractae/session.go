@@ -61,8 +61,32 @@ func (s *Session) Spawn() error {
 // the agent is resumed rather than started fresh — preserving conversation
 // context accumulated across prior cataractae cycles.
 func (s *Session) spawn() error {
-	// Kill any stale tmux session with the same name before creating a new one.
-	s.kill()
+	// Guard: if a session with this ID already exists, inspect it before acting.
+	//
+	// - Session alive + agent alive → agent is actively working. Do not
+	//   interfere. Return nil so the caller treats this as a successful spawn.
+	//   The observe loop will pick up the outcome when the agent finishes.
+	//
+	// - Session alive + agent dead → zombie (tmux shell open but agent exited
+	//   without writing an outcome). Kill it and spawn fresh.
+	//
+	// - Session dead → fall through and spawn normally.
+	//
+	// This replaces the previous unconditional kill-before-spawn, which was
+	// silently terminating healthy sessions whenever the heartbeat reset a
+	// droplet and the dispatcher picked it up again.
+	if isSessionAlive(s.ID) {
+		if s.isAgentAlive() {
+			slog.Default().Info("session: already running — skipping respawn",
+				"session", s.ID)
+			return nil
+		}
+		// Zombie: session exists but agent has exited without writing an outcome.
+		slog.Default().Warn("session: killing zombie session before respawn",
+			"session", s.ID,
+			"note", "tmux session was alive but agent process had already exited")
+		s.kill()
+	}
 
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -484,16 +508,10 @@ func (s *Session) resolveIdentityPath() string {
 	return filepath.Join(s.resolveIdentityDir(), s.Preset.InstrFile())
 }
 
-// kill terminates the tmux session if it exists. Errors are silently ignored
-// since the session may already be dead.
+// kill terminates the tmux session. Errors are silently ignored since the
+// session may already be dead. Only called for confirmed zombie sessions;
+// healthy sessions are left running (see spawn guard above).
 func (s *Session) kill() {
-	// Only log if we're actually killing something that was alive — this makes
-	// stale-session kills visible in the log without noise on every spawn.
-	if isSessionAlive(s.ID) {
-		slog.Default().Warn("session: killing existing session before respawn",
-			"session", s.ID,
-			"note", "session was still alive at spawn time — prior session may have been killed by us")
-	}
 	exec.Command("tmux", "kill-session", "-t", s.ID).Run() //nolint:errcheck
 }
 
