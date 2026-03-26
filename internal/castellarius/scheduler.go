@@ -458,16 +458,22 @@ func (s *Castellarius) Run(ctx context.Context) error {
 //   - Clean drain:    all sessions complete within drainTimeout, logs "drain complete"
 //   - Timeout:        forces exit after drainTimeout, logs stuck IDs
 //
+// If stuckSessionIDs returns an error, the drain conservatively assumes sessions
+// are still running and keeps waiting until the timeout fires.
+//
 // Always returns context.Canceled so the caller (cmd layer) treats it as a
 // clean exit from a signal.
 func (s *Castellarius) drainInFlight() error {
-	inflight := s.countInFlight()
-	if inflight == 0 {
+	ids, err := s.stuckSessionIDs()
+	if err != nil {
+		// Conservative: treat a query failure as sessions still running.
+		s.logger.Info("draining in-flight sessions before shutdown (count unknown due to query error)")
+	} else if len(ids) == 0 {
 		s.logger.Info("Aqueducts closed.")
 		return context.Canceled
+	} else {
+		s.logger.Info("draining in-flight sessions before shutdown", "sessions", len(ids))
 	}
-
-	s.logger.Info("draining in-flight sessions before shutdown", "sessions", inflight)
 
 	deadline := time.NewTimer(s.drainTimeout)
 	defer deadline.Stop()
@@ -477,7 +483,7 @@ func (s *Castellarius) drainInFlight() error {
 	for {
 		select {
 		case <-deadline.C:
-			stuck := s.stuckSessionIDs()
+			stuck, _ := s.stuckSessionIDs()
 			s.logger.Warn("drain timeout — forcing exit with sessions still running",
 				"sessions", len(stuck),
 				"ids", stuck,
@@ -487,7 +493,12 @@ func (s *Castellarius) drainInFlight() error {
 			for _, repo := range s.config.Repos {
 				s.observeRepo(context.Background(), repo)
 			}
-			if s.countInFlight() == 0 {
+			ids, err := s.stuckSessionIDs()
+			if err != nil {
+				// Conservative: keep draining on query error.
+				continue
+			}
+			if len(ids) == 0 {
 				s.logger.Info("drain complete")
 				return context.Canceled
 			}
@@ -495,20 +506,20 @@ func (s *Castellarius) drainInFlight() error {
 	}
 }
 
-// countInFlight returns the number of in-progress droplets that have not yet
-// signaled an outcome (i.e. agents still actively running).
-func (s *Castellarius) countInFlight() int {
-	return len(s.stuckSessionIDs())
-}
-
 // stuckSessionIDs returns the IDs of in-progress droplets with no outcome set.
-func (s *Castellarius) stuckSessionIDs() []string {
+// Returns an error if any repo's client.List call fails; callers must treat
+// errors conservatively (assume sessions are still running).
+func (s *Castellarius) stuckSessionIDs() ([]string, error) {
 	var ids []string
 	for _, repo := range s.config.Repos {
 		client := s.clients[repo.Name]
 		items, err := client.List(repo.Name, "in_progress")
 		if err != nil {
-			continue
+			s.logger.Warn("stuckSessionIDs: failed to list in-progress droplets",
+				"repo", repo.Name,
+				"err", err,
+			)
+			return nil, err
 		}
 		for _, item := range items {
 			if item.Outcome == "" {
@@ -516,7 +527,7 @@ func (s *Castellarius) stuckSessionIDs() []string {
 			}
 		}
 	}
-	return ids
+	return ids, nil
 }
 
 // logStartupCredentials logs which credential-related environment variables are

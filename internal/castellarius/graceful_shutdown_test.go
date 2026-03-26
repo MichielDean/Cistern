@@ -38,6 +38,45 @@ func waitBlockingCall(br *blockingRunner, timeout time.Duration) bool {
 	}
 }
 
+// TestGracefulShutdown_ListError_TreatAsInFlight verifies that when client.List
+// returns an error, drainInFlight conservatively assumes sessions are still
+// running (instead of treating the empty result as "no in-flight sessions") and
+// continues draining until the timeout fires.
+func TestGracefulShutdown_ListError_TreatAsInFlight(t *testing.T) {
+	client := newMockClient()
+	client.listErr = errors.New("DB unreachable")
+	runner := newMockRunner(client)
+	var buf bytes.Buffer
+	sched := newDrainScheduler(client, runner, 60*time.Millisecond, &buf)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- sched.Run(ctx) }()
+
+	// Let the scheduler start its ticker loop, then trigger shutdown.
+	time.Sleep(15 * time.Millisecond)
+	cancel()
+
+	// With a persistent list error the drain must wait until timeout — not exit
+	// immediately as if there are zero in-flight sessions.
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("expected context.Canceled, got %v", err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("timed out — drain did not exit after timeout with persistent list error")
+	}
+
+	output := buf.String()
+	if strings.Contains(output, "Aqueducts closed") {
+		t.Errorf("should not log 'Aqueducts closed' when list query fails: %q", output)
+	}
+	if !strings.Contains(output, "drain timeout") {
+		t.Errorf("expected drain timeout log when list error persists, got: %q", output)
+	}
+}
+
 // TestGracefulShutdown_ZeroInFlight_ExitsImmediately verifies that when there
 // are no in-progress droplets at shutdown time, the Castellarius exits without
 // logging a drain message.

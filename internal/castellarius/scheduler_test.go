@@ -38,6 +38,7 @@ type mockClient struct {
 	lastReviewedCommits map[string]string
 	addNoteErr          error // if set, AddNote returns this error
 	getReadyErr         error // if set, GetReady returns this error once then clears
+	listErr             error // if set, List returns this error
 }
 
 type attachedNote struct {
@@ -151,6 +152,9 @@ func (m *mockClient) CloseItem(id string) error {
 func (m *mockClient) List(repo, status string) ([]*cistern.Droplet, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if m.listErr != nil {
+		return nil, m.listErr
+	}
 	var result []*cistern.Droplet
 	for _, item := range m.items {
 		if status == "" || item.Status == status {
