@@ -9,6 +9,15 @@
 - Queue summaries are printed after the existing worker table and aqueduct flow status line, providing an at-a-glance view of cistern load per repo
 - Helps operators monitor queue buildup and identify bottlenecks at the repo level without needing to run separate `ct droplet list` commands
 
+### Castellarius: graceful shutdown waits for in-flight sessions to signal outcome before exiting (ci-0ksnw)
+- When Castellarius receives SIGTERM, it now enters graceful shutdown instead of exiting immediately: stops dispatching new work but continues running the observe loop until all in-progress droplets have signaled an outcome (or until a configurable drain timeout is reached)
+- Two-phase shutdown: (1) signal cancels the dispatch loop to stop accepting new work; (2) observe loop polls until no in-progress items remain or the drain timeout fires
+- Drain timeout is configurable in `~/.cistern/cistern.yaml` with `drain_timeout_minutes` (default 5 minutes). Must be properly sized relative to systemd's `TimeoutStopSec` — set `TimeoutStopSec >= drain_timeout_minutes + buffer` (e.g., 360 seconds for 5 min drain + 60 sec buffer)
+- Logging is clear: 'draining N in-flight sessions before shutdown' at the start, 'drain complete' on clean exit, 'drain timeout — forcing exit with N sessions still running' if timeout fires. On timeout, stuck session IDs are logged so operators can investigate
+- Error handling is conservative: if querying in-progress sessions fails, the drain assumes sessions are still running and keeps waiting until the timeout, preventing premature exit that would abandon droplets
+- This fixes the issue where SIGTERM would immediately exit and leave droplets stuck in-progress with no outcome, blocking the pipeline
+- Tests added: 5 test cases covering clean drain (zero in-flight), successful drain before timeout, timeout with stuck sessions, and error handling paths
+
 ### Castellarius: read Claude OAuth credentials from ~/.claude/.credentials.json directly (ci-i5ft0)
 - Castellarius startup now reads Claude OAuth credentials directly from `~/.claude/.credentials.json` (managed by the Claude CLI) instead of requiring a manual copy in `~/.cistern/env`
 - Credential resolution order: (1) OAuth token from `~/.claude/.credentials.json` if present and fresh; (2) `ANTHROPIC_API_KEY` from `~/.cistern/env` as fallback for API-key auth

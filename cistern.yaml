@@ -41,6 +41,16 @@ handoff_token_threshold: 100000
 # Default: 30s
 heartbeat_interval: 30s
 
+# drain_timeout_minutes configures the graceful shutdown drain timeout. When
+# Castellarius receives SIGTERM, it stops accepting new work but continues
+# running the observe loop until all in-progress droplets have signaled an
+# outcome, or until this timeout fires (whichever comes first). On timeout,
+# Castellarius exits and logs the IDs of any still-running sessions.
+# Must be properly sized relative to systemd's TimeoutStopSec:
+#   TimeoutStopSec >= drain_timeout_minutes + buffer (e.g., 360 for 5 min drain + 60 sec buffer)
+# Default: 5
+# drain_timeout_minutes: 5
+
 # Drought protocols — run automatically when the Cistern is idle
 drought_hooks:
   - name: sync-workflow

@@ -79,6 +79,8 @@ systemctl --user daemon-reload
 systemctl --user enable --now cistern-castellarius
 ```
 
+The service is configured for graceful shutdown: when systemd sends SIGTERM, the Castellarius stops accepting new work but continues processing in-flight droplets until they signal an outcome (or until a configurable drain timeout is reached). The default drain timeout is 5 minutes — configure it in `~/.cistern/cistern.yaml` with `drain_timeout_minutes`. Make sure systemd's `TimeoutStopSec` is set >= drain timeout + buffer (the default service file uses 360 seconds, suitable for a 5-minute drain).
+
 ## Web Dashboard (optional)
 
 ```bash
