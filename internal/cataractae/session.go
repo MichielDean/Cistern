@@ -305,21 +305,16 @@ var execTmuxKillServer = func() {
 }
 
 // redactArgs returns a copy of args with the value portion of any -e KEY=VALUE
-// pair replaced by [REDACTED]. This prevents sensitive environment variables
-// (ANTHROPIC_API_KEY, GH_TOKEN, CT_DB, etc.) from appearing in error messages
-// that propagate to logs. Structural args (session ID, workdir flags) are preserved
-// so operators can still reproduce failures without secrets.
+// pair replaced by [REDACTED], preventing secrets from appearing in error messages.
+// Structural args (session ID, workdir, flags) are preserved for operator diagnostics.
 func redactArgs(args []string) []string {
 	out := make([]string, len(args))
-	for i, a := range args {
-		if i > 0 && args[i-1] == "-e" {
-			if idx := strings.IndexByte(a, '='); idx >= 0 {
-				out[i] = a[:idx+1] + "[REDACTED]"
-			} else {
-				out[i] = a
+	copy(out, args)
+	for i := 1; i < len(out); i++ {
+		if args[i-1] == "-e" {
+			if idx := strings.IndexByte(out[i], '='); idx >= 0 {
+				out[i] = out[i][:idx+1] + "[REDACTED]"
 			}
-		} else {
-			out[i] = a
 		}
 	}
 	return out
