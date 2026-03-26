@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### Add ct droplet stats command: show droplet counts by status (ci-2a4ms)
+- New `ct droplet stats` command displays a summary table of droplet counts grouped by status: flowing (in_progress), queued (open), delivered, and stagnant
+- Output is a simple tabwriter table showing counts for each status category plus a total count
+- Useful for monitoring overall cistern load without needing to list all droplets
+- Command exists and is fully tested with both empty database and multi-droplet scenarios
+
 ### Castellarius status: expose queue depth and active session count per repo (ci-x0ss6)
 - `ct castellarius status` now displays per-repo queue summaries showing queue depth (count of "open" droplets) and active session count (count of "in_progress" droplets)
 - Output format: each repo shows a summary line like `cistern: 2 queued, 1 flowing (julia: sc-abc123/implement)` with assignee details for active droplets

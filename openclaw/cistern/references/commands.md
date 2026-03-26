@@ -4,10 +4,12 @@
 
 ```bash
 ct droplet list                          # All droplets
-ct droplet list --status <status>        # Filter: pending|running|done|failed|cancelled
+ct droplet list --status <status>        # Filter: open|in_progress|delivered|stagnant
 ct droplet list --cancelled              # Show only cancelled droplets (audit purposes)
 ct droplet list --repo <repo>            # Filter by repo
+ct droplet list --watch                  # Live-refresh every 2 seconds (Ctrl-C to stop)
 ct droplet show <id>                     # Full detail
+ct droplet stats                         # Show counts by status (flowing, queued, delivered, stagnant)
 ct droplet add --title "..." --repo <r>  # Add new droplet (direct)
 ct droplet add --filter --title "..." --repo <r>  # Add with filtration (LLM-assisted)
 ct droplet restart <id>                  # Retry failed droplet
