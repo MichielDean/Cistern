@@ -16,11 +16,6 @@ import (
 	"github.com/MichielDean/cistern/internal/provider"
 )
 
-// quickExitWindow is the duration after a spawn within which, if the session
-// dies, a warning is logged as a possible auth failure or binary-not-found.
-// Exposed as a variable so tests can shorten it without waiting 30 seconds.
-var quickExitWindow = 30 * time.Second
-
 // Session manages an agent execution inside a tmux session.
 type Session struct {
 	// ID is the tmux session name (e.g., "myrepo-alice").
@@ -49,22 +44,14 @@ type Session struct {
 	// that do not support AddDirFlag. Skills are read from ~/.cistern/skills/<name>/SKILL.md.
 	// Providers with SupportsAddDir=true receive skill files automatically via --add-dir.
 	Skills []string
-
-	// DropletSignaledOutcome, if non-nil, is called by the quick-exit goroutine
-	// before emitting a warning. If it returns true the session has already signaled
-	// an outcome (pass/recirculate/block) and the warning is suppressed —
-	// preventing false positives when a fast agent task completes within the window.
-	DropletSignaledOutcome func() bool
-
-	// done is closed by kill() to cancel the quick-exit goroutine so it does
-	// not emit a spurious warning when the session is intentionally stopped.
-	done     chan struct{}
-	killOnce sync.Once
 }
 
 // Spawn creates a new tmux session running the agent and returns immediately.
 // The Castellarius observe loop detects completion via the outcome field in the DB —
 // agents signal their outcome by calling `ct droplet pass/recirculate/block <id>`.
+// When the session exits for any reason the heartbeat detects the dead tmux session
+// and resets the droplet for re-dispatch. If a session log file exists at
+// ~/.cistern/session-logs/<id>.log the heartbeat reads and logs the tail for diagnostics.
 func (s *Session) Spawn() error {
 	return s.spawn()
 }
@@ -76,11 +63,6 @@ func (s *Session) Spawn() error {
 func (s *Session) spawn() error {
 	// Kill any stale tmux session with the same name before creating a new one.
 	s.kill()
-
-	// Reset the done channel and killOnce for this spawn so the quick-exit
-	// goroutine below can be cancelled via a fresh kill() call.
-	s.killOnce = sync.Once{}
-	s.done = make(chan struct{})
 
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -187,52 +169,6 @@ func (s *Session) spawn() error {
 				"session", s.ID)
 		}
 	}
-
-	// Quick-exit detection: warn if the session dies within quickExitWindow of
-	// spawning — a possible auth failure, missing binary, or prompt error.
-	// The goroutine can be cancelled via the done channel (closed by kill()) to
-	// avoid false positives on intentional kills and graceful shutdown.
-	spawnedAt := time.Now()
-	sessionID := s.ID
-	logPath := sessionLogPath
-	done := s.done
-	checkOutcome := s.DropletSignaledOutcome
-	window := quickExitWindow // capture at spawn time to avoid concurrent access with test overrides
-	go func() {
-		select {
-		case <-time.After(window):
-		case <-done:
-			// Session killed intentionally — clean up log and suppress warning.
-			os.Remove(logPath) //nolint:errcheck
-			return
-		}
-		if isSessionAlive(sessionID) {
-			return
-		}
-		if checkOutcome != nil && checkOutcome() {
-			// Session signaled an outcome (completed successfully) — clean up log.
-			os.Remove(logPath) //nolint:errcheck
-			return
-		}
-		elapsed := time.Since(spawnedAt).Round(time.Second)
-
-		// Read the last 20 lines of the session log for diagnostics.
-		tail := sessionLogTail(logPath, 20)
-		os.Remove(logPath) //nolint:errcheck
-
-		if tail != "" {
-			slog.Default().Warn("session exited quickly — last output follows",
-				"session", sessionID,
-				"elapsed", elapsed.String(),
-				"output", tail,
-			)
-		} else {
-			slog.Default().Warn("session exited quickly — possible auth failure or binary not found",
-				"session", sessionID,
-				"elapsed", elapsed.String(),
-			)
-		}
-	}()
 
 	return nil
 }
@@ -548,14 +484,10 @@ func (s *Session) resolveIdentityPath() string {
 	return filepath.Join(s.resolveIdentityDir(), s.Preset.InstrFile())
 }
 
-// kill terminates the tmux session if it exists and cancels the quick-exit goroutine.
+// kill terminates the tmux session if it exists. Errors are silently ignored
+// since the session may already be dead.
 func (s *Session) kill() {
-	exec.Command("tmux", "kill-session", "-t", s.ID).Run()
-	s.killOnce.Do(func() {
-		if s.done != nil {
-			close(s.done)
-		}
-	})
+	exec.Command("tmux", "kill-session", "-t", s.ID).Run() //nolint:errcheck
 }
 
 // isAlive checks whether the tmux session still exists.
@@ -593,22 +525,6 @@ func (s *Session) isAgentAlive() bool {
 	return slices.Contains(s.Preset.ProcessNames, current)
 }
 
-// sessionLogTail reads up to maxLines lines from the end of the named file.
-// Returns an empty string if the file cannot be read or is empty.
-// Used to capture the last output of a quick-exit session for diagnostics.
-func sessionLogTail(path string, maxLines int) string {
-	data, err := os.ReadFile(path)
-	if err != nil || len(data) == 0 {
-		return ""
-	}
-	// Strip trailing newline before splitting so we don't count a phantom empty line.
-	text := strings.TrimRight(string(data), "\n")
-	lines := strings.Split(text, "\n")
-	if len(lines) > maxLines {
-		lines = lines[len(lines)-maxLines:]
-	}
-	return strings.Join(lines, "\n")
-}
 
 // claudePathFn resolves the path to the claude executable. It is a variable so
 // tests can substitute it to inject a known absolute path without modifying the

@@ -1199,13 +1199,32 @@ func (s *Castellarius) heartbeatRepo(_ context.Context, repo aqueduct.RepoConfig
 		// No assignee, pool=flowing + tmux=dead, or unknown aqueduct +
 		// tmux=dead. Reset to open for re-dispatch.
 		sessionDuration := time.Since(item.UpdatedAt).Round(time.Second)
-		s.logger.Info("heartbeat: resetting stalled droplet",
-			"repo", repo.Name,
-			"droplet", item.ID,
-			"cataractae", item.CurrentCataractae,
-			"reason", stallReason,
-			"session_duration", sessionDuration.String(),
-		)
+
+		// Diagnostic: read the session output log if one exists. The session
+		// tees its stdout+stderr to ~/.cistern/session-logs/<sessionID>.log so
+		// we can capture the actual error on quick-exit (auth failure, rate
+		// limit, binary not found, etc.) without requiring manual tmux inspection.
+		sessionID := repo.Name + "-" + item.Assignee
+		logTail := readSessionLogTail(sessionID, 20)
+
+		if logTail != "" {
+			s.logger.Info("heartbeat: resetting stalled droplet",
+				"repo", repo.Name,
+				"droplet", item.ID,
+				"cataractae", item.CurrentCataractae,
+				"reason", stallReason,
+				"session_duration", sessionDuration.String(),
+				"last_output", logTail,
+			)
+		} else {
+			s.logger.Info("heartbeat: resetting stalled droplet",
+				"repo", repo.Name,
+				"droplet", item.ID,
+				"cataractae", item.CurrentCataractae,
+				"reason", stallReason,
+				"session_duration", sessionDuration.String(),
+			)
+		}
 
 		// Quick-exit backoff: when a session dies within the threshold without
 		// writing an outcome and the cause is tmux_dead (session was spawned but
@@ -1245,6 +1264,29 @@ func (s *Castellarius) heartbeatRepo(_ context.Context, repo aqueduct.RepoConfig
 // isTmuxAlive returns true if a tmux session with the given name is running.
 func isTmuxAlive(sessionID string) bool {
 	return exec.Command("tmux", "has-session", "-t", sessionID).Run() == nil
+}
+
+// readSessionLogTail reads the last maxLines lines from the session output log
+// at ~/.cistern/session-logs/<sessionID>.log and removes the file. Returns an
+// empty string if the file does not exist or cannot be read.
+// Called by the heartbeat when a stalled session is detected.
+func readSessionLogTail(sessionID string, maxLines int) string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	logPath := filepath.Join(home, ".cistern", "session-logs", sessionID+".log")
+	data, err := os.ReadFile(logPath)
+	os.Remove(logPath) //nolint:errcheck
+	if err != nil || len(data) == 0 {
+		return ""
+	}
+	text := strings.TrimRight(string(data), "\n")
+	lines := strings.Split(text, "\n")
+	if len(lines) > maxLines {
+		lines = lines[len(lines)-maxLines:]
+	}
+	return strings.Join(lines, "\n")
 }
 
 // sandboxHead returns the current HEAD commit hash in the given directory.

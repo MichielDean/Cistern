@@ -410,6 +410,12 @@ func TestFakeagent_SpawnOutcomeCycle(t *testing.T) {
 	// Point CLAUDE_PATH at the fakeagent binary.
 	t.Setenv("CLAUDE_PATH", fakeagentBin)
 
+	// Isolate HOME so ensureClaudeOAuthFresh finds no credentials file and
+	// skips the refresh entirely. Without this the test hits the real OAuth
+	// endpoint with whatever (potentially expired) credentials exist on the
+	// test machine, causing intermittent CI failures.
+	t.Setenv("HOME", t.TempDir())
+
 	// Spawn the session.
 	sessionID := "ci-t3xo9-fa-" + droplet.ID
 	s := &Session{
@@ -1413,91 +1419,10 @@ func TestSpawn_LogsResumeContext_WhenPriorSessionExists(t *testing.T) {
 // TestSpawn_LogsQuickExit_WhenSessionDiesImmediately verifies that the quick-exit
 // goroutine emits a Warn-level log when the session dies within the quick-exit window.
 // This test uses a very short window so it does not have to wait 30 seconds.
-func TestSpawn_LogsQuickExit_WhenSessionDiesImmediately(t *testing.T) {
-	if _, err := exec.LookPath("tmux"); err != nil {
-		t.Skip("tmux not available")
-	}
-
-	buf := captureDefaultSlog(t)
-
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	t.Setenv("CLAUDE_PATH", "true") // 'true' exits 0 immediately
-
-	workDir := t.TempDir()
-	s := &Session{
-		ID:      "quick-exit-test",
-		WorkDir: workDir,
-	}
-
-	// Override quick-exit window for this test.
-	orig := quickExitWindow
-	quickExitWindow = 200 * time.Millisecond
-	t.Cleanup(func() { quickExitWindow = orig })
-
-	if err := s.spawn(); err != nil {
-		t.Skip("spawn failed (tmux environment issue):", err)
-	}
-	defer s.kill()
-
-	// Wait longer than the quick-exit window for the goroutine to fire.
-	deadline := time.Now().Add(3 * time.Second)
-	for time.Now().Before(deadline) {
-		if strings.Contains(buf.String(), "exited quickly") {
-			break
-		}
-		time.Sleep(50 * time.Millisecond)
-	}
-
-	out := buf.String()
-	if !strings.Contains(out, "exited quickly") {
-		t.Errorf("expected quick-exit warning in log; got: %s", out)
-	}
-	if !strings.Contains(out, "session=quick-exit-test") {
-		t.Errorf("quick-exit log missing session field; got: %s", out)
-	}
-}
 
 // TestSpawn_QuickExit_CancelledByKill verifies that calling kill() before the
 // quick-exit window expires cancels the goroutine so no spurious warning is logged
 // when the session is intentionally stopped.
-func TestSpawn_QuickExit_CancelledByKill(t *testing.T) {
-	if _, err := exec.LookPath("tmux"); err != nil {
-		t.Skip("tmux not available")
-	}
-
-	buf := captureDefaultSlog(t)
-
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	t.Setenv("CLAUDE_PATH", "true") // exits immediately
-
-	workDir := t.TempDir()
-	s := &Session{
-		ID:      "kill-cancel-test",
-		WorkDir: workDir,
-	}
-
-	// Use a window long enough that we can call kill() before it fires.
-	orig := quickExitWindow
-	quickExitWindow = 500 * time.Millisecond
-	t.Cleanup(func() { quickExitWindow = orig })
-
-	if err := s.spawn(); err != nil {
-		t.Skip("spawn failed (tmux environment issue):", err)
-	}
-
-	// Cancel the goroutine by killing the session before the window expires.
-	s.kill()
-
-	// Wait longer than the window to give the goroutine time to fire if not cancelled.
-	time.Sleep(800 * time.Millisecond)
-
-	out := buf.String()
-	if strings.Contains(out, "exited quickly") {
-		t.Errorf("unexpected quick-exit warning after intentional kill; got: %s", out)
-	}
-}
 
 // --- isTmuxServerDeadError tests ---
 
@@ -1562,16 +1487,11 @@ func TestSpawn_TmuxServerDead_RecoverySucceeds(t *testing.T) {
 	}
 	execTmuxKillServer = func() { killCalled = true }
 
-	// Extend quickExitWindow so the goroutine does not fire during this test.
-	orig := quickExitWindow
-	quickExitWindow = 10 * time.Second
-	t.Cleanup(func() { quickExitWindow = orig })
 
 	workDir := t.TempDir()
 	s := &Session{ID: "tmux-recovery-ok", WorkDir: workDir}
 
 	err := s.spawn()
-	s.kill() // cancel the quick-exit goroutine before it fires
 
 	if err != nil {
 		t.Fatalf("spawn returned unexpected error: %v", err)
@@ -1691,9 +1611,6 @@ func TestSpawn_TmuxServerDead_ConcurrentRecoveryIsSerializedByMutex(t *testing.T
 		execTmuxKillServer = origKill
 	})
 
-	orig := quickExitWindow
-	quickExitWindow = 10 * time.Second
-	t.Cleanup(func() { quickExitWindow = orig })
 
 	// Both spawns always fail with a dead-server error so both enter the recovery
 	// block. The test is about serialization, not recovery success.
@@ -1750,9 +1667,6 @@ func TestSpawn_TmuxServerDead_DoubleCheckPreventsKillingRecoveredServer(t *testi
 		execTmuxKillServer = origKill
 	})
 
-	orig := quickExitWindow
-	quickExitWindow = 10 * time.Second
-	t.Cleanup(func() { quickExitWindow = orig })
 
 	// The server is "dead" until execTmuxKillServer is called; after that it is
 	// "alive". This models: goroutine A's kill restarts the server, so goroutine
@@ -1780,7 +1694,6 @@ func TestSpawn_TmuxServerDead_DoubleCheckPreventsKillingRecoveredServer(t *testi
 			<-start
 			s := &Session{ID: fmt.Sprintf("double-check-%d", i), WorkDir: workDir}
 			errs[i] = s.spawn()
-			s.kill() // cancel quick-exit goroutine
 		}(i)
 	}
 	close(start)
@@ -1804,40 +1717,3 @@ func TestSpawn_TmuxServerDead_DoubleCheckPreventsKillingRecoveredServer(t *testi
 // DropletSignaledOutcome returns true the goroutine does not emit a warning —
 // a fast agent that completed successfully should not be flagged as a possible
 // auth failure.
-func TestSpawn_QuickExit_SuppressedWhenOutcomeSignaled(t *testing.T) {
-	if _, err := exec.LookPath("tmux"); err != nil {
-		t.Skip("tmux not available")
-	}
-
-	buf := captureDefaultSlog(t)
-
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	t.Setenv("CLAUDE_PATH", "true") // exits immediately
-
-	workDir := t.TempDir()
-	s := &Session{
-		ID:      "outcome-suppress-test",
-		WorkDir: workDir,
-		DropletSignaledOutcome: func() bool {
-			return true // simulate a successfully completed droplet
-		},
-	}
-
-	orig := quickExitWindow
-	quickExitWindow = 200 * time.Millisecond
-	t.Cleanup(func() { quickExitWindow = orig })
-
-	if err := s.spawn(); err != nil {
-		t.Skip("spawn failed (tmux environment issue):", err)
-	}
-	defer s.kill()
-
-	// Wait longer than the window.
-	time.Sleep(500 * time.Millisecond)
-
-	out := buf.String()
-	if strings.Contains(out, "exited quickly") {
-		t.Errorf("unexpected quick-exit warning when outcome already signaled; got: %s", out)
-	}
-}
