@@ -1717,3 +1717,172 @@ func TestSpawn_TmuxServerDead_DoubleCheckPreventsKillingRecoveredServer(t *testi
 // DropletSignaledOutcome returns true the goroutine does not emit a warning —
 // a fast agent that completed successfully should not be flagged as a possible
 // auth failure.
+
+// --- spawn guard tests (PR #204: don't kill running sessions) ---
+
+// TestSpawn_AlreadyRunning_SkipsRespawn verifies that when a healthy session is
+// already alive and the agent process is running, Spawn() returns nil without
+// touching the session. This is the core correctness check for the self-kill fix:
+// the heartbeat resetting a droplet must not cause the dispatcher to kill a
+// session that is actively doing work.
+func TestSpawn_AlreadyRunning_SkipsRespawn(t *testing.T) {
+	if _, err := exec.LookPath("tmux"); err != nil {
+		t.Skip("tmux not available")
+	}
+
+	buf := captureDefaultSlog(t)
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	const sessionID = "spawn-guard-running-test"
+
+	// Start a long-running tmux session manually to simulate an active agent.
+	// 'sleep 60' keeps the session alive; its process name is 'sleep' which is
+	// not in ProcessNames, so isAgentAlive() returns true (conservative fallback
+	// when ProcessNames is empty).
+	spawnArgs := []string{"new-session", "-d", "-s", sessionID, "-c", t.TempDir(), "sleep 60"}
+	if out, err := exec.Command("tmux", spawnArgs...).CombinedOutput(); err != nil {
+		t.Skipf("could not create tmux session: %v: %s", err, out)
+	}
+	t.Cleanup(func() {
+		exec.Command("tmux", "kill-session", "-t", sessionID).Run()
+	})
+
+	workDir := t.TempDir()
+	s := &Session{
+		ID:      sessionID,
+		WorkDir: workDir,
+		// No ProcessNames configured → isAgentAlive() returns true (conservative).
+		Preset: provider.ProviderPreset{},
+	}
+
+	err := s.Spawn()
+	if err != nil {
+		t.Fatalf("Spawn() returned error for already-running session: %v", err)
+	}
+
+	// The session must still be alive — Spawn() must not have killed it.
+	if !isSessionAlive(sessionID) {
+		t.Error("Spawn() killed the running session — expected it to be left alone")
+	}
+
+	// Spawn() must have logged the skip message.
+	out := buf.String()
+	if !strings.Contains(out, "already running") {
+		t.Errorf("expected 'already running' log; got: %s", out)
+	}
+
+	// kill() must NOT have been called (no "killing zombie" log).
+	if strings.Contains(out, "killing zombie") {
+		t.Errorf("unexpected 'killing zombie' log — session should have been left alone; got: %s", out)
+	}
+}
+
+// TestSpawn_ZombieSession_KillsAndRespawns verifies that when a tmux session
+// exists but the agent process has exited (zombie state), Spawn() kills the
+// dead shell and starts a fresh session.
+func TestSpawn_ZombieSession_KillsAndRespawns(t *testing.T) {
+	if _, err := exec.LookPath("tmux"); err != nil {
+		t.Skip("tmux not available")
+	}
+
+	buf := captureDefaultSlog(t)
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("CLAUDE_PATH", "true") // exits immediately — simulates dead agent
+
+	const sessionID = "spawn-guard-zombie-test"
+
+	// Create a zombie: start a tmux session running 'bash' (shell prompt only,
+	// no agent). ProcessNames = ["notbash"] so isAgentAlive() returns false.
+	spawnArgs := []string{"new-session", "-d", "-s", sessionID, "-c", t.TempDir(), "bash"}
+	if out, err := exec.Command("tmux", spawnArgs...).CombinedOutput(); err != nil {
+		t.Skipf("could not create tmux session: %v: %s", err, out)
+	}
+	t.Cleanup(func() {
+		exec.Command("tmux", "kill-session", "-t", sessionID).Run()
+	})
+
+	workDir := t.TempDir()
+	s := &Session{
+		ID:      sessionID,
+		WorkDir: workDir,
+		// ProcessNames that don't match 'bash' → isAgentAlive() returns false.
+		Preset: provider.ProviderPreset{
+			Name:         "test",
+			Command:      "true",
+			ProcessNames: []string{"notbash", "notnode"},
+		},
+	}
+
+	// Override execTmuxNewSession so the respawn doesn't need a real agent.
+	origSpawn := execTmuxNewSession
+	var spawnCalled bool
+	execTmuxNewSession = func(args []string) ([]byte, error) {
+		spawnCalled = true
+		return nil, nil
+	}
+	t.Cleanup(func() { execTmuxNewSession = origSpawn })
+
+	err := s.Spawn()
+	if err != nil {
+		t.Fatalf("Spawn() returned unexpected error: %v", err)
+	}
+
+	out := buf.String()
+
+	// Must have logged zombie detection.
+	if !strings.Contains(out, "killing zombie") {
+		t.Errorf("expected 'killing zombie' log; got: %s", out)
+	}
+
+	// Must have attempted a new spawn after killing the zombie.
+	if !spawnCalled {
+		t.Error("expected execTmuxNewSession to be called after zombie kill — got no respawn")
+	}
+}
+
+// TestSpawn_NoExistingSession_SpawnsNormally verifies the happy path: when no
+// session exists, Spawn() creates one without any kill or skip logic.
+func TestSpawn_NoExistingSession_SpawnsNormally(t *testing.T) {
+	buf := captureDefaultSlog(t)
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	const sessionID = "spawn-guard-fresh-test"
+
+	// Ensure no session with this ID exists.
+	exec.Command("tmux", "kill-session", "-t", sessionID).Run()
+
+	var spawnCalled bool
+	origSpawn := execTmuxNewSession
+	execTmuxNewSession = func(args []string) ([]byte, error) {
+		spawnCalled = true
+		return nil, nil
+	}
+	t.Cleanup(func() { execTmuxNewSession = origSpawn })
+
+	s := &Session{
+		ID:      sessionID,
+		WorkDir: t.TempDir(),
+		Preset:  provider.ProviderPreset{Name: "test", Command: "true"},
+	}
+
+	err := s.Spawn()
+	if err != nil {
+		t.Fatalf("Spawn() returned unexpected error: %v", err)
+	}
+
+	// Must have spawned — no skip, no zombie kill.
+	if !spawnCalled {
+		t.Error("expected execTmuxNewSession to be called for a fresh spawn")
+	}
+
+	out := buf.String()
+	if strings.Contains(out, "already running") {
+		t.Errorf("unexpected 'already running' log for fresh spawn; got: %s", out)
+	}
+	if strings.Contains(out, "killing zombie") {
+		t.Errorf("unexpected 'killing zombie' log for fresh spawn; got: %s", out)
+	}
+}
