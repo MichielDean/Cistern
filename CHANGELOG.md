@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+### Castellarius: read Claude OAuth credentials from ~/.claude/.credentials.json directly (ci-i5ft0)
+- Castellarius startup now reads Claude OAuth credentials directly from `~/.claude/.credentials.json` (managed by the Claude CLI) instead of requiring a manual copy in `~/.cistern/env`
+- Credential resolution order: (1) OAuth token from `~/.claude/.credentials.json` if present and fresh; (2) `ANTHROPIC_API_KEY` from `~/.cistern/env` as fallback for API-key auth
+- Automatic token refresh: if the OAuth token is expired or expiring within 5 minutes, Castellarius automatically attempts refresh using the stored refresh token before failing
+- Removes the duplication problem where `~/.cistern/env` required manual sync each time the Claude CLI rotated the OAuth token (automatic on `claude` CLI interactive use) — now token rotation is transparent to Castellarius
+- `start-castellarius.sh` pre-flight checks now validate credential content (OAuth `accessToken` field or `ANTHROPIC_API_KEY` entry) instead of just file existence, preventing confusing error messages when the credentials file is empty or malformed
+- `ct doctor` now checks OAuth token freshness in `~/.claude/.credentials.json` in addition to checking `ANTHROPIC_API_KEY` in `~/.cistern/env`, and can refresh expired tokens automatically
+- Tests added: `TestResolveAccessToken_*` covers OAuth read, fallback to env var, expiry detection with 5-minute buffer, auto-refresh on near-expiry, and proper handling of missing/malformed credentials files
+- User-visible change: new users can now authenticate once with `claude` and skip setting `ANTHROPIC_API_KEY` in `~/.cistern/env` entirely; existing API-key setups continue to work unchanged
+
 ### Castellarius: detect dead tmux server and auto-recover session spawn (ci-whqq9)
 - When Castellarius attempts to spawn a session and the tmux server is not running (socket missing), it now auto-detects the failure mode and attempts recovery instead of failing immediately
 - Recovery process: logs INFO `session: dead tmux server detected — attempting restart`, calls `tmux kill-server` to clear stale state, and retries the spawn — all transparent to the droplet

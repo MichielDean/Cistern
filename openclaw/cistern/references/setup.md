@@ -21,18 +21,27 @@ ct --help                   # Verify binary works
 ct init                     # Create ~/.cistern/ with default config, credentials file, and startup script
 ```
 
-After `ct init`, add your credentials to `~/.cistern/env`:
+Set up credentials (choose one):
+
+**Option A: OAuth (Recommended for Claude users)**
+
+Run the Claude CLI once to authenticate — it creates `~/.claude/.credentials.json` with your OAuth token. Castellarius reads this automatically and refreshes on expiry:
+
+```bash
+claude                      # Authenticate once
+ct castellarius start       # Reads OAuth token automatically
+ct status                   # Confirm running
+```
+
+**Option B: API Key Authentication**
+
+Add `ANTHROPIC_API_KEY` to `~/.cistern/env`:
 
 ```bash
 echo 'ANTHROPIC_API_KEY=sk-ant-...' >> ~/.cistern/env
 echo 'GH_TOKEN=ghp_...' >> ~/.cistern/env
 chmod 600 ~/.cistern/env
-```
-
-Then start the daemon:
-
-```bash
-ct castellarius start       # Start via ~/.cistern/start-castellarius.sh (sources ~/.cistern/env)
+ct castellarius start       # Reads from ~/.cistern/env
 ct status                   # Confirm running
 ```
 

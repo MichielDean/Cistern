@@ -290,9 +290,20 @@ The Castellarius automatically refreshes the Claude OAuth access token before ea
 
 ## Credentials
 
-Cistern uses `~/.cistern/env` as its canonical credential store — a simple `KEY=VALUE` file, one pair per line, chmod 600. The `ct castellarius start` startup wrapper (`~/.cistern/start-castellarius.sh`) sources this file before launching the service, so updated credentials are picked up on every restart without editing the systemd drop-in.
+Cistern resolves credentials in the following order:
 
-`ct init` creates the file automatically with the correct permissions. Populate it with your API keys:
+1. **~/.claude/.credentials.json** — OAuth token managed by the Claude CLI. When you run `claude` interactively, it updates this file with a fresh access token. Castellarius automatically detects token expiry and triggers refresh via the OAuth endpoint. No manual sync required.
+
+2. **ANTHROPIC_API_KEY in ~/.cistern/env** — Fallback for API-key auth setups or non-OAuth configurations. A simple `KEY=VALUE` file, one pair per line, chmod 600.
+
+**For Claude users (recommended):** Run `claude` interactively once to authenticate. Castellarius will read your OAuth credentials from `~/.claude/.credentials.json` and keep them fresh automatically. You do not need to set `ANTHROPIC_API_KEY` in `~/.cistern/env`.
+
+```bash
+claude          # Authenticate once — updates ~/.claude/.credentials.json
+ct castellarius start  # Reads OAuth token; automatic refresh on expiry
+```
+
+**For API key authentication:** Add `ANTHROPIC_API_KEY` to `~/.cistern/env`:
 
 ```bash
 # Plaintext (simplest)
@@ -309,9 +320,9 @@ echo "ANTHROPIC_API_KEY=$(op read 'op://Personal/Anthropic/api-key')" >> ~/.cist
 chmod 600 ~/.cistern/env
 ```
 
-The file is added to `~/.cistern/.gitignore` by `ct init` so it is never accidentally committed.
+`ct init` creates `~/.cistern/env` automatically with the correct permissions (600). The file is added to `~/.cistern/.gitignore` so it is never accidentally committed.
 
-`ct doctor` checks that the file exists, is chmod 600 (warning if world-readable), and that each environment variable required by the configured provider(s) is set. For new installs without a config yet, it defaults to requiring `ANTHROPIC_API_KEY`. `ct doctor --fix` creates a missing file and, in an interactive terminal, prompts for the required key values.
+`ct doctor` checks both credential sources: it verifies that `~/.claude/.credentials.json` tokens are fresh (and prompts to refresh if expired), and validates any `ANTHROPIC_API_KEY` in `~/.cistern/env`. `ct doctor --fix` can refresh expired OAuth tokens automatically or prompt for missing API keys.
 
 ## Configuration
 
