@@ -257,13 +257,13 @@ test_upgrade() {
         CT_NO_ASCII_LOGO=1 ct doctor >/dev/null 2>&1
 }
 
-# test_missing_credentials verifies the absent-credentials failure path.
+# test_missing_credentials verifies that the service starts cleanly without
+# ~/.cistern/env when using the claude provider.
 #
 # Given: ct init has run but ~/.cistern/env is deleted afterwards
-# When:  ct doctor runs
-# Then:  exits non-zero with output naming ~/.cistern/env
-# And:   the systemd service fails to start (not a silent crash), with an
-#        actionable error captured in the journal.
+# When:  the service starts and ct doctor runs
+# Then:  the service reaches active state (no ANTHROPIC_API_KEY required for claude)
+# And:   ct doctor exits 0 (OAuth check skips silently when no credentials file)
 test_missing_credentials() {
     local home_dir="/tmp/cistern-test-missing-creds"
 
@@ -272,42 +272,38 @@ test_missing_credentials() {
     exec_in_container env HOME="${home_dir}" CT_NO_ASCII_LOGO=1 ct init \
         >/dev/null 2>&1 || return 1
 
-    # Remove the credential file to simulate the absent-credentials scenario.
+    # Remove the credential file to simulate the absent-env scenario.
     exec_in_container rm -f "${home_dir}/.cistern/env" || return 1
 
-    # When: ct doctor runs.
-    local doctor_out doctor_exit=0
-    doctor_out=$(exec_in_container env HOME="${home_dir}" CT_NO_ASCII_LOGO=1 \
-        ct doctor 2>&1) || doctor_exit=$?
+    # Create skill stubs so ct castellarius start passes validateWorkflowSkills.
+    exec_in_container bash -c "
+        for skill in cistern-droplet-state cistern-git cistern-github code-simplifier critical-code-reviewer adversarial-reviewer; do
+            mkdir -p ${home_dir}/.cistern/skills/\${skill}
+            printf '# stub\\n' > ${home_dir}/.cistern/skills/\${skill}/SKILL.md
+        done
+    " || return 1
 
-    # Then: ct doctor exits non-zero.
-    [[ "${doctor_exit}" -ne 0 ]] || return 1
+    # Install and start the system service.
+    install_system_service "${home_dir}" || return 1
 
-    # Then: output names the missing file (~/.cistern/env).
-    echo "${doctor_out}" | grep -q '\.cistern/env' || return 1
+    # Then: service reaches active state — claude provider does not require ANTHROPIC_API_KEY.
+    if ! wait_for_service_active "cistern-castellarius" 10; then
+        return 1
+    fi
 
-    # Install and (attempt to) start the system service.
-    # start-castellarius.sh will exit 1 immediately — that is the expected outcome.
-    install_system_service "${home_dir}" || true
-    sleep 2
-
-    # Then: service must NOT be active.
-    [[ "$(service_status "cistern-castellarius")" != "active" ]] || return 1
-
-    # Then: journal contains the actionable error from start-castellarius.sh.
-    local logs
-    logs=$(exec_in_container journalctl -u cistern-castellarius --no-pager -n 20 2>/dev/null || true)
-    echo "${logs}" | grep -qi 'not found' || return 1
-
-    return 0
+    # Then: ct doctor exits 0 — no ANTHROPIC_API_KEY required, OAuth check skips when
+    # no credentials file is present.
+    exec_in_container env HOME="${home_dir}" CT_NO_ASCII_LOGO=1 \
+        ct doctor >/dev/null 2>&1
 }
 
-# test_wrong_token verifies the wrong-credentials failure path.
+# test_wrong_token verifies that an expired OAuth token is properly detected
+# and reported by ct doctor.
 #
-# Given: ~/.cistern/env exists but ANTHROPIC_API_KEY is set to an empty value
+# Given: ~/.claude/.credentials.json has an expired OAuth token (expiresAt in past)
 # When:  ct doctor runs
-# Then:  exits non-zero with output naming the missing key
-# And:   the systemd service fails to start with an actionable logged error.
+# Then:  exits non-zero with output mentioning expired/invalid token
+# And:  the service still starts (no credential pre-check at startup)
 test_wrong_token() {
     local home_dir="/tmp/cistern-test-wrong-token"
 
@@ -316,10 +312,20 @@ test_wrong_token() {
     exec_in_container env HOME="${home_dir}" CT_NO_ASCII_LOGO=1 ct init \
         >/dev/null 2>&1 || return 1
 
-    # Overwrite the env file: ANTHROPIC_API_KEY present but empty — "wrong token".
+    # Create an expired OAuth token in ~/.claude/.credentials.json
+    # (expiresAt=1000 is 1970-01-01, well in the past).
     exec_in_container bash -c \
-        "printf 'ANTHROPIC_API_KEY=\n' > '${home_dir}/.cistern/env' && chmod 600 '${home_dir}/.cistern/env'" \
+        "mkdir -p '${home_dir}/.claude' && \
+         printf '{\"claudeAiOauth\":{\"accessToken\":\"expired-token\",\"refreshToken\":\"refresh-token\",\"expiresAt\":1000}}' > '${home_dir}/.claude/.credentials.json'" \
         || return 1
+
+    # Create skill stubs so ct castellarius start passes validateWorkflowSkills.
+    exec_in_container bash -c "
+        for skill in cistern-droplet-state cistern-git cistern-github code-simplifier critical-code-reviewer adversarial-reviewer; do
+            mkdir -p ${home_dir}/.cistern/skills/\${skill}
+            printf '# stub\\n' > ${home_dir}/.cistern/skills/\${skill}/SKILL.md
+        done
+    " || return 1
 
     # When: ct doctor runs.
     local doctor_out doctor_exit=0
@@ -329,21 +335,16 @@ test_wrong_token() {
     # Then: ct doctor exits non-zero.
     [[ "${doctor_exit}" -ne 0 ]] || return 1
 
-    # Then: output names the key that is not set.
-    echo "${doctor_out}" | grep -q 'ANTHROPIC_API_KEY' || return 1
+    # Then: output mentions expired or invalid token.
+    echo "${doctor_out}" | grep -qi 'expired\|invalid.*token' || return 1
 
-    # Install and (attempt to) start the system service.
-    # start-castellarius.sh will exit 1 because the key is empty — expected.
-    install_system_service "${home_dir}" || true
-    sleep 2
+    # Install and start the system service.
+    install_system_service "${home_dir}" || return 1
 
-    # Then: service must NOT be active.
-    [[ "$(service_status "cistern-castellarius")" != "active" ]] || return 1
-
-    # Then: journal contains the actionable error from start-castellarius.sh.
-    local logs
-    logs=$(exec_in_container journalctl -u cistern-castellarius --no-pager -n 20 2>/dev/null || true)
-    echo "${logs}" | grep -qi 'no Claude credentials found' || return 1
+    # Then: service still reaches active state (no credential pre-check at startup).
+    if ! wait_for_service_active "cistern-castellarius" 10; then
+        return 1
+    fi
 
     return 0
 }
