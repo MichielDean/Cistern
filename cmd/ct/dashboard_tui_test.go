@@ -220,7 +220,7 @@ func TestTuiAqueductRow_MipmapArch_ReplacesOldPillarRows(t *testing.T) {
 	m := dashboardTUIModel{}
 	rows := m.tuiAqueductRow(ch, 0)
 
-	const wantHeaderRows = 5  // nameLine + infoLine + lblLine + l1 + l2
+	const wantHeaderRows = 5   // nameLine + infoLine + lblLine + l1 + l2
 	const wantMipmapLines = 12 // 36x12 mipmap: 12 visual lines after cursor-seq strip
 	wantTotal := wantHeaderRows + wantMipmapLines
 	if len(rows) != wantTotal {
@@ -501,16 +501,16 @@ func TestSelectArchMipmap_ReturnsCorrectLevelForWidth(t *testing.T) {
 // When:  selectArchMipmap is called for each
 // Then:  all four returned strings are non-empty and pairwise distinct
 func TestSelectArchMipmap_EachLevelReturnsDistinctContent(t *testing.T) {
-	large  := selectArchMipmap(90) // 100x38
+	large := selectArchMipmap(90)  // 100x38
 	medium := selectArchMipmap(70) // 80x30
-	small  := selectArchMipmap(50) // 60x22
+	small := selectArchMipmap(50)  // 60x22
 	xsmall := selectArchMipmap(0)  // 36x12
 
 	for name, s := range map[string]string{
-		"large (100x38)":  large,
-		"medium (80x30)":  medium,
-		"small (60x22)":   small,
-		"xsmall (36x12)":  xsmall,
+		"large (100x38)": large,
+		"medium (80x30)": medium,
+		"small (60x22)":  small,
+		"xsmall (36x12)": xsmall,
 	} {
 		if s == "" {
 			t.Errorf("selectArchMipmap returned empty string for %s", name)
