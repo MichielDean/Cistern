@@ -802,6 +802,45 @@ func stripANSITest(s string) string {
 	return out.String()
 }
 
+// TestStripANSITest_CSISequences verifies the two-state FSM correctly strips
+// CSI escape sequences, exercising stateAfterESC and stateInCSI branches.
+func TestStripANSITest_CSISequences(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{
+			name:  "TrueColor_fg_reset",
+			input: "\x1b[38;2;255;0;0mRed\x1b[0m",
+			want:  "Red",
+		},
+		{
+			name:  "multiple_CSI_sequences",
+			input: "\x1b[1mBold\x1b[0m and \x1b[32mgreen\x1b[0m",
+			want:  "Bold and green",
+		},
+		{
+			name:  "no_escape_sequences",
+			input: "plain text",
+			want:  "plain text",
+		},
+		{
+			name:  "empty_string",
+			input: "",
+			want:  "",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := stripANSITest(tt.input)
+			if got != tt.want {
+				t.Errorf("stripANSITest(%q) = %q, want %q", tt.input, got, tt.want)
+			}
+		})
+	}
+}
+
 // TestTuiAqueductRow_LabelRowAboveArch verifies that:
 // - lines[2] is the label row (contains all step names)
 // - lines[3] is the channel top row (▀ characters)
