@@ -528,4 +528,10 @@ func TestSelectArchMipmap_EachLevelReturnsDistinctContent(t *testing.T) {
 	if large == xsmall {
 		t.Error("large (100x38) and xsmall (36x12) mipmaps are identical — embed may be wrong")
 	}
+	if large == small {
+		t.Error("large (100x38) and small (60x22) mipmaps are identical — embed may be wrong")
+	}
+	if medium == xsmall {
+		t.Error("medium (80x30) and xsmall (36x12) mipmaps are identical — embed may be wrong")
+	}
 }
