@@ -9,6 +9,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/MichielDean/cistern/internal/oauth"
 	"github.com/MichielDean/cistern/internal/provider"
@@ -600,14 +601,34 @@ var tmuxRecoveryMu sync.Mutex
 //
 // If the credentials file is absent or unreadable, the function returns an
 // error and the caller falls back to whatever is already in ANTHROPIC_API_KEY.
+// injectTokenMu serializes token injection + CLI refresh across concurrent spawns.
+var injectTokenMu sync.Mutex
+
 func injectClaudeTokenFromCredentials(home string) error {
+	injectTokenMu.Lock()
+	defer injectTokenMu.Unlock()
+
 	creds := oauth.Read(home)
 	if creds == nil || creds.AccessToken == "" {
 		return fmt.Errorf("no access token in ~/.claude/.credentials.json")
 	}
 
-	// Always inject — even if the token looks expired, the Claude CLI may have
-	// refreshed it and the ExpiresAt clock can drift. Let the agent try it.
+	// If the token is expired, force the Claude CLI to refresh it by running a
+	// no-op invocation. The CLI manages its own OAuth lifecycle — when it runs
+	// it checks the token and refreshes via its own mechanism (which works,
+	// unlike the Anthropic refresh endpoint which returns HTTP 400 for us).
+	if oauth.IsExpiredOrNear(creds, 2*time.Minute) {
+		slog.Default().Info("session: OAuth token expired or near-expiry — triggering Claude CLI refresh")
+		cmd := exec.Command(claudePathFn(), "--print", "-p", ".")
+		cmd.Env = append(os.Environ(), "ANTHROPIC_API_KEY="+creds.AccessToken)
+		_ = cmd.Run() // best-effort — re-read credentials regardless of exit code
+
+		// Re-read after CLI run — it may have refreshed the token.
+		if fresh := oauth.Read(home); fresh != nil && fresh.AccessToken != "" {
+			creds = fresh
+		}
+	}
+
 	os.Setenv("ANTHROPIC_API_KEY", creds.AccessToken) //nolint:errcheck
 	return nil
 }
