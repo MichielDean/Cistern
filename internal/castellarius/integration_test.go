@@ -135,10 +135,7 @@ func (r *integrationRunner) sessionIDs() []string {
 
 // cleanup kills all tmux sessions spawned by this runner.
 func (r *integrationRunner) cleanup() {
-	r.mu.Lock()
-	sessions := r.sessions
-	r.mu.Unlock()
-	for _, s := range sessions {
+	for _, s := range r.sessionIDs() {
 		exec.Command("tmux", "kill-session", "-t", s).Run() //nolint:errcheck
 	}
 }
@@ -180,12 +177,10 @@ func intConfig() aqueduct.AqueductConfig {
 // newIntScheduler creates a Castellarius configured for integration tests with
 // short poll and heartbeat intervals to keep test runtime under 30s.
 func newIntScheduler(client *cistern.Client, runner castellarius.CataractaeRunner) *castellarius.Castellarius {
-	config := intConfig()
-	wf := intWorkflow()
-	workflows := map[string]*aqueduct.Workflow{"myrepo": wf}
+	workflows := map[string]*aqueduct.Workflow{"myrepo": intWorkflow()}
 	clients := map[string]castellarius.CisternClient{"myrepo": client}
 
-	return castellarius.NewFromParts(config, workflows, clients, runner,
+	return castellarius.NewFromParts(intConfig(), workflows, clients, runner,
 		castellarius.WithPollInterval(500*time.Millisecond),
 		castellarius.WithHeartbeatInterval(time.Second),
 		castellarius.WithDrainTimeout(3*time.Second),
