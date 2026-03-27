@@ -100,6 +100,68 @@ func TestCallFilterAgent_AgentExecFailure(t *testing.T) {
 	}
 }
 
+// TestCallFilterAgent_JSONFallback_RawOutput verifies the fallback path where the
+// agent exits 0 but returns non-JSON output (not a JSON envelope).
+// callFilterAgent must fall back to extractProposals on the raw output and return
+// proposals with an empty session_id.
+// Given a fakeagent in raw_fallback mode (returns raw proposals despite --output-format),
+// When callFilterAgent is called,
+// Then proposals are returned and session_id is empty.
+func TestCallFilterAgent_JSONFallback_RawOutput(t *testing.T) {
+	fakeagentBin := buildTestBin(t, "fakeagent", "github.com/MichielDean/cistern/internal/testutil/fakeagent")
+	t.Setenv("FAKEAGENT_MODE", "raw_fallback")
+
+	preset := provider.ProviderPreset{
+		Name:    "test",
+		Command: fakeagentBin,
+		NonInteractive: provider.NonInteractiveConfig{
+			PrintFlag:  "--print",
+			PromptFlag: "-p",
+		},
+	}
+
+	result, err := callFilterAgent(preset, nil, "Title: fix auth bug")
+	if err != nil {
+		t.Fatalf("callFilterAgent fallback: unexpected error: %v", err)
+	}
+	if result.SessionID != "" {
+		t.Errorf("expected empty session_id in fallback mode, got %q", result.SessionID)
+	}
+	if len(result.Proposals) == 0 {
+		t.Fatal("expected at least one proposal from fallback path")
+	}
+	if result.Proposals[0].Title != "mock proposal" {
+		t.Errorf("title = %q, want %q", result.Proposals[0].Title, "mock proposal")
+	}
+}
+
+// TestCallFilterAgent_IsErrorEnvelope_ReturnsError verifies that when the agent
+// returns a JSON envelope with is_error:true, callFilterAgent returns an error.
+// Given a fakeagent in error_envelope mode (returns is_error:true JSON),
+// When callFilterAgent is called,
+// Then an error mentioning "agent returned error" is returned.
+func TestCallFilterAgent_IsErrorEnvelope_ReturnsError(t *testing.T) {
+	fakeagentBin := buildTestBin(t, "fakeagent", "github.com/MichielDean/cistern/internal/testutil/fakeagent")
+	t.Setenv("FAKEAGENT_MODE", "error_envelope")
+
+	preset := provider.ProviderPreset{
+		Name:    "test",
+		Command: fakeagentBin,
+		NonInteractive: provider.NonInteractiveConfig{
+			PrintFlag:  "--print",
+			PromptFlag: "-p",
+		},
+	}
+
+	_, err := callFilterAgent(preset, nil, "Title: fix auth bug")
+	if err == nil {
+		t.Fatal("expected error when agent returns is_error envelope, got nil")
+	}
+	if !strings.Contains(err.Error(), "agent returned error") {
+		t.Errorf("error %q does not mention 'agent returned error'", err.Error())
+	}
+}
+
 // TestCallFilterAgent_MissingRequiredEnvVar verifies that callFilterAgent returns
 // an error without executing the agent when a required env var is absent.
 // Given a preset with EnvPassthrough=["MISSING_FILTER_KEY"] and the var unset,

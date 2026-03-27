@@ -56,6 +56,10 @@ const hardcodedProposals = `[{"title":"mock proposal","description":"test descri
 // and session_id is a stable test value used to verify session_id extraction.
 const hardcodedJSONEnvelope = `{"type":"result","subtype":"success","is_error":false,"result":"[{\"title\":\"mock proposal\",\"description\":\"test description\",\"complexity\":\"standard\",\"depends_on\":[]}]","session_id":"test-session-id-abc123"}`
 
+// hardcodedErrorEnvelope is returned in FAKEAGENT_MODE=error_envelope.
+// is_error is true so callFilterAgent returns an error for the envelope.IsError path.
+const hardcodedErrorEnvelope = `{"type":"result","subtype":"error","is_error":true,"result":"agent encountered an error","session_id":"error-session-id"}`
+
 func main() {
 	// Pre-scan os.Args for --print and --output-format before calling flag.Parse.
 	// flag.Parse stops at the first positional arg (e.g. a subcommand such as
@@ -73,9 +77,16 @@ func main() {
 	}
 
 	if hasPrint {
-		if hasOutputFormat {
+		mode := os.Getenv("FAKEAGENT_MODE")
+		switch {
+		case mode == "error_envelope":
+			// Return a JSON envelope with is_error:true to test the error path.
+			fmt.Println(hardcodedErrorEnvelope)
+		case hasOutputFormat && mode != "raw_fallback":
+			// Normal JSON envelope (default when --output-format is present).
 			fmt.Println(hardcodedJSONEnvelope)
-		} else {
+		default:
+			// Raw proposals: either no --output-format, or raw_fallback mode.
 			fmt.Println(hardcodedProposals)
 		}
 		return

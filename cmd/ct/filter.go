@@ -178,7 +178,7 @@ func callFilterAgent(preset provider.ProviderPreset, extraArgs []string, prompt 
 		// Fallback: the preset may not support --output-format json; try raw.
 		proposals, perr := extractProposals(string(out))
 		if perr != nil {
-			return filterSessionResult{}, fmt.Errorf("failed to parse agent output: %w", err)
+			return filterSessionResult{}, fmt.Errorf("failed to parse agent output: %w", perr)
 		}
 		return filterSessionResult{Proposals: proposals}, nil
 	}
