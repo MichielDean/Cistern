@@ -342,8 +342,11 @@ heartbeat_interval: 30s
 # Stall detection: threshold for inactivity before marking a droplet as stalled
 # Monitors three progress signals: newest note timestamp, worktree file mtime,
 # and session log mtime. Droplet is stalled if all three are older than this threshold.
-# When detected, a diagnostic note is appended and further notes are suppressed
-# until one of the signals advances.
+# When detected: (1) a diagnostic note is appended, (2) if the droplet has an assignee
+# with prior session history, the session is automatically re-spawned with --continue
+# to allow the agent to resume; (3) further diagnostic notes are suppressed until
+# one of the signals advances. Re-spawn failures are automatically retried on the next
+# heartbeat tick.
 # Default: 45 minutes
 stall_threshold_minutes: 45
 

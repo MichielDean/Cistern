@@ -15,6 +15,16 @@
   ```
 - Tests added: debounce boundary conditions, signal independence, threshold configuration, and memory cleanup validation
 
+### Heartbeat: re-spawn stalled sessions with --continue instead of just warning (ci-l93yr)
+- When the heartbeat detects a stall (no activity for ≥ `stall_threshold_minutes` AND the droplet has an assignee with a prior Claude session), it now automatically re-spawns the session to allow the agent to resume
+- The respawn reuses the existing worktree and assignee; `session.Spawn()` selects `--continue` or a fresh spawn based on prior session files under `~/.claude/projects/<worktree>/`
+- If the droplet has no session history (agent died before writing anything), it spawns fresh with a new session — same as current behavior
+- Status and assignee remain unchanged during respawn — the agent resumes from where it left off
+- Spawn failures are automatically retried on the next heartbeat: the debounce is cleared so the next heartbeat re-detects the stall and retries (transient spawn errors like tmux/disk issues don't permanently disable recovery)
+- Diagnostics: on respawn failure, the error is logged at Error level; on respawn success, an Info-level log confirms the session was re-spawned with the droplet ID and assignee
+- This restores the re-spawn behavior from PR #221 but triggered by heartbeat activity signals instead of tmux liveness checks
+- Tests added: respawn with prior session history (--continue path), respawn without prior history (fresh spawn), spawn failure clears debounce on retry
+
 ### Dashboard TUI: replace ASCII arch with chafa-rendered pixel art mipmaps (ci-9lzhh, resized in ci-bv1ol)
 - The aqueduct arch diagram in `ct dashboard` now renders high-quality pixel art instead of hand-drawn ASCII
 - Four mipmap levels automatically selected based on terminal width for pixel-perfect rendering at any size:
