@@ -2,12 +2,13 @@
 
 ## Unreleased
 
-### Dashboard TUI: replace ASCII arch with chafa-rendered pixel art mipmaps (ci-9lzhh)
+### Dashboard TUI: replace ASCII arch with chafa-rendered pixel art mipmaps (ci-9lzhh, resized in ci-bv1ol)
 - The aqueduct arch diagram in `ct dashboard` now renders high-quality pixel art instead of hand-drawn ASCII
-- Three mipmap levels automatically selected based on terminal width for pixel-perfect rendering at any size:
+- Four mipmap levels automatically selected based on terminal width for pixel-perfect rendering at any size:
   - **Width ≥ 90 columns**: 100×38 mipmap (highest quality)
   - **Width ≥ 70 columns**: 80×30 mipmap (medium quality)
-  - **Width < 70 columns**: 60×22 mipmap (mobile/constrained terminals)
+  - **Width ≥ 50 columns**: 60×22 mipmap
+  - **Width < 50 columns**: 36×12 mipmap (mobile/constrained terminals)
 - Generated with `chafa --size <WxH> --font-ratio=1/2 --colors full --symbols block` for rich color gradients and block character rendering
 - Mipmaps are embedded at compile time (`go:embed`) — no additional assets required at runtime
 - Cursor-visibility escape sequences (`\x1b[?25l` / `\x1b[?25h`) are automatically stripped before rendering, preventing terminal state pollution
