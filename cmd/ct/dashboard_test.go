@@ -1044,8 +1044,9 @@ func TestTuiAqueductRow_LineCount(t *testing.T) {
 			}
 			ch := CataractaeInfo{Name: "virgo", Steps: steps}
 			lines := m.tuiAqueductRow(ch, 0)
-			// 5 header rows + 37 mipmap lines (100x38 for width=100, after cursor-seq strip)
-			const wantLines = 42
+			// 5 header rows + 12 mipmap lines (36x12 mipmap — arch selected by
+			// archPillarW=36, not terminal width)
+			const wantLines = 17
 			if len(lines) != wantLines {
 				t.Errorf("tuiAqueductRow() returned %d lines, want %d", len(lines), wantLines)
 			}
@@ -1078,9 +1079,9 @@ func TestTuiAqueductRow_MipmapArchLinesNonEmpty(t *testing.T) {
 }
 
 // TestTuiAqueductRow_MipmapArchLinesHaveExpectedCount verifies the arch section
-// has exactly the expected number of lines for the model width.
-// newDashboardTUIModel uses width=100 (>= 90), selecting the 100x38 mipmap
-// (37 visual lines after cursor-seq stripping). Total rows = 5 + 37 = 42.
+// has exactly the expected number of lines. The mipmap is now selected by
+// archPillarW (36), not terminal width — so the 36x12 mipmap is always used,
+// giving 12 visual lines. Total = 5 header + 12 mipmap = 17.
 func TestTuiAqueductRow_MipmapArchLinesHaveExpectedCount(t *testing.T) {
 	m := newDashboardTUIModel("", "")
 	steps := []string{"implement"}
@@ -1088,10 +1089,10 @@ func TestTuiAqueductRow_MipmapArchLinesHaveExpectedCount(t *testing.T) {
 	lines := m.tuiAqueductRow(ch, 0)
 
 	const headerRows = 5
-	const mipmapLines = 37 // 100x38 mipmap for width=100, after cursor-seq strip
+	const mipmapLines = 12 // 36x12 mipmap — selected by archPillarW=36
 	const wantTotal = headerRows + mipmapLines
 	if len(lines) != wantTotal {
-		t.Errorf("tuiAqueductRow() returned %d lines, want %d (5 header + 37 mipmap)", len(lines), wantTotal)
+		t.Errorf("tuiAqueductRow() returned %d lines, want %d (5 header + 12 mipmap)", len(lines), wantTotal)
 	}
 }
 

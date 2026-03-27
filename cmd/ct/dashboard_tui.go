@@ -36,29 +36,32 @@ var archMipmap36x12 string
 var archMipmapStripper = strings.NewReplacer("\x1b[?25l", "", "\x1b[?25h", "")
 
 // archMipmapWidth returns the pixel column width of the mipmap level chosen for
-// the given terminal width, matching the thresholds in selectArchMipmap.
-func archMipmapWidth(availableWidth int) int {
-	if availableWidth >= 90 {
+// the given slot width. The arch is rendered per-slot (one pillar column), so
+// the slot width is archPillarW, not the full terminal width.
+func archMipmapWidth(slotWidth int) int {
+	if slotWidth >= 90 {
 		return 100
 	}
-	if availableWidth >= 70 {
+	if slotWidth >= 70 {
 		return 80
 	}
-	if availableWidth >= 50 {
+	if slotWidth >= 50 {
 		return 60
 	}
 	return 36
 }
 
-// selectArchMipmap returns the ANSI arch mipmap whose width best fits availableWidth,
-// with cursor-control sequences stripped.
-//   - width >= 90  → 100x38 mipmap (37 visual lines)
-//   - width >= 70  → 80x30 mipmap  (30 visual lines)
-//   - width >= 50  → 60x22 mipmap  (22 visual lines)
-//   - width < 50   → 36x12 mipmap  (12 visual lines)
-func selectArchMipmap(availableWidth int) string {
+// selectArchMipmap returns the ANSI arch mipmap whose width best fits slotWidth,
+// with cursor-control sequences stripped. The arch is centered over a single
+// pillar slot (archPillarW wide), so slotWidth should be archPillarW, not the
+// full terminal width.
+//   - slot >= 90  → 100x38 mipmap
+//   - slot >= 70  → 80x30 mipmap
+//   - slot >= 50  → 60x22 mipmap
+//   - slot < 50   → 36x12 mipmap
+func selectArchMipmap(slotWidth int) string {
 	var raw string
-	switch archMipmapWidth(availableWidth) {
+	switch archMipmapWidth(slotWidth) {
 	case 100:
 		raw = archMipmap100x38
 	case 80:
@@ -739,12 +742,22 @@ func (m dashboardTUIModel) tuiAqueductRow(ch CataractaeInfo, frame int) []string
 		l2 += wfExit
 	}
 
-	// Mipmap arch: select the pre-rendered pixel art arch for the available width,
-	// center it in the terminal, and use its lines in place of the ASCII pillar rows.
-	mipmapW := archMipmapWidth(m.width)
-	mipmap := selectArchMipmap(m.width)
+	// Mipmap arch: select the mipmap that fits within one pillar slot (archPillarW),
+	// and center it under the active step's slot. If no step is active, center
+	// under the middle slot. The arch is decorative — one arch per aqueduct row,
+	// positioned to visually anchor the active cataracta.
+	mipmapW := archMipmapWidth(archPillarW)
+	mipmap := selectArchMipmap(archPillarW)
 	mipmapLines := strings.Split(strings.TrimRight(mipmap, "\n"), "\n")
-	leftPad := (m.width - mipmapW) / 2
+
+	// Determine the center column of the target slot (indent + slot center).
+	targetSlot := activeIdx
+	if targetSlot < 0 {
+		targetSlot = n / 2 // no active step: center under middle slot
+	}
+	indentW := len(indent) // indent is ASCII spaces only
+	slotCenter := indentW + targetSlot*archPillarW + archPillarW/2
+	leftPad := slotCenter - mipmapW/2
 	if leftPad < 0 {
 		leftPad = 0
 	}
