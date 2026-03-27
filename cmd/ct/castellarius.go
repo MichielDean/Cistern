@@ -541,8 +541,7 @@ func resolveConfigPath() string {
 
 // startupRequiredEnvVars parses the aqueduct config at cfgPath and returns the
 // deduplicated list of env vars required by the configured provider preset(s),
-// along with whether any repo uses the claude provider (which requires an OAuth
-// token check at startup).
+// along with whether any repo uses the claude provider.
 //
 // If cfgPath is empty or the config cannot be parsed, it returns nil env vars
 // and usesClaude=true — claude authenticates via its own OAuth credentials file
