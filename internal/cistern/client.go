@@ -69,6 +69,11 @@ func New(dbPath, prefix string) (*Client, error) {
 	if err != nil {
 		return nil, fmt.Errorf("cistern: open %s: %w", dbPath, err)
 	}
+	// SQLite only supports one concurrent writer. Limit the connection pool to
+	// a single connection so concurrent goroutines (dispatch, heartbeat, observe)
+	// queue behind the same connection rather than racing across independent
+	// *sql.DB pools, which causes "database is locked" errors even with WAL mode.
+	db.SetMaxOpenConns(1)
 	// Migrations: rename legacy tables/columns before applying schema.
 	// Each statement is idempotent — errors are ignored (already-renamed or fresh DB).
 	db.Exec(`ALTER TABLE work_items RENAME TO droplets`)
