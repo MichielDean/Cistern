@@ -283,6 +283,10 @@ test_missing_credentials() {
         done
     " || return 1
 
+    # Create cistern.db via ct doctor --fix so the service can open it.
+    exec_in_container env HOME="${home_dir}" CT_NO_ASCII_LOGO=1 \
+        ct doctor --fix >/dev/null 2>&1 || true
+
     # Install and start the system service.
     install_system_service "${home_dir}" || return 1
 
@@ -337,6 +341,10 @@ test_wrong_token() {
 
     # Then: output mentions expired or invalid token.
     echo "${doctor_out}" | grep -qi 'expired\|invalid.*token' || return 1
+
+    # Create cistern.db via ct doctor --fix so the service can open it.
+    exec_in_container env HOME="${home_dir}" CT_NO_ASCII_LOGO=1 \
+        ct doctor --fix >/dev/null 2>&1 || true
 
     # Install and start the system service.
     install_system_service "${home_dir}" || return 1
