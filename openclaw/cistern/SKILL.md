@@ -21,13 +21,53 @@ Cistern is an agentic workflow orchestrator. It routes units of work called **dr
 | **Drought** | Idle state — maintenance hooks run here |
 | **Filtration** | LLM refinement that sharpens a rough idea into well-specified droplets before they enter the pipeline |
 
+Never say "drop/item/task/ticket/issue" for work units — always **droplet**.
+
+## Installation
+
+- **CLI:** `~/go/bin/ct`
+- **Config:** `~/.cistern/cistern.yaml`
+- **DB:** `~/.cistern/cistern.db`
+- **Log:** `~/.cistern/castellarius.log`
+- **Dashboard:** `http://192.168.0.138:5737` (ttyd)
+- **Build:** `cd ~/cistern && PATH="/usr/local/go/bin:$PATH" go build -o ~/go/bin/ct ./cmd/ct/`
+
+## Repos configured
+
+| Repo | Prefix | Aqueducts |
+|------|--------|-----------|
+| cistern | `ci-` | virgo, marcia |
+| ScaledTest | `st-` | julia, appia |
+| PortfolioWebsite | `pw-` | anio |
+
+## Worktree Rule
+
+**Never edit `~/cistern` directly.** That's the primary clone — touching it corrupts all agent worktrees.
+
+All manual Cistern work goes in the dedicated lobsterdog worktree:
+```bash
+cd ~/.cistern/sandboxes/cistern/lobsterdog
+git checkout -B lobsterdog-work origin/main   # Always sync before starting
+```
+ScaledTest worktree: `~/.cistern/sandboxes/ScaledTest/lobsterdog`
+
+## Pipeline
+
+```
+implement → review → qa → security-review → docs → delivery
+```
+
+| Complexity | Code | Notes |
+|------------|------|-------|
+| standard | 1 | default minimum — always includes review |
+| full | 2 | all stages |
+| critical | 3 | all stages + human approval before merge |
+
 ## Adding a Droplet
 
-**Always get the user's confirmation before filing any droplet.**
+**⛔ Always get explicit confirmation before filing any droplet.**
 
-### Two modes: direct or filtered
-
-**Direct** — when requirements are already clear and well-specified:
+### Direct — when requirements are already clear:
 ```bash
 export ANTHROPIC_API_KEY=$(pass anthropic/claude)
 ct droplet add \
@@ -38,110 +78,78 @@ ct droplet add \
   --yes
 ```
 
-**Filtered** — when the idea is rough or complex. Filtration is a **conversation**, not a batch pass. The filtering agent reads the idea, asks clarifying questions, and iterates with you until the spec is tight.
+### Filtered — for non-trivial or exploratory work:
 
-### Filtration workflow (always use this for non-trivial droplets)
+Filtration is a **conversation**, not a batch pass.
 
-**Step 1 — Start a filter session:**
+**Step 1 — Start:**
 ```bash
 export ANTHROPIC_API_KEY=$(pass anthropic/claude)
 ct filter --repo <repo> --title "Rough idea" --description "Intent..."
 ```
-This prints a refined draft + a `session_id`. The agent may ask clarifying questions in its output.
 
-**Step 2 — Resume with answers/context:**
+**Step 2 — Resume with answers:**
 ```bash
-ct filter --resume <session-id> "Here are my answers: ..."
+ct filter --resume <session-id> "answers and context..."
 ```
-Continue until the spec feels complete. Typically 2-4 rounds.
 
-**Step 3 — File when satisfied:**
+**Step 3 — File after confirmation:**
 ```bash
 ct filter --resume <session-id> --file --repo <repo>
 ```
-This files the final version. Only run this after confirming with the user.
 
 **Rules:**
-- Never use `ct droplet add --filter` — that fires-and-forgets with no conversation
-- Always show the user a **single summary** of how the description improved across iterations — not a message per round
-- Get explicit user confirmation before running `--file`
-- Minimum 3 iterations unless the user says it's ready sooner
-
-**When to use filtration:**
-- The idea spans multiple files or concerns
-- The description is intent, not a spec
-- The user says "plan this out" or "figure out what we need"
-
-**When to file directly:**
-- Requirements are already fully specified
-- It's a small, well-understood fix (typo, config change)
-
-### Complexity
-
-| Level | Code | Stages skipped |
-|-------|------|---------------|
-| standard | 1 | review, qa |
-| full | 2 | all stages — default |
-| critical | 3 | all stages + human approval before merge |
+- Never use `ct droplet add --filter` — fires-and-forgets, no conversation
+- Minimum 3 rounds unless user says it's ready sooner
+- Report a single summary of improvements, not one message per round
+- Get explicit "yes" before `--file`
+- File follow-up droplets with `--depends-on <id>` rather than injecting notes into flowing work
 
 ## Key Commands
 
 ```bash
 # Status
-ct status                        # Pipeline overview
-ct droplet list                  # All droplets
-ct droplet list --status pending # Filter by status
-ct droplet list --repo <repo>    # Filter by repo
-ct droplet show <id>             # Detail view
+ct status
+ct droplet list
+ct droplet list --repo <repo>
+ct droplet show <id>
 
-# Manage flowing work
-ct droplet restart <id>          # Retry a failed droplet
-ct droplet escalate <id>         # Bump priority
-ct droplet cancel <id>           # Cancel — won't be implemented
-ct droplet note <id> "..."       # Add a note to a droplet
+# Manage
+ct droplet restart <id>
+ct droplet escalate <id>
+ct droplet cancel <id>
+ct droplet note <id> "..."
+ct droplet deps <id> --add <dep-id>
 
-# Daemon control
-ct castellarius start
-ct castellarius status
-journalctl --user -u cistern-castellarius -f   # Live logs
-cat ~/.cistern/castellarius.log                # Log file
+# Daemon
+ct castellarius start/status
+journalctl --user -u cistern-castellarius -f
+systemctl --user restart cistern-castellarius
 
 # Cataractae
-ct cataractae list               # List all stages
-ct cataractae generate           # Generate missing stage configs
+ct cataractae list
+ct cataractae generate
 
-# Dashboard
-ct dashboard                     # Live TUI (requires tmux)
+# Dashboard (reload after rebuild)
+kill $(ss -tlnp | grep 5737 | grep -o 'pid=[0-9]*' | cut -d= -f2) 2>/dev/null
+systemctl --user start cistern-ttyd.service
 ```
 
-See [references/commands.md](references/commands.md) for the full command reference.
+## Infrastructure
 
-## Pipeline
-
-```
-implement → simplify → review → qa → security-review → docs → delivery
-```
-
-Castellarius routes each droplet through the stages configured for its aqueduct. Completed droplets move to the next stage automatically; recirculated ones go back for revision.
+- Castellarius: systemd user service `cistern-castellarius.service` (Restart=always)
+- Auth: Claude CLI manages its own credentials via `~/.claude/.credentials.json` — no ANTHROPIC_API_KEY env var needed in service
+- `start-castellarius.sh` just runs `exec ct castellarius start` — no credential setup
+- ttyd dashboard: port 5737, managed by `cistern-ttyd.service`
+- Self-restart: git_sync drought hook + binary mtime detection → os.Exit(0) → systemd restarts
 
 ## Troubleshooting
 
 | Symptom | Check |
 |---------|-------|
-| Castellarius not running | `systemctl --user status cistern-castellarius` → `systemctl --user start cistern-castellarius` |
-| Sessions crashing immediately | Token mismatch — check `~/.cistern/env` has valid `ANTHROPIC_API_KEY`; run `claude -p "hi"` with that key to verify |
-| Droplet stuck looping | `ct droplet show <id>` — check notes for dispatch-loop recovery messages |
-| Logs for a failed stage | `journalctl --user -u cistern-castellarius -f` |
-| Binary out of date | `ct update` or rebuild: see [references/setup.md](references/setup.md) |
-
-See [references/troubleshooting.md](references/troubleshooting.md) for detailed recovery workflows.
-
-## Worktree Rule
-
-**Never edit `~/cistern` directly.** That's the primary clone — touching it corrupts all agent worktrees.
-
-All manual work goes in the dedicated lobsterdog worktree:
-```bash
-cd ~/.cistern/sandboxes/cistern/lobsterdog
-git checkout -B lobsterdog-work origin/main   # Sync before starting
-```
+| Castellarius not running | `systemctl --user status cistern-castellarius` → start it |
+| Sessions failing auth | `claude -p "hi"` — if that works, Claude's own auth is fine. Check nothing is setting ANTHROPIC_API_KEY in the env |
+| Droplet stuck | `ct droplet show <id>` — check notes; `ct droplet restart <id>` |
+| Logs | `journalctl --user -u cistern-castellarius -f` or `cat ~/.cistern/castellarius.log` |
+| Dashboard stale after rebuild | Kill old process on port 5737, restart cistern-ttyd.service |
+| Binary out of date | Rebuild: `cd ~/cistern && PATH="/usr/local/go/bin:$PATH" go build -o ~/go/bin/ct ./cmd/ct/` |
