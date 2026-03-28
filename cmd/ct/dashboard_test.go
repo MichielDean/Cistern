@@ -952,45 +952,6 @@ func TestTuiAqueductRow_MipmapArchLinesHaveExpectedCount(t *testing.T) {
 	}
 }
 
-// --- TestViewDroughtArch — drought display ---
-
-// TestViewDroughtArch_LineCount verifies viewDroughtArch returns 1 + mipmapLines lines:
-// 1 drought label + 12 mipmap rows (36x12 mipmap selected by archPillarW=36).
-func TestViewDroughtArch_LineCount(t *testing.T) {
-	m := newDashboardTUIModel("", "")
-	m.width = 80
-	lines := m.viewDroughtArch()
-	const wantLines = 13 // 1 label + 12 mipmap rows
-	if len(lines) != wantLines {
-		t.Errorf("viewDroughtArch() returned %d lines, want %d", len(lines), wantLines)
-	}
-}
-
-// TestViewDroughtArch_LabelContainsDrought verifies the first line contains "drought".
-func TestViewDroughtArch_LabelContainsDrought(t *testing.T) {
-	m := newDashboardTUIModel("", "")
-	m.width = 80
-	lines := m.viewDroughtArch()
-	if !strings.Contains(stripANSITest(lines[0]), "drought") {
-		t.Errorf("first line should contain 'drought', got %q", lines[0])
-	}
-}
-
-// TestViewDroughtArch_MipmapLinesNonEmpty verifies all mipmap rows (lines[1:]) are non-empty.
-func TestViewDroughtArch_MipmapLinesNonEmpty(t *testing.T) {
-	m := newDashboardTUIModel("", "")
-	m.width = 80
-	lines := m.viewDroughtArch()
-
-	if len(lines) < 2 {
-		t.Fatalf("not enough lines: got %d", len(lines))
-	}
-	for i := 1; i < len(lines); i++ {
-		if stripANSITest(lines[i]) == "" {
-			t.Errorf("drought mipmap lines[%d] is empty", i)
-		}
-	}
-}
 
 // TestViewAqueductArches_AllIdleState_ShowsIdleArchs verifies that when all
 // aqueducts are idle, viewAqueductArches renders each aqueduct with its arch

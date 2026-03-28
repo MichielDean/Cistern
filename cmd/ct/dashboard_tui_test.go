@@ -432,28 +432,29 @@ func TestDashboardTUIModel_ExitsIdleModeWhenStateChanges(t *testing.T) {
 
 // TestTuiAqueductRow_InfoLine_IncludesTitle verifies that the info line in an
 // active aqueduct arch row includes the droplet title styled dim after the
-// elapsed time.
+// elapsed time. The title must fit within the archBlockW budget (archPillarW+2=38)
+// after the droplet ID and elapsed time are deducted.
 //
-// Given: a CataractaeInfo with DropletID, Title, and Elapsed set
-// When:  tuiAqueductRow is called on a model with sufficient terminal width
+// Given: a CataractaeInfo with DropletID, a short Title that fits in the block, and Elapsed
+// When:  tuiAqueductRow is called
 // Then:  rows[1] (the info line) contains the title text
 func TestTuiAqueductRow_InfoLine_IncludesTitle(t *testing.T) {
 	ch := CataractaeInfo{
 		Name:      "virgo",
 		RepoName:  "myrepo",
 		DropletID: "ci-abc123",
-		Title:     "Add retry logic to export pipeline",
+		Title:     "Fix retry logic",
 		Step:      "implement",
 		Steps:     []string{"implement", "review"},
 		Elapsed:   5 * time.Minute,
 	}
-	m := dashboardTUIModel{width: 120}
+	m := dashboardTUIModel{}
 	rows := m.tuiAqueductRow(ch, 0)
 
 	if len(rows) < 2 {
 		t.Fatalf("tuiAqueductRow returned %d rows, want at least 2", len(rows))
 	}
-	if !strings.Contains(rows[1], "Add retry logic to export pipeline") {
+	if !strings.Contains(rows[1], "Fix retry logic") {
 		t.Errorf("info line should include title, got: %q", rows[1])
 	}
 }
@@ -778,9 +779,10 @@ func TestViewAqueductArches_IdleAqueductShowsIdleLabel(t *testing.T) {
 }
 
 // TestViewAqueductArches_FitsIn80Cols verifies that all output lines from
-// viewAqueductArches fit within 80 columns on an 80-column terminal.
+// viewAqueductArches fit within 80 columns on an 80-column terminal, including
+// when the active aqueduct has a long title that exercises the titleW truncation path.
 //
-// Given: a dashboard with 2 aqueducts (one active, one idle)
+// Given: a dashboard with 2 aqueducts (one active with a realistic title, one idle)
 // When:  viewAqueductArches is called with m.width=80
 // Then:  every output line's visual width (stripped of ANSI) is ≤ 80
 func TestViewAqueductArches_FitsIn80Cols(t *testing.T) {
@@ -788,8 +790,59 @@ func TestViewAqueductArches_FitsIn80Cols(t *testing.T) {
 	m.width = 80
 	m.data = &DashboardData{
 		Cataractae: []CataractaeInfo{
-			{Name: "virgo", DropletID: "ci-abc12", Step: "implement", Steps: []string{"implement", "review"}},
+			{Name: "virgo", DropletID: "ci-abc12", Title: "Add retry logic to export pipeline", Step: "implement", Steps: []string{"implement", "review"}},
 			{Name: "marcia", Steps: []string{"implement", "review"}},
+		},
+	}
+
+	lines := m.viewAqueductArches()
+	for i, line := range lines {
+		visual := len([]rune(stripANSI(line)))
+		if visual > 80 {
+			t.Errorf("line[%d] visual width %d exceeds 80 cols: %q", i, visual, stripANSI(line))
+		}
+	}
+}
+
+// TestViewAqueductArches_TwoActiveWithTitles_FitsIn80Cols verifies that when two
+// active aqueducts each have a title, horizontal tiling still fits within 80 cols.
+//
+// Given: a dashboard with 2 active aqueducts each carrying a realistic title
+// When:  viewAqueductArches is called with m.width=80
+// Then:  every output line's visual width (stripped of ANSI) is ≤ 80
+func TestViewAqueductArches_TwoActiveWithTitles_FitsIn80Cols(t *testing.T) {
+	m := newDashboardTUIModel("", "")
+	m.width = 80
+	m.data = &DashboardData{
+		Cataractae: []CataractaeInfo{
+			{Name: "virgo", DropletID: "ci-abc12", Title: "Add retry logic to export pipeline", Step: "implement", Steps: []string{"implement", "review"}},
+			{Name: "marcia", DropletID: "ci-def34", Title: "Refactor auth middleware for compliance", Step: "review", Steps: []string{"implement", "review"}},
+		},
+	}
+
+	lines := m.viewAqueductArches()
+	for i, line := range lines {
+		visual := len([]rune(stripANSI(line)))
+		if visual > 80 {
+			t.Errorf("line[%d] visual width %d exceeds 80 cols: %q", i, visual, stripANSI(line))
+		}
+	}
+}
+
+// TestViewAqueductArches_TwoActiveOnFinalStep_FitsIn80Cols verifies that when two
+// active aqueducts are both on their final step (wfExit appended), horizontal
+// tiling still fits within 80 cols.
+//
+// Given: a dashboard with 2 active aqueducts both on their last step
+// When:  viewAqueductArches is called with m.width=80
+// Then:  every output line's visual width (stripped of ANSI) is ≤ 80
+func TestViewAqueductArches_TwoActiveOnFinalStep_FitsIn80Cols(t *testing.T) {
+	m := newDashboardTUIModel("", "")
+	m.width = 80
+	m.data = &DashboardData{
+		Cataractae: []CataractaeInfo{
+			{Name: "virgo", DropletID: "ci-abc12", Step: "merge", Steps: []string{"implement", "review", "merge"}},
+			{Name: "marcia", DropletID: "ci-def34", Step: "merge", Steps: []string{"implement", "review", "merge"}},
 		},
 	}
 

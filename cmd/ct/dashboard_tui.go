@@ -553,31 +553,6 @@ func (m dashboardTUIModel) viewAqueductArches() []string {
 	return lines
 }
 
-// viewDroughtArch renders a single unlabeled dry pillar arch centered in the terminal.
-// Called when all aqueducts are idle (drought state). Uses the same 36x12 pixel-art
-// mipmap as the active arch, rendered in dim styling.
-//
-// Returns 1 + mipmapLines lines: drought label + mipmap rows.
-func (m dashboardTUIModel) viewDroughtArch() []string {
-	mipmap := selectArchMipmap(archPillarW)
-	mipmapLines := strings.Split(strings.TrimRight(mipmap, "\n"), "\n")
-
-	leftPad := (m.width - archPillarW) / 2
-	if leftPad < 0 {
-		leftPad = 0
-	}
-	indent := strings.Repeat(" ", leftPad)
-
-	droughtLabel := tuiStyleDim.Render(tuiPadCenter("drought", m.width))
-
-	lines := make([]string, 0, len(mipmapLines)+1)
-	lines = append(lines, droughtLabel)
-	for _, line := range mipmapLines {
-		lines = append(lines, indent+line)
-	}
-	return lines
-}
-
 
 // viewPeekSelectOverlay renders a centered picker overlay listing every active aqueduct.
 // The user navigates with Up/Down, confirms with Enter, and cancels with Esc or q.
@@ -695,7 +670,7 @@ func (m dashboardTUIModel) tuiAqueductRow(ch CataractaeInfo, frame int) []string
 		infoBase := ch.DropletID + "  " + formatElapsed(ch.Elapsed)
 		// indent visual width: 2 chars (the compact indent).
 		const indentW = 2
-		titleW := m.width - indentW - len([]rune(infoBase)) - 2
+		titleW := (archPillarW + 2) - indentW - len([]rune(infoBase)) - 2
 		if titleW > 0 && ch.Title != "" {
 			title := ch.Title
 			if len([]rune(title)) > titleW {
@@ -744,9 +719,19 @@ func (m dashboardTUIModel) tuiAqueductRow(ch CataractaeInfo, frame int) []string
 		archLines[1] = padStr + animateTroughLine(mipmapLines[1], frame, mipmapW)
 	}
 
-	// Waterfall exit: append wfExit to the last mipmap row when on the final step.
+	// Waterfall exit: replace the last wfW visual chars of the last mipmap row with
+	// wfExit, keeping the arch line within archBlockW (archPillarW+2).
 	if isLastStep && len(archLines) > 0 {
-		archLines[len(archLines)-1] += wfExit
+		const wfW = 4 // visual width of wfExit (░▒▓▓)
+		trimTo := (archPillarW + 2) - wfW
+		if trimTo < 0 {
+			trimTo = 0
+		}
+		stripped := []rune(stripANSI(archLines[len(archLines)-1]))
+		if len(stripped) > trimTo {
+			stripped = stripped[:trimTo]
+		}
+		archLines[len(archLines)-1] = string(stripped) + wfExit
 	}
 
 	// Label line: single archPillarW-wide label.
