@@ -165,9 +165,34 @@ Web dashboard (if configured): `http://<host>:5737`
 
 ```bash
 ct status                        # High-level pipeline health
-ct doctor                        # Check prereqs, credentials, service env
-ct doctor --fix                  # Auto-repair common issues
+ct doctor                        # Check system health and configuration
+ct doctor --fix                  # Auto-repair common issues (credentials, permissions)
 ```
+
+### `ct doctor` Checks
+
+Verifies your Cistern installation is functional. Runs several categories of checks:
+
+**Credentials & Auth:**
+- Claude OAuth token (auto-refresh via `--fix` if expired)
+- API key fallback (`ANTHROPIC_API_KEY` in `~/.cistern/env`)
+- Provider binary availability for configured providers
+- Required env vars for each provider in `~/.cistern/env`
+
+**Configuration:**
+- Agent instruction files (`CLAUDE.md`, `AGENTS.md`, etc.) for each role in workflow
+- Skills installed at `~/.cistern/skills/<name>/`
+- Aqueduct YAML validity and configuration consistency
+
+**Runtime Health:**
+- Castellarius daemon status and scheduler liveness via health file
+- **Scheduler staleness**: warns if last poll cycle is too old (may indicate hung scheduler)
+- **Drought goroutine hung**: warns if drought hooks have been running > 10 minutes
+- Systemd service health (on systemd systems only)
+- Stalled droplets (informational warnings, does not fail the check)
+
+**With `--fix`:**
+Automatically repairs: missing agent files, credential token refresh, permissions, service enablement.
 
 ## Config
 

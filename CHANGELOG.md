@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+### Add ct doctor check for hung or silent Castellarius scheduler (ci-bwm5x)
+
+- `ct doctor` now reads `~/.cistern/castellarius.health` and reports three failure cases:
+  1. **File absent**: warns `⚠ castellarius health file missing: is castellarius running?` — indicates Castellarius may not be running
+  2. **Stale tick**: warns `⚠ castellarius: last tick Xm ago (expected <Ys) — scheduler may be hung` — indicates scheduler hasn't completed a poll cycle within expected time (threshold = 3× pollIntervalSec)
+  3. **Hung drought goroutine**: warns `⚠ castellarius: drought goroutine has been running Xm — possible hang` — indicates drought hooks have been active for more than 10 minutes
+- Passes silently when health file is present and all values are within expected bounds
+- This check is informational and does not cause `ct doctor` to fail
+- Handles corrupted/unreadable health files gracefully: warns `⚠ castellarius health file unreadable: <error>` instead of silently failing
+- Useful for diagnosing scheduler stalls: run `ct doctor` when droplets stop flowing or become stuck
+
 ### Track drought goroutine liveness in castellarius.health (ci-a6d81)
 
 - HealthFile schema extended with `droughtRunning: bool` and `droughtStartedAt: "<RFC3339>|null"` fields

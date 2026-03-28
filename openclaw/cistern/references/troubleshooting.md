@@ -1,6 +1,19 @@
 # Cistern Troubleshooting
 
-## Castellarius Not Running
+## Castellarius Not Running or Stalled
+
+**Quick diagnosis:**
+
+```bash
+ct doctor                        # Check scheduler health and runtime status
+```
+
+This will show three key issues:
+- **Health file missing** — Castellarius may not be running
+- **Scheduler stale** — Last poll cycle is too old; scheduler may be hung
+- **Drought goroutine hung** — Drought hooks running too long
+
+**If Castellarius has stopped:**
 
 ```bash
 ct castellarius status
@@ -11,14 +24,63 @@ systemctl --user start cistern-castellarius
 journalctl --user -u cistern-castellarius -f
 ```
 
+### Castellarius Health Warnings from ct doctor
+
+`ct doctor` monitors the castellarius.health file and warns about three specific issues:
+
+**⚠ castellarius health file missing: is castellarius running?**
+
+The health file doesn't exist, which may indicate Castellarius is not running or is stuck at startup.
+
+```bash
+# Check if Castellarius is running:
+ct castellarius status
+
+# If stopped, start it:
+ct castellarius start
+
+# If running, the file should be created within the poll interval (typically 10-30 seconds)
+# Wait and check:
+ls -la ~/.cistern/castellarius.health
+```
+
+**⚠ castellarius: last tick Xm ago (expected <Ys) — scheduler may be hung**
+
+The last completed poll cycle is older than expected (threshold = 3× the poll interval). This indicates the scheduler may be stuck and not processing droplets.
+
+```bash
+# Diagnosis:
+cat ~/.cistern/castellarius.health     # Check the health file
+journalctl --user -u cistern-castellarius -n 50   # Check recent logs for errors
+
+# If scheduler is hung, restart it:
+ct castellarius restart
+# or: systemctl --user restart cistern-castellarius
+```
+
+**⚠ castellarius: drought goroutine has been running Xm — possible hang**
+
+Drought hooks have been running for more than 10 minutes, suggesting they may be stuck.
+
+```bash
+# Check the health file for drought state:
+cat ~/.cistern/castellarius.health
+
+# Check logs for what the drought hook is doing:
+journalctl --user -u cistern-castellarius -f | grep -i "drought"
+
+# Kill the stuck goroutine by restarting Castellarius:
+ct castellarius restart
+```
+
 ### Castellarius Health File Missing
 
 If `ct castellarius status` displays `last tick: unknown (health file missing)`:
 
 ```bash
 # This can occur at startup (file is created on first poll cycle) or if the file was removed
-# The warning does not indicate an error — check if Castellarius is running:
-ct castellarius status
+# Run ct doctor for diagnosis:
+ct doctor
 
 # If Castellarius is running, the health file will be created within the configured
 # poll interval (typically 10-30 seconds):
