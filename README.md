@@ -9,7 +9,7 @@ Cistern is an agentic delivery system built around a water metaphor. Droplets of
 | Term | Meaning |
 |---|---|
 | **Droplet** | A unit of work — one issue, one feature, one fix. The atomic thing that flows. |
-| **Complexity** | A droplet's weight: standard, full, or critical. Controls which cataractae it passes through. |
+| **Complexity** | A droplet's weight: standard, full, or critical. All droplets run through all cataractae; critical droplets require human approval before delivery. |
 | **Filtration** | Optional LLM refinement step. Refine a raw idea before it enters the Cistern. |
 | **Cistern** | The reservoir. Droplets queue here waiting to flow into the aqueduct. |
 | **Drought** | Idle state. The cistern is dry. Drought protocols run maintenance automatically. A drought may also be a forced maintenance window where processing is stopped. |
@@ -56,29 +56,35 @@ ct dashboard
 
 ## How It Works
 
-Every droplet flows through a sequence of cataractae. Which cataractae run depends on the droplet's **complexity level**:
+Every droplet flows through the same sequence of cataractae, regardless of complexity level:
 
 ```
-standard:  implement → simplify → adversarial-review                                   → delivery → done
-full:      implement → simplify → adversarial-review → qa → docs                       → delivery → done
-critical:  implement → simplify → adversarial-review → qa → security-review → docs → [human gate] → delivery → done
+All:      implement → simplify → adversarial-review → qa → security-review → docs → delivery → done
+```
+
+Complexity levels control one thing: whether a droplet pauses for human approval before delivery.
+
+```
+standard:  No human gate → delivery
+full:      No human gate → delivery
+critical:  Pauses for human approval (ct droplet approve <id>) → delivery
 ```
 
 Filtration is an optional pre-intake step that refines vague ideas before they enter the pipeline. Use `ct droplet add --filter` to filtrate while adding, or `ct filter` to refine ideas standalone before deciding to add them.
 
 1. **Implement** (`implement`) — Reads the droplet description, implements the feature, writes tests, commits. Verifies every concrete deliverable from the description exists in the commit before signaling pass.
 
-2. **Simplify** (`simplify`) — Refines the implementation for clarity, consistency, and maintainability without changing behaviour. Runs only on branches with new commits since `origin/main`. *Skipped for standard droplets.*
+2. **Simplify** (`simplify`) — Refines the implementation for clarity, consistency, and maintainability without changing behaviour. Runs on all branches with new commits since `origin/main`.
 
-3. **Adversarial Review** (`adversarial-review`) — Receives *only the diff* — no codebase access, no author context. First verifies all required deliverables are present in the diff (Phase 0), then checks for bugs, security issues, missing tests, and logic errors. Context isolation enforced at the infrastructure level. *Skipped for standard droplets.*
+3. **Adversarial Review** (`adversarial-review`) — Receives *only the diff* — no codebase access, no author context. First verifies all required deliverables are present in the diff (Phase 0), then checks for bugs, security issues, missing tests, and logic errors. Context isolation enforced at the infrastructure level.
 
-4. **QA** (`qa`) — Active verification with full codebase access: runs tests, checks each deliverable exists via `grep`, verifies CLI flags, checks mirror file consistency. Recirculates to implement on any failure. *Skipped for standard droplets.*
+4. **QA** (`qa`) — Active verification with full codebase access: runs tests, checks each deliverable exists via `grep`, verifies CLI flags, checks mirror file consistency. Recirculates to implement on any failure.
 
-5. **Security Review** (`security-review`) — Adversarial security audit of the diff. Checks for auth bypass, injection, prompt injection, exposed secrets, resource safety, and path traversal. *Runs only for critical droplets.*
+5. **Security Review** (`security-review`) — Adversarial security audit of the diff. Checks for auth bypass, injection, prompt injection, exposed secrets, resource safety, and path traversal.
 
-6. **Docs** (`docs`) — Reviews the diff and updates documentation for all user-visible changes: README, CHANGELOG, CLI reference, config docs. Skips if there are no user-visible changes. *Skipped for standard droplets.*
+6. **Docs** (`docs`) — Reviews the diff and updates documentation for all user-visible changes: README, CHANGELOG, CLI reference, config docs. Skips if there are no user-visible changes.
 
-7. **Human Gate** — Critical droplets pause before delivery and require explicit human approval: `ct droplet approve <id>`. Ensures a human signs off before any critical change ships.
+7. **Human Gate** — Only critical droplets pause before delivery and require explicit human approval: `ct droplet approve <id>`. Ensures a human signs off before any critical change ships.
 
 8. **Delivery** (`delivery`) — Owns all git operations: rebase, PR creation, CI monitoring, PR review response, and merge. One agent handles the full branch-to-merged lifecycle. If a delivery agent stalls, the Castellarius detects and recovers automatically — see [Automatic Stuck Delivery Recovery](#automatic-stuck-delivery-recovery).
 
@@ -86,13 +92,13 @@ Filtration is an optional pre-intake step that refines vague ideas before they e
 
 ## Complexity Levels
 
-Set complexity when adding a droplet with `--complexity` (or `-x`):
+Set complexity when adding a droplet with `--complexity` (or `-x`). All droplets run through the same 7-step pipeline. Complexity controls whether a droplet requires human approval before delivery:
 
-| Level | Name | Pipeline |
+| Level | Name | Requires Human Approval |
 |---|---|---|
-| 1 | standard | implement → simplify → adversarial-review → delivery |
-| 2 | full *(default)* | implement → simplify → adversarial-review → qa → docs → delivery |
-| 3 | critical | implement → simplify → adversarial-review → qa → security-review → docs → [human] → delivery |
+| 1 | standard | No — auto-merges after delivery |
+| 2 | full *(default)* | No — auto-merges after delivery |
+| 3 | critical | Yes — pauses for `ct droplet approve <id>` before delivery |
 
 ```bash
 ct droplet add --title "Add pagination to list endpoint" --repo myproject --complexity standard

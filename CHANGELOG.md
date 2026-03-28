@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+### Remove skip_cataractae — always run the full pipeline (ci-8ot9m)
+
+All droplets now flow through the same 7-step pipeline regardless of complexity level. Complexity no longer gates which cataractae execute — it exclusively gates human approval before delivery.
+
+**Pipeline changes:**
+- `standard`, `full`, and `critical` droplets all run: implement → simplify → adversarial-review → qa → security-review → docs → delivery
+- Simplify, Adversarial Review, QA, Security Review, and Docs steps now run for all droplets (previously skipped for standard/full)
+- Complexity level (`--complexity`) now exclusively controls the human gate (critical only)
+- No references to skip_cataractae or skip_for remain in source, config, tests, or documentation
+
+**Configuration changes:**
+- `aqueduct.yaml`: removed all `skip_cataractae` and `skip_for` definitions
+- Complexity levels reduced to a simple flag in `aqueduct.yaml`: only `critical` has `require_human: true`
+
 ### Add ct doctor check for hung or silent Castellarius scheduler (ci-bwm5x)
 
 - `ct doctor` now reads `~/.cistern/castellarius.health` and reports three failure cases:
