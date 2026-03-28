@@ -625,18 +625,19 @@ func (m dashboardTUIModel) viewAqueductProgress(ch CataractaeInfo) string {
 		// Top row: spaces across the full segment width.
 		topRow.WriteString(strings.Repeat(" ", segW))
 
-		// Bottom row: left │ only at start of bar or after a closed gate.
-		leftRaised := i > 0 && (i-1) < activeIdx
+		// Left │ only at the very start of the bar (i==0).
+		// After a raised gate: no wall (seamless fill).
+		// After a closed gate: ][ IS the boundary — no additional │.
 		rightRaised := i < n-1 && i < activeIdx
 
-		if !leftRaised {
+		if i == 0 {
 			botRow.WriteString(wallStyle(i).Render("│"))
 		}
 
-		// Fill: full segW minus left wall (if present) minus right wall (if present).
+		// Fill width: segW minus left │ (only at i==0) minus right │ (when not right-raised).
 		innerW := segW
-		if !leftRaised {
-			innerW--
+		if i == 0 {
+			innerW-- // left wall at start
 		}
 		if !rightRaised {
 			innerW--
@@ -666,7 +667,10 @@ func (m dashboardTUIModel) viewAqueductProgress(ch CataractaeInfo) string {
 			}
 		}
 
-		if !rightRaised {
+		// Right │ only at the very end of the bar.
+		// Closed gate ahead: ][ of next iteration is the boundary — no │ here.
+		// Raised gate ahead: seamless — no │.
+		if i == n-1 {
 			botRow.WriteString(wallStyle(i).Render("│"))
 		}
 	}
