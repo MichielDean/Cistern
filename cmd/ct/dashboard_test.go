@@ -900,7 +900,7 @@ func TestTuiAqueductRow_LineCount(t *testing.T) {
 			lines := m.tuiAqueductRow(ch, 0)
 			// 3 header rows + 12 mipmap lines (36x12 mipmap — arch selected by
 			// archPillarW=36, not terminal width)
-			const wantLines = 15
+			const wantLines = 9
 			if len(lines) != wantLines {
 				t.Errorf("tuiAqueductRow() returned %d lines, want %d", len(lines), wantLines)
 			}
@@ -942,10 +942,10 @@ func TestTuiAqueductRow_MipmapArchLinesHaveExpectedCount(t *testing.T) {
 	lines := m.tuiAqueductRow(ch, 0)
 
 	const headerRows = 3
-	const mipmapLines = 12 // 36x12 mipmap — selected by archPillarW=36
+	const mipmapLines = 6 // 20x7 mipmap — selected by archPillarW=20
 	const wantTotal = headerRows + mipmapLines
 	if len(lines) != wantTotal {
-		t.Errorf("tuiAqueductRow() returned %d lines, want %d (3 header + 12 mipmap)", len(lines), wantTotal)
+		t.Errorf("tuiAqueductRow() returned %d lines, want %d (3 header + 6 mipmap)", len(lines), wantTotal)
 	}
 }
 
