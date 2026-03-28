@@ -1205,20 +1205,20 @@ var dropletPeekCmd = &cobra.Command{
 			}
 			logDir := sessionLogDir
 			if logDir == "" {
-				home, herr := os.UserHomeDir()
-				if herr != nil {
-					return fmt.Errorf("cannot determine home directory: %w", herr)
+				home, err := os.UserHomeDir()
+				if err != nil {
+					return fmt.Errorf("cannot determine home directory: %w", err)
 				}
 				logDir = filepath.Join(home, ".cistern", "session-logs")
 			}
 			logPath := filepath.Join(logDir, session+".log")
-			f, rerr := os.Open(logPath)
-			if rerr != nil {
-				if os.IsNotExist(rerr) {
+			f, err := os.Open(logPath)
+			if err != nil {
+				if os.IsNotExist(err) {
 					fmt.Printf("No session log found at %s\n", logPath)
 					return nil
 				}
-				return rerr
+				return err
 			}
 			defer f.Close()
 			_, err = io.Copy(os.Stdout, f)
