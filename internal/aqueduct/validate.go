@@ -108,7 +108,7 @@ func isTerminal(name string) bool {
 // ValidateAqueductConfig checks a AqueductConfig for structural errors.
 func ValidateAqueductConfig(cfg *AqueductConfig) error {
 	if len(cfg.Repos) == 0 {
-		return fmt.Errorf("farm config: at least one repo is required")
+		return fmt.Errorf("cistern config: at least one repo is required")
 	}
 
 	repoNames := make(map[string]bool, len(cfg.Repos))
@@ -116,16 +116,16 @@ func ValidateAqueductConfig(cfg *AqueductConfig) error {
 
 	for i, repo := range cfg.Repos {
 		if repo.Name == "" {
-			return fmt.Errorf("farm config: repo[%d] name is required", i)
+			return fmt.Errorf("cistern config: repo[%d] name is required", i)
 		}
 		if repoNames[repo.Name] {
-			return fmt.Errorf("farm config: duplicate repo name %q", repo.Name)
+			return fmt.Errorf("cistern config: duplicate repo name %q", repo.Name)
 		}
 		repoNames[repo.Name] = true
 
 		if repo.Prefix != "" {
 			if other, ok := prefixes[repo.Prefix]; ok {
-				return fmt.Errorf("farm config: repos %q and %q share prefix %q", other, repo.Name, repo.Prefix)
+				return fmt.Errorf("cistern config: repos %q and %q share prefix %q", other, repo.Name, repo.Prefix)
 			}
 			prefixes[repo.Prefix] = repo.Name
 		}
@@ -134,12 +134,12 @@ func ValidateAqueductConfig(cfg *AqueductConfig) error {
 		cataractae := repo.Cataractae
 		if len(repo.Names) > 0 {
 			if cataractae > 0 && cataractae != len(repo.Names) {
-				return fmt.Errorf("farm config: repo %q: cataractae=%d but names has %d entries", repo.Name, cataractae, len(repo.Names))
+				return fmt.Errorf("cistern config: repo %q: cataractae=%d but names has %d entries", repo.Name, cataractae, len(repo.Names))
 			}
 			cataractae = len(repo.Names)
 		}
 		if cataractae <= 0 {
-			return fmt.Errorf("farm config: repo %q: cataractae must be > 0", repo.Name)
+			return fmt.Errorf("cistern config: repo %q: cataractae must be > 0", repo.Name)
 		}
 	}
 

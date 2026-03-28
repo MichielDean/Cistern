@@ -154,7 +154,7 @@ func TestValidateDuplicateStepName(t *testing.T) {
 
 // --- AqueductConfig validation tests ---
 
-func TestValidateFarmConfig_Valid(t *testing.T) {
+func TestValidateCisternConfig_Valid(t *testing.T) {
 	cfg := &AqueductConfig{
 		Repos: []RepoConfig{
 			{Name: "ScaledTest", Cataractae: 2, Names: []string{"cascade", "tributary"}, Prefix: "st"},
@@ -167,7 +167,7 @@ func TestValidateFarmConfig_Valid(t *testing.T) {
 	}
 }
 
-func TestValidateFarmConfig_NoRepos(t *testing.T) {
+func TestValidateCisternConfig_NoRepos(t *testing.T) {
 	cfg := &AqueductConfig{MaxCataractae: 1}
 	err := ValidateAqueductConfig(cfg)
 	if err == nil || !strings.Contains(err.Error(), "at least one repo") {
@@ -175,7 +175,7 @@ func TestValidateFarmConfig_NoRepos(t *testing.T) {
 	}
 }
 
-func TestValidateFarmConfig_MaxCataractaeIsNoOp(t *testing.T) {
+func TestValidateCisternConfig_MaxCataractaeIsNoOp(t *testing.T) {
 	// max_cataractae is deprecated — setting it to 0 should not cause a validation error.
 	// Capping is per-repo via pool size.
 	cfg := &AqueductConfig{
@@ -187,7 +187,7 @@ func TestValidateFarmConfig_MaxCataractaeIsNoOp(t *testing.T) {
 	}
 }
 
-func TestValidateFarmConfig_DuplicateRepoName(t *testing.T) {
+func TestValidateCisternConfig_DuplicateRepoName(t *testing.T) {
 	cfg := &AqueductConfig{
 		Repos: []RepoConfig{
 			{Name: "dup", Cataractae: 1, Prefix: "a"},
@@ -201,7 +201,7 @@ func TestValidateFarmConfig_DuplicateRepoName(t *testing.T) {
 	}
 }
 
-func TestValidateFarmConfig_DuplicatePrefix(t *testing.T) {
+func TestValidateCisternConfig_DuplicatePrefix(t *testing.T) {
 	cfg := &AqueductConfig{
 		Repos: []RepoConfig{
 			{Name: "r1", Cataractae: 1, Prefix: "shared"},
@@ -215,7 +215,7 @@ func TestValidateFarmConfig_DuplicatePrefix(t *testing.T) {
 	}
 }
 
-func TestValidateFarmConfig_WorkersNamesMismatch(t *testing.T) {
+func TestValidateCisternConfig_WorkersNamesMismatch(t *testing.T) {
 	cfg := &AqueductConfig{
 		Repos: []RepoConfig{
 			{Name: "r1", Cataractae: 3, Names: []string{"a", "b"}},
@@ -228,7 +228,7 @@ func TestValidateFarmConfig_WorkersNamesMismatch(t *testing.T) {
 	}
 }
 
-func TestValidateFarmConfig_ZeroWorkers(t *testing.T) {
+func TestValidateCisternConfig_ZeroWorkers(t *testing.T) {
 	cfg := &AqueductConfig{
 		Repos:           []RepoConfig{{Name: "r1", Cataractae: 0}},
 		MaxCataractae: 1,
@@ -239,7 +239,7 @@ func TestValidateFarmConfig_ZeroWorkers(t *testing.T) {
 	}
 }
 
-func TestValidateFarmConfig_NamesOnly(t *testing.T) {
+func TestValidateCisternConfig_NamesOnly(t *testing.T) {
 	// Names specified, workers omitted — should infer worker count from names.
 	cfg := &AqueductConfig{
 		Repos: []RepoConfig{
@@ -252,7 +252,7 @@ func TestValidateFarmConfig_NamesOnly(t *testing.T) {
 	}
 }
 
-func TestValidateFarmConfig_MissingRepoName(t *testing.T) {
+func TestValidateCisternConfig_MissingRepoName(t *testing.T) {
 	cfg := &AqueductConfig{
 		Repos:           []RepoConfig{{Cataractae: 1}},
 		MaxCataractae: 1,

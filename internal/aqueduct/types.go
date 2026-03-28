@@ -136,7 +136,7 @@ type ProviderConfig struct {
 	Env map[string]string `yaml:"env,omitempty"`
 }
 
-// RepoConfig defines a repository managed by the farm.
+// RepoConfig defines a repository managed by the Castellarius.
 type RepoConfig struct {
 	Name         string          `yaml:"name"`
 	URL          string          `yaml:"url"`

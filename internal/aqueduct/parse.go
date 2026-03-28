@@ -34,11 +34,11 @@ func ParseWorkflowBytes(data []byte) (*Workflow, error) {
 func ParseAqueductConfig(path string) (*AqueductConfig, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return nil, fmt.Errorf("reading farm config: %w", err)
+		return nil, fmt.Errorf("reading cistern config: %w", err)
 	}
 	var cfg AqueductConfig
 	if err := yaml.Unmarshal(data, &cfg); err != nil {
-		return nil, fmt.Errorf("parsing farm config YAML: %w", err)
+		return nil, fmt.Errorf("parsing cistern config YAML: %w", err)
 	}
 	if err := ValidateAqueductConfig(&cfg); err != nil {
 		return nil, err
