@@ -94,8 +94,12 @@ func New(dbPath, prefix string) (*Client, error) {
 	var migrationDone int
 	db.QueryRow(`SELECT COUNT(*) FROM _schema_migrations WHERE id = 'complexity_renumber'`).Scan(&migrationDone)
 	if migrationDone == 0 {
-		db.Exec(`UPDATE droplets SET complexity = complexity - 1 WHERE complexity >= 2`)
-		db.Exec(`INSERT OR IGNORE INTO _schema_migrations (id) VALUES ('complexity_renumber')`)
+		tx, err := db.Begin()
+		if err == nil {
+			tx.Exec(`UPDATE droplets SET complexity = complexity - 1 WHERE complexity >= 2`)
+			tx.Exec(`INSERT OR IGNORE INTO _schema_migrations (id) VALUES ('complexity_renumber')`)
+			tx.Commit()
+		}
 	}
 	db.Exec(`ALTER TABLE droplets ADD COLUMN outcome TEXT DEFAULT NULL`)
 	// Vocabulary migrations: update legacy status values to canonical vocabulary.
