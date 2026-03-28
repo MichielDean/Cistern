@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/MichielDean/cistern/internal/aqueduct"
+	"github.com/MichielDean/cistern/internal/castellarius"
 	"github.com/MichielDean/cistern/internal/cistern"
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
@@ -182,7 +183,10 @@ func fixCisternDB(dbFile string) error {
 //  7. Skills installed at ~/.cistern/skills/<name>/SKILL.md
 //  8. Aqueduct YAML validity (one check per repo)
 //  9. Castellarius process (informational, does not fail the check)
-// 10. Stalled in_progress droplets (warnings only, does not fail the check)
+// 10. Castellarius health file (warnings only, does not fail the check)
+// 11. Systemd service health (only on systemd systems)
+// 12. Repo sandbox health
+// 13. Stalled in_progress droplets (warnings only, does not fail the check)
 func runDoctorExtendedChecks(cfg *aqueduct.AqueductConfig, cfgPath, home, dbPath string) bool {
 	ok := true
 	cfgDir := filepath.Dir(cfgPath)
@@ -340,13 +344,16 @@ func runDoctorExtendedChecks(cfg *aqueduct.AqueductConfig, cfgPath, home, dbPath
 	// Check 9: Castellarius process (informational — does not affect ok).
 	checkCastellariusProcess()
 
-	// Check 10: Systemd service health (only on systemd systems).
+	// Check 10: Castellarius health file (informational — does not affect ok).
+	checkCastellariusHealth(dbPath)
+
+	// Check 11: Systemd service health (only on systemd systems).
 	checkSystemdService(cfg)
 
-	// Check 11: Repo sandbox health — one check per configured repo.
+	// Check 12: Repo sandbox health — one check per configured repo.
 	checkRepoSandboxes(cfg)
 
-	// Check 12: Stalled droplets (warnings only — does not affect ok).
+	// Check 13: Stalled droplets (warnings only — does not affect ok).
 	checkStalledDroplets(dbPath)
 
 	return ok
@@ -407,6 +414,39 @@ func checkCastellariusProcess() {
 	}
 	pid := strings.SplitN(strings.TrimSpace(string(out)), "\n", 2)[0]
 	fmt.Printf("\u2713 castellarius: running (pid %s)\n", pid)
+}
+
+// checkCastellariusHealth reads {cistern_db_dir}/castellarius.health and warns
+// about three failure cases:
+//  1. File absent — castellarius may not be running.
+//  2. lastTickAt is more than 3× pollIntervalSec in the past — scheduler may be hung.
+//  3. droughtRunning is true and elapsed time exceeds 10 minutes — goroutine may be hung.
+//
+// Passes silently when the file is present and all values are within healthy bounds.
+// This check is informational and does not contribute to pass/fail.
+func checkCastellariusHealth(dbPath string) {
+	hf, err := castellarius.ReadHealthFile(filepath.Dir(dbPath))
+	if err != nil {
+		if os.IsNotExist(err) {
+			fmt.Printf("\u26A0 castellarius health file missing: is castellarius running?\n")
+		}
+		return
+	}
+
+	elapsed := time.Since(hf.LastTickAt)
+	threshold := time.Duration(hf.PollIntervalSec) * time.Second * 3
+	if elapsed > threshold {
+		fmt.Printf("\u26A0 castellarius: last tick %dm ago (expected <%ds) \u2014 scheduler may be hung\n",
+			int(elapsed.Minutes()), hf.PollIntervalSec*3)
+	}
+
+	if hf.DroughtRunning && hf.DroughtStartedAt != nil {
+		droughtElapsed := time.Since(*hf.DroughtStartedAt)
+		if droughtElapsed > 10*time.Minute {
+			fmt.Printf("\u26A0 castellarius: drought goroutine has been running %dm \u2014 possible hang\n",
+				int(droughtElapsed.Minutes()))
+		}
+	}
 }
 
 // checkSystemdService verifies the Castellarius systemd user service is installed,
