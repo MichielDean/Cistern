@@ -516,7 +516,7 @@ ct droplet peek <id>                                              Attach read-on
 ct droplet peek <id> --snapshot                                   Capture a static snapshot instead of live attach
 ct droplet peek <id> --snapshot --lines 100                       With --snapshot: show only last 100 lines (default: full scrollback)
 ct droplet peek <id> --snapshot --follow                          With --snapshot: re-capture every 3 seconds (Ctrl-C to stop)
-ct droplet peek <id> --snapshot --raw                             With --snapshot: include ANSI color codes
+ct droplet peek <id> --raw                                        Read the session log file directly without requiring tmux (useful for programmatic consumption)
 
 # Droplet issues — structured findings from adversarial-review
 ct droplet issue add <id> "<description>"                         File a finding

@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+### Add ct droplet peek --raw flag: read session log directly without tmux (ci-7f5bz)
+- New `--raw` flag for `ct droplet peek` reads the session log file directly instead of attaching to tmux
+- Reads from `~/.cistern/session-logs/<aqueduct>.log` (configurable via `CT_SESSION_LOG_DIR`)
+- Useful for programmatic consumption and non-interactive environments (CI/CD scripts, log aggregation)
+- Mutually exclusive with `--snapshot` and `--follow` flags
+- Output is plain text (preserves any terminal sequences present in the log)
+- If no session log exists, prints a helpful message with the log path
+- Existing `ct droplet peek` behavior unchanged when `--raw` is not specified
+
 ### Dashboard TUI: replace arch/mipmap with water-gradient progress bar (ci-huu18)
 - All mipmap, photo, and pixel-art arch rendering has been dropped in favour of a clean native lipgloss-only layout — no external tools (chafa), no embedded pixel maps
 - **Active aqueducts**: each flowing aqueduct renders a two-line block — a header (`name  repo  droplet-id  step  elapsed`) followed by a water-gradient progress bar (deep teal `#1a7a96` → bright cyan `#a8eeff`) with a `N/M` step counter, and the full pipeline label below with the active step highlighted in bold green
