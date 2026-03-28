@@ -506,7 +506,7 @@ func (m dashboardTUIModel) viewIdleAqueductRow(ch CataractaeInfo) string {
 		status = tuiStyleGreen.Render("▶  " + ch.Step)
 	}
 	return fmt.Sprintf("  %s  %s  %s",
-		tuiStyleDim.Render(name),
+		name,
 		tuiStyleDim.Render(repo),
 		tuiStyleDim.Render(status),
 	)
