@@ -429,15 +429,19 @@ func checkCastellariusHealth(dbPath string) {
 	if err != nil {
 		if os.IsNotExist(err) {
 			fmt.Printf("\u26A0 castellarius health file missing: is castellarius running?\n")
+		} else {
+			fmt.Printf("\u26A0 castellarius health file unreadable: %v\n", err)
 		}
 		return
 	}
 
 	elapsed := time.Since(hf.LastTickAt)
-	threshold := time.Duration(hf.PollIntervalSec) * time.Second * 3
-	if elapsed > threshold {
-		fmt.Printf("\u26A0 castellarius: last tick %dm ago (expected <%ds) \u2014 scheduler may be hung\n",
-			int(elapsed.Minutes()), hf.PollIntervalSec*3)
+	if hf.PollIntervalSec > 0 {
+		threshold := time.Duration(hf.PollIntervalSec) * time.Second * 3
+		if elapsed > threshold {
+			fmt.Printf("\u26A0 castellarius: last tick %ds ago (expected <%ds) \u2014 scheduler may be hung\n",
+				int(elapsed.Seconds()), hf.PollIntervalSec*3)
+		}
 	}
 
 	if hf.DroughtRunning && hf.DroughtStartedAt != nil {
