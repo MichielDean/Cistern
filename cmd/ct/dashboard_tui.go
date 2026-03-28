@@ -491,14 +491,11 @@ func (m dashboardTUIModel) viewAqueductProgress(ch CataractaeInfo) string {
 		w = 20
 	}
 
-	// Header line: name  repo  droplet  step  elapsed
+	// Header line: name  droplet  elapsed
 	const nameW = 10
-	const repoW = 10
 	name := g.Render(padRight(ch.Name, nameW))
-	repo := dim.Render(padRight(ch.RepoName, repoW))
 	elapsed := dim.Render(formatElapsed(ch.Elapsed))
-	step := g.Bold(true).Render(ch.Step)
-	header := fmt.Sprintf("  %s  %s  %s  %s  %s", name, repo, dim.Render(ch.DropletID), step, elapsed)
+	header := fmt.Sprintf("  %s  %s  %s", name, dim.Render(ch.DropletID), elapsed)
 
 	// Progress bar: fixed width, water colors
 	barW := 48
@@ -540,37 +537,38 @@ func (m dashboardTUIModel) viewAqueductProgress(ch CataractaeInfo) string {
 	}
 	bar.WriteString(fmt.Sprintf("  %s", dim.Render(fmt.Sprintf("%d/%d", ch.CataractaeIndex, total))))
 
-	// Pipeline steps: all steps, active one highlighted
-	effW := m.width - 2
-	if effW <= 0 {
-		effW = 80
-	}
-	var lblSB strings.Builder
-	lblSB.WriteString("  ")
-	usedW := 2
+	// Step label: show active step bold, rest dim, truncated to terminal width
+	stepLabel := pipelineLabel(ch, m.width-2, g, dim)
+
+	return header + "\n" + bar.String() + "\n" + "  " + stepLabel
+}
+
+// pipelineLabel returns the pipeline steps as "step1 → step2 → ..." with the
+// active step bold+green, truncated to maxW visual chars.
+func pipelineLabel(ch CataractaeInfo, maxW int, g, dim lipgloss.Style) string {
+	var sb strings.Builder
+	used := 0
 	for i, s := range ch.Steps {
 		sep := ""
 		if i > 0 {
 			sep = " → "
 		}
-		part := sep + s
-		partW := len([]rune(part))
-		if usedW+partW > effW {
-			lblSB.WriteString(dim.Render("…"))
+		partW := len([]rune(sep)) + len([]rune(s))
+		if used+partW > maxW {
+			sb.WriteString(dim.Render("…"))
 			break
 		}
-		if s == ch.Step && ch.DropletID != "" {
-			if i > 0 {
-				lblSB.WriteString(dim.Render(" → "))
-			}
-			lblSB.WriteString(g.Bold(true).Render(s))
-		} else {
-			lblSB.WriteString(dim.Render(part))
+		if i > 0 {
+			sb.WriteString(dim.Render(sep))
 		}
-		usedW += partW
+		if s == ch.Step && ch.DropletID != "" {
+			sb.WriteString(g.Bold(true).Render(s))
+		} else {
+			sb.WriteString(dim.Render(s))
+		}
+		used += partW
 	}
-
-	return header + "\n" + bar.String() + "\n" + lblSB.String()
+	return sb.String()
 }
 
 // interpolateHex linearly interpolates between two hex colors (#rrggbb) at t in [0,1].
