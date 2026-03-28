@@ -40,7 +40,6 @@ type WorkflowCataractae struct {
 	Context ContextLevel `yaml:"context,omitempty"`
 
 	TimeoutMinutes int        `yaml:"timeout_minutes,omitempty"`
-	SkipFor        []int      `yaml:"skip_for,omitempty"` // complexity levels that skip this step
 	Skills         []SkillRef `yaml:"skills,omitempty"`
 	OnPass         string     `yaml:"on_pass,omitempty"`
 	OnFail         string     `yaml:"on_fail,omitempty"`
@@ -48,11 +47,10 @@ type WorkflowCataractae struct {
 	OnEscalate     string     `yaml:"on_escalate,omitempty"`
 }
 
-// ComplexityLevel defines skip rules for a single complexity tier.
+// ComplexityLevel configures a single complexity tier.
 type ComplexityLevel struct {
-	Level        int      `yaml:"level"`
-	SkipCataractae  []string `yaml:"skip_cataractae"`
-	RequireHuman bool     `yaml:"require_human,omitempty"`
+	Level        int  `yaml:"level"`
+	RequireHuman bool `yaml:"require_human,omitempty"`
 }
 
 // ComplexityConfig holds the three complexity tiers for a aqueduct.
@@ -75,34 +73,6 @@ func (wf *Workflow) UniqueIdentities() []string {
 	}
 	sort.Strings(ids)
 	return ids
-}
-
-// SkipCataractaeForLevel returns cataractae names that should be skipped for the given
-// complexity level, derived from each cataractae's skip_for field.
-func (wf *Workflow) SkipCataractaeForLevel(level int) []string {
-	var skipped []string
-	for _, step := range wf.Cataractae {
-		for _, cx := range step.SkipFor {
-			if cx == level {
-				skipped = append(skipped, step.Name)
-				break
-			}
-		}
-	}
-	return skipped
-}
-
-// SkipCataractaeForLevel returns cataractae names in the config block that are skipped
-// for the given complexity level: 1=standard, 2=full, 3=critical.
-func (cc ComplexityConfig) SkipCataractaeForLevel(level int) []string {
-	switch level {
-	case 1:
-		return cc.Standard.SkipCataractae
-	case 3:
-		return cc.Critical.SkipCataractae
-	default:
-		return cc.Full.SkipCataractae
-	}
 }
 
 // RequireHumanForLevel returns whether a human gate is required for a given complexity level.

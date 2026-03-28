@@ -3,13 +3,10 @@ name: feature
 complexity:
   standard:
     level: 1
-    skip_cataractae: [qa, security-review]
   full:
     level: 2
-    skip_cataractae: [security-review]
   critical:
     level: 3
-    skip_cataractae: []
     require_human: true
 
 cataractae:
@@ -37,7 +34,6 @@ cataractae:
       - name: cistern-git
       - name: code-simplifier
     timeout_minutes: 20
-    skip_for: [] # all complexity levels run simplification
     on_pass: adversarial-review
     on_fail: implement
     on_recirculate: implement
@@ -54,7 +50,6 @@ cataractae:
       - name: cistern-git
       - name: cistern-github
     timeout_minutes: 15
-    skip_for: [] # all complexity levels run adversarial-review
     on_pass: qa
     on_fail: implement
     on_recirculate: implement
@@ -69,7 +64,6 @@ cataractae:
       - name: cistern-droplet-state
       - name: cistern-git
     timeout_minutes: 20
-    skip_for: [1] # standard droplets skip qa
     on_pass: security-review
     on_fail: implement
     on_recirculate: implement
@@ -83,7 +77,6 @@ cataractae:
     skills:
       - name: cistern-droplet-state
     timeout_minutes: 15
-    skip_for: [1, 2] # only critical droplets run security review
     on_pass: docs
     on_fail: implement
     on_recirculate: implement
@@ -98,7 +91,6 @@ cataractae:
       - name: cistern-droplet-state
       - name: cistern-git
     timeout_minutes: 20
-    skip_for: [] # all complexity levels run docs
     on_pass: delivery
     on_fail: implement
     on_recirculate: implement

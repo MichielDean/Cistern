@@ -1185,83 +1185,30 @@ func TestLookupStep(t *testing.T) {
 	}
 }
 
-// --- complexity skip tests ---
+// --- complexity / human-gate tests ---
 
-func complexityWorkflow() *aqueduct.Workflow {
+// criticalWorkflow returns a workflow with RequireHuman for critical (level 3)
+// droplets and no skip rules on any step.
+func criticalWorkflow() *aqueduct.Workflow {
 	return &aqueduct.Workflow{
 		Name: "feature",
 		Cataractae: []aqueduct.WorkflowCataractae{
 			{Name: "implement", Type: aqueduct.CataractaeTypeAgent, OnPass: "adversarial-review", OnFail: "blocked"},
-			{Name: "adversarial-review", Type: aqueduct.CataractaeTypeAgent, SkipFor: []int{}, OnPass: "qa", OnFail: "implement", OnRecirculate: "implement"},
-			{Name: "qa", Type: aqueduct.CataractaeTypeAgent, SkipFor: []int{1}, OnPass: "docs", OnFail: "implement"},
-			{Name: "docs", Type: aqueduct.CataractaeTypeAgent, SkipFor: []int{}, OnPass: "delivery", OnFail: "implement", OnRecirculate: "implement", OnEscalate: "human"},
+			{Name: "adversarial-review", Type: aqueduct.CataractaeTypeAgent, OnPass: "qa", OnFail: "implement", OnRecirculate: "implement"},
+			{Name: "qa", Type: aqueduct.CataractaeTypeAgent, OnPass: "docs", OnFail: "implement"},
+			{Name: "docs", Type: aqueduct.CataractaeTypeAgent, OnPass: "delivery", OnFail: "implement", OnRecirculate: "implement", OnEscalate: "human"},
 			{Name: "delivery", Type: aqueduct.CataractaeTypeAgent, OnPass: "done", OnRecirculate: "implement", OnEscalate: "human"},
 		},
 		Complexity: aqueduct.ComplexityConfig{
-			Standard: aqueduct.ComplexityLevel{Level: 1, SkipCataractae: []string{"qa"}},
-			Full:     aqueduct.ComplexityLevel{Level: 2, SkipCataractae: []string{}},
-			Critical: aqueduct.ComplexityLevel{Level: 3, SkipCataractae: []string{}, RequireHuman: true},
+			Standard: aqueduct.ComplexityLevel{Level: 1},
+			Full:     aqueduct.ComplexityLevel{Level: 2},
+			Critical: aqueduct.ComplexityLevel{Level: 3, RequireHuman: true},
 		},
-	}
-}
-
-func TestAdvanceSkipped_StandardSkipsQAOnly(t *testing.T) {
-	wf := complexityWorkflow()
-	skipSteps := wf.Complexity.SkipCataractaeForLevel(1) // ["qa"]
-
-	// After adversarial-review passes, qa is skipped → advance to docs.
-	got := advanceSkippedCataractae("qa", wf, skipSteps)
-	if got != "docs" {
-		t.Errorf("advanceSkippedCataractae(qa, standard) = %q, want %q", got, "docs")
-	}
-
-	// adversarial-review itself is NOT skipped for standard.
-	got = advanceSkippedCataractae("adversarial-review", wf, skipSteps)
-	if got != "adversarial-review" {
-		t.Errorf("advanceSkippedCataractae(adversarial-review, standard) = %q, want %q", got, "adversarial-review")
-	}
-}
-
-func TestAdvanceSkipped_FullSkipsNothing(t *testing.T) {
-	wf := complexityWorkflow()
-	skipSteps := wf.Complexity.SkipCataractaeForLevel(2) // [] — full skips nothing
-
-	got := advanceSkippedCataractae("adversarial-review", wf, skipSteps)
-	if got != "adversarial-review" {
-		t.Errorf("advanceSkippedCataractae(adversarial-review, full) = %q, want %q", got, "adversarial-review")
-	}
-
-	got = advanceSkippedCataractae("qa", wf, skipSteps)
-	if got != "qa" {
-		t.Errorf("advanceSkippedCataractae(qa, full) = %q, want %q", got, "qa")
-	}
-}
-
-func TestAdvanceSkipped_CriticalSkipsNothing(t *testing.T) {
-	wf := complexityWorkflow()
-	skipSteps := wf.Complexity.SkipCataractaeForLevel(3) // [] — critical skips nothing
-
-	got := advanceSkippedCataractae("adversarial-review", wf, skipSteps)
-	if got != "adversarial-review" {
-		t.Errorf("advanceSkippedCataractae(adversarial-review, critical) = %q, want %q", got, "adversarial-review")
-	}
-
-	got = advanceSkippedCataractae("qa", wf, skipSteps)
-	if got != "qa" {
-		t.Errorf("advanceSkippedCataractae(qa, critical) = %q, want %q", got, "qa")
-	}
-}
-
-func TestAdvanceSkipped_NoSkipList(t *testing.T) {
-	wf := complexityWorkflow()
-	got := advanceSkippedCataractae("adversarial-review", wf, nil)
-	if got != "adversarial-review" {
-		t.Errorf("advanceSkippedCataractae with nil skip = %q, want %q", got, "adversarial-review")
 	}
 }
 
 func TestComplexity_CriticalHumanGateBeforeMerge(t *testing.T) {
-	wf := complexityWorkflow()
+	wf := criticalWorkflow()
 	client := newMockClient()
 	client.readyItems = []*cistern.Droplet{
 		{ID: "crit-1", CurrentCataractae: "docs", Complexity: 3},
@@ -1296,14 +1243,13 @@ func TestComplexity_CriticalHumanGateBeforeMerge(t *testing.T) {
 }
 
 func TestTick_StandardDrop_AdvancesToAdversarialReview(t *testing.T) {
-	wf := complexityWorkflow()
+	wf := criticalWorkflow()
 	client := newMockClient()
 	client.readyItems = []*cistern.Droplet{
 		{ID: "std-1", Complexity: 1},
 	}
 
 	runner := newMockRunner(client)
-	// standard(1) does NOT skip adversarial-review: implement → adversarial-review
 
 	config := aqueduct.AqueductConfig{
 		Repos: []aqueduct.RepoConfig{
@@ -1319,55 +1265,19 @@ func TestTick_StandardDrop_AdvancesToAdversarialReview(t *testing.T) {
 	if !runner.waitCalls(1, time.Second) {
 		t.Fatal("timed out")
 	}
-	// implement passed → adversarial-review is NOT skipped for standard(1) → advance there.
+	// implement passed → advance to adversarial-review.
 	sched.Tick(context.Background())
 	time.Sleep(10 * time.Millisecond)
 
 	client.mu.Lock()
 	defer client.mu.Unlock()
 	if client.steps["std-1"] != "adversarial-review" {
-		t.Errorf("expected standard droplet at adversarial-review (not skipped), got %q", client.steps["std-1"])
-	}
-}
-
-func TestTick_StandardDrop_SkipsQA(t *testing.T) {
-	wf := complexityWorkflow()
-	client := newMockClient()
-	// Pre-position the droplet at adversarial-review so we can observe qa being skipped.
-	client.readyItems = []*cistern.Droplet{
-		{ID: "std-2", CurrentCataractae: "adversarial-review", Complexity: 1},
-	}
-
-	runner := newMockRunner(client)
-	// adversarial-review passes → qa (skipped for standard=1) → advance to docs.
-
-	config := aqueduct.AqueductConfig{
-		Repos: []aqueduct.RepoConfig{
-			{Name: "test-repo", Cataractae: 1, Names: []string{"alpha"}, Prefix: "test"},
-		},
-		MaxCataractae: 4,
-	}
-	workflows := map[string]*aqueduct.Workflow{"test-repo": wf}
-	clients := map[string]CisternClient{"test-repo": client}
-	sched := NewFromParts(config, workflows, clients, runner)
-	sched.Tick(context.Background())
-
-	if !runner.waitCalls(1, time.Second) {
-		t.Fatal("timed out")
-	}
-	// adversarial-review passed → qa skipped → advance to docs.
-	sched.Tick(context.Background())
-	time.Sleep(10 * time.Millisecond)
-
-	client.mu.Lock()
-	defer client.mu.Unlock()
-	if client.steps["std-2"] != "docs" {
-		t.Errorf("expected standard droplet at docs (qa skipped), got %q", client.steps["std-2"])
+		t.Errorf("expected droplet at adversarial-review, got %q", client.steps["std-1"])
 	}
 }
 
 func TestComplexity_HumanGateSetsCurrentCataractae(t *testing.T) {
-	wf := complexityWorkflow()
+	wf := criticalWorkflow()
 	client := newMockClient()
 	client.readyItems = []*cistern.Droplet{
 		{ID: "crit-2", CurrentCataractae: "docs", Complexity: 3},

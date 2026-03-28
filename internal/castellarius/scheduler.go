@@ -850,10 +850,6 @@ func (s *Castellarius) observeRepo(_ context.Context, repo aqueduct.RepoConfig) 
 			continue
 		}
 
-		// Apply complexity skip rules.
-		skipSteps := wf.SkipCataractaeForLevel(item.Complexity)
-		next = advanceSkippedCataractae(next, wf, skipSteps)
-
 		// For critical droplets, insert a human gate before delivery.
 		if wf.Complexity.RequireHumanForLevel(item.Complexity) && next == "delivery" {
 			next = "human"
@@ -1121,28 +1117,6 @@ func route(step aqueduct.WorkflowCataractae, result Result) string {
 	default:
 		return step.OnFail
 	}
-}
-
-// advanceSkippedCataractae walks the workflow from nextStep, skipping any step whose name
-// appears in skipSteps. It follows on_pass links to find the next non-skipped step.
-// Returns "done" if all remaining steps are skipped.
-func advanceSkippedCataractae(nextStep string, wf *aqueduct.Workflow, skipSteps []string) string {
-	if len(skipSteps) == 0 {
-		return nextStep
-	}
-	skip := make(map[string]bool, len(skipSteps))
-	for _, s := range skipSteps {
-		skip[s] = true
-	}
-	current := nextStep
-	for skip[current] {
-		step := lookupCataracta(wf, current)
-		if step == nil || step.OnPass == "" {
-			return "done"
-		}
-		current = step.OnPass
-	}
-	return current
 }
 
 // isTerminal returns true if the target is a terminal state.

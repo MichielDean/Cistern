@@ -534,106 +534,20 @@ func TestStepIndexInWorkflow_ReturnsCorrectIndex(t *testing.T) {
 	}
 }
 
-// --- TestActiveStepNames ---
+// --- TestFetchDashboardData ---
 
-func TestActiveStepNames_NoSkipFor_ReturnsAllSteps(t *testing.T) {
-	wf := []aqueduct.WorkflowCataractae{
-		{Name: "implement"},
-		{Name: "review"},
-		{Name: "merge"},
-	}
-	got := activeStepNames(wf, 2)
-	want := []string{"implement", "review", "merge"}
-	if len(got) != len(want) {
-		t.Fatalf("activeStepNames len = %d, want %d", len(got), len(want))
-	}
-	for i := range want {
-		if got[i] != want[i] {
-			t.Errorf("activeStepNames[%d] = %q, want %q", i, got[i], want[i])
-		}
-	}
-}
-
-func TestActiveStepNames_SkippedStep_IsExcluded(t *testing.T) {
-	// complexity 1 skips "adv-review"
-	wf := []aqueduct.WorkflowCataractae{
-		{Name: "implement"},
-		{Name: "adv-review", SkipFor: []int{1}},
-		{Name: "merge"},
-	}
-	got := activeStepNames(wf, 1)
-	want := []string{"implement", "merge"}
-	if len(got) != len(want) {
-		t.Fatalf("activeStepNames len = %d, want %d: got %v", len(got), len(want), got)
-	}
-	for i := range want {
-		if got[i] != want[i] {
-			t.Errorf("activeStepNames[%d] = %q, want %q", i, got[i], want[i])
-		}
-	}
-}
-
-func TestActiveStepNames_MultipleSkipped_AllExcluded(t *testing.T) {
-	wf := []aqueduct.WorkflowCataractae{
-		{Name: "implement"},
-		{Name: "adv-review", SkipFor: []int{1, 2}},
-		{Name: "qa", SkipFor: []int{1}},
-		{Name: "merge"},
-	}
-	got := activeStepNames(wf, 1)
-	want := []string{"implement", "merge"}
-	if len(got) != len(want) {
-		t.Fatalf("activeStepNames len = %d, want %d: got %v", len(got), len(want), got)
-	}
-	for i := range want {
-		if got[i] != want[i] {
-			t.Errorf("activeStepNames[%d] = %q, want %q", i, got[i], want[i])
-		}
-	}
-}
-
-func TestActiveStepNames_ComplexityNotInSkipFor_StepIncluded(t *testing.T) {
-	// complexity 3 is NOT in SkipFor: []int{1, 2}, so step runs
-	wf := []aqueduct.WorkflowCataractae{
-		{Name: "implement"},
-		{Name: "adv-review", SkipFor: []int{1, 2}},
-		{Name: "merge"},
-	}
-	got := activeStepNames(wf, 3)
-	want := []string{"implement", "adv-review", "merge"}
-	if len(got) != len(want) {
-		t.Fatalf("activeStepNames len = %d, want %d: got %v", len(got), len(want), got)
-	}
-	for i := range want {
-		if got[i] != want[i] {
-			t.Errorf("activeStepNames[%d] = %q, want %q", i, got[i], want[i])
-		}
-	}
-}
-
-func TestActiveStepNames_EmptyWorkflow_ReturnsNil(t *testing.T) {
-	got := activeStepNames(nil, 1)
-	if len(got) != 0 {
-		t.Errorf("activeStepNames(nil, 1) = %v, want empty", got)
-	}
-}
-
-// --- TestFetchDashboardData_ActiveAqueduct_FiltersStepsByComplexity ---
-
-// tempCfgWithSkipFor writes a cistern.yaml referencing a workflow that has
-// SkipFor fields. Returns the path to the config file.
-func tempCfgWithSkipFor(t *testing.T) string {
+// tempCfg3Steps writes a cistern.yaml referencing a minimal 3-step workflow.
+// Returns the path to the config file.
+func tempCfg3Steps(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
 
-	// Workflow with adv-review skipped for complexity 1.
 	wfContent := `name: test
 cataractae:
   - name: implement
     type: agent
   - name: adv-review
     type: agent
-    skip_for: [1]
   - name: merge
     type: automated
 `
@@ -650,7 +564,6 @@ cataractae:
     names:
       - virgo
     prefix: mr
-max_cataractae: 2
 `
 	cfgPath := filepath.Join(dir, "cistern.yaml")
 	if err := os.WriteFile(cfgPath, []byte(cfgContent), 0o644); err != nil {
@@ -659,8 +572,10 @@ max_cataractae: 2
 	return cfgPath
 }
 
-func TestFetchDashboardData_ActiveAqueduct_FiltersStepsByComplexity(t *testing.T) {
-	cfgPath := tempCfgWithSkipFor(t)
+// TestFetchDashboardData_ActiveAqueduct_ShowsAllSteps verifies that all workflow
+// steps appear in the dashboard for an active aqueduct regardless of complexity.
+func TestFetchDashboardData_ActiveAqueduct_ShowsAllSteps(t *testing.T) {
+	cfgPath := tempCfg3Steps(t)
 	dbPath := tempDB(t)
 
 	c, err := cistern.New(dbPath, "mr")
@@ -668,11 +583,8 @@ func TestFetchDashboardData_ActiveAqueduct_FiltersStepsByComplexity(t *testing.T
 		t.Fatal(err)
 	}
 
-	// Add a complexity-1 droplet and assign it to virgo at "merge" — a step
-	// AFTER the skipped "adv-review". In the full workflow [implement, adv-review, merge]
-	// "merge" is at position 3, but in the filtered list [implement, merge] it is at
-	// position 2. This exercises the CataractaeIndex bug where the full-list index
-	// would exceed TotalCataractae.
+	// Complexity 1 droplet assigned at "merge" (the 3rd step). All 3 steps must
+	// appear and CataractaeIndex must correctly reflect position in the full list.
 	item, _ := c.Add("myrepo", "Trivial task", "", 1, 1)
 	c.GetReady("myrepo")
 	c.Assign(item.ID, "virgo", "merge")
@@ -690,8 +602,7 @@ func TestFetchDashboardData_ActiveAqueduct_FiltersStepsByComplexity(t *testing.T
 		t.Fatal("cataractae virgo not found")
 	}
 
-	// adv-review is skipped for complexity 1, so only implement + merge remain.
-	wantSteps := []string{"implement", "merge"}
+	wantSteps := []string{"implement", "adv-review", "merge"}
 	if len(virgo.Steps) != len(wantSteps) {
 		t.Fatalf("virgo.Steps = %v, want %v", virgo.Steps, wantSteps)
 	}
@@ -700,22 +611,17 @@ func TestFetchDashboardData_ActiveAqueduct_FiltersStepsByComplexity(t *testing.T
 			t.Errorf("virgo.Steps[%d] = %q, want %q", i, virgo.Steps[i], s)
 		}
 	}
-
-	// TotalCataractae must reflect filtered count.
-	if virgo.TotalCataractae != 2 {
-		t.Errorf("virgo.TotalCataractae = %d, want 2", virgo.TotalCataractae)
+	if virgo.TotalCataractae != 3 {
+		t.Errorf("virgo.TotalCataractae = %d, want 3", virgo.TotalCataractae)
 	}
-
-	// CataractaeIndex must be the position in the FILTERED list (2), not the
-	// full-workflow position (3). Previously the bug caused index > total.
-	if virgo.CataractaeIndex != 2 {
-		t.Errorf("virgo.CataractaeIndex = %d, want 2 (filtered position of 'merge')", virgo.CataractaeIndex)
+	// "merge" is the 3rd step — CataractaeIndex must equal 3.
+	if virgo.CataractaeIndex != 3 {
+		t.Errorf("virgo.CataractaeIndex = %d, want 3", virgo.CataractaeIndex)
 	}
 }
 
 func TestFetchDashboardData_IdleAqueduct_ShowsAllSteps(t *testing.T) {
-	// Idle aqueduct (no droplet) should show all steps regardless of SkipFor.
-	cfgPath := tempCfgWithSkipFor(t)
+	cfgPath := tempCfg3Steps(t)
 	dbPath := tempDB(t)
 
 	data := fetchDashboardData(cfgPath, dbPath)
