@@ -100,8 +100,9 @@ ct filter --resume <session-id> --file --repo <repo>
 
 **Rules:**
 - Never use `ct droplet add --filter` — fires-and-forgets, no conversation
-- Minimum 3 rounds unless user says it's ready sooner
-- Report a single summary of improvements, not one message per round
+- Minimum 3 rounds. Keep going past 3 until the spec is unambiguous — every cataracta (implement, reviewer, QA, delivery) should be able to read CONTEXT.md and have the same understanding of what needs to change, with no guessing about scope, file locations, or acceptance criteria. Stop when the spec is concrete, not when the count hits a number.
+- After each session, give a recommendation: ready to file, or needs more passes? Say why.
+- Report a single summary of improvements across all rounds, not one message per round
 - Get explicit "yes" before `--file`
 - File follow-up droplets with `--depends-on <id>` rather than injecting notes into flowing work
 
