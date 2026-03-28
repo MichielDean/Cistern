@@ -211,6 +211,9 @@ var castellariusStatusCmd = &cobra.Command{
 
 		hf, hErr := castellarius.ReadHealthFile(filepath.Dir(dbPath))
 		fmt.Printf("\nlast tick: %s\n", formatLastTick(hf, hErr))
+		if ds := formatDroughtStatus(hf); ds != "" {
+			fmt.Printf("drought hooks: %s\n", ds)
+		}
 		return nil
 	},
 }
@@ -224,6 +227,17 @@ func formatLastTick(hf *castellarius.HealthFile, err error) string {
 	}
 	age := time.Since(hf.LastTickAt).Round(time.Second)
 	return age.String() + " ago"
+}
+
+// formatDroughtStatus returns "running (Xm)" when a drought goroutine is active,
+// or empty string when idle. Nothing is printed when idle — drought hooks are rare
+// and should only appear in status output when they are actually running.
+func formatDroughtStatus(hf *castellarius.HealthFile) string {
+	if hf == nil || !hf.DroughtRunning || hf.DroughtStartedAt == nil {
+		return ""
+	}
+	elapsed := int(time.Since(*hf.DroughtStartedAt).Minutes())
+	return fmt.Sprintf("running (%dm)", elapsed)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

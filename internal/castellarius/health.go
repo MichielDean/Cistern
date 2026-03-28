@@ -9,8 +9,10 @@ import (
 
 // HealthFile is the schema written to {cistern_db_dir}/castellarius.health after each tick.
 type HealthFile struct {
-	LastTickAt      time.Time `json:"lastTickAt"`
-	PollIntervalSec int       `json:"pollIntervalSec"`
+	LastTickAt       time.Time  `json:"lastTickAt"`
+	PollIntervalSec  int        `json:"pollIntervalSec"`
+	DroughtRunning   bool       `json:"droughtRunning"`
+	DroughtStartedAt *time.Time `json:"droughtStartedAt"`
 }
 
 // writeHealthFile atomically writes the health file to
@@ -27,8 +29,10 @@ func (s *Castellarius) writeHealthFile() {
 	tmpPath := hPath + ".tmp"
 
 	data := HealthFile{
-		LastTickAt:      time.Now().UTC(),
-		PollIntervalSec: int(s.pollInterval.Seconds()),
+		LastTickAt:       time.Now().UTC(),
+		PollIntervalSec:  int(s.pollInterval.Seconds()),
+		DroughtRunning:   s.droughtRunning.Load(),
+		DroughtStartedAt: s.droughtStartedAt.Load(),
 	}
 
 	b, err := json.Marshal(data)

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -149,5 +150,121 @@ func TestReadHealthFile_ReturnsErrorOnMalformedJSON(t *testing.T) {
 	_, err := ReadHealthFile(dir)
 	if err == nil {
 		t.Fatal("expected error for malformed JSON, got nil")
+	}
+}
+
+// --- Drought fields schema tests ---
+
+// TestHealthFile_DroughtRunning_MarshalsFalseByDefault verifies that the zero
+// value of HealthFile serializes droughtRunning as false (not absent).
+func TestHealthFile_DroughtRunning_MarshalsFalseByDefault(t *testing.T) {
+	hf := HealthFile{LastTickAt: time.Now().UTC(), PollIntervalSec: 10}
+	b, err := json.Marshal(hf)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if !strings.Contains(string(b), `"droughtRunning":false`) {
+		t.Errorf("expected droughtRunning:false in JSON, got: %s", b)
+	}
+}
+
+// TestHealthFile_DroughtStartedAt_NullWhenNil verifies that a nil DroughtStartedAt
+// marshals to droughtStartedAt:null in JSON.
+func TestHealthFile_DroughtStartedAt_NullWhenNil(t *testing.T) {
+	hf := HealthFile{LastTickAt: time.Now().UTC(), PollIntervalSec: 10}
+	b, err := json.Marshal(hf)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if !strings.Contains(string(b), `"droughtStartedAt":null`) {
+		t.Errorf("expected droughtStartedAt:null in JSON, got: %s", b)
+	}
+}
+
+// TestHealthFile_DroughtRunning_TrueAndStartedAt_RoundTrip verifies that
+// droughtRunning:true and a non-nil droughtStartedAt survive a JSON round-trip.
+func TestHealthFile_DroughtRunning_TrueAndStartedAt_RoundTrip(t *testing.T) {
+	now := time.Now().UTC().Truncate(time.Second)
+	hf := HealthFile{
+		LastTickAt:       now,
+		PollIntervalSec:  30,
+		DroughtRunning:   true,
+		DroughtStartedAt: &now,
+	}
+	b, err := json.Marshal(hf)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	var got HealthFile
+	if err := json.Unmarshal(b, &got); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if !got.DroughtRunning {
+		t.Error("DroughtRunning: expected true after round-trip, got false")
+	}
+	if got.DroughtStartedAt == nil {
+		t.Fatal("DroughtStartedAt: expected non-nil after round-trip, got nil")
+	}
+	if !got.DroughtStartedAt.Equal(now) {
+		t.Errorf("DroughtStartedAt: got %v, want %v", *got.DroughtStartedAt, now)
+	}
+}
+
+// TestWriteHealthFile_IncludesDroughtRunningTrue_WhenDroughtActive verifies that
+// writeHealthFile writes droughtRunning:true when the scheduler tracks drought activity.
+func TestWriteHealthFile_IncludesDroughtRunningTrue_WhenDroughtActive(t *testing.T) {
+	dir := t.TempDir()
+	s := &Castellarius{
+		dbPath:       filepath.Join(dir, "cistern.db"),
+		pollInterval: 10 * time.Second,
+		logger:       discardLogger(),
+	}
+	now := time.Now().UTC()
+	s.droughtRunning.Store(true)
+	s.droughtStartedAt.Store(&now)
+
+	s.writeHealthFile()
+
+	data, err := os.ReadFile(filepath.Join(dir, "castellarius.health"))
+	if err != nil {
+		t.Fatalf("health file not created: %v", err)
+	}
+	var hf HealthFile
+	if err := json.Unmarshal(data, &hf); err != nil {
+		t.Fatalf("health file parse failed: %v", err)
+	}
+	if !hf.DroughtRunning {
+		t.Error("DroughtRunning: expected true, got false")
+	}
+	if hf.DroughtStartedAt == nil {
+		t.Error("DroughtStartedAt: expected non-nil, got nil")
+	}
+}
+
+// TestWriteHealthFile_DroughtRunningFalse_WhenNoActiveDrought verifies that
+// writeHealthFile writes droughtRunning:false when the scheduler has no active drought.
+func TestWriteHealthFile_DroughtRunningFalse_WhenNoActiveDrought(t *testing.T) {
+	dir := t.TempDir()
+	s := &Castellarius{
+		dbPath:       filepath.Join(dir, "cistern.db"),
+		pollInterval: 10 * time.Second,
+		logger:       discardLogger(),
+	}
+
+	s.writeHealthFile()
+
+	data, err := os.ReadFile(filepath.Join(dir, "castellarius.health"))
+	if err != nil {
+		t.Fatalf("health file not created: %v", err)
+	}
+	var hf HealthFile
+	if err := json.Unmarshal(data, &hf); err != nil {
+		t.Fatalf("health file parse failed: %v", err)
+	}
+	if hf.DroughtRunning {
+		t.Error("DroughtRunning: expected false, got true")
+	}
+	if hf.DroughtStartedAt != nil {
+		t.Errorf("DroughtStartedAt: expected nil, got %v", hf.DroughtStartedAt)
 	}
 }

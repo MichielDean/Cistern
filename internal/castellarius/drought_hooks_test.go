@@ -1155,3 +1155,96 @@ cataractae:
 		t.Error("cataractae deploy dir should not exist when remote has no source files")
 	}
 }
+
+// --- OnDroughtStart / OnDroughtEnd callback tests ---
+
+// emptyConfig returns a minimal non-nil AqueductConfig for tests that invoke
+// RunDroughtHooks but do not exercise config-dependent behaviour.
+func emptyConfig() *aqueduct.AqueductConfig {
+	return &aqueduct.AqueductConfig{}
+}
+
+// TestRunDroughtHooks_CallsOnDroughtStart_BeforeHooksRun verifies that OnDroughtStart
+// is called at the beginning of RunDroughtHooks with a timestamp close to now.
+func TestRunDroughtHooks_CallsOnDroughtStart_BeforeHooksRun(t *testing.T) {
+	var startedAt time.Time
+	called := false
+	before := time.Now().UTC().Add(-time.Millisecond)
+
+	RunDroughtHooks(DroughtHookParams{
+		Logger: discardLogger(),
+		Config: emptyConfig(),
+		OnDroughtStart: func(ts time.Time) {
+			called = true
+			startedAt = ts
+		},
+	})
+
+	after := time.Now().UTC().Add(time.Millisecond)
+
+	if !called {
+		t.Fatal("OnDroughtStart was not called")
+	}
+	if startedAt.Before(before) || startedAt.After(after) {
+		t.Errorf("startedAt %v outside expected range [%v, %v]", startedAt, before, after)
+	}
+}
+
+// TestRunDroughtHooks_CallsOnDroughtEnd_AfterHooksComplete verifies that OnDroughtEnd
+// is called after all hooks have executed.
+func TestRunDroughtHooks_CallsOnDroughtEnd_AfterHooksComplete(t *testing.T) {
+	tmpDir := t.TempDir()
+	markerFile := filepath.Join(tmpDir, "hook-ran")
+	endCalled := false
+
+	RunDroughtHooks(DroughtHookParams{
+		Logger: discardLogger(),
+		Config: emptyConfig(),
+		Hooks: []aqueduct.DroughtHook{
+			{
+				Name:    "marker",
+				Action:  "shell",
+				Command: platformCreateFile(markerFile),
+				Timeout: 5,
+			},
+		},
+		OnDroughtStart: func(time.Time) {},
+		OnDroughtEnd:   func() { endCalled = true },
+	})
+
+	if !endCalled {
+		t.Fatal("OnDroughtEnd was not called")
+	}
+	if _, err := os.Stat(markerFile); err != nil {
+		t.Fatalf("hook did not run: marker file absent: %v", err)
+	}
+}
+
+// TestRunDroughtHooks_OnDroughtEndCalledEvenWithNoHooks verifies that OnDroughtEnd
+// is called when there are no hooks configured (nil slice).
+func TestRunDroughtHooks_OnDroughtEndCalledEvenWithNoHooks(t *testing.T) {
+	endCalled := false
+	RunDroughtHooks(DroughtHookParams{
+		Logger:       discardLogger(),
+		Config:       emptyConfig(),
+		Hooks:        nil,
+		OnDroughtEnd: func() { endCalled = true },
+	})
+	if !endCalled {
+		t.Fatal("OnDroughtEnd should be called even when Hooks is nil")
+	}
+}
+
+// TestRunDroughtHooks_NilCallbacks_DoesNotPanic verifies that nil OnDroughtStart
+// and OnDroughtEnd callbacks do not cause a panic.
+func TestRunDroughtHooks_NilCallbacks_DoesNotPanic(t *testing.T) {
+	defer func() {
+		if r := recover(); r != nil {
+			t.Errorf("RunDroughtHooks panicked with nil callbacks: %v", r)
+		}
+	}()
+	RunDroughtHooks(DroughtHookParams{
+		Logger: discardLogger(),
+		Config: emptyConfig(),
+	})
+}

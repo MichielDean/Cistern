@@ -37,6 +37,12 @@ type DroughtHookParams struct {
 	StartupCfgMtime    time.Time
 	Supervised         bool
 	OnReload           func()
+	// OnDroughtStart is called at the very start of RunDroughtHooks with the UTC
+	// timestamp of when the goroutine began. Used to track drought liveness.
+	OnDroughtStart func(startedAt time.Time)
+	// OnDroughtEnd is called just before RunDroughtHooks returns (via defer).
+	// Used to clear drought liveness tracking on completion.
+	OnDroughtEnd func()
 }
 
 // RunDroughtHooks executes all configured drought hooks sequentially.
@@ -50,6 +56,14 @@ type DroughtHookParams struct {
 //
 // This ensures the Castellarius never dies without something to bring it back.
 func RunDroughtHooks(p DroughtHookParams) {
+	startedAt := time.Now().UTC()
+	if p.OnDroughtStart != nil {
+		p.OnDroughtStart(startedAt)
+	}
+	if p.OnDroughtEnd != nil {
+		defer p.OnDroughtEnd()
+	}
+
 	logger := p.Logger
 	needsRestart := false
 	workflowChanged := false

@@ -526,3 +526,59 @@ func TestFormatLastTick_WhenErrorOccurred_ShowsUnknownWarning(t *testing.T) {
 		t.Errorf("got %q, want %q", got, "unknown (health file missing)")
 	}
 }
+
+// --- formatDroughtStatus tests ---
+
+// TestFormatDroughtStatus_WhenRunning_ShowsRunningWithElapsed verifies that when
+// droughtRunning is true, the status shows "running (Xm)".
+func TestFormatDroughtStatus_WhenRunning_ShowsRunningWithElapsed(t *testing.T) {
+	startedAt := time.Now().Add(-3 * time.Minute)
+	hf := &castellarius.HealthFile{
+		LastTickAt:       time.Now(),
+		PollIntervalSec:  10,
+		DroughtRunning:   true,
+		DroughtStartedAt: &startedAt,
+	}
+	got := formatDroughtStatus(hf)
+	if !strings.HasPrefix(got, "running (") {
+		t.Errorf("expected 'running (Xm)', got %q", got)
+	}
+	if !strings.HasSuffix(got, "m)") {
+		t.Errorf("expected elapsed in minutes ending with 'm)', got %q", got)
+	}
+}
+
+// TestFormatDroughtStatus_WhenNotRunning_ReturnsEmpty verifies that droughtRunning:false
+// returns an empty string (nothing shown when idle).
+func TestFormatDroughtStatus_WhenNotRunning_ReturnsEmpty(t *testing.T) {
+	hf := &castellarius.HealthFile{
+		LastTickAt:      time.Now(),
+		PollIntervalSec: 10,
+		DroughtRunning:  false,
+	}
+	if got := formatDroughtStatus(hf); got != "" {
+		t.Errorf("expected empty string when not running, got %q", got)
+	}
+}
+
+// TestFormatDroughtStatus_WhenNilHealthFile_ReturnsEmpty verifies that a nil HealthFile
+// returns an empty string without panicking.
+func TestFormatDroughtStatus_WhenNilHealthFile_ReturnsEmpty(t *testing.T) {
+	if got := formatDroughtStatus(nil); got != "" {
+		t.Errorf("expected empty string for nil HealthFile, got %q", got)
+	}
+}
+
+// TestFormatDroughtStatus_WhenStartedAtNil_ReturnsEmpty verifies that droughtRunning:true
+// but nil DroughtStartedAt returns empty (defensive guard against malformed health file).
+func TestFormatDroughtStatus_WhenStartedAtNil_ReturnsEmpty(t *testing.T) {
+	hf := &castellarius.HealthFile{
+		LastTickAt:       time.Now(),
+		PollIntervalSec:  10,
+		DroughtRunning:   true,
+		DroughtStartedAt: nil,
+	}
+	if got := formatDroughtStatus(hf); got != "" {
+		t.Errorf("expected empty string when StartedAt is nil, got %q", got)
+	}
+}

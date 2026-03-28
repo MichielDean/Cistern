@@ -2686,3 +2686,117 @@ func TestRemoveDropletWorktree_LogsWarn_WhenWorktreeMissing(t *testing.T) {
 		t.Errorf("log missing droplet ID; got: %s", out)
 	}
 }
+
+// --- checkHungDrought tests ---
+
+// TestCheckHungDrought_WhenDroughtRunningMoreThan5m_EmitsWarning verifies that a drought
+// goroutine running for more than 5 minutes causes a "hung" warning in the log.
+func TestCheckHungDrought_WhenDroughtRunningMoreThan5m_EmitsWarning(t *testing.T) {
+	dir := t.TempDir()
+	startedAt := time.Now().UTC().Add(-6 * time.Minute)
+	hf := HealthFile{
+		LastTickAt:       time.Now().UTC(),
+		PollIntervalSec:  10,
+		DroughtRunning:   true,
+		DroughtStartedAt: &startedAt,
+	}
+	b, err := json.Marshal(hf)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "castellarius.health"), b, 0o644); err != nil {
+		t.Fatalf("write health file: %v", err)
+	}
+
+	var logBuf bytes.Buffer
+	s := &Castellarius{
+		dbPath: filepath.Join(dir, "cistern.db"),
+		logger: newTestLogger(&logBuf),
+	}
+	s.checkHungDrought()
+
+	if !strings.Contains(logBuf.String(), "hung") {
+		t.Errorf("expected warning about hung drought, got log: %s", logBuf.String())
+	}
+}
+
+// TestCheckHungDrought_WhenDroughtRunningLessThan5m_NoWarning verifies that a drought
+// goroutine running for less than 5 minutes does not emit a warning.
+func TestCheckHungDrought_WhenDroughtRunningLessThan5m_NoWarning(t *testing.T) {
+	dir := t.TempDir()
+	startedAt := time.Now().UTC().Add(-2 * time.Minute)
+	hf := HealthFile{
+		LastTickAt:       time.Now().UTC(),
+		PollIntervalSec:  10,
+		DroughtRunning:   true,
+		DroughtStartedAt: &startedAt,
+	}
+	b, _ := json.Marshal(hf)
+	os.WriteFile(filepath.Join(dir, "castellarius.health"), b, 0o644) //nolint:errcheck
+
+	var logBuf bytes.Buffer
+	s := &Castellarius{
+		dbPath: filepath.Join(dir, "cistern.db"),
+		logger: newTestLogger(&logBuf),
+	}
+	s.checkHungDrought()
+
+	if strings.Contains(logBuf.String(), "hung") {
+		t.Errorf("unexpected warning for drought under 5m: %s", logBuf.String())
+	}
+}
+
+// TestCheckHungDrought_WhenDroughtNotRunning_NoWarning verifies that when
+// droughtRunning is false in the health file, no warning is emitted.
+func TestCheckHungDrought_WhenDroughtNotRunning_NoWarning(t *testing.T) {
+	dir := t.TempDir()
+	hf := HealthFile{
+		LastTickAt:      time.Now().UTC(),
+		PollIntervalSec: 10,
+		DroughtRunning:  false,
+	}
+	b, _ := json.Marshal(hf)
+	os.WriteFile(filepath.Join(dir, "castellarius.health"), b, 0o644) //nolint:errcheck
+
+	var logBuf bytes.Buffer
+	s := &Castellarius{
+		dbPath: filepath.Join(dir, "cistern.db"),
+		logger: newTestLogger(&logBuf),
+	}
+	s.checkHungDrought()
+
+	if strings.Contains(logBuf.String(), "hung") {
+		t.Errorf("unexpected warning when drought not running: %s", logBuf.String())
+	}
+}
+
+// TestCheckHungDrought_WhenHealthFileMissing_NoWarning verifies that a missing health
+// file does not cause a warning or panic.
+func TestCheckHungDrought_WhenHealthFileMissing_NoWarning(t *testing.T) {
+	dir := t.TempDir()
+	var logBuf bytes.Buffer
+	s := &Castellarius{
+		dbPath: filepath.Join(dir, "cistern.db"),
+		logger: newTestLogger(&logBuf),
+	}
+	s.checkHungDrought()
+
+	if strings.Contains(logBuf.String(), "hung") {
+		t.Errorf("unexpected warning for missing health file: %s", logBuf.String())
+	}
+}
+
+// TestCheckHungDrought_WhenEmptyDBPath_NoWarning verifies that an empty dbPath
+// is handled gracefully without panic.
+func TestCheckHungDrought_WhenEmptyDBPath_NoWarning(t *testing.T) {
+	var logBuf bytes.Buffer
+	s := &Castellarius{
+		dbPath: "",
+		logger: newTestLogger(&logBuf),
+	}
+	s.checkHungDrought()
+
+	if strings.Contains(logBuf.String(), "hung") {
+		t.Errorf("unexpected warning for empty dbPath: %s", logBuf.String())
+	}
+}

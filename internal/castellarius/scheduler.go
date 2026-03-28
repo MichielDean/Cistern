@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"runtime/debug"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/MichielDean/cistern/internal/aqueduct"
@@ -110,6 +111,12 @@ type Castellarius struct {
 	// sessionLogRoot is the directory containing per-session output logs.
 	// Defaults to ~/.cistern/session-logs when empty.
 	sessionLogRoot string
+
+	// droughtRunning and droughtStartedAt are written by the drought goroutine
+	// (via OnDroughtStart/OnDroughtEnd callbacks) and read by writeHealthFile on
+	// the main tick goroutine. atomic fields ensure safe concurrent access.
+	droughtRunning   atomic.Bool
+	droughtStartedAt atomic.Pointer[time.Time]
 }
 
 // isSupervisedProcess returns true when the Castellarius is being managed by
@@ -443,6 +450,7 @@ func (s *Castellarius) Run(ctx context.Context) error {
 						}
 					}()
 					s.heartbeatInProgress(ctx)
+					s.checkHungDrought()
 				}()
 			}
 		}
@@ -699,6 +707,14 @@ func (s *Castellarius) tick(ctx context.Context) {
 				StartupCfgMtime:    s.startupCfgMtime,
 				Supervised:         s.supervised,
 				OnReload:           reloadFn,
+				OnDroughtStart: func(t time.Time) {
+					s.droughtRunning.Store(true)
+					s.droughtStartedAt.Store(&t)
+				},
+				OnDroughtEnd: func() {
+					s.droughtRunning.Store(false)
+					s.droughtStartedAt.Store(nil)
+				},
 			})
 		}
 	}
@@ -1213,6 +1229,29 @@ func (s *Castellarius) heartbeatInProgress(ctx context.Context) {
 			return
 		}
 		s.heartbeatRepo(ctx, repo)
+	}
+}
+
+// checkHungDrought reads the health file and emits a warning log if the drought
+// goroutine has been running for more than 5 minutes without completing. A hung
+// drought is invisible otherwise because the goroutine runs in the background.
+func (s *Castellarius) checkHungDrought() {
+	if s.dbPath == "" {
+		return
+	}
+	hf, err := ReadHealthFile(filepath.Dir(s.dbPath))
+	if err != nil {
+		return // health file absent — nothing to check
+	}
+	if !hf.DroughtRunning || hf.DroughtStartedAt == nil {
+		return
+	}
+	elapsed := time.Since(*hf.DroughtStartedAt)
+	if elapsed > 5*time.Minute {
+		s.logger.Warn("drought goroutine may be hung",
+			"started_at", hf.DroughtStartedAt.Format(time.RFC3339),
+			"elapsed", elapsed.Round(time.Second).String(),
+		)
 	}
 }
 
