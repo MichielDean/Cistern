@@ -705,9 +705,6 @@ cataractae:
 
 func TestHookGitSync_FetchTimeout_SkipsRepoAndContinues(t *testing.T) {
 	// Given: a sandbox clone whose git fetch hangs indefinitely.
-	if _, err := exec.LookPath("git"); err != nil {
-		t.Skip("git not available")
-	}
 	if runtime.GOOS == "windows" {
 		t.Skip("fake-git shell script not supported on Windows")
 	}
