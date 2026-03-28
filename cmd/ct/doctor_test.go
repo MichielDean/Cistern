@@ -251,15 +251,7 @@ func TestCheckCastellariusHealth_FileMissing_WarnsMissing(t *testing.T) {
 	dir := t.TempDir()
 	dbPath := filepath.Join(dir, "cistern.db")
 
-	r, w, _ := os.Pipe()
-	orig := os.Stdout
-	os.Stdout = w
-	checkCastellariusHealth(dbPath)
-	w.Close()
-	os.Stdout = orig
-	var buf bytes.Buffer
-	buf.ReadFrom(r)
-	out := buf.String()
+	out := captureStdout(t, func() { checkCastellariusHealth(dbPath) })
 
 	if !strings.Contains(out, "castellarius health file missing") {
 		t.Errorf("expected missing-file warning, got: %q", out)
@@ -281,15 +273,7 @@ func TestCheckCastellariusHealth_FreshFile_Silent(t *testing.T) {
 		t.Fatalf("write health file: %v", err)
 	}
 
-	r, w, _ := os.Pipe()
-	orig := os.Stdout
-	os.Stdout = w
-	checkCastellariusHealth(dbPath)
-	w.Close()
-	os.Stdout = orig
-	var buf bytes.Buffer
-	buf.ReadFrom(r)
-	out := buf.String()
+	out := captureStdout(t, func() { checkCastellariusHealth(dbPath) })
 
 	if out != "" {
 		t.Errorf("expected no output for healthy file, got: %q", out)
@@ -309,15 +293,7 @@ func TestCheckCastellariusHealth_StaleTick_WarnsHung(t *testing.T) {
 		t.Fatalf("write health file: %v", err)
 	}
 
-	r, w, _ := os.Pipe()
-	orig := os.Stdout
-	os.Stdout = w
-	checkCastellariusHealth(dbPath)
-	w.Close()
-	os.Stdout = orig
-	var buf bytes.Buffer
-	buf.ReadFrom(r)
-	out := buf.String()
+	out := captureStdout(t, func() { checkCastellariusHealth(dbPath) })
 
 	if !strings.Contains(out, "scheduler may be hung") {
 		t.Errorf("expected stale-tick warning, got: %q", out)
@@ -342,15 +318,7 @@ func TestCheckCastellariusHealth_DroughtTooLong_WarnsDroughtHang(t *testing.T) {
 		t.Fatalf("write health file: %v", err)
 	}
 
-	r, w, _ := os.Pipe()
-	orig := os.Stdout
-	os.Stdout = w
-	checkCastellariusHealth(dbPath)
-	w.Close()
-	os.Stdout = orig
-	var buf bytes.Buffer
-	buf.ReadFrom(r)
-	out := buf.String()
+	out := captureStdout(t, func() { checkCastellariusHealth(dbPath) })
 
 	if !strings.Contains(out, "drought goroutine has been running") {
 		t.Errorf("expected drought warning, got: %q", out)
@@ -373,15 +341,7 @@ func TestCheckCastellariusHealth_DroughtRecent_Silent(t *testing.T) {
 		t.Fatalf("write health file: %v", err)
 	}
 
-	r, w, _ := os.Pipe()
-	orig := os.Stdout
-	os.Stdout = w
-	checkCastellariusHealth(dbPath)
-	w.Close()
-	os.Stdout = orig
-	var buf bytes.Buffer
-	buf.ReadFrom(r)
-	out := buf.String()
+	out := captureStdout(t, func() { checkCastellariusHealth(dbPath) })
 
 	if out != "" {
 		t.Errorf("expected no output for recent drought, got: %q", out)
@@ -397,15 +357,7 @@ func TestCheckCastellariusHealth_CorruptFile_WarnsUnreadable(t *testing.T) {
 		t.Fatalf("write health file: %v", err)
 	}
 
-	r, w, _ := os.Pipe()
-	orig := os.Stdout
-	os.Stdout = w
-	checkCastellariusHealth(dbPath)
-	w.Close()
-	os.Stdout = orig
-	var buf bytes.Buffer
-	buf.ReadFrom(r)
-	out := buf.String()
+	out := captureStdout(t, func() { checkCastellariusHealth(dbPath) })
 
 	if !strings.Contains(out, "castellarius health file unreadable") {
 		t.Errorf("expected unreadable warning for corrupt file, got: %q", out)
@@ -424,15 +376,7 @@ func TestCheckCastellariusHealth_ZeroPollIntervalSec_NoFalsePositive(t *testing.
 		t.Fatalf("write health file: %v", err)
 	}
 
-	r, w, _ := os.Pipe()
-	orig := os.Stdout
-	os.Stdout = w
-	checkCastellariusHealth(dbPath)
-	w.Close()
-	os.Stdout = orig
-	var buf bytes.Buffer
-	buf.ReadFrom(r)
-	out := buf.String()
+	out := captureStdout(t, func() { checkCastellariusHealth(dbPath) })
 
 	if strings.Contains(out, "scheduler may be hung") {
 		t.Errorf("expected no hung warning for zero pollIntervalSec, got: %q", out)
@@ -452,15 +396,7 @@ func TestCheckCastellariusHealth_NearThresholdStaleTick_ShowsSeconds(t *testing.
 		t.Fatalf("write health file: %v", err)
 	}
 
-	r, w, _ := os.Pipe()
-	orig := os.Stdout
-	os.Stdout = w
-	checkCastellariusHealth(dbPath)
-	w.Close()
-	os.Stdout = orig
-	var buf bytes.Buffer
-	buf.ReadFrom(r)
-	out := buf.String()
+	out := captureStdout(t, func() { checkCastellariusHealth(dbPath) })
 
 	if !strings.Contains(out, "scheduler may be hung") {
 		t.Errorf("expected stale-tick warning, got: %q", out)
