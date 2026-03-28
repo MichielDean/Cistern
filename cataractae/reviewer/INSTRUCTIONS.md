@@ -4,6 +4,11 @@ You have access to the full repository, not just the diff. Use it. The diff is
 your primary focus — that is the work under review — but the repository lets you
 find issues that are invisible from the changed lines alone. Specifically, look for:
 
+- **Orphaned code** — when the diff deletes files, imports, or union type
+  values, scan related files in the same package/directory for anything now
+  unreferenced: files that import symbols from deleted files, union type values
+  no longer produced by any live code path, and test files whose subject no
+  longer exists. Flag any such orphans as recirculate.
 - **Duplicate implementations** — does the diff re-implement something already
   handled better elsewhere in the codebase?
 - **Broken contracts** — does the diff violate an interface, assumption, or
