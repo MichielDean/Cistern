@@ -884,8 +884,8 @@ func TestViewAqueductProgress_PipelineContainsAllSteps(t *testing.T) {
 	if !strings.Contains(stripped, "deliver") {
 		t.Errorf("progress row should contain all steps, got: %q", stripped)
 	}
-	if !strings.Contains(stripped, "[") {
-		t.Errorf("progress row should contain segment brackets, got: %q", stripped)
+	if !strings.Contains(stripped, "│") {
+		t.Errorf("progress row should contain channel wall characters (│), got: %q", stripped)
 	}
 }
 

@@ -511,8 +511,10 @@ func (m dashboardTUIModel) viewAqueductRow(ch CataractaeInfo) string {
 }
 
 // viewAqueductProgress renders an active aqueduct as a segmented pipeline bar.
-// Each cataracta gets its own labelled segment. Completed = filled teal,
-// active = animated water gradient, future = dim empty.
+// Each cataracta gets its own labelled segment separated by sluice gates.
+// Completed segments = filled teal channel; active = animated water gradient;
+// future = dim empty. Gates between segments are open (animated water) when
+// the upstream segment is complete, or closed (═╪═) when water hasn't arrived.
 func (m dashboardTUIModel) viewAqueductProgress(ch CataractaeInfo) string {
 	g := tuiStyleGreen
 
@@ -529,9 +531,12 @@ func (m dashboardTUIModel) viewAqueductProgress(ch CataractaeInfo) string {
 		avail = 20
 	}
 
-	// Each segment: [████] with 1-char gap between segments.
-	// Total chars: n*segW + (n-1)*1 = avail → segW = (avail - n + 1) / n
-	segW := (avail - n + 1) / n
+	// Sluice gate width: the visual gap between segments showing water/gate state.
+	const gateW = 3
+
+	// Each segment: │████│ with gateW-char sluice gate between segments.
+	// Total chars: n*segW + (n-1)*gateW = avail → segW = (avail - gateW*(n-1)) / n
+	segW := (avail - gateW*(n-1)) / n
 	if segW < 3 {
 		segW = 3
 	}
@@ -547,18 +552,33 @@ func (m dashboardTUIModel) viewAqueductProgress(ch CataractaeInfo) string {
 
 	// Water colors.
 	const (
-		waterFull  = "#1a8fa8" // completed segments
-		waterDark  = "#0a3545" // empty segments
+		waterFull = "#1a8fa8" // completed segments
+		waterDark = "#0a3545" // empty segments
 	)
 	waterGradA := "#1a7a96"
 	waterGradB := "#a8eeff"
+
+	// Sluice gate animation: three frames of water flowing through an open gate.
+	gateOpenFrames := [3]string{"≋≈≋", "≈~≈", "~≋~"}
+	gateOpenStyle  := lipgloss.NewStyle().Foreground(lipgloss.Color("#a8eeff"))
+	gateClosedStyle := tuiStyleDim
+
+	// wallStyle returns the channel wall colour (│) for segment i.
+	wallStyle := func(i int) lipgloss.Style {
+		if i < activeIdx {
+			return lipgloss.NewStyle().Foreground(lipgloss.Color(waterFull))
+		} else if i == activeIdx {
+			return lipgloss.NewStyle().Foreground(lipgloss.Color(waterGradB))
+		}
+		return lipgloss.NewStyle().Foreground(lipgloss.Color(waterDark))
+	}
 
 	// Label row: each step name centered over its segment.
 	var lblRow strings.Builder
 	lblRow.WriteString(indent)
 	for i, s := range steps {
 		if i > 0 {
-			lblRow.WriteRune(' ') // gap between segments
+			lblRow.WriteString(strings.Repeat(" ", gateW)) // align labels over gate gap
 		}
 		lbl := s
 		if len([]rune(lbl)) > segW {
@@ -574,21 +594,29 @@ func (m dashboardTUIModel) viewAqueductProgress(ch CataractaeInfo) string {
 		}
 	}
 
-	// Bar row: segments joined by single space.
+	// Bar row: segments joined by sluice gates.
 	var barRow strings.Builder
 	barRow.WriteString(indent)
 	for i := range steps {
 		if i > 0 {
-			barRow.WriteRune(' ')
+			// Sluice gate between segment i-1 and segment i.
+			// Gate is OPEN when segment i-1 is complete (water has passed through).
+			if (i - 1) < activeIdx {
+				barRow.WriteString(gateOpenStyle.Render(gateOpenFrames[m.frame%3]))
+			} else {
+				barRow.WriteString(gateClosedStyle.Render("═╪═"))
+			}
 		}
-		barRow.WriteRune('[')
-		for j := 0; j < segW-2; j++ { // -2 for [ and ]
+		// Left channel wall.
+		barRow.WriteString(wallStyle(i).Render("│"))
+		// Inner fill: completed / active-animated / future-dim.
+		for j := 0; j < segW-2; j++ { // -2 for the two │ walls
 			if i < activeIdx {
-				// Completed: solid teal fill
+				// Completed: solid teal fill.
 				barRow.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color(waterFull)).Render("█"))
 			} else if i == activeIdx {
-				// Active: water gradient, animated leading edge
-				filled := segW - 2 // inner width
+				// Active: water gradient with animated leading edge.
+				filled := segW - 2
 				halfFilled := (filled * (m.frame % (filled + 1))) / filled
 				if j < halfFilled {
 					t := float64(j) / float64(filled)
@@ -601,11 +629,12 @@ func (m dashboardTUIModel) viewAqueductProgress(ch CataractaeInfo) string {
 					barRow.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color(waterDark)).Render("░"))
 				}
 			} else {
-				// Future: dim empty
+				// Future: dim empty.
 				barRow.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color(waterDark)).Render("░"))
 			}
 		}
-		barRow.WriteRune(']')
+		// Right channel wall.
+		barRow.WriteString(wallStyle(i).Render("│"))
 	}
 
 	// Header: name  droplet  elapsed
