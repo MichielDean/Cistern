@@ -366,6 +366,48 @@ func TestDropletPeekRaw_WithSnapshot_ReturnsError(t *testing.T) {
 	}
 }
 
+// TestDropletPeekRaw_WithFollow_ReturnsError verifies that --raw and --follow
+// are mutually exclusive.
+//
+// Given: a droplet in_progress
+// When:  peek is run with both --raw and --follow
+// Then:  an error mentioning --follow is returned
+func TestDropletPeekRaw_WithFollow_ReturnsError(t *testing.T) {
+	dir := t.TempDir()
+	db := filepath.Join(dir, "test.db")
+	t.Setenv("CT_DB", db)
+
+	c, err := cistern.New(db, "ts")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.Add("myrepo", "Test item", "", 1, 3); err != nil {
+		t.Fatal(err)
+	}
+	item, err := c.GetReady("myrepo")
+	if err != nil || item == nil {
+		t.Fatalf("GetReady failed: %v", err)
+	}
+	if err := c.Assign(item.ID, "test-worker", "implement"); err != nil {
+		t.Fatal(err)
+	}
+	c.Close()
+
+	peekLines = 0
+	peekRaw = true
+	peekFollow = true
+	peekSnapshot = false
+
+	err = dropletPeekCmd.RunE(dropletPeekCmd, []string{item.ID})
+
+	if err == nil {
+		t.Fatal("expected error when --raw used with --follow, got nil")
+	}
+	if !strings.Contains(err.Error(), "--follow") {
+		t.Errorf("error should mention --follow, got: %q", err.Error())
+	}
+}
+
 // TestDropletPeek_FollowWithoutSnapshot_ReturnsError verifies that running
 // 'ct droplet peek --follow' without --snapshot returns an error explaining
 // that --follow requires --snapshot.

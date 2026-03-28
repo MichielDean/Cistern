@@ -1212,7 +1212,7 @@ var dropletPeekCmd = &cobra.Command{
 				logDir = filepath.Join(home, ".cistern", "session-logs")
 			}
 			logPath := filepath.Join(logDir, session+".log")
-			data, rerr := os.ReadFile(logPath)
+			f, rerr := os.Open(logPath)
 			if rerr != nil {
 				if os.IsNotExist(rerr) {
 					fmt.Printf("No session log found at %s\n", logPath)
@@ -1220,7 +1220,8 @@ var dropletPeekCmd = &cobra.Command{
 				}
 				return rerr
 			}
-			_, err = os.Stdout.Write(data)
+			defer f.Close()
+			_, err = io.Copy(os.Stdout, f)
 			return err
 		}
 
