@@ -1,8 +1,6 @@
 package main
 
 import (
-	"strings"
-
 	"github.com/charmbracelet/lipgloss"
 )
 
@@ -47,80 +45,9 @@ const (
 // These match the 36x12 mipmap dimensions so the drought arch aligns with the
 // active-arch pixel-art slot width.
 const (
-	archPillarW = 36
-	archPillarH = 12
+	archPillarW = 20
+	archPillarH = 7
 )
 
-// archPixelMap is the static archPillarH×archPillarW pixel map for one Roman arch pillar.
-// Each cell contains pxBlank (' '), pxEdge ('░'), or pxFill ('▒').
-//
-// Reading the map top-to-bottom gives a visual impression of the arch shape:
-//
-//	rows 0–3:  blank space above the arch crown
-//	row  4:    full-width road surface  ▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒
-//	row  5:    arch opening widens      ________░▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒________
-//	row  6:    arch narrows             ____________░▒▒▒▒▒▒▒▒▒▒▒____________
-//	row  7:    arch narrowest           _____________░▒▒▒▒▒▒▒▒▒_____________
-//	rows 8–11: pier body               _______________░▒▒▒▒▒_______________
-var archPixelMap = [archPillarH][archPillarW]rune{
-	// row 0: blank above arch
-	{' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' '},
-	// row 1: blank above arch
-	{' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' '},
-	// row 2: blank above arch
-	{' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' '},
-	// row 3: blank above arch
-	{' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' '},
-	// row 4: arch crown — full-width fill (road surface)
-	{'▒', '▒', '▒', '▒', '▒', '▒', '▒', '▒', '▒', '▒', '▒', '▒', '▒', '▒', '▒', '▒', '▒', '▒', '▒', '▒', '▒', '▒', '▒', '▒', '▒', '▒', '▒', '▒', '▒', '▒', '▒', '▒', '▒', '▒', '▒', '▒'},
-	// row 5: arch opening — 8 blank, edge, 19 fill, 8 blank
-	{' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', '░', '▒', '▒', '▒', '▒', '▒', '▒', '▒', '▒', '▒', '▒', '▒', '▒', '▒', '▒', '▒', '▒', '▒', '▒', '▒', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' '},
-	// row 6: arch narrows — 12 blank, edge, 11 fill, 12 blank
-	{' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', '░', '▒', '▒', '▒', '▒', '▒', '▒', '▒', '▒', '▒', '▒', '▒', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' '},
-	// row 7: arch narrowest — 13 blank, edge, 9 fill, 13 blank
-	{' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', '░', '▒', '▒', '▒', '▒', '▒', '▒', '▒', '▒', '▒', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' '},
-	// row 8: pier body — 15 blank, edge, 5 fill, 15 blank
-	{' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', '░', '▒', '▒', '▒', '▒', '▒', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' '},
-	// row 9: pier body — 15 blank, edge, 5 fill, 15 blank
-	{' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', '░', '▒', '▒', '▒', '▒', '▒', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' '},
-	// row 10: pier body — 15 blank, edge, 5 fill, 15 blank
-	{' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', '░', '▒', '▒', '▒', '▒', '▒', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' '},
-	// row 11: pier body — 15 blank, edge, 5 fill, 15 blank
-	{' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', '░', '▒', '▒', '▒', '▒', '▒', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' '},
-}
-
-// renderArchPillarRowWith renders row r of archPixelMap as a styled string.
-// fill is applied to pxFill ('▒') pixels; edge to pxEdge ('░'); bg to pxBlank (' ').
-// Pass an empty lipgloss.Style{} as bg to render blank cells as plain spaces with no background.
-func renderArchPillarRowWith(r int, fill, edge, bg lipgloss.Style) string {
-	row := archPixelMap[r]
-	var sb strings.Builder
-	for _, px := range row {
-		switch px {
-		case pxFill:
-			sb.WriteString(fill.Render(string(px)))
-		case pxEdge:
-			sb.WriteString(edge.Render(string(px)))
-		default:
-			sb.WriteString(bg.Render(string(px)))
-		}
-	}
-	return sb.String()
-}
-
-// renderArchPillarRow renders row r for a normal (non-drought) pillar.
-// When active is true, pxFill pixels use archRoleActive; otherwise archRoleIdle.
-// pxEdge always uses archRoleEdge; pxBlank uses archRoleBackground (black bg).
-func renderArchPillarRow(r int, active bool) string {
-	fill := archRoleIdle
-	if active {
-		fill = archRoleActive
-	}
-	return renderArchPillarRowWith(r, fill, archRoleEdge, archRoleBackground)
-}
-
-// renderDroughtPillarRow renders row r for the drought arch (all aqueducts idle).
-// Both pxFill and pxEdge use archRoleDrought; blank cells are unstyled plain spaces.
-func renderDroughtPillarRow(r int) string {
-	return renderArchPillarRowWith(r, archRoleDrought, archRoleDrought, lipgloss.NewStyle())
-}
+// The hand-drawn archPixelMap and its render functions have been removed.
+// All arch rendering now uses the pre-rendered chafa mipmap (arch_20x7.ansi).

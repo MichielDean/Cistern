@@ -14,20 +14,11 @@ import (
 	"github.com/MichielDean/cistern/internal/cistern"
 )
 
-// Pixel-art arch mipmaps — pre-rendered ANSI art at four sizes.
-// selectArchMipmap picks the level whose width is closest to the available slot.
+// Pixel-art arch mipmap — pre-rendered ANSI art at 20×7.
+// This is the single arch image used for all aqueduct rows.
 
-//go:embed assets/arch_mipmaps/arch_100x38.ansi
-var archMipmap100x38 string
-
-//go:embed assets/arch_mipmaps/arch_80x30.ansi
-var archMipmap80x30 string
-
-//go:embed assets/arch_mipmaps/arch_60x22.ansi
-var archMipmap60x22 string
-
-//go:embed assets/arch_mipmaps/arch_36x12.ansi
-var archMipmap36x12 string
+//go:embed assets/arch_mipmaps/arch_20x7.ansi
+var archMipmap20x7 string
 
 // archMipmapStripper removes chafa's cursor-visibility escape sequences
 // (\x1b[?25l hide-cursor and \x1b[?25h show-cursor) from embedded mipmap files.
@@ -35,43 +26,12 @@ var archMipmap36x12 string
 // manages cursor visibility independently.
 var archMipmapStripper = strings.NewReplacer("\x1b[?25l", "", "\x1b[?25h", "")
 
-// archMipmapWidth returns the pixel column width of the mipmap level chosen for
-// the given slot width. The arch is rendered per-slot (one pillar column), so
-// the slot width is archPillarW, not the full terminal width.
-func archMipmapWidth(slotWidth int) int {
-	if slotWidth >= 90 {
-		return 100
-	}
-	if slotWidth >= 70 {
-		return 80
-	}
-	if slotWidth >= 50 {
-		return 60
-	}
-	return 36
-}
+// archMipmapWidth returns the pixel column width of the arch mipmap.
+func archMipmapWidth(_ int) int { return 20 }
 
-// selectArchMipmap returns the ANSI arch mipmap whose width best fits slotWidth,
-// with cursor-control sequences stripped. The arch is centered over a single
-// pillar slot (archPillarW wide), so slotWidth should be archPillarW, not the
-// full terminal width.
-//   - slot >= 90  → 100x38 mipmap
-//   - slot >= 70  → 80x30 mipmap
-//   - slot >= 50  → 60x22 mipmap
-//   - slot < 50   → 36x12 mipmap
-func selectArchMipmap(slotWidth int) string {
-	var raw string
-	switch archMipmapWidth(slotWidth) {
-	case 100:
-		raw = archMipmap100x38
-	case 80:
-		raw = archMipmap80x30
-	case 60:
-		raw = archMipmap60x22
-	default:
-		raw = archMipmap36x12
-	}
-	return archMipmapStripper.Replace(raw)
+// selectArchMipmap returns the ANSI arch mipmap with cursor-control sequences stripped.
+func selectArchMipmap(_ int) string {
+	return archMipmapStripper.Replace(archMipmap20x7)
 }
 
 // insideTmux reports whether the process is running inside a tmux session.
@@ -703,9 +663,13 @@ func (m dashboardTUIModel) tuiAqueductRow(ch CataractaeInfo, frame int) []string
 	var infoLine string
 	if ch.DropletID != "" {
 		infoBase := ch.DropletID + "  " + formatElapsed(ch.Elapsed)
-		// indent visual width: 2 chars (the compact indent).
+		// Info line uses full terminal width, not the arch block width.
 		const indentW = 2
-		titleW := archBlockW - indentW - len([]rune(infoBase)) - 2
+		availW := m.width
+		if availW <= 0 {
+			availW = 80
+		}
+		titleW := availW - indentW - len([]rune(infoBase)) - 2
 		if titleW > 0 && ch.Title != "" {
 			title := ch.Title
 			if len([]rune(title)) > titleW {
