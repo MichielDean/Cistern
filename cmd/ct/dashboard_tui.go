@@ -374,7 +374,7 @@ func (m dashboardTUIModel) View() string {
 		return "  Loading…\n"
 	}
 
-	sep := tuiStyleDim.Render(strings.Repeat("─", m.width))
+	sep := strings.Repeat("─", m.width)
 	var parts []string
 
 	// 1. Logo header.
@@ -425,9 +425,9 @@ func (m dashboardTUIModel) View() string {
 
 func (m dashboardTUIModel) viewLogo() []string {
 	return []string{
-		tuiStyleDim.Render(strings.Repeat("▓", m.width)),
+		strings.Repeat("▓", m.width),
 		tuiStyleHeader.Bold(true).Render(tuiPadCenter("◈  C I S T E R N  ◈", m.width)),
-		tuiStyleDim.Render(strings.Repeat("▓", m.width)),
+		strings.Repeat("▓", m.width),
 	}
 }
 
@@ -436,7 +436,7 @@ func (m dashboardTUIModel) viewStatusBar() string {
 	flowing := tuiStyleGreen.Render(fmt.Sprintf("● %d flowing", d.FlowingCount))
 	queued := tuiStyleYellow.Render(fmt.Sprintf("○ %d queued", d.QueuedCount))
 	done := tuiStyleGreen.Render(fmt.Sprintf("✓ %d delivered", d.DoneCount))
-	ts := tuiStyleDim.Render("— last update " + d.FetchedAt.Format("15:04:05"))
+	ts := "— last update " + d.FetchedAt.Format("15:04:05")
 	return fmt.Sprintf("  %s  %s  %s  %s", flowing, queued, done, ts)
 }
 
@@ -447,7 +447,7 @@ func (m dashboardTUIModel) viewStatusBar() string {
 // In both cases, a compact list of all aqueduct names and their status is shown below.
 func (m dashboardTUIModel) viewAqueductArches() []string {
 	if len(m.data.Cataractae) == 0 {
-		return []string{tuiStyleDim.Render("  No aqueducts configured")}
+		return []string{"  No aqueducts configured"}
 	}
 
 	// One unified row per aqueduct: active ones show the segmented bar inline,
@@ -473,8 +473,7 @@ func (m dashboardTUIModel) viewAqueductRow(ch CataractaeInfo) string {
 // Each cataracta gets its own labelled segment. Completed = filled teal,
 // active = animated water gradient, future = dim empty.
 func (m dashboardTUIModel) viewAqueductProgress(ch CataractaeInfo) string {
-	g   := tuiStyleGreen
-	dim := tuiStyleDim
+	g := tuiStyleGreen
 
 	steps := ch.Steps
 	if len(steps) == 0 {
@@ -530,7 +529,7 @@ func (m dashboardTUIModel) viewAqueductProgress(ch CataractaeInfo) string {
 		} else if i < activeIdx {
 			lblRow.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color(waterFull)).Render(centered))
 		} else {
-			lblRow.WriteString(dim.Render(centered))
+			lblRow.WriteString(centered)
 		}
 	}
 
@@ -571,8 +570,8 @@ func (m dashboardTUIModel) viewAqueductProgress(ch CataractaeInfo) string {
 	// Header: name  droplet  elapsed
 	const nameW = 10
 	name := g.Render(padRight(ch.Name, nameW))
-	elapsed := dim.Render(formatElapsed(ch.Elapsed))
-	header := fmt.Sprintf("%s%s  %s  %s", indent, name, dim.Render(ch.DropletID), elapsed)
+	elapsed := formatElapsed(ch.Elapsed)
+	header := fmt.Sprintf("%s%s  %s  %s", indent, name, ch.DropletID, elapsed)
 
 	return header + "\n" + lblRow.String() + "\n" + barRow.String()
 }
@@ -589,16 +588,16 @@ func pipelineLabel(ch CataractaeInfo, maxW int, g, dim lipgloss.Style) string {
 		}
 		partW := len([]rune(sep)) + len([]rune(s))
 		if used+partW > maxW {
-			sb.WriteString(dim.Render("…"))
+			sb.WriteString("…")
 			break
 		}
 		if i > 0 {
-			sb.WriteString(dim.Render(sep))
+			sb.WriteString(sep)
 		}
 		if s == ch.Step && ch.DropletID != "" {
 			sb.WriteString(g.Bold(true).Render(s))
 		} else {
-			sb.WriteString(dim.Render(s))
+			sb.WriteString(s)
 		}
 		used += partW
 	}
@@ -652,7 +651,7 @@ func (m dashboardTUIModel) viewPeekSelectOverlay() string {
 
 	var rows []string
 	rows = append(rows, tuiStyleHeader.Render("  select aqueduct"))
-	rows = append(rows, tuiStyleDim.Render(divider))
+	rows = append(rows, divider)
 	for i, ch := range active {
 		line := fmt.Sprintf("  %-12s  %-12s  %-12s  %s",
 			ch.Name, ch.RepoName, ch.DropletID, ch.Step)
@@ -662,8 +661,8 @@ func (m dashboardTUIModel) viewPeekSelectOverlay() string {
 			rows = append(rows, line)
 		}
 	}
-	rows = append(rows, tuiStyleDim.Render(divider))
-	rows = append(rows, tuiStyleDim.Render("  ↑↓ navigate  enter connect  esc cancel"))
+	rows = append(rows, divider)
+	rows = append(rows, "  ↑↓ navigate  enter connect  esc cancel")
 
 	boxStyle := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
@@ -694,14 +693,14 @@ func (m dashboardTUIModel) tuiFlowGraphRow(ch CataractaeInfo) (graphLine, infoLi
 
 	if len(ch.Steps) == 0 {
 		if ch.DropletID == "" {
-			return "  " + tuiStyleDim.Render(namePfx+"  (idle)"), ""
+			return "  " + namePfx+"  (idle)", ""
 		}
 		return "  " + tuiStyleGreen.Render(namePfx) + "  " + ch.Step, ""
 	}
 
 	var g strings.Builder
 	g.WriteString("  ")
-	g.WriteString(tuiStyleDim.Render(namePfx))
+	g.WriteString(namePfx)
 	g.WriteString("  ")
 	activeVisualCol := -1
 	visualCol := pfxWidth
@@ -710,11 +709,11 @@ func (m dashboardTUIModel) tuiFlowGraphRow(ch CataractaeInfo) (graphLine, infoLi
 		if i > 0 {
 			// " ──" = 3 visual chars, "●"/"○" = 1, "──▶ " = 4 → total 8
 			if step == ch.Step && ch.DropletID != "" {
-				g.WriteString(tuiStyleDim.Render(" ──"))
+				g.WriteString(" ──")
 				g.WriteString(tuiStyleGreen.Render("●"))
-				g.WriteString(tuiStyleDim.Render("──▶ "))
+				g.WriteString("──▶ ")
 			} else {
-				g.WriteString(tuiStyleDim.Render(" ──○──▶ "))
+				g.WriteString(" ──○──▶ ")
 			}
 			visualCol += 8
 		}
@@ -722,7 +721,7 @@ func (m dashboardTUIModel) tuiFlowGraphRow(ch CataractaeInfo) (graphLine, infoLi
 			g.WriteString(tuiStyleGreen.Bold(true).Render(step))
 			activeVisualCol = visualCol // step name starts here (after any incoming edge)
 		} else {
-			g.WriteString(tuiStyleDim.Render(step))
+			g.WriteString(step)
 		}
 		visualCol += len([]rune(step))
 	}
@@ -732,9 +731,9 @@ func (m dashboardTUIModel) tuiFlowGraphRow(ch CataractaeInfo) (graphLine, infoLi
 		bar := progressBar(ch.CataractaeIndex, ch.TotalCataractae, 8)
 		elapsed := formatElapsed(ch.Elapsed)
 		infoLine = strings.Repeat(" ", activeVisualCol) +
-			tuiStyleDim.Render("↑ ") +
+			"↑ " +
 			tuiStyleGreen.Render(ch.Name) +
-			tuiStyleDim.Render(" · "+ch.DropletID) +
+			" · "+ch.DropletID +
 			"  " + elapsed +
 			"  " + tuiStyleGreen.Render(bar)
 		if ch.Title != "" {
@@ -747,7 +746,7 @@ func (m dashboardTUIModel) tuiFlowGraphRow(ch CataractaeInfo) (graphLine, infoLi
 				if len([]rune(title)) > titleW {
 					title = string([]rune(title)[:titleW-1]) + "…"
 				}
-				infoLine += "  " + tuiStyleDim.Render(title)
+				infoLine += "  " + title
 			}
 		}
 	}
@@ -757,7 +756,7 @@ func (m dashboardTUIModel) tuiFlowGraphRow(ch CataractaeInfo) (graphLine, infoLi
 func (m dashboardTUIModel) viewCurrentFlow() []string {
 	d := m.data
 	if len(d.FlowActivities) == 0 {
-		return []string{tuiStyleDim.Render("  No droplets currently flowing.")}
+		return []string{"  No droplets currently flowing."}
 	}
 
 	maxW := m.width - 6 // leave room for indent + borders
@@ -836,7 +835,7 @@ func (m dashboardTUIModel) viewCistern() []string {
 		}
 	}
 	if len(queued) == 0 {
-		return []string{tuiStyleDim.Render("  Cistern is empty.")}
+		return []string{"  Cistern is empty."}
 	}
 
 	lines := make([]string, 0, len(queued))
@@ -865,9 +864,9 @@ func (m dashboardTUIModel) viewCisternRow(item *cistern.Droplet) string {
 	case 1:
 		prio = tuiStyleRed.Render("↑")
 	case 2:
-		prio = tuiStyleDim.Render("·")
+		prio = "·"
 	case 3:
-		prio = tuiStyleDim.Render("↓")
+		prio = "↓"
 	}
 
 	// Truncate title to fit.
@@ -882,10 +881,10 @@ func (m dashboardTUIModel) viewCisternRow(item *cistern.Droplet) string {
 		title = string(r[:titleW-1]) + "…"
 	}
 
-	elapsed := tuiStyleDim.Render(formatElapsed(age))
+	elapsed := formatElapsed(age)
 	return fmt.Sprintf("  %s %s  %s  %s  %s",
 		prio,
-		tuiStyleDim.Render(id),
+		id,
 		elapsed,
 		statusStr,
 		title,
@@ -894,7 +893,7 @@ func (m dashboardTUIModel) viewCisternRow(item *cistern.Droplet) string {
 
 func (m dashboardTUIModel) viewRecentFlow() []string {
 	if len(m.data.RecentItems) == 0 {
-		return []string{tuiStyleDim.Render("  No recent flow.")}
+		return []string{"  No recent flow."}
 	}
 	lines := make([]string, 0, len(m.data.RecentItems))
 	for _, item := range m.data.RecentItems {
@@ -917,7 +916,7 @@ func (m dashboardTUIModel) viewRecentRow(item *cistern.Droplet) string {
 	case "stagnant":
 		icon = tuiStyleRed.Render("✗")
 	default:
-		icon = tuiStyleDim.Render("·")
+		icon = "·"
 	}
 
 	// Truncate title to fit terminal width.
@@ -933,7 +932,7 @@ func (m dashboardTUIModel) viewRecentRow(item *cistern.Droplet) string {
 	}
 
 	return fmt.Sprintf("  %s  %-10s  %-20s  %s  %s",
-		tuiStyleDim.Render(t),
+		t,
 		item.ID,
 		step,
 		icon,
