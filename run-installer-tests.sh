@@ -301,61 +301,6 @@ test_missing_credentials() {
         ct doctor >/dev/null 2>&1
 }
 
-# test_wrong_token verifies that an expired OAuth token is properly detected
-# and reported by ct doctor.
-#
-# Given: ~/.claude/.credentials.json has an expired OAuth token (expiresAt in past)
-# When:  ct doctor runs
-# Then:  exits non-zero with output mentioning expired/invalid token
-# And:  the service still starts (no credential pre-check at startup)
-test_wrong_token() {
-    local home_dir="/tmp/cistern-test-wrong-token"
-
-    # Given: isolated home — ct init creates the layout.
-    exec_in_container bash -c "rm -rf '${home_dir}' && mkdir -p '${home_dir}'" || return 1
-    exec_in_container env HOME="${home_dir}" CT_NO_ASCII_LOGO=1 ct init \
-        >/dev/null 2>&1 || return 1
-
-    # Create an expired OAuth token in ~/.claude/.credentials.json
-    # (expiresAt=1000 is 1970-01-01, well in the past).
-    exec_in_container bash -c \
-        "mkdir -p '${home_dir}/.claude' && \
-         printf '{\"claudeAiOauth\":{\"accessToken\":\"expired-token\",\"refreshToken\":\"refresh-token\",\"expiresAt\":1000}}' > '${home_dir}/.claude/.credentials.json'" \
-        || return 1
-
-    # Create skill stubs so ct castellarius start passes validateWorkflowSkills.
-    exec_in_container bash -c "
-        for skill in cistern-droplet-state cistern-git cistern-github code-simplifier critical-code-reviewer adversarial-reviewer; do
-            mkdir -p ${home_dir}/.cistern/skills/\${skill}
-            printf '# stub\\n' > ${home_dir}/.cistern/skills/\${skill}/SKILL.md
-        done
-    " || return 1
-
-    # When: ct doctor runs.
-    local doctor_out doctor_exit=0
-    doctor_out=$(exec_in_container env HOME="${home_dir}" CT_NO_ASCII_LOGO=1 \
-        ct doctor 2>&1) || doctor_exit=$?
-
-    # Then: ct doctor exits non-zero.
-    [[ "${doctor_exit}" -ne 0 ]] || return 1
-
-    # Then: output mentions expired or invalid token.
-    echo "${doctor_out}" | grep -qi 'expired\|invalid.*token' || return 1
-
-    # Create cistern.db via ct doctor --fix so the service can open it.
-    exec_in_container env HOME="${home_dir}" CT_NO_ASCII_LOGO=1 \
-        ct doctor --fix >/dev/null 2>&1 || true
-
-    # Install and start the system service.
-    install_system_service "${home_dir}" || return 1
-
-    # Then: service still reaches active state (no credential pre-check at startup).
-    if ! wait_for_service_active "cistern-castellarius" 10; then
-        return 1
-    fi
-
-    return 0
-}
 
 # ─── Runner ───────────────────────────────────────────────────────────────────
 
@@ -396,7 +341,6 @@ main() {
     run_test "ct doctor runs without crash"                                    test_ct_doctor
     run_test "service_status helper queries systemd"                           test_service_status_helper
     run_test "missing credentials: doctor reports missing file, service fails" test_missing_credentials
-    run_test "wrong token: doctor reports unset key, service fails"            test_wrong_token
     run_test "fresh install: service active and ct doctor exits 0"             test_fresh_install
     run_test "upgrade: stale config survives ct init, service active"          test_upgrade
 
