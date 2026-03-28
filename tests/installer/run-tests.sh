@@ -268,15 +268,14 @@ else
     fi
 fi
 
-# ── Scenario 3: Expired OAuth token ──────────────────────────────────────────
-# Given: ~/.claude/.credentials.json has an expired OAuth token (expiresAt in the past)
+# ── Scenario 3: Ignore stale OAuth credentials ───────────────────────────────
+# Given: ~/.claude/.credentials.json has stale/expired OAuth credentials
 # When:  the service starts; ct doctor runs
-# Then:  service starts successfully — start-castellarius.sh no longer checks
-#        credential validity at startup;
-#        ct doctor exits non-zero, surfacing the expired-token error via the
-#        OAuth expiry check (Check 13)
+# Then:  service starts successfully — credentials are no longer checked;
+#        ct doctor exits 0 — the new "claude CLI authenticated" check
+#        (analogous to gh auth status) is used instead of OAuth checks
 echo ""
-echo "=== Scenario: Expired OAuth token ==="
+echo "=== Scenario: Ignore stale OAuth credentials ==="
 
 _reset_scenario_state
 
@@ -285,7 +284,8 @@ if ! CT_NO_ASCII_LOGO=1 ct init >/dev/null; then
 else
     _install_skill_stubs
 
-    # Given: expired OAuth credentials (expiresAt=1000ms — 1970-01-01, well in the past).
+    # Given: stale OAuth credentials (expiresAt=1000ms — 1970-01-01, well in the past).
+    # These are no longer checked by ct doctor.
     mkdir -p "${HOME}/.claude"
     cat > "${HOME}/.claude/.credentials.json" <<'CREDS_EOF'
 {"claudeAiOauth":{"accessToken":"expired-token","refreshToken":"refresh-token","expiresAt":1000}}
@@ -304,19 +304,16 @@ CREDS_EOF
             "service did not reach active state (state=${_svc_state}): ${_log}"
     fi
 
-    # Then: ct doctor exits non-zero, surfacing the expired OAuth token.
-    _doctor_out=$(CT_NO_ASCII_LOGO=1 ct doctor 2>&1) && _doctor_exit=0 || _doctor_exit=$?
-    if echo "${_doctor_out}" | grep -qi "expired\|invalid.*token"; then
+    # Then: ct doctor exits 0 — stale OAuth credentials are ignored.
+    # The "claude CLI authenticated" check (using 'claude auth status') is used instead.
+    if CT_NO_ASCII_LOGO=1 ct doctor >/dev/null 2>&1; then
         pass "expired_token_ct_doctor_surfaces_error"
-    else
-        fail "expired_token_ct_doctor_surfaces_error" \
-            "ct doctor did not surface expired token error: ${_doctor_out}"
-    fi
-    if [ "${_doctor_exit}" -ne 0 ]; then
         pass "expired_token_ct_doctor_exits_nonzero"
     else
+        fail "expired_token_ct_doctor_surfaces_error" \
+            "ct doctor should pass with stale OAuth credentials (now ignored)"
         fail "expired_token_ct_doctor_exits_nonzero" \
-            "ct doctor should have exited non-zero with expired token"
+            "ct doctor should exit 0 — OAuth checks are replaced"
     fi
 fi
 
