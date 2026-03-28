@@ -19,6 +19,10 @@ import (
 	_ "github.com/mattn/go-sqlite3"
 )
 
+// gitFetchTimeout is the maximum time allowed for a single git fetch to complete.
+// Exposed as a package-level variable so tests can override it without waiting 30 s.
+var gitFetchTimeout = 30 * time.Second
+
 // DroughtHookParams bundles the context needed by RunDroughtHooks.
 // Using a struct avoids a long positional parameter list and makes call sites
 // self-documenting — callers only set the fields they need.
@@ -211,8 +215,16 @@ func hookGitSync(cfg *aqueduct.AqueductConfig, sandboxRoot string, logger *slog.
 		}
 
 		// Fetch latest refs without touching the working tree.
-		if out, err := exec.Command("git", "-C", cloneDir, "fetch", "origin").CombinedOutput(); err != nil {
-			logger.Warn("git_sync: fetch failed", "repo", repo.Name, "error", err, "output", string(out))
+		// A 30-second timeout prevents a stalled network from blocking RunDroughtHooks indefinitely.
+		fetchCtx, fetchCancel := context.WithTimeout(context.Background(), gitFetchTimeout)
+		fetchOut, fetchErr := exec.CommandContext(fetchCtx, "git", "-C", cloneDir, "fetch", "origin").CombinedOutput()
+		fetchCancel()
+		if fetchCtx.Err() == context.DeadlineExceeded {
+			logger.Warn("git_sync: git fetch timed out, skipping sync", "repo", repo.Name)
+			continue
+		}
+		if fetchErr != nil {
+			logger.Warn("git_sync: fetch failed", "repo", repo.Name, "error", fetchErr, "output", string(fetchOut))
 			continue
 		}
 

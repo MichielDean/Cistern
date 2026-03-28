@@ -701,6 +701,71 @@ cataractae:
 	}
 }
 
+// --- git fetch timeout tests ---
+
+func TestHookGitSync_FetchTimeout_SkipsRepoAndContinues(t *testing.T) {
+	// Given: a sandbox clone whose git fetch hangs indefinitely.
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	if runtime.GOOS == "windows" {
+		t.Skip("fake-git shell script not supported on Windows")
+	}
+
+	realGit, err := exec.LookPath("git")
+	if err != nil {
+		t.Skip("git not available")
+	}
+
+	tmpDir := t.TempDir()
+	setHomeForTest(t, tmpDir)
+
+	const repoName = "timeout-repo"
+	sandboxRoot := setupGitSyncEnv(t, tmpDir, repoName, map[string]string{
+		"README.md": "hello\n",
+	})
+
+	// Create a fake git binary: sleeps 60 s on fetch, delegates all else to real git.
+	fakeBinDir := filepath.Join(tmpDir, "fakebin")
+	if err := os.MkdirAll(fakeBinDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// Use "exec sleep" so the shell process is replaced — killing the PID closes the pipe cleanly.
+	script := fmt.Sprintf(
+		"#!/bin/sh\nfor arg; do\n  case \"$arg\" in\n    fetch) exec sleep 60 ;;\n  esac\ndone\nexec %s \"$@\"\n",
+		realGit,
+	)
+	if err := os.WriteFile(filepath.Join(fakeBinDir, "git"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", fakeBinDir+":"+os.Getenv("PATH"))
+
+	// Override the fetch timeout to a very small value so the test completes quickly.
+	origTimeout := gitFetchTimeout
+	gitFetchTimeout = 150 * time.Millisecond
+	defer func() { gitFetchTimeout = origTimeout }()
+
+	cfg := &aqueduct.AqueductConfig{
+		Repos: []aqueduct.RepoConfig{
+			{Name: repoName, WorkflowPath: "aqueduct/workflow.yaml", Cataractae: 1, Prefix: "t"},
+		},
+	}
+
+	start := time.Now()
+
+	// When: hookGitSync is called with a stalled fetch.
+	_, syncErr := hookGitSync(cfg, sandboxRoot, discardLogger())
+
+	// Then: returns well within the test budget — not blocked by the stalled fetch.
+	if elapsed := time.Since(start); elapsed > 5*time.Second {
+		t.Errorf("hookGitSync blocked for %v; expected fast return on fetch timeout", elapsed)
+	}
+	// And: returns nil — a timed-out fetch is a soft skip, not a hard error.
+	if syncErr != nil {
+		t.Errorf("expected nil on fetch timeout, got: %v", syncErr)
+	}
+}
+
 // --- cistern.yaml mtime detection tests ---
 
 func TestRunDroughtHooks_CfgMtimeZero_NoDetection(t *testing.T) {
