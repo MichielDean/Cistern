@@ -597,6 +597,44 @@ func (m dashboardTUIModel) viewPeekSelectOverlay() string {
 	return lipgloss.Place(w, h, lipgloss.Center, lipgloss.Center, box)
 }
 
+// ansiTruncVisual truncates s to at most width visible rune-columns while
+// preserving all ANSI escape sequences (CSI: \x1b[…m) within the retained
+// portion. A reset (\x1b[0m) is appended when ANSI codes were present so that
+// subsequent styled output (e.g. wfExit) starts from a clean colour state.
+func ansiTruncVisual(s string, width int) string {
+	var sb strings.Builder
+	visual := 0
+	hasANSI := false
+	runes := []rune(s)
+	i := 0
+	for i < len(runes) && visual < width {
+		if runes[i] == '\x1b' && i+1 < len(runes) && runes[i+1] == '[' {
+			// CSI escape sequence: \x1b[ params final-byte (0x40–0x7E).
+			hasANSI = true
+			sb.WriteRune(runes[i]) // \x1b
+			i++
+			sb.WriteRune(runes[i]) // [
+			i++
+			for i < len(runes) {
+				sb.WriteRune(runes[i])
+				if runes[i] >= 0x40 && runes[i] <= 0x7E {
+					i++
+					break
+				}
+				i++
+			}
+			continue
+		}
+		sb.WriteRune(runes[i])
+		visual++
+		i++
+	}
+	if hasANSI {
+		sb.WriteString("\x1b[0m")
+	}
+	return sb.String()
+}
+
 // animateTroughLine post-processes a single ANSI-encoded mipmap row for water
 // animation. For each visible (non-space) character in the row it substitutes a
 // cycling wave character from the pattern (░▒▓≈▒░) based on column position and
@@ -715,14 +753,11 @@ func (m dashboardTUIModel) tuiAqueductRow(ch CataractaeInfo, frame int) []string
 
 	// Waterfall exit: replace the last wfW visual chars of the last mipmap row with
 	// wfExit, keeping the arch line within archBlockW (archPillarW+2).
+	// ansiTruncVisual preserves 24-bit pixel-art colours in the retained prefix.
 	if isLastStep && len(archLines) > 0 {
 		const wfW = 4 // visual width of wfExit (░▒▓▓)
 		const trimTo = (archPillarW + 2) - wfW
-		stripped := []rune(stripANSI(archLines[len(archLines)-1]))
-		if len(stripped) > trimTo {
-			stripped = stripped[:trimTo]
-		}
-		archLines[len(archLines)-1] = string(stripped) + wfExit
+		archLines[len(archLines)-1] = ansiTruncVisual(archLines[len(archLines)-1], trimTo) + wfExit
 	}
 
 	// Label line: single archPillarW-wide label.

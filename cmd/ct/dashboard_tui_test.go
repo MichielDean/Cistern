@@ -855,6 +855,105 @@ func TestViewAqueductArches_TwoActiveOnFinalStep_FitsIn80Cols(t *testing.T) {
 	}
 }
 
+// --- ansiTruncVisual tests ---
+
+// TestAnsiTruncVisual_PreservesANSICodes verifies that ANSI escape sequences
+// in the retained prefix are kept intact after truncation.
+//
+// Given: "\x1b[32mhello\x1b[0m world" (green "hello" then reset then " world")
+// When:  ansiTruncVisual(s, 5)
+// Then:  result contains "\x1b[32m" and visible text is "hello"
+func TestAnsiTruncVisual_PreservesANSICodes(t *testing.T) {
+	input := "\x1b[32mhello\x1b[0m world"
+	got := ansiTruncVisual(input, 5)
+	if !strings.Contains(got, "\x1b[32m") {
+		t.Errorf("ANSI green code should be preserved in truncated output; got %q", got)
+	}
+	if stripANSI(got) != "hello" {
+		t.Errorf("visible content = %q, want %q", stripANSI(got), "hello")
+	}
+}
+
+// TestAnsiTruncVisual_VisualWidthIsExact verifies that the visual width of the
+// result (after stripping ANSI) equals min(width, input visual width).
+//
+// Given: various ANSI-encoded strings and target widths
+// When:  ansiTruncVisual is called
+// Then:  len([]rune(stripANSI(result))) == wantVis
+func TestAnsiTruncVisual_VisualWidthIsExact(t *testing.T) {
+	cases := []struct {
+		name    string
+		input   string
+		width   int
+		wantVis int
+	}{
+		{"plain exact", "hello", 5, 5},
+		{"plain truncate", "hello world", 5, 5},
+		{"ANSI prefix truncate", "\x1b[32mhello world\x1b[0m", 5, 5},
+		{"ANSI mid-string truncate", "he\x1b[32mllo\x1b[0m world", 3, 3},
+		{"width >= visual length", "hi", 10, 2},
+		{"empty input", "", 5, 0},
+		{"24-bit color sequence", "\x1b[38;2;255;128;0mABC\x1b[0m", 2, 2},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := ansiTruncVisual(tc.input, tc.width)
+			vis := len([]rune(stripANSI(got)))
+			if vis != tc.wantVis {
+				t.Errorf("visual width = %d, want %d (input=%q, width=%d, got=%q)",
+					vis, tc.wantVis, tc.input, tc.width, got)
+			}
+		})
+	}
+}
+
+// TestTuiAqueductRow_LastMipmapRow_RetainsColorsOnFinalStep verifies that when a
+// droplet is on the final step, the retained arch-base pixels (trimTo visual chars)
+// in the last mipmap row still contain ANSI escape sequences.
+//
+// Before the fix, stripANSI was called on the whole last row, destroying all
+// 24-bit pixel-art colours. The mipmap last row has hundreds of raw bytes of ANSI
+// codes; if they are stripped the raw byte count drops to near visual-width bytes.
+//
+// Given: TrueColor profile active; aqueduct on final step
+// When:  tuiAqueductRow is called
+// Then:  last row raw byte count >> visual char count (ANSI codes present)
+func TestTuiAqueductRow_LastMipmapRow_RetainsColorsOnFinalStep(t *testing.T) {
+	m := dashboardTUIModel{}
+	// Idle aqueduct: last mipmap row is unmodified — use as reference.
+	idleRows := m.tuiAqueductRow(CataractaeInfo{
+		Name:  "virgo",
+		Steps: []string{"implement", "review", "merge"},
+	}, 0)
+	idleLastRow := idleRows[len(idleRows)-1]
+
+	// If the test environment emits no ANSI codes, skip (nothing to verify).
+	if !strings.Contains(idleLastRow, "\x1b[") {
+		t.Skip("no ANSI codes in mipmap (non-TrueColor test environment)")
+	}
+
+	// Final-step aqueduct: last mipmap row has wfExit appended after truncation.
+	finalRows := m.tuiAqueductRow(CataractaeInfo{
+		Name:      "virgo",
+		DropletID: "ci-test01",
+		Step:      "merge",
+		Steps:     []string{"implement", "review", "merge"},
+	}, 0)
+	finalLastRow := finalRows[len(finalRows)-1]
+
+	// The final-step row must still contain ANSI codes from the mipmap pixels.
+	// With the bug (stripANSI applied), the retained 34-char prefix would be
+	// plain text and the only ANSI codes would come from the appended wfExit.
+	// Verify by checking raw byte count: plain 34 runes (block chars, 3 bytes/char)
+	// = ~102 bytes; with ANSI the mipmap last row has 500+ bytes for its 36 visible chars.
+	const trimTo = 34 // (archPillarW + 2) - wfW
+	// Set a conservative minimum: at least trimTo * 6 raw bytes means ANSI is present.
+	if len(finalLastRow) <= trimTo*6 {
+		t.Errorf("last mipmap row has %d raw bytes, want > %d: ANSI pixel-art colours likely stripped",
+			len(finalLastRow), trimTo*6)
+	}
+}
+
 // --- Fix 3: animateTroughLine tests ---
 
 // TestAnimateTroughLine_ReplacesColoredCharsWithWave verifies that
