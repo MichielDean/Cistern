@@ -789,11 +789,11 @@ func (m dashboardTUIModel) viewCurrentFlow() []string {
 		// Header: droplet ID + step + title.
 		stepStr := tuiStyleGreen.Render(fa.Step)
 		idStr   := tuiStyleHeader.Render(fa.DropletID)
-		title   := tuiStyleDim.Render("  " + truncate(fa.Title, maxW-30))
+		title   := "  " + truncate(fa.Title, maxW-30)
 		lines = append(lines, fmt.Sprintf("  %s  %s%s", idStr, stepStr, title))
 
 		if len(fa.RecentNotes) == 0 {
-			lines = append(lines, tuiStyleDim.Render("    (no notes yet — first pass)"))
+			lines = append(lines, "    (no notes yet — first pass)")
 		} else {
 			for _, note := range fa.RecentNotes {
 				// Timestamp: relative if recent, otherwise HH:MM.
@@ -808,8 +808,8 @@ func (m dashboardTUIModel) viewCurrentFlow() []string {
 					ts = note.CreatedAt.Local().Format("15:04")
 				}
 
-				who  := tuiStyleDim.Render("[" + note.CataractaeName + "]")
-				when := tuiStyleDim.Render(ts)
+				who  := "[" + note.CataractaeName + "]"
+				when := ts
 				text := firstMeaningfulLine(note.Content)
 				text  = truncate(text, maxW-30)
 				lines = append(lines,
