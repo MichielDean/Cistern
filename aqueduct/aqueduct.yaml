@@ -1,17 +1,14 @@
 name: feature
 
 complexity:
-  trivial:
-    level: 1
-    skip_cataractae: [review, qa, docs]
   standard:
-    level: 2
-    skip_cataractae: [qa]
+    level: 1
+    skip_cataractae: [qa, security-review]
   full:
-    level: 3
-    skip_cataractae: []
+    level: 2
+    skip_cataractae: [security-review]
   critical:
-    level: 4
+    level: 3
     skip_cataractae: []
     require_human: true
 
@@ -40,13 +37,13 @@ cataractae:
       - name: cistern-git
       - name: code-simplifier
     timeout_minutes: 20
-    skip_for: [1] # trivial droplets skip simplification
-    on_pass: review
+    skip_for: [] # all complexity levels run simplification
+    on_pass: adversarial-review
     on_fail: implement
     on_recirculate: implement
     on_escalate: human
 
-  - name: review
+  - name: adversarial-review
     type: agent
     identity: reviewer
     model: opus         # strongest reasoning needed — must find non-obvious bugs across full codebase
@@ -57,7 +54,7 @@ cataractae:
       - name: cistern-git
       - name: cistern-github
     timeout_minutes: 15
-    skip_for: [1] # trivial droplets skip this cataractae
+    skip_for: [] # all complexity levels run adversarial-review
     on_pass: qa
     on_fail: implement
     on_recirculate: implement
@@ -72,7 +69,7 @@ cataractae:
       - name: cistern-droplet-state
       - name: cistern-git
     timeout_minutes: 20
-    skip_for: [1, 2] # trivial and standard droplets skip this cataractae
+    skip_for: [1] # standard droplets skip qa
     on_pass: security-review
     on_fail: implement
     on_recirculate: implement
@@ -86,7 +83,7 @@ cataractae:
     skills:
       - name: cistern-droplet-state
     timeout_minutes: 15
-    skip_for: [1, 2, 3] # only critical droplets run security review
+    skip_for: [1, 2] # only critical droplets run security review
     on_pass: docs
     on_fail: implement
     on_recirculate: implement
@@ -101,7 +98,7 @@ cataractae:
       - name: cistern-droplet-state
       - name: cistern-git
     timeout_minutes: 20
-    skip_for: [1] # trivial droplets skip docs
+    skip_for: [] # all complexity levels run docs
     on_pass: delivery
     on_fail: implement
     on_recirculate: implement

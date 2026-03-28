@@ -85,7 +85,22 @@ func New(dbPath, prefix string) (*Client, error) {
 	db.Exec(`ALTER TABLE events RENAME COLUMN item_id TO droplet_id`)
 	db.Exec(`ALTER TABLE events RENAME COLUMN drop_id TO droplet_id`)
 	db.Exec(`ALTER TABLE droplets RENAME COLUMN current_step TO current_cataractae`)
-	db.Exec(`ALTER TABLE droplets ADD COLUMN complexity INTEGER DEFAULT 3`)
+	db.Exec(`ALTER TABLE droplets ADD COLUMN complexity INTEGER DEFAULT 2`)
+	// Idempotent one-time migration: remap old 4-level complexity scheme
+	// (1=trivial, 2=standard, 3=full, 4=critical) to new 3-level scheme
+	// (1=standard, 2=full, 3=critical). Tracked in _schema_migrations so it
+	// runs exactly once per database.
+	db.Exec(`CREATE TABLE IF NOT EXISTS _schema_migrations (id TEXT PRIMARY KEY)`)
+	var migrationDone int
+	db.QueryRow(`SELECT COUNT(*) FROM _schema_migrations WHERE id = 'complexity_renumber'`).Scan(&migrationDone)
+	if migrationDone == 0 {
+		tx, err := db.Begin()
+		if err == nil {
+			tx.Exec(`UPDATE droplets SET complexity = complexity - 1 WHERE complexity >= 2`)
+			tx.Exec(`INSERT OR IGNORE INTO _schema_migrations (id) VALUES ('complexity_renumber')`)
+			tx.Commit()
+		}
+	}
 	db.Exec(`ALTER TABLE droplets ADD COLUMN outcome TEXT DEFAULT NULL`)
 	// Vocabulary migrations: update legacy status values to canonical vocabulary.
 	db.Exec(`UPDATE droplets SET status = 'stagnant' WHERE status = 'escalated'`)
@@ -145,8 +160,8 @@ func (c *Client) generateID() (string, error) {
 // Add creates a new droplet and returns it. Optional deps are dependency IDs
 // that must be delivered before this droplet can be dispatched.
 func (c *Client) Add(repo, title, description string, priority, complexity int, deps ...string) (*Droplet, error) {
-	if complexity < 1 || complexity > 4 {
-		complexity = 3
+	if complexity < 1 || complexity > 3 {
+		complexity = 2
 	}
 	id, err := c.generateID()
 	if err != nil {
@@ -420,8 +435,8 @@ func (c *Client) EditDroplet(id string, fields EditDropletFields) error {
 		return nil
 	}
 
-	if fields.Complexity != nil && (*fields.Complexity < 1 || *fields.Complexity > 4) {
-		return fmt.Errorf("cistern: complexity must be between 1 and 4, got %d", *fields.Complexity)
+	if fields.Complexity != nil && (*fields.Complexity < 1 || *fields.Complexity > 3) {
+		return fmt.Errorf("cistern: complexity must be between 1 and 3, got %d", *fields.Complexity)
 	}
 
 	var setClauses []string

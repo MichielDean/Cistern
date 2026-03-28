@@ -1,6 +1,7 @@
 package cistern
 
 import (
+	"database/sql"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -25,6 +26,105 @@ func TestNew_CreatesDB(t *testing.T) {
 	}
 	if c.prefix != "bf" {
 		t.Errorf("prefix = %q, want %q", c.prefix, "bf")
+	}
+}
+
+// TestNew_FreshDB_DefaultComplexityIsTwo verifies that a fresh database created
+// from schema.sql defaults the complexity column to 2 (full), not 3 (critical).
+func TestNew_FreshDB_DefaultComplexityIsTwo(t *testing.T) {
+	c := testClient(t)
+	// Add a droplet, then fetch it back directly to check the schema-level default
+	// is not involved (Add validates and stores explicitly). Instead, verify the
+	// schema default by inserting a row without specifying complexity.
+	_, err := c.db.Exec(`INSERT INTO droplets (id, repo, title) VALUES ('bf-test1', 'repo', 'title')`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got int
+	if err := c.db.QueryRow(`SELECT complexity FROM droplets WHERE id = 'bf-test1'`).Scan(&got); err != nil {
+		t.Fatal(err)
+	}
+	if got != 2 {
+		t.Errorf("schema DEFAULT complexity = %d, want 2 (full)", got)
+	}
+}
+
+// TestNew_ComplexityMigration_RemapsOldSchemeValues verifies that when New() is
+// called on a DB containing old-scheme complexity values (1=trivial, 2=standard,
+// 3=full, 4=critical), they are remapped to the new scheme (1=standard, 2=full,
+// 3=critical).
+func TestNew_ComplexityMigration_RemapsOldSchemeValues(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "migrate.db")
+
+	// Seed the DB with old-scheme complexity values using the raw driver,
+	// bypassing New() so the migration has not yet run.
+	seedDB, err := sql.Open("sqlite3", dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = seedDB.Exec(`CREATE TABLE IF NOT EXISTS droplets (
+		id TEXT PRIMARY KEY,
+		repo TEXT NOT NULL,
+		title TEXT NOT NULL,
+		description TEXT DEFAULT '',
+		priority INTEGER DEFAULT 2,
+		complexity INTEGER DEFAULT 3,
+		status TEXT DEFAULT 'open',
+		assignee TEXT DEFAULT '',
+		current_cataractae TEXT DEFAULT '',
+		outcome TEXT DEFAULT NULL,
+		assigned_aqueduct TEXT DEFAULT '',
+		last_reviewed_commit TEXT DEFAULT NULL,
+		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+		updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+	)`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Insert rows with old-scheme values: trivial=1, standard=2, full=3, critical=4.
+	for _, row := range []struct {
+		id         string
+		complexity int
+	}{
+		{"old-trivial", 1},
+		{"old-standard", 2},
+		{"old-full", 3},
+		{"old-critical", 4},
+	} {
+		if _, err := seedDB.Exec(`INSERT INTO droplets (id, repo, title, complexity) VALUES (?, 'r', 't', ?)`, row.id, row.complexity); err != nil {
+			t.Fatal(err)
+		}
+	}
+	seedDB.Close()
+
+	// Open with New() to trigger the migration.
+	c, err := New(dbPath, "bf")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+
+	// Given: old scheme 1=trivial → new scheme 1=standard (unchanged, trivial removed)
+	// Given: old scheme 2=standard → new scheme 1=standard
+	// Given: old scheme 3=full    → new scheme 2=full
+	// Given: old scheme 4=critical → new scheme 3=critical
+	cases := []struct {
+		id      string
+		wantNew int
+	}{
+		{"old-trivial", 1},
+		{"old-standard", 1},
+		{"old-full", 2},
+		{"old-critical", 3},
+	}
+	for _, tc := range cases {
+		var got int
+		if err := c.db.QueryRow(`SELECT complexity FROM droplets WHERE id = ?`, tc.id).Scan(&got); err != nil {
+			t.Fatalf("id=%s: %v", tc.id, err)
+		}
+		if got != tc.wantNew {
+			t.Errorf("id=%s: complexity after migration = %d, want %d", tc.id, got, tc.wantNew)
+		}
 	}
 }
 
@@ -374,33 +474,33 @@ func TestAdd_WithComplexity(t *testing.T) {
 
 func TestAdd_ComplexityDefault(t *testing.T) {
 	c := testClient(t)
-	// Out-of-range complexity should default to 3.
+	// Out-of-range complexity should default to 2 (full).
 	item, err := c.Add("myrepo", "Bad cx", "", 2, 99)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if item.Complexity != 3 {
-		t.Errorf("complexity = %d, want 3 (default)", item.Complexity)
+	if item.Complexity != 2 {
+		t.Errorf("complexity = %d, want 2 (default)", item.Complexity)
 	}
 }
 
 func TestGetReady_ReturnsComplexity(t *testing.T) {
 	c := testClient(t)
-	c.Add("myrepo", "Critical task", "", 1, 4)
+	c.Add("myrepo", "Critical task", "", 1, 3)
 
 	item, err := c.GetReady("myrepo")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if item.Complexity != 4 {
-		t.Errorf("complexity = %d, want 4", item.Complexity)
+	if item.Complexity != 3 {
+		t.Errorf("complexity = %d, want 3", item.Complexity)
 	}
 }
 
 func TestList_ReturnsComplexity(t *testing.T) {
 	c := testClient(t)
-	c.Add("myrepo", "Trivial", "", 1, 1)
-	c.Add("myrepo", "Critical", "", 1, 4)
+	c.Add("myrepo", "Standard", "", 1, 1)
+	c.Add("myrepo", "Critical", "", 1, 3)
 
 	items, err := c.List("myrepo", "")
 	if err != nil {
@@ -412,8 +512,8 @@ func TestList_ReturnsComplexity(t *testing.T) {
 	if items[0].Complexity != 1 {
 		t.Errorf("items[0].Complexity = %d, want 1", items[0].Complexity)
 	}
-	if items[1].Complexity != 4 {
-		t.Errorf("items[1].Complexity = %d, want 4", items[1].Complexity)
+	if items[1].Complexity != 3 {
+		t.Errorf("items[1].Complexity = %d, want 3", items[1].Complexity)
 	}
 }
 
@@ -1096,17 +1196,17 @@ func TestEditDroplet_InvalidComplexity(t *testing.T) {
 	c := testClient(t)
 	item, _ := c.Add("repo", "Title", "desc", 2, 3)
 
-	for _, bad := range []int{0, -1, 5, 100} {
+	for _, bad := range []int{0, -1, 4, 5, 100} {
 		err := c.EditDroplet(item.ID, EditDropletFields{Complexity: ptr(bad)})
 		if err == nil {
 			t.Errorf("expected error for complexity=%d", bad)
-		} else if !strings.Contains(err.Error(), "complexity must be between 1 and 4") {
+		} else if !strings.Contains(err.Error(), "complexity must be between 1 and 3") {
 			t.Errorf("complexity=%d: unexpected error: %v", bad, err)
 		}
 	}
 
 	// Valid boundary values should succeed.
-	for _, ok := range []int{1, 4} {
+	for _, ok := range []int{1, 3} {
 		if err := c.EditDroplet(item.ID, EditDropletFields{Complexity: ptr(ok)}); err != nil {
 			t.Errorf("complexity=%d should be valid, got: %v", ok, err)
 		}

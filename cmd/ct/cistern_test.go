@@ -212,12 +212,12 @@ func TestParseComplexity(t *testing.T) {
 		{"1", 1, false},
 		{"2", 2, false},
 		{"3", 3, false},
-		{"4", 4, false},
-		{"trivial", 1, false},
-		{"standard", 2, false},
-		{"full", 3, false},
-		{"critical", 4, false},
-		{"", 3, false},
+		{"standard", 1, false},
+		{"full", 2, false},
+		{"critical", 3, false},
+		{"", 2, false},
+		{"trivial", 0, true},
+		{"4", 0, true},
 		{"5", 0, true},
 		{"foo", 0, true},
 	}
@@ -245,11 +245,11 @@ func TestComplexityName(t *testing.T) {
 		level int
 		want  string
 	}{
-		{1, "trivial"},
-		{2, "standard"},
-		{3, "full"},
-		{4, "critical"},
+		{1, "standard"},
+		{2, "full"},
+		{3, "critical"},
 		{0, "full"},
+		{4, "full"},
 		{99, "full"},
 	}
 	for _, tt := range tests {
@@ -1044,7 +1044,7 @@ func TestDropletEdit(t *testing.T) {
 
 	t.Run("update complexity", func(t *testing.T) {
 		resetEditFlags()
-		dropletEditCmd.Flags().Set("complexity", "trivial")
+		dropletEditCmd.Flags().Set("complexity", "standard")
 
 		if err := dropletEditCmd.RunE(dropletEditCmd, []string{item.ID}); err != nil {
 			t.Fatalf("unexpected error: %v", err)

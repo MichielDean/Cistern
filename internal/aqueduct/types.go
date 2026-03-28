@@ -55,9 +55,8 @@ type ComplexityLevel struct {
 	RequireHuman bool     `yaml:"require_human,omitempty"`
 }
 
-// ComplexityConfig holds the four complexity tiers for a aqueduct.
+// ComplexityConfig holds the three complexity tiers for a aqueduct.
 type ComplexityConfig struct {
-	Trivial  ComplexityLevel `yaml:"trivial"`
 	Standard ComplexityLevel `yaml:"standard"`
 	Full     ComplexityLevel `yaml:"full"`
 	Critical ComplexityLevel `yaml:"critical"`
@@ -93,14 +92,13 @@ func (wf *Workflow) SkipCataractaeForLevel(level int) []string {
 	return skipped
 }
 
-// SkipCataractaeForLevel on ComplexityConfig is kept for backward compat but delegates.
+// SkipCataractaeForLevel returns cataractae names in the config block that are skipped
+// for the given complexity level: 1=standard, 2=full, 3=critical.
 func (cc ComplexityConfig) SkipCataractaeForLevel(level int) []string {
 	switch level {
 	case 1:
-		return cc.Trivial.SkipCataractae
-	case 2:
 		return cc.Standard.SkipCataractae
-	case 4:
+	case 3:
 		return cc.Critical.SkipCataractae
 	default:
 		return cc.Full.SkipCataractae
@@ -109,12 +107,7 @@ func (cc ComplexityConfig) SkipCataractaeForLevel(level int) []string {
 
 // RequireHumanForLevel returns whether a human gate is required for a given complexity level.
 func (cc ComplexityConfig) RequireHumanForLevel(level int) bool {
-	switch level {
-	case 4:
-		return cc.Critical.RequireHuman
-	default:
-		return false
-	}
+	return level == 3 && cc.Critical.RequireHuman
 }
 
 // Workflow is a named sequence of cataractae parsed from a YAML file.

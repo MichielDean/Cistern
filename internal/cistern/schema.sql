@@ -4,7 +4,7 @@ CREATE TABLE IF NOT EXISTS droplets (
     title TEXT NOT NULL,
     description TEXT DEFAULT '',
     priority INTEGER DEFAULT 2,
-    complexity INTEGER DEFAULT 3,
+    complexity INTEGER DEFAULT 2,
     status TEXT DEFAULT 'open',
     assignee TEXT DEFAULT '',
     current_cataractae TEXT DEFAULT '',

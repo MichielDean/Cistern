@@ -171,12 +171,12 @@ func TestComplexityToInt(t *testing.T) {
 		input string
 		want  int
 	}{
-		{"trivial", 1},
-		{"standard", 2},
-		{"full", 3},
-		{"critical", 4},
-		{"unknown", 3},
-		{"", 3},
+		{"standard", 1},
+		{"full", 2},
+		{"critical", 3},
+		{"unknown", 2},
+		{"", 2},
+		{"trivial", 2},
 	}
 	for _, tt := range tests {
 		got := complexityToInt(tt.input)

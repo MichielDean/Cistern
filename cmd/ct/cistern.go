@@ -1370,7 +1370,7 @@ func init() {
 	dropletAddCmd.Flags().StringVar(&addDescription, "description", "", "droplet description")
 	dropletAddCmd.Flags().IntVar(&addPriority, "priority", 2, "priority (1=highest)")
 	dropletAddCmd.Flags().StringVar(&addRepo, "repo", "", "target repository (required)")
-	dropletAddCmd.Flags().StringVarP(&addComplexity, "complexity", "x", "3", "droplet complexity: 1/trivial, 2/standard, 3/full (default), 4/critical")
+	dropletAddCmd.Flags().StringVarP(&addComplexity, "complexity", "x", "2", "droplet complexity: 1/standard, 2/full (default), 3/critical")
 	dropletAddCmd.Flags().StringArrayVar(&addDependsOn, "depends-on", nil, "dependency droplet ID (repeatable)")
 	dropletAddCmd.Flags().BoolVar(&addFilter, "filter", false, "run filtration — LLM-assisted pass to refine ideas into well-specified droplets")
 	dropletAddCmd.Flags().BoolVar(&addYes, "yes", false, "skip confirmation prompts (for non-interactive/agent use)")
@@ -1424,7 +1424,7 @@ func init() {
 	_ = dropletRestartCmd.MarkFlagRequired("cataractae")
 
 	dropletEditCmd.Flags().StringVar(&editDescription, "description", "", "new description (use - to read from stdin)")
-	dropletEditCmd.Flags().StringVar(&editComplexity, "complexity", "", "new complexity: trivial|standard|full|critical (or 1-4)")
+	dropletEditCmd.Flags().StringVar(&editComplexity, "complexity", "", "new complexity: standard|full|critical (or 1-3)")
 	dropletEditCmd.Flags().IntVar(&editPriority, "priority", 0, "new priority")
 
 	dropletCmd.AddCommand(dropletAddCmd, dropletListCmd, dropletShowCmd, dropletNoteCmd,
@@ -1435,29 +1435,25 @@ func init() {
 	rootCmd.AddCommand(dropletCmd)
 }
 
-// parseComplexity accepts "1"-"4" or names "trivial","standard","full","critical".
+// parseComplexity accepts "1"-"3" or names "standard","full","critical".
 func parseComplexity(s string) (int, error) {
 	switch s {
-	case "1", "trivial":
+	case "1", "standard":
 		return 1, nil
-	case "2", "standard":
+	case "2", "full", "":
 		return 2, nil
-	case "3", "full", "":
+	case "3", "critical":
 		return 3, nil
-	case "4", "critical":
-		return 4, nil
 	}
-	return 0, fmt.Errorf("invalid complexity %q: use 1/trivial, 2/standard, 3/full, 4/critical", s)
+	return 0, fmt.Errorf("invalid complexity %q: use 1/standard, 2/full, 3/critical", s)
 }
 
 // complexityName returns the human name for a complexity level.
 func complexityName(cx int) string {
 	switch cx {
 	case 1:
-		return "trivial"
-	case 2:
 		return "standard"
-	case 4:
+	case 3:
 		return "critical"
 	default:
 		return "full"

@@ -32,10 +32,9 @@ Cistern vocabulary:
   cataractae — a gate/step in an aqueduct (e.g., implement, review, test)
 
 Complexity guide:
-  trivial  (1) — typo fix, config change, minor doc update
-  standard (2) — single focused feature, straightforward implementation
-  full     (3) — multi-part feature or moderate complexity
-  critical (4) — breaking change, major refactor, multi-system coordination
+  standard (1) — single focused feature, straightforward implementation
+  full     (2) — multi-part feature or moderate complexity
+  critical (3) — breaking change, major refactor, multi-system coordination
 
 Your task: Given a rough idea (title and optional description), reason carefully about:
   - Scope and acceptance criteria
@@ -50,7 +49,7 @@ Each proposal object must have exactly these fields:
   {
     "title": "short imperative title (max 72 chars)",
     "description": "clear acceptance criteria and key implementation notes",
-    "complexity": "trivial|standard|full|critical",
+    "complexity": "standard|full|critical",
     "depends_on": []
   }
 ]
@@ -170,11 +169,11 @@ func extractProposals(text string) ([]DropletProposal, error) {
 	return proposals, nil
 }
 
-// complexityToInt converts a complexity name to its integer level (default: 3).
+// complexityToInt converts a complexity name to its integer level (default: 2/full).
 func complexityToInt(s string) int {
 	cx, err := parseComplexity(s)
 	if err != nil {
-		return 3
+		return 2
 	}
 	return cx
 }
@@ -369,7 +368,6 @@ var (
 )
 
 var complexityColors = map[string]string{
-	"trivial":  "#57d57a",
 	"standard": "#9db1db",
 	"full":     "#f0c86b",
 	"critical": "#e06c75",
