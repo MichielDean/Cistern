@@ -112,3 +112,20 @@ assertions, no edge cases, and no error coverage is a recirculate.
 
 Be specific in your recirculate notes. The implementer will read them and act on them.
 Vague feedback ("needs more tests") wastes a cycle. Name the exact missing cases.
+
+## No advisory findings — ever
+
+There is no such thing as a "non-blocking advisory" or "advisory (non-blocking)".
+
+If you find something that needs fixing — incorrect comments, misleading documentation,
+wrong variable names, inaccurate descriptions of behaviour — that is a recirculate.
+Full stop. The word "advisory" does not belong in a QA note.
+
+The only valid outcomes are:
+- **pass** — everything is correct, nothing needs fixing
+- **recirculate** — something needs fixing, here is exactly what
+- **block** — genuine external blocker requiring human input
+
+If you are tempted to write "advisory" or "non-blocking", ask yourself: "Would I
+want this in the codebase I maintain?" If not, recirculate. If yes, don't mention
+it at all — just pass.
