@@ -1018,6 +1018,14 @@ var dropletPassCmd = &cobra.Command{
 		}
 		defer c.Close()
 
+		item, err := c.Get(args[0])
+		if err != nil {
+			return err
+		}
+		if item.Status == "delivered" || item.Status == "cancelled" {
+			return fmt.Errorf("cannot pass: droplet %s has terminal status %q", args[0], item.Status)
+		}
+
 		// Refuse to pass if there are open issues.
 		openCount, err := c.CountOpenIssues(args[0])
 		if err != nil {
@@ -1043,6 +1051,13 @@ var dropletPassCmd = &cobra.Command{
 		if err := c.SetOutcome(args[0], "pass"); err != nil {
 			return err
 		}
+		// When not in_progress, Castellarius will never observe this droplet.
+		// Directly mark it delivered so it appears correctly in all list views.
+		if item.Status != "in_progress" {
+			if err := c.CloseItem(args[0]); err != nil {
+				return err
+			}
+		}
 		fmt.Printf("droplet %s: outcome=pass\n", args[0])
 		return nil
 	},
@@ -1064,6 +1079,14 @@ var dropletRecirculateCmd = &cobra.Command{
 		}
 		defer c.Close()
 
+		item, err := c.Get(args[0])
+		if err != nil {
+			return err
+		}
+		if item.Status == "delivered" || item.Status == "cancelled" {
+			return fmt.Errorf("cannot recirculate: droplet %s has terminal status %q", args[0], item.Status)
+		}
+
 		if recirculateNotes != "" {
 			if err := c.AddNote(args[0], cataractaeName(), "♻ "+recirculateNotes); err != nil {
 				return err
@@ -1072,6 +1095,19 @@ var dropletRecirculateCmd = &cobra.Command{
 		outcome := "recirculate"
 		if recirculateTo != "" {
 			outcome = "recirculate:" + recirculateTo
+		}
+		// When not in_progress, Castellarius will never observe this droplet.
+		// Directly open it for the target cataractae. Assign clears outcome.
+		if item.Status != "in_progress" {
+			target := recirculateTo
+			if target == "" {
+				target = item.CurrentCataractae
+			}
+			if err := c.Assign(args[0], "", target); err != nil {
+				return err
+			}
+			fmt.Printf("droplet %s: outcome=%s\n", args[0], outcome)
+			return nil
 		}
 		if err := c.SetOutcome(args[0], outcome); err != nil {
 			return err
@@ -1096,6 +1132,14 @@ var dropletBlockCmd = &cobra.Command{
 		}
 		defer c.Close()
 
+		item, err := c.Get(args[0])
+		if err != nil {
+			return err
+		}
+		if item.Status == "delivered" || item.Status == "cancelled" {
+			return fmt.Errorf("cannot block: droplet %s has terminal status %q", args[0], item.Status)
+		}
+
 		if blockNotes != "" {
 			if err := c.AddNote(args[0], cataractaeName(), blockNotes); err != nil {
 				return err
@@ -1103,6 +1147,13 @@ var dropletBlockCmd = &cobra.Command{
 		}
 		if err := c.SetOutcome(args[0], "block"); err != nil {
 			return err
+		}
+		// When not in_progress, Castellarius will never observe this droplet.
+		// Directly escalate so the reason is recorded in events with a non-empty payload.
+		if item.Status != "in_progress" {
+			if err := c.Escalate(args[0], blockNotes); err != nil {
+				return err
+			}
 		}
 		fmt.Printf("droplet %s: outcome=block\n", args[0])
 		return nil
