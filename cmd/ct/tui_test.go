@@ -771,6 +771,35 @@ func TestTabApp_Droplets_View_CursorAlwaysVisible(t *testing.T) {
 	}
 }
 
+// ── Issue 6: cistern.New error propagated in fetchDetailCmd ──────────────────
+
+// TestFetchDetailCmd_CisternNewFails_ReturnsError verifies that when cistern.New
+// fails (e.g. DB path is a directory), the returned message carries the error
+// rather than silently returning a zero-value message.
+//
+// Given: a model whose dbPath points to a directory (not a valid SQLite file)
+// When:  fetchDetailCmd is invoked and the returned tea.Cmd is executed
+// Then:  the resulting tuiDetailDataMsg has err != nil and the correct dropletID
+func TestFetchDetailCmd_CisternNewFails_ReturnsError(t *testing.T) {
+	t.TempDir() // ensure t.TempDir is available
+	dir := t.TempDir()
+
+	m := newTabAppModel("", dir) // dir is not a valid SQLite file
+	cmd := m.fetchDetailCmd("ci-aaa")
+	msg := cmd()
+
+	dm, ok := msg.(tuiDetailDataMsg)
+	if !ok {
+		t.Fatalf("expected tuiDetailDataMsg, got %T", msg)
+	}
+	if dm.dropletID != "ci-aaa" {
+		t.Errorf("dropletID = %q, want %q", dm.dropletID, "ci-aaa")
+	}
+	if dm.err == nil {
+		t.Error("err should be non-nil when cistern.New fails, got nil")
+	}
+}
+
 // ── Issue 3: Error handling in fetchDetailCmd ─────────────────────────────────
 
 // TestTabApp_Detail_NotesFetchError_ShowsErrorIndicator verifies that when

@@ -81,7 +81,7 @@ func (m tabAppModel) fetchDetailCmd(dropletID string) tea.Cmd {
 	return func() tea.Msg {
 		c, err := cistern.New(dbPath, "")
 		if err != nil {
-			return tuiDetailDataMsg{dropletID: dropletID}
+			return tuiDetailDataMsg{dropletID: dropletID, err: err}
 		}
 		defer c.Close()
 		notes, err := c.GetNotes(dropletID)
