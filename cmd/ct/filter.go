@@ -111,10 +111,13 @@ Use --output-format json for scriptable output (session_id + proposals).`,
 		}
 		var contextBlock string
 		if !filterSkipContext {
-			home, _ := os.UserHomeDir()
+			var repoPath string
+			if home, err := os.UserHomeDir(); err == nil {
+				repoPath = filepath.Join(home, ".cistern", "sandboxes", filterRepo, "_primary")
+			}
 			contextBlock = gatherFilterContext(filterContextConfig{
 				DBPath:   resolveDBPath(),
-				RepoPath: filepath.Join(home, ".cistern", "sandboxes", filterRepo, "_primary"),
+				RepoPath: repoPath,
 				Title:    filterTitle,
 				Desc:     filterDescription,
 			})

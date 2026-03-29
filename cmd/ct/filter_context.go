@@ -62,7 +62,7 @@ func gatherDBSchema(dbPath string) string {
 	if dbPath == "" {
 		return ""
 	}
-	db, err := sql.Open("sqlite3", dbPath)
+	db, err := sql.Open("sqlite3", dbPath+"?mode=ro")
 	if err != nil {
 		return ""
 	}
@@ -81,6 +81,9 @@ func gatherDBSchema(dbPath string) string {
 			continue
 		}
 		parts = append(parts, s)
+	}
+	if err := rows.Err(); err != nil {
+		return ""
 	}
 	if len(parts) == 0 {
 		return ""
