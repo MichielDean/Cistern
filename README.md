@@ -724,6 +724,31 @@ architecti:
 
 Omit the section entirely to use built-in defaults.
 
+### Manual Invocation
+
+Invoke Architecti on demand for debugging or immediate intervention:
+
+```bash
+# Run Architecti immediately
+ct architecti run
+
+# Inspect snapshot and proposed actions without dispatching
+ct architecti run --dry-run
+
+# Use a specific droplet as trigger context
+ct architecti run --droplet <id>
+
+# Combine flags
+ct architecti run --dry-run --droplet <id>
+```
+
+**Use cases:**
+- **Debugging** — Use `--dry-run` to inspect the snapshot and proposed actions before dispatching
+- **Immediate intervention** — Run `ct architecti run` manually when droplets need recovery outside the automatic schedule
+- **Testing** — Verify Architecti configuration and behavior before enabling automatic triggers
+
+See `ct architecti run --help` for full details, or check the [Command Reference](openclaw/cistern/references/commands.md#architecti-autonomous-recovery) for examples.
+
 ### Rate limits and safety
 
 - Max 1 `restart` per droplet per 24h rolling window (enforced by Castellarius)

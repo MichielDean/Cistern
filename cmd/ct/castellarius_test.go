@@ -582,3 +582,50 @@ func TestFormatDroughtStatus_WhenStartedAtNil_ReturnsEmpty(t *testing.T) {
 		t.Errorf("expected empty string when StartedAt is nil, got %q", got)
 	}
 }
+
+// --- ct architecti run flag registration tests ---
+
+func TestArchitectiRunCmd_DryRunFlagRegistered(t *testing.T) {
+	// Given: architectiRunCmd is registered
+	// When: looking up the --dry-run flag
+	f := architectiRunCmd.Flags().Lookup("dry-run")
+
+	// Then: flag exists with default false
+	if f == nil {
+		t.Fatal("--dry-run flag not registered on architectiRunCmd")
+	}
+	if f.DefValue != "false" {
+		t.Errorf("expected --dry-run default false, got %q", f.DefValue)
+	}
+}
+
+func TestArchitectiRunCmd_DropletFlagRegistered(t *testing.T) {
+	// Given: architectiRunCmd is registered
+	// When: looking up the --droplet flag
+	f := architectiRunCmd.Flags().Lookup("droplet")
+
+	// Then: flag exists with empty default
+	if f == nil {
+		t.Fatal("--droplet flag not registered on architectiRunCmd")
+	}
+	if f.DefValue != "" {
+		t.Errorf("expected --droplet default empty, got %q", f.DefValue)
+	}
+}
+
+func TestArchitectiCmd_HasRunSubcommand(t *testing.T) {
+	// Given: architectiCmd is registered
+	// When: listing subcommands
+	found := false
+	for _, sub := range architectiCmd.Commands() {
+		if sub.Name() == "run" {
+			found = true
+			break
+		}
+	}
+
+	// Then: 'run' subcommand is present
+	if !found {
+		t.Error("architectiCmd does not have a 'run' subcommand")
+	}
+}

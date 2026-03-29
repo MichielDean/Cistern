@@ -144,8 +144,8 @@ func (s *Castellarius) startArchitectiQueue(ctx context.Context) {
 	}()
 }
 
-// architectiAction is a single action output by the Architecti agent.
-type architectiAction struct {
+// ArchitectiAction is a single action output by the Architecti agent.
+type ArchitectiAction struct {
 	Action     string `json:"action"`
 	DropletID  string `json:"droplet_id,omitempty"`
 	Cataractae string `json:"cataractae,omitempty"`
@@ -361,20 +361,20 @@ func writeDropletTable(sb *strings.Builder, heading string, items []*cistern.Dro
 // parseArchitectiOutput extracts and validates the JSON action array from raw
 // agent output. Enforces MaxFilesPerRun by dropping excess "file" actions.
 // Returns nil slice (not an error) when the array is empty.
-func parseArchitectiOutput(output []byte, maxFiles int) ([]architectiAction, error) {
+func parseArchitectiOutput(output []byte, maxFiles int) ([]ArchitectiAction, error) {
 	raw := extractJSONArray(output)
 	if raw == nil {
 		return nil, fmt.Errorf("no JSON array found in output")
 	}
 
-	var actions []architectiAction
+	var actions []ArchitectiAction
 	if err := json.Unmarshal(raw, &actions); err != nil {
 		return nil, fmt.Errorf("unmarshal: %w", err)
 	}
 
 	// Enforce MaxFilesPerRun and cap total actions per invocation.
 	fileCount := 0
-	var filtered []architectiAction
+	var filtered []ArchitectiAction
 	for _, a := range actions {
 		if a.Action == "file" {
 			fileCount++
@@ -433,7 +433,7 @@ func extractJSONArray(output []byte) []byte {
 
 // dispatchArchitectiActions executes each action in sequence. Individual action
 // errors are logged but do not abort remaining actions.
-func (s *Castellarius) dispatchArchitectiActions(ctx context.Context, actions []architectiAction, repoByDroplet map[string]string) error {
+func (s *Castellarius) dispatchArchitectiActions(ctx context.Context, actions []ArchitectiAction, repoByDroplet map[string]string) error {
 	for _, action := range actions {
 		if ctx.Err() != nil {
 			return ctx.Err()
@@ -449,7 +449,7 @@ func (s *Castellarius) dispatchArchitectiActions(ctx context.Context, actions []
 }
 
 // dispatchArchitectiAction routes a single action to its handler.
-func (s *Castellarius) dispatchArchitectiAction(_ context.Context, action architectiAction, repoByDroplet map[string]string) error {
+func (s *Castellarius) dispatchArchitectiAction(_ context.Context, action ArchitectiAction, repoByDroplet map[string]string) error {
 	switch action.Action {
 	case "restart":
 		return s.architectiRestart(action, repoByDroplet)
@@ -467,7 +467,7 @@ func (s *Castellarius) dispatchArchitectiAction(_ context.Context, action archit
 	}
 }
 
-func (s *Castellarius) architectiRestart(action architectiAction, repoByDroplet map[string]string) error {
+func (s *Castellarius) architectiRestart(action ArchitectiAction, repoByDroplet map[string]string) error {
 	if action.DropletID == "" {
 		return fmt.Errorf("restart action missing droplet_id")
 	}
@@ -516,7 +516,7 @@ func (s *Castellarius) architectiRestart(action architectiAction, repoByDroplet 
 	return nil
 }
 
-func (s *Castellarius) architectiCancel(action architectiAction, repoByDroplet map[string]string) error {
+func (s *Castellarius) architectiCancel(action ArchitectiAction, repoByDroplet map[string]string) error {
 	if action.DropletID == "" {
 		return fmt.Errorf("cancel action missing droplet_id")
 	}
@@ -531,7 +531,7 @@ func (s *Castellarius) architectiCancel(action architectiAction, repoByDroplet m
 	return client.Cancel(action.DropletID, fmt.Sprintf("Architecti: %s", action.Reason))
 }
 
-func (s *Castellarius) architectiFile(action architectiAction) error {
+func (s *Castellarius) architectiFile(action ArchitectiAction) error {
 	if action.Repo == "" {
 		return fmt.Errorf("file action missing repo")
 	}
@@ -561,7 +561,7 @@ func (s *Castellarius) architectiFile(action architectiAction) error {
 	return err
 }
 
-func (s *Castellarius) architectiNote(action architectiAction, repoByDroplet map[string]string) error {
+func (s *Castellarius) architectiNote(action ArchitectiAction, repoByDroplet map[string]string) error {
 	if action.DropletID == "" {
 		return fmt.Errorf("note action missing droplet_id")
 	}
@@ -581,7 +581,7 @@ func (s *Castellarius) architectiNote(action architectiAction, repoByDroplet map
 	return client.AddNote(action.DropletID, "architecti", body)
 }
 
-func (s *Castellarius) architectiRestartCastellarius(action architectiAction) error {
+func (s *Castellarius) architectiRestartCastellarius(action ArchitectiAction) error {
 	// Guard: only restart if the scheduler is positively confirmed to be hung.
 	// Fail-closed: refuse to restart if the health file is unavailable or
 	// unreadable — we cannot verify the hung state and the restart may be unsafe.
@@ -767,6 +767,35 @@ func architectiClaudePath() string {
 // architectiShellQuote single-quotes a string for safe embedding in a shell script.
 func architectiShellQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+}
+
+// RunArchitectiAdHoc builds a system snapshot, invokes the Architecti agent,
+// and optionally dispatches the resulting actions. Returns the snapshot text,
+// raw agent output bytes, the parsed/filtered actions (nil when dryRun or no
+// actions), and any error. When dryRun is true, raw output is returned without
+// parsing or dispatching.
+func (s *Castellarius) RunArchitectiAdHoc(ctx context.Context, trigger *cistern.Droplet, config aqueduct.ArchitectiConfig, dryRun bool) (snapshot string, rawOutput []byte, actions []ArchitectiAction, err error) {
+	snapshot, repoByDroplet := s.buildArchitectiSnapshot(ctx, trigger, config)
+
+	rawOutput, err = s.architectiExecFn(ctx, snapshot)
+	if err != nil {
+		return snapshot, nil, nil, fmt.Errorf("architecti: exec: %w", err)
+	}
+
+	if dryRun {
+		return snapshot, rawOutput, nil, nil
+	}
+
+	actions, err = parseArchitectiOutput(rawOutput, config.MaxFilesPerRun)
+	if err != nil {
+		return snapshot, rawOutput, nil, fmt.Errorf("architecti: parse: %w", err)
+	}
+
+	if len(actions) == 0 {
+		return snapshot, rawOutput, nil, nil
+	}
+
+	return snapshot, rawOutput, actions, s.dispatchArchitectiActions(ctx, actions, repoByDroplet)
 }
 
 // defaultRestartCastellarius restarts the Castellarius systemd user service.
