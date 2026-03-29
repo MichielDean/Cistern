@@ -213,6 +213,62 @@ cataractae:
 
 Valid values are any string accepted by the configured provider's CLI (e.g. `sonnet`, `opus`, `haiku`, `claude-opus-4-6` for `claude`). If `model:` is omitted, the agent uses the `provider.model:` default from `cistern.yaml`, or the CLI's own default if neither is set. `ct doctor` validates that the value is a non-empty string when present.
 
+### CLAUDE.md Templates
+
+Cataractae instructions can use Go template syntax to render content at spawn time. This allows CLAUDE.md (or PERSONA.md/INSTRUCTIONS.md that generate CLAUDE.md) to reference the current step's routing, droplet metadata, and pipeline structure. Templates are rendered before the file is sent to the agent — agents never see raw template markers.
+
+**Template variables available at render time:**
+
+```
+{{.Step.Name}}              Current step name (e.g., 'implement', 'review')
+{{.Step.Position}}          0-based step index in the pipeline
+{{.Step.IsFirst}}           true if this is the first step
+{{.Step.IsLast}}            true if this is the last step
+{{.Step.OnPass}}            Name of next step after pass, or 'done'
+{{.Step.OnFail}}            Name of fail target, or 'blocked'
+{{.Step.OnRecirculate}}     Name of recirculate target (empty if not configured)
+{{.Step.OnEscalate}}        Name of escalate target (empty if not configured)
+{{.Step.ValidOutcomes}}     Slice of valid ct droplet commands with descriptions
+{{.Step.SkippedFor}}        Complexity levels this step is skipped for
+{{.Droplet.ID}}             Work item ID (e.g., 'ci-amg37')
+{{.Droplet.Title}}          Work item title
+{{.Droplet.Description}}    Full work item description
+{{.Droplet.Complexity}}     Complexity level (standard, full, critical)
+{{.Pipeline}}               Ordered slice of all step names
+```
+
+**Example template fragment (in CLAUDE.md or INSTRUCTIONS.md):**
+
+```markdown
+## Signaling Outcomes
+
+**Pass (work complete):**
+{{if .Step.OnPass}}
+- ct droplet pass {{.Droplet.ID}} — advance to {{.Step.OnPass}}
+{{else}}
+- ct droplet pass {{.Droplet.ID}} — work complete
+{{end}}
+
+{{if .Step.OnRecirculate}}
+**Recirculate (send back for revision):**
+- ct droplet recirculate {{.Droplet.ID}} — return to {{.Step.OnRecirculate}}
+{{end}}
+
+**Block (genuinely blocked):**
+- ct droplet block {{.Droplet.ID}} — blocked waiting on external dependency
+```
+
+**Static files pass through unchanged** — if a CLAUDE.md contains no template markers, it is used as-is. This maintains backward compatibility.
+
+**Previewing templates:**
+
+Authors can preview rendered output before deployment:
+
+```bash
+ct cataractae render --step implement                    # Render with sample droplet data
+ct cataractae render --step review --droplet ci-amg37    # Render with specific droplet context
+```
+
 ## Skills
 
 Skills are reusable knowledge packages injected into cataractae at spawn time. Providers with `--add-dir` support (`claude`) receive skills via filesystem injection; providers without it (codex, gemini, copilot, opencode) receive skill content as text in the prompt preamble. Either way, skills keep cataractae prompts concise by factoring out shared conventions.
@@ -549,6 +605,8 @@ ct cataractae list                   See all cataractae definitions
 ct cataractae status                 Show which cataractae are active and what they're processing
 ct cataractae edit <cataractae>       Edit cataractae definition in $EDITOR
 ct cataractae generate               Regenerate provider instructions files (CLAUDE.md/AGENTS.md/GEMINI.md) from source files
+ct cataractae render --step <name>   Preview rendered template for a step with sample droplet data
+ct cataractae render --step <name> --droplet <id>  Preview with specific droplet context
 
 # Skills — manage cataractae skills
 ct skills install <name> <url>       Install a skill from a URL

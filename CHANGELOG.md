@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+### Cataractae prompt templating: render CLAUDE.md from aqueduct at spawn time (ci-amg37)
+
+Cataractae instructions (CLAUDE.md, PERSONA.md, INSTRUCTIONS.md) can now use Go template syntax to render content at spawn time. This makes prompts data-driven — the aqueduct YAML is the source of truth, and rendered CLAUDE.md files incorporate step-specific routing, droplet metadata, and pipeline structure. Agents never see raw template markers — templates are rendered before dispatch.
+
+**Key features:**
+- **Template variables**: {{.Step.Name}}, {{.Step.Position}}, {{.Step.IsFirst}}, {{.Step.IsLast}}, {{.Step.OnPass}}, {{.Step.OnFail}}, {{.Step.OnRecirculate}}, {{.Step.OnEscalate}}, {{.Step.ValidOutcomes}}, {{.Droplet.ID}}, {{.Droplet.Title}}, {{.Droplet.Description}}, {{.Droplet.Complexity}}, {{.Pipeline}} — all resolved from the aqueduct config and droplet at spawn time
+- **Backward compatible**: static files with no template markers pass through unchanged
+- **Safe fallback**: template parse/execution errors fall back to raw content with a warning (never fails to spawn)
+- **Preview command**: `ct cataractae render --step <name> [--droplet <id>]` outputs rendered template for authoring and debugging
+- **Conditional logic**: templates can use `{{if .Step.OnRecirculate}}...{{end}}` to show/hide content based on step configuration
+
+**Example use case:**
+A step's outcome instructions can now adapt to its configuration — recirculate outcome only appears if the step has an upstream recirculate target, and escalate outcome only appears if the step has an escalate target configured.
+
 ### Delivery: pre-PR merge-base guard to skip unnecessary rebases (ci-zzqy7)
 
 The delivery cataractae now checks whether a branch is already based on the latest `origin/main` before attempting to rebase. This prevents unnecessary rebases and their associated risks.

@@ -16,6 +16,100 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// --- cataractae render ---
+
+var cataractaeRenderStep string
+var cataractaeRenderDroplet string
+
+var cataractaeRenderCmd = &cobra.Command{
+	Use:   "render",
+	Short: "Preview a rendered CLAUDE.md template for a given step and optional droplet",
+	Long: `Renders the CLAUDE.md template for the named step, substituting all template
+variables. Use this to preview exactly what an agent will see at spawn time.
+
+Without --droplet, placeholder values are used so you can inspect the template
+structure without needing a real droplet.`,
+	RunE: runCataractaeRender,
+}
+
+func runCataractaeRender(cmd *cobra.Command, args []string) error {
+	if cataractaeRenderStep == "" {
+		return fmt.Errorf("--step is required")
+	}
+
+	wfPath, err := resolveWorkflowPath()
+	if err != nil {
+		return err
+	}
+
+	wf, err := aqueduct.ParseWorkflow(wfPath)
+	if err != nil {
+		return fmt.Errorf("parse aqueduct: %w", err)
+	}
+
+	var step *aqueduct.WorkflowCataractae
+	for i := range wf.Cataractae {
+		if wf.Cataractae[i].Name == cataractaeRenderStep {
+			step = &wf.Cataractae[i]
+			break
+		}
+	}
+	if step == nil {
+		return fmt.Errorf("step %q not found in workflow", cataractaeRenderStep)
+	}
+
+	stepCtx := aqueduct.BuildStepTemplateContext(wf, step)
+	dropletCtx := aqueduct.DropletTemplateContext{
+		ID:          "<droplet-id>",
+		Title:       "<droplet title>",
+		Description: "<droplet description>",
+		Complexity:  1,
+	}
+
+	if cataractaeRenderDroplet != "" {
+		dbPath := resolveDBPath()
+		c, err := cistern.New(dbPath, "")
+		if err != nil {
+			return fmt.Errorf("cistern: %w", err)
+		}
+		defer c.Close()
+		item, err := c.Get(cataractaeRenderDroplet)
+		if err != nil {
+			return fmt.Errorf("get droplet %s: %w", cataractaeRenderDroplet, err)
+		}
+		dropletCtx = aqueduct.DropletTemplateContext{
+			ID:          item.ID,
+			Title:       item.Title,
+			Description: item.Description,
+			Complexity:  item.Complexity,
+		}
+	}
+
+	ctx := aqueduct.TemplateContext{
+		Step:     stepCtx,
+		Droplet:  dropletCtx,
+		Pipeline: aqueduct.BuildPipeline(wf),
+	}
+
+	// Locate and render the identity's instructions file.
+	cataractaeDir := cisternCataractaeDir(wfPath)
+	if step.Identity == "" {
+		return fmt.Errorf("step %q has no identity — only agent steps have CLAUDE.md files", cataractaeRenderStep)
+	}
+	identityDir := filepath.Join(cataractaeDir, step.Identity)
+	instrFile := resolveInstructionsFile()
+	instrPath := filepath.Join(identityDir, instrFile)
+
+	raw, err := os.ReadFile(instrPath)
+	if err != nil {
+		return fmt.Errorf("read %s: %w", instrPath, err)
+	}
+
+	rendered := aqueduct.RenderTemplate(string(raw), ctx)
+	fmt.Print(rendered)
+	return nil
+}
+
 // resolveInstructionsFile returns the InstructionsFile from the resolved provider
 // preset for the first configured repo, or "CLAUDE.md" as the default fallback.
 func resolveInstructionsFile() string {
@@ -331,6 +425,10 @@ func init() {
 	cataractaeEditCmd.Flags().StringVar(&cataractaeGenerateWorkflow, "workflow", "", "path to workflow YAML file")
 	cataractaeAddCmd.Flags().StringVar(&cataractaeGenerateWorkflow, "workflow", "", "path to workflow YAML file")
 
-	cataractaeCmd.AddCommand(cataractaeGenerateCmd, cataractaeListCmd, cataractaeEditCmd, cataractaeStatusCmd, cataractaeAddCmd)
+	cataractaeRenderCmd.Flags().StringVar(&cataractaeRenderStep, "step", "", "step name to render (required)")
+	cataractaeRenderCmd.Flags().StringVar(&cataractaeRenderDroplet, "droplet", "", "droplet ID to use for live context (optional)")
+	cataractaeRenderCmd.Flags().StringVar(&cataractaeGenerateWorkflow, "workflow", "", "path to workflow YAML file")
+
+	cataractaeCmd.AddCommand(cataractaeGenerateCmd, cataractaeListCmd, cataractaeEditCmd, cataractaeStatusCmd, cataractaeAddCmd, cataractaeRenderCmd)
 	rootCmd.AddCommand(cataractaeCmd)
 }

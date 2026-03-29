@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/MichielDean/cistern/internal/aqueduct"
 	"github.com/MichielDean/cistern/internal/cistern"
 	"github.com/MichielDean/cistern/internal/provider"
 )
@@ -1997,5 +1998,83 @@ func TestSpawn_TmuxServerDead_SecretsNotLeaked_DoubleCheckFailure(t *testing.T) 
 	}
 	if strings.Contains(errMsg, "ghp_very-secret-gh-token") {
 		t.Errorf("error message leaks GH_TOKEN value in double-check path: %v", errMsg)
+	}
+}
+
+// TestBuildPrompt_TemplateCtxWiring_AddDirProvider_RendersMarker verifies that
+// the SupportsAddDir=true path (line 449) renders {{.Step.Name}} using TemplateCtx.
+// If the RenderTemplate call were removed, this test would fail because the raw
+// marker would still appear in the prompt output.
+func TestBuildPrompt_TemplateCtxWiring_AddDirProvider_RendersMarker(t *testing.T) {
+	dir := t.TempDir()
+	identityDir := filepath.Join(dir, ".cistern", "cataractae", "implementer")
+	if err := os.MkdirAll(identityDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(identityDir, "CLAUDE.md"),
+		[]byte("You are the {{.Step.Name}} agent."), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HOME", dir)
+
+	s := &Session{
+		ID:       "test",
+		WorkDir:  dir,
+		Identity: "implementer",
+		Preset: provider.ProviderPreset{
+			Name:             "claude",
+			InstructionsFile: "CLAUDE.md",
+			SupportsAddDir:   true,
+		},
+		TemplateCtx: aqueduct.TemplateContext{
+			Step: aqueduct.StepTemplateContext{Name: "implement"},
+		},
+	}
+	prompt := s.buildPrompt()
+
+	if !strings.Contains(prompt, "You are the implement agent.") {
+		t.Errorf("prompt missing rendered template content; got:\n%s", prompt)
+	}
+	if strings.Contains(prompt, "{{.Step.Name}}") {
+		t.Error("prompt still contains unreplaced template marker — RenderTemplate not called")
+	}
+}
+
+// TestBuildPrompt_TemplateCtxWiring_NonAddDirProvider_RendersMarker verifies that
+// the SupportsAddDir=false path (line 439) renders {{.Step.Name}} using TemplateCtx.
+// If the RenderTemplate call were removed, this test would fail because the raw
+// marker would still appear in the prompt output.
+func TestBuildPrompt_TemplateCtxWiring_NonAddDirProvider_RendersMarker(t *testing.T) {
+	dir := t.TempDir()
+	identityDir := filepath.Join(dir, ".cistern", "cataractae", "implementer")
+	if err := os.MkdirAll(identityDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(identityDir, "AGENTS.md"),
+		[]byte("You are the {{.Step.Name}} agent."), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HOME", dir)
+
+	s := &Session{
+		ID:       "test",
+		WorkDir:  dir,
+		Identity: "implementer",
+		Preset: provider.ProviderPreset{
+			Name:             "codex",
+			InstructionsFile: "AGENTS.md",
+			SupportsAddDir:   false,
+		},
+		TemplateCtx: aqueduct.TemplateContext{
+			Step: aqueduct.StepTemplateContext{Name: "implement"},
+		},
+	}
+	prompt := s.buildPrompt()
+
+	if !strings.Contains(prompt, "You are the implement agent.") {
+		t.Errorf("prompt missing rendered template content; got:\n%s", prompt)
+	}
+	if strings.Contains(prompt, "{{.Step.Name}}") {
+		t.Error("prompt still contains unreplaced template marker — RenderTemplate not called")
 	}
 }

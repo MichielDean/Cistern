@@ -260,6 +260,16 @@ func (r *Runner) SpawnStep(w *Worker, item *cistern.Droplet, step *aqueduct.Work
 		TimeoutMinutes: step.TimeoutMinutes,
 		Preset:         r.preset,
 		Skills:         skillNames,
+		TemplateCtx: aqueduct.TemplateContext{
+			Step: aqueduct.BuildStepTemplateContext(r.workflow, step),
+			Droplet: aqueduct.DropletTemplateContext{
+				ID:          item.ID,
+				Title:       item.Title,
+				Description: item.Description,
+				Complexity:  item.Complexity,
+			},
+			Pipeline: aqueduct.BuildPipeline(r.workflow),
+		},
 	}
 	if err := sess.Spawn(); err != nil {
 		cleanup()

@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/MichielDean/cistern/internal/aqueduct"
 	"github.com/MichielDean/cistern/internal/provider"
 )
 
@@ -41,6 +42,11 @@ type Session struct {
 	// that do not support AddDirFlag. Skills are read from ~/.cistern/skills/<name>/SKILL.md.
 	// Providers with SupportsAddDir=true receive skill files automatically via --add-dir.
 	Skills []string
+
+	// TemplateCtx holds the step and droplet data used to render CLAUDE.md as a
+	// Go template at spawn time. When the zero value is passed, templates are
+	// rendered with empty data — static content (no markers) passes through unchanged.
+	TemplateCtx aqueduct.TemplateContext
 }
 
 // Spawn creates a new tmux session running the agent and returns immediately.
@@ -430,7 +436,7 @@ func (s *Session) buildPrompt() string {
 			identityDir := s.resolveIdentityDir()
 			preamble := buildContextPreamble(identityDir, s.Preset)
 			if preamble != "" {
-				prompt += "\n## Your Role\n\n" + preamble
+				prompt += "\n## Your Role\n\n" + aqueduct.RenderTemplate(preamble, s.TemplateCtx)
 			} else {
 				// Fallback: point agent to the file location.
 				prompt += "\nRead " + s.resolveIdentityPath() + " for your role instructions. "
@@ -440,7 +446,7 @@ func (s *Session) buildPrompt() string {
 			// filesystem injection (--add-dir). Also embed it in the prompt for reliability.
 			identityPath := s.resolveIdentityPath()
 			if content, err := os.ReadFile(identityPath); err == nil {
-				prompt += "\n## Your Role\n\n" + string(content)
+				prompt += "\n## Your Role\n\n" + aqueduct.RenderTemplate(string(content), s.TemplateCtx)
 			} else {
 				// File missing/unreadable — fall back to pointer so agent can try to find it.
 				prompt += "\nRead " + identityPath + " for your role instructions. "
