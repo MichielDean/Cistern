@@ -825,7 +825,10 @@ var tuiCmd = &cobra.Command{
 
 Navigate the droplet list with ↑↓ (or j/k), press enter or d to open the
 Detail panel for a selected droplet. The Detail panel shows the full notes
-timeline and pipeline step indicator. Press esc to return to the list.`,
+timeline and pipeline step indicator. Press esc to return to the list.
+
+From the Detail panel, press p to peek at the live agent session output.
+Press esc to return.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		cfgPath := resolveConfigPath()
 		dbPath := resolveDBPath()
