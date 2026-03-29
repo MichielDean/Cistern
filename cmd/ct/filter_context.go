@@ -33,23 +33,18 @@ func gatherFilterContext(cfg filterContextConfig) string {
 	var sb strings.Builder
 	sb.WriteString("=== CODEBASE CONTEXT ===\n")
 
-	if schema := gatherDBSchema(cfg.DBPath); schema != "" {
-		sb.WriteString("\n--- DB SCHEMA ---\n")
-		sb.WriteString(schema)
+	writeSection := func(header, content string) {
+		if content == "" {
+			return
+		}
+		sb.WriteString("\n--- " + header + " ---\n")
+		sb.WriteString(content)
 		sb.WriteString("\n")
 	}
 
-	if instructions := gatherInstructionFiles(cfg.RepoPath); instructions != "" {
-		sb.WriteString("\n--- CATARACTAE INSTRUCTIONS ---\n")
-		sb.WriteString(instructions)
-		sb.WriteString("\n")
-	}
-
-	if help := gatherCTHelp(cfg.Title, cfg.Desc); help != "" {
-		sb.WriteString("\n--- CT HELP ---\n")
-		sb.WriteString(help)
-		sb.WriteString("\n")
-	}
+	writeSection("DB SCHEMA", gatherDBSchema(cfg.DBPath))
+	writeSection("CATARACTAE INSTRUCTIONS", gatherInstructionFiles(cfg.RepoPath))
+	writeSection("CT HELP", gatherCTHelp(cfg.Title, cfg.Desc))
 
 	sb.WriteString("\n=== END CODEBASE CONTEXT ===")
 	return sb.String()
@@ -98,12 +93,9 @@ func gatherInstructionFiles(repoPath string) string {
 	if repoPath == "" {
 		return ""
 	}
-	if _, err := os.Stat(repoPath); err != nil {
-		return ""
-	}
 
 	var parts []string
-	filepath.WalkDir(repoPath, func(path string, d fs.DirEntry, err error) error {
+	_ = filepath.WalkDir(repoPath, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return nil
 		}
