@@ -2,6 +2,33 @@
 
 ## Unreleased
 
+### ct droplet pass/block/recirculate: correctly update status when called outside a session (ci-k6w66)
+
+The `ct droplet pass`, `ct droplet block`, and `ct droplet recirculate` commands now correctly update droplet status when called on stagnant or blocked droplets (i.e., droplets not in an active cataractae session). Previously, these commands only updated the outcome field, relying on Castellarius to detect and advance the status. Stagnant droplets were never picked up for routing, leaving them in their original status despite the outcome being set.
+
+**Key changes:**
+- **Pass on stagnant**: `ct droplet pass <id>` on a stagnant droplet now sets `status=delivered` immediately via `CloseItem()` — no Castellarius involvement required
+- **Block on stagnant**: `ct droplet block <id>` on a stagnant droplet now escalates with the block reason recorded in the events table via `Escalate(blockNotes)` — prevents empty event payloads
+- **Recirculate on stagnant**: `ct droplet recirculate <id>` on a stagnant droplet now opens it for the target cataractae via `Assign()`, clearing the outcome field to prevent routing loops
+- **Pass on in_progress unchanged**: `ct droplet pass <id>` on an in_progress droplet behaves as before — Castellarius detects the outcome and handles routing
+- **Terminal status guards**: All three commands now reject calls on delivered or cancelled droplets with a clear error message
+- **Attribution tracking**: Commands now track which cataractae (or user) issued the signal via the `CT_CATARACTA_NAME` environment variable, falling back to "manual" for direct CLI invocations
+- **Recirculate note marking**: Recirculate notes are now prefixed with "♻" to visually distinguish them from other note types
+
+**Acceptance criteria met**: (1) Stagnant pass→delivered, in_progress unchanged; (2) clear errors on terminal states; (3) block escalates with non-empty reason; (4) recirculate clears outcome; (5) all 13 new tests pass.
+
+**Example usage:**
+```bash
+# Pass a stagnant droplet — now immediately delivered
+ct droplet pass my-stagnant-droplet
+
+# Block with reason — recorded in events
+ct droplet block my-stagnant-droplet --notes "infrastructure failure: port already in use"
+
+# Recirculate to implementer — clears outcome, reopens
+ct droplet recirculate my-stagnant-droplet --to implementer
+```
+
 ### Security cataractae: grant full codebase access, remove diff-only isolation (ci-8rxid)
 
 The security cataractae now receives the full repository as context instead of only the diff. This enables deep vulnerability analysis through call chain tracing and cumulative exposure detection.

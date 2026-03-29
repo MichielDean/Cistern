@@ -106,7 +106,7 @@ ct droplet issue list my-droplet --flagged-by qa --open
 
 ### Droplet Signaling (Terminal Outcomes)
 
-Agents use these commands to signal the outcome of their work:
+Agents use these commands to signal the outcome of their work. These commands work on both in-progress and stagnant droplets, automatically updating status as needed:
 
 ```bash
 ct droplet pass <id>                     # Work complete — advance to next stage
@@ -124,6 +124,14 @@ ct droplet cancel <id> --notes "..."     # Include reason (e.g., "superseded by 
 
 ct droplet note <id> "..."               # Add a narrative note (for summaries only)
 ```
+
+**Status Updates:**
+- **In-progress droplets**: Signal commands update the outcome field; Castellarius detects the outcome and routes accordingly
+- **Stagnant droplets**: Signal commands immediately update the status:
+  - `pass` → `status=delivered` (directly closed)
+  - `block` → Escalates with reason recorded in events
+  - `recirculate` → Reopens for the target stage (clears outcome to prevent routing loops)
+- **Terminal states** (delivered, cancelled): All signal commands reject with a clear error message — droplets in terminal states cannot be modified
 
 **Distinction:**
 - **block** = Waiting on external dependency, cannot proceed. Droplet will retry when unblocked.
