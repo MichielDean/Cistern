@@ -51,7 +51,7 @@ Examine the diff for:
 
 Do **not** review for:
 - Style or formatting (that is a linter's job)
-- Whether the change is a good idea (you have no requirements context)
+- Whether the change is a good idea (requirements fit is out of scope — you review for correctness, not design intent)
 - Naming preferences (unless a name is actively misleading)
 
 ## Signaling Outcome
