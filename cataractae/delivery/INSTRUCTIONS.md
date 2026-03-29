@@ -125,24 +125,50 @@ else
 fi
 ```
 
-Track fix attempts per failing check:
+### Per-check attempt counter
+
+Before entering the fix loop, initialize an associative array keyed by check name:
+
 ```bash
-declare -A FIX_ATTEMPTS   # keyed by check name; incremented each time a fix is attempted
+declare -A CHECK_ATTEMPTS  # key = check name, value = number of fix attempts made
 ```
 
-Fix failures:
-- Compile error → fix code, go build ./..., commit, push
-- Test failure → fix test or code, go test ./..., commit, push
-- Flaky test → `gh run rerun <run_id>` and wait for result — **a rerun counts as an attempt**
-- Merge conflict detected by CI → rebase again (Step 2) and push
-- Unresolved review comment → address it, commit, push
+Each time you take any action to fix a specific failing check — including a `gh run rerun` — increment `CHECK_ATTEMPTS["<check_name>"]`. The counter is per check name, not per push. A rerun is not a free retry: it counts as attempt 1, and if the same check fails again after the rerun, that is attempt 2 and triggers recirculation.
 
-After each fix attempt (including reruns), increment the counter:
+### Failure classification
+
+Classify each failing check before acting on it. Classification determines whether the attempt counter applies.
+
+**Recirculate-eligible** — code-level failures the implementer can address (attempt counter applies):
+- Test failures: output contains `FAIL`, `--- FAIL`, `FAIL\t`, assertion errors, `expected X got Y`, `not equal`
+- API errors: application returns unexpected `4xx` or `5xx` status
+- Schema mismatches: `field missing`, `type mismatch`, `unknown field`, `validation error`
+- Compilation errors in test or application code
+
+**Stagnant-eligible** — infrastructure failures the implementer cannot address (attempt counter does NOT apply):
+- Port conflicts: `address already in use`, `bind: address already in use`
+- Container startup failures: `container exited with code`, `failed to start container`, `OOMKilled`
+- Service unavailable: `connection refused`, `no such host`, `dial tcp.*refused`, `i/o timeout`
+
+For stagnant-eligible failures, signal immediately without incrementing the counter:
 ```bash
-CHECK_NAME="<failing check name>"
-FIX_ATTEMPTS[$CHECK_NAME]=$(( ${FIX_ATTEMPTS[$CHECK_NAME]:-0} + 1 ))
+ct droplet block $DROPLET_ID --notes "Stagnant: <infrastructure failure> — $PR_URL"
 ```
-For code changes, also commit and push:
+
+### Fix loop
+
+For each recirculate-eligible failing check:
+
+1. Increment `CHECK_ATTEMPTS["<check_name>"]`
+2. If `CHECK_ATTEMPTS["<check_name>"] > 2`, recirculate — see **Recirculate path** below. Do NOT attempt a third fix.
+3. If `CHECK_ATTEMPTS["<check_name>"] <= 2`, apply the appropriate fix and push:
+   - Compile error → fix code, `go build ./...`, commit, push
+   - Test failure → fix test or code, `go test ./...`, commit, push
+   - Flaky test → `gh run rerun <run_id>` and wait for result (**this counts as attempt 1; a second failure of the same check after rerun counts as attempt 2 and triggers recirculation**)
+   - Merge conflict detected by CI → rebase again (Step 2) and push
+   - Unresolved review comment → address it, commit, push
+
+After each fix commit:
 ```bash
 git add -A -- ':!CONTEXT.md' && git commit -m "fix: <specific issue>" && git push
 ```
@@ -167,6 +193,30 @@ ct droplet recirculate $DROPLET_ID --notes "$(cat <<'EOF'
 **Attempt 1:** <what was tried>
 **Attempt 2:** <what was tried>
 **Recommended fix:** <specific guidance for the implementer>
+EOF
+)"
+```
+
+Wait for the check to complete, then return to step 1 of the loop for any remaining failures.
+
+### Recirculate path
+
+When `CHECK_ATTEMPTS["<check_name>"] >= 2`, stop and recirculate with a structured diagnostic. All five fields are required — do not recirculate with a partial note.
+
+```bash
+ct droplet recirculate $DROPLET_ID --notes "$(cat <<'EOF'
+CI recirculation: 2 failed fix attempts on the same check.
+
+Failed check: <exact check name as reported by gh pr checks>
+
+Error snippet:
+<paste the specific failure lines from CI logs — include file path and line number if available>
+
+Fix attempt 1: <describe exactly what was changed — files modified, functions updated, logic altered>
+
+Fix attempt 2: <describe exactly what was changed — files modified, functions updated, logic altered>
+
+Recommended fix: <state the apparent root cause and a concrete suggestion for the implementer to resolve it>
 EOF
 )"
 ```
@@ -205,5 +255,6 @@ ct droplet block $DROPLET_ID --notes "Cannot merge: <exact reason> — $PR_URL"
 - Never signal pass until gh pr view confirms state == "MERGED"
 - Never discard branch additions in conflicts — always keep both sides
 - go build + go test must pass before every push
-- Fix CI failures yourself; after 2 failed attempts on the same check, recirculate (code-level failures) or block (infrastructure failures) — do not loop indefinitely
-- Recirculate only for code-level CI failures the implementer can fix; infrastructure failures (port conflicts, service unavailable, container errors) go stagnant
+- Fix CI failures yourself; after 2 failed fix attempts on the same check, recirculate (code-level failures) or block (infrastructure failures) — do not loop indefinitely
+- Recirculate after 2 failed fix attempts on the same code-level CI check (see Step 4 recirculate path)
+- Recirculate only for code-level failures — never recirculate for infrastructure/stagnant failures (block instead)
