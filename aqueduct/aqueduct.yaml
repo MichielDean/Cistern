@@ -10,7 +10,6 @@ complexity:
   critical:
     level: 3
     skip_cataractae: []
-    require_human: true
 
 cataractae:
   - name: implement
