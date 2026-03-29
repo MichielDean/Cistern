@@ -239,26 +239,26 @@ func (m tabAppModel) openPeek() (tabAppModel, tea.Cmd) {
 		}
 	}
 
+	var session, header string
 	if ch == nil {
 		// Droplet is not currently flowing — show a placeholder with no session.
-		header := fmt.Sprintf("[%s] — not flowing, no agent session", m.selectedID)
+		header = fmt.Sprintf("[%s] — not flowing, no agent session", m.selectedID)
 		if m.selectedID == "" {
 			header = "(no droplet selected)"
 		}
-		pk := newPeekModel(defaultCapturer, "", header, defaultPeekLines)
-		pk.width = m.width
-		pk.height = m.height - 1
-		m.peek = pk
-		return m, nil
+	} else {
+		session = ch.RepoName + "-" + ch.Name
+		header = fmt.Sprintf("[%s] %s — flowing %s", ch.DropletID, ch.Step, formatElapsed(ch.Elapsed))
 	}
 
-	// Flowing droplet — create peek with the real agent session.
-	session := ch.RepoName + "-" + ch.Name
-	header := fmt.Sprintf("[%s] %s — flowing %s", ch.DropletID, ch.Step, formatElapsed(ch.Elapsed))
 	pk := newPeekModel(defaultCapturer, session, header, defaultPeekLines)
 	pk.width = m.width
 	pk.height = m.height - 1
 	m.peek = pk
+
+	if ch == nil {
+		return m, nil
+	}
 	return m, m.peek.Init()
 }
 
@@ -558,18 +558,13 @@ func (m tabAppModel) updatePeek(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.tab = tabDetail
 			return m, nil
 		}
-		// Forward all other keys (scroll, pin toggle) to the peek model.
-		updated, cmd := m.peek.Update(msg)
-		m.peek = updated.(peekModel)
-		return m, cmd
-
-	default:
-		// Forward peek-specific messages (peekTickMsg, peekContentMsg) to the
-		// embedded model so the refresh loop keeps running.
-		updated, cmd := m.peek.Update(msg)
-		m.peek = updated.(peekModel)
-		return m, cmd
 	}
+
+	// Forward all other messages (peek-specific tick/content and unhandled keys)
+	// to the embedded model so the refresh loop and scroll controls keep working.
+	updated, cmd := m.peek.Update(msg)
+	m.peek = updated.(peekModel)
+	return m, cmd
 }
 
 // View dispatches to the active tab's renderer.
