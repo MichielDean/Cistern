@@ -218,7 +218,7 @@ func (r *Runner) SpawnStep(w *Worker, item *cistern.Droplet, step *aqueduct.Work
 		slog.Default().Warn("cataractae: could not fetch notes", "droplet", item.ID, "error", err)
 	}
 
-	openIssues, err := r.queue.ListIssues(item.ID, true)
+	openIssues, err := r.queue.ListIssues(item.ID, true, "")
 	if err != nil {
 		slog.Default().Warn("cataractae: could not fetch open issues", "droplet", item.ID, "error", err)
 	}

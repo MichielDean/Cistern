@@ -118,11 +118,12 @@ This protocol prevents common failure modes: rubber-stamping recirculations, anc
 Cistern maintains a `droplet_issues` table for structured findings from review. Each issue has a description, a filer, and a resolution state.
 
 ```bash
-ct droplet issue add <id> "<description>"         File a finding against a droplet
-ct droplet issue list <id>                        List all issues for a droplet
-ct droplet issue list <id> --open                 List only open issues
-ct droplet issue resolve <issue-id> --evidence "" Resolve with proof (reviewer only — not implementer)
-ct droplet issue reject <issue-id> --evidence ""  Reject as invalid with proof (reviewer only)
+ct droplet issue add <id> "<description>"                    File a finding against a droplet
+ct droplet issue list <id>                                   List all issues for a droplet
+ct droplet issue list <id> --open                            List only open issues
+ct droplet issue list <id> --flagged-by <cataractae-name>    List issues filed by a specific cataractae
+ct droplet issue resolve <issue-id> --evidence ""            Resolve with proof (reviewer only — not implementer)
+ct droplet issue reject <issue-id> --evidence ""             Reject as invalid with proof (reviewer only)
 ```
 
 Key invariants:
@@ -599,6 +600,7 @@ ct droplet peek <id> --raw                                        Read the sessi
 ct droplet issue add <id> "<description>"                         File a finding
 ct droplet issue list <id>                                        List all issues
 ct droplet issue list <id> --open                                 List only open issues
+ct droplet issue list <id> --flagged-by <cataractae-name>         List issues filed by a specific cataractae
 ct droplet issue resolve <issue-id> --evidence "..."              Resolve with proof (reviewer only)
 ct droplet issue reject <issue-id> --evidence "..."               Reject as still present (reviewer only)
 

@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+### Add --flagged-by filter to ct droplet issue list (ci-u8l1e)
+
+The `ct droplet issue list` command now supports a `--flagged-by` flag to filter issues by the cataractae that filed them.
+
+**Key changes:**
+- **New `--flagged-by` flag**: filters droplet issues by the cataractae name that filed the issue
+- **Usage**: `ct droplet issue list <droplet-id> --flagged-by <cataractae-name>` — returns only issues filed by that cataractae
+- **Combinations**: `--flagged-by` can be combined with existing `--open` flag to filter both by status and filer
+- **SQL parameterized**: the filter uses parameterized queries to prevent injection
+
+**Example:**
+```bash
+ct droplet issue list my-droplet --flagged-by reviewer    # Issues filed by reviewer
+ct droplet issue list my-droplet --flagged-by qa          # Issues filed by qa
+ct droplet issue list my-droplet --open --flagged-by qa   # Open issues filed by qa
+```
+
 ### Delivery: recirculate on repeated CI check failures with 2-attempt fix loop (ci-n1i8z)
 
 The delivery cataractae now implements a per-check attempt counter for CI failures. After 2 failed attempts on the same check, failures are classified and routed accordingly: code-level failures recirculate with structured diagnostics, while infrastructure failures block (stagnant). This prevents infinite retry loops on stagnant failures while enabling the delivery agent to fix transient code issues.

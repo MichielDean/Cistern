@@ -1103,15 +1103,21 @@ func (c *Client) RejectIssue(issueID, evidence string) error {
 }
 
 // ListIssues returns all issues for a droplet. If openOnly is true, only open issues are returned.
-func (c *Client) ListIssues(dropletID string, openOnly bool) ([]DropletIssue, error) {
+// If flaggedBy is non-empty, only issues with that flagged_by value are returned.
+func (c *Client) ListIssues(dropletID string, openOnly bool, flaggedBy string) ([]DropletIssue, error) {
 	query := `SELECT id, droplet_id, flagged_by, flagged_at, description, status, COALESCE(evidence,''), resolved_at
 	          FROM droplet_issues WHERE droplet_id = ?`
+	args := []any{dropletID}
 	if openOnly {
 		query += ` AND status = 'open'`
 	}
+	if flaggedBy != "" {
+		query += ` AND flagged_by = ?`
+		args = append(args, flaggedBy)
+	}
 	query += ` ORDER BY flagged_at ASC`
 
-	rows, err := c.db.Query(query, dropletID)
+	rows, err := c.db.Query(query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("cistern: list issues %s: %w", dropletID, err)
 	}

@@ -26,7 +26,7 @@ func TestAddIssue_And_ListIssues(t *testing.T) {
 		t.Errorf("flagged_by = %q, want reviewer", iss.FlaggedBy)
 	}
 
-	issues, err := c.ListIssues(item.ID, false)
+	issues, err := c.ListIssues(item.ID, false, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -51,7 +51,7 @@ func TestListIssues_OpenOnly(t *testing.T) {
 	}
 
 	// ListIssues(openOnly=false) should return both.
-	all, err := c.ListIssues(item.ID, false)
+	all, err := c.ListIssues(item.ID, false, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -60,7 +60,7 @@ func TestListIssues_OpenOnly(t *testing.T) {
 	}
 
 	// ListIssues(openOnly=true) should return only iss2.
-	open, err := c.ListIssues(item.ID, true)
+	open, err := c.ListIssues(item.ID, true, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -81,7 +81,7 @@ func TestResolveIssue(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	issues, _ := c.ListIssues(item.ID, false)
+	issues, _ := c.ListIssues(item.ID, false, "")
 	if issues[0].Status != "resolved" {
 		t.Errorf("status = %q, want resolved", issues[0].Status)
 	}
@@ -102,7 +102,7 @@ func TestRejectIssue(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	issues, _ := c.ListIssues(item.ID, false)
+	issues, _ := c.ListIssues(item.ID, false, "")
 	if issues[0].Status != "unresolved" {
 		t.Errorf("status = %q, want unresolved", issues[0].Status)
 	}
@@ -152,6 +152,54 @@ func TestCountOpenIssues(t *testing.T) {
 	n, _ = c.CountOpenIssues(item.ID)
 	if n != 1 {
 		t.Errorf("count after resolve = %d, want 1", n)
+	}
+}
+
+func TestListIssues_FlaggedByFilter(t *testing.T) {
+	c := testClient(t)
+	item, _ := c.Add("myrepo", "Task", "", 1, 3)
+
+	// Given: issues from two different cataractae.
+	c.AddIssue(item.ID, "reviewer", "reviewer issue one")
+	c.AddIssue(item.ID, "reviewer", "reviewer issue two")
+	c.AddIssue(item.ID, "qa", "qa issue one")
+
+	// When: filtered by flagged_by = "reviewer".
+	reviewerIssues, err := c.ListIssues(item.ID, false, "reviewer")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Then: only reviewer issues returned.
+	if len(reviewerIssues) != 2 {
+		t.Fatalf("flagged-by reviewer: got %d issues, want 2", len(reviewerIssues))
+	}
+	for _, iss := range reviewerIssues {
+		if iss.FlaggedBy != "reviewer" {
+			t.Errorf("expected flagged_by=reviewer, got %q", iss.FlaggedBy)
+		}
+	}
+
+	// When: filtered by flagged_by = "qa".
+	qaIssues, err := c.ListIssues(item.ID, false, "qa")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Then: only qa issue returned.
+	if len(qaIssues) != 1 {
+		t.Fatalf("flagged-by qa: got %d issues, want 1", len(qaIssues))
+	}
+	if qaIssues[0].FlaggedBy != "qa" {
+		t.Errorf("flagged_by = %q, want qa", qaIssues[0].FlaggedBy)
+	}
+
+	// When: no flaggedBy filter (empty string).
+	all, err := c.ListIssues(item.ID, false, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Then: all issues returned.
+	if len(all) != 3 {
+		t.Fatalf("no filter: got %d issues, want 3", len(all))
 	}
 }
 

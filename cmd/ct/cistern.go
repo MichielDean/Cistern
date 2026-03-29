@@ -953,6 +953,7 @@ var dropletIssueRejectCmd = &cobra.Command{
 }
 
 var issueListOpen bool
+var issueListFlaggedBy string
 
 var dropletIssueListCmd = &cobra.Command{
 	Use:   "list <droplet-id>",
@@ -965,7 +966,7 @@ var dropletIssueListCmd = &cobra.Command{
 		}
 		defer c.Close()
 
-		issues, err := c.ListIssues(args[0], issueListOpen)
+		issues, err := c.ListIssues(args[0], issueListOpen, issueListFlaggedBy)
 		if err != nil {
 			return err
 		}
@@ -1007,7 +1008,7 @@ var dropletPassCmd = &cobra.Command{
 			return err
 		}
 		if openCount > 0 {
-			issues, err2 := c.ListIssues(args[0], true)
+			issues, err2 := c.ListIssues(args[0], true, "")
 			if err2 != nil {
 				return err2
 			}
@@ -1441,6 +1442,7 @@ func init() {
 	_ = dropletIssueResolveCmd.MarkFlagRequired("evidence")
 	_ = dropletIssueRejectCmd.MarkFlagRequired("evidence")
 	dropletIssueListCmd.Flags().BoolVar(&issueListOpen, "open", false, "only show open issues")
+	dropletIssueListCmd.Flags().StringVar(&issueListFlaggedBy, "flagged-by", "", "filter by cataractae name that filed the issue")
 
 	dropletIssueCmd.AddCommand(dropletIssueAddCmd, dropletIssueResolveCmd, dropletIssueRejectCmd, dropletIssueListCmd)
 

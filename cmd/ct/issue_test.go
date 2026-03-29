@@ -34,7 +34,7 @@ func TestDropletIssueAdd_CreatesIssue(t *testing.T) {
 
 	c2, _ := cistern.New(db, "ct")
 	defer c2.Close()
-	issues, _ := c2.ListIssues(item.ID, false)
+	issues, _ := c2.ListIssues(item.ID, false, "")
 	if len(issues) != 1 {
 		t.Fatalf("expected 1 issue, got %d", len(issues))
 	}
@@ -66,7 +66,7 @@ func TestDropletIssueResolve_UpdatesStatus(t *testing.T) {
 
 	c2, _ := cistern.New(db, "ct")
 	defer c2.Close()
-	issues, _ := c2.ListIssues(item.ID, false)
+	issues, _ := c2.ListIssues(item.ID, false, "")
 	if issues[0].Status != "resolved" {
 		t.Errorf("status = %q, want resolved", issues[0].Status)
 	}
@@ -94,7 +94,7 @@ func TestDropletIssueResolve_ImplementerForbidden(t *testing.T) {
 	// Verify DB state unchanged.
 	c2, _ := cistern.New(db, "ct")
 	defer c2.Close()
-	issues, _ := c2.ListIssues(item.ID, false)
+	issues, _ := c2.ListIssues(item.ID, false, "")
 	if issues[0].Status != "open" {
 		t.Errorf("status should remain open, got %q", issues[0].Status)
 	}
@@ -134,7 +134,7 @@ func TestDropletIssueReject_UpdatesStatus(t *testing.T) {
 
 	c2, _ := cistern.New(db, "ct")
 	defer c2.Close()
-	issues, _ := c2.ListIssues(item.ID, false)
+	issues, _ := c2.ListIssues(item.ID, false, "")
 	if issues[0].Status != "unresolved" {
 		t.Errorf("status = %q, want unresolved", issues[0].Status)
 	}
@@ -165,7 +165,7 @@ func TestDropletIssueReject_ImplementerForbidden(t *testing.T) {
 	// Verify DB state unchanged.
 	c2, _ := cistern.New(db, "ct")
 	defer c2.Close()
-	issues, _ := c2.ListIssues(item.ID, false)
+	issues, _ := c2.ListIssues(item.ID, false, "")
 	if issues[0].Status != "open" {
 		t.Errorf("status should remain open, got %q", issues[0].Status)
 	}
@@ -365,5 +365,33 @@ func TestDropletIssueReject_EmptyEvidence(t *testing.T) {
 	err := execCmd(t, "droplet", "issue", "reject", iss.ID, "--evidence", "")
 	if err == nil {
 		t.Error("expected error: reject with empty --evidence should fail")
+	}
+}
+
+func TestDropletIssueList_FlaggedByFilter(t *testing.T) {
+	t.Cleanup(func() { issueListFlaggedBy = "" })
+	db := filepath.Join(t.TempDir(), "test.db")
+	t.Setenv("CT_DB", db)
+	t.Setenv("CT_NO_ASCII_LOGO", "1")
+
+	// Given: issues filed by two different cataractae.
+	c, _ := cistern.New(db, "ct")
+	item, _ := c.Add("myrepo", "Task", "", 1, 3)
+	c.AddIssue(item.ID, "reviewer", "reviewer filed this")
+	c.AddIssue(item.ID, "qa", "qa filed this")
+	c.Close()
+
+	// When: --flagged-by reviewer
+	out := captureStdout(t, func() {
+		if err := execCmd(t, "droplet", "issue", "list", "--flagged-by", "reviewer", item.ID); err != nil {
+			t.Fatalf("issue list --flagged-by reviewer failed: %v", err)
+		}
+	})
+	// Then: only reviewer issue shown.
+	if !strings.Contains(out, "reviewer filed this") {
+		t.Errorf("expected reviewer issue in output, got: %q", out)
+	}
+	if strings.Contains(out, "qa filed this") {
+		t.Errorf("qa issue should be filtered out, got: %q", out)
 	}
 }
