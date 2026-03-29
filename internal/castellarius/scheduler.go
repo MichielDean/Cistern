@@ -502,6 +502,8 @@ func (s *Castellarius) Run(ctx context.Context) error {
 // Always returns context.Canceled so the caller (cmd layer) treats it as a
 // clean exit from a signal.
 func (s *Castellarius) drainInFlight() error {
+	drainStart := time.Now()
+
 	// Wait for in-flight architecti goroutines to finish or time out.
 	architectiDone := make(chan struct{})
 	go func() {
@@ -527,7 +529,16 @@ func (s *Castellarius) drainInFlight() error {
 		s.logger.Info("draining in-flight sessions before shutdown", "sessions", len(ids))
 	}
 
-	deadline := time.NewTimer(s.drainTimeout)
+	// Use the time remaining from the shared drainTimeout budget rather than
+	// starting a fresh drainTimeout for the session drain.  Without this, the
+	// total shutdown time can reach 2×drainTimeout when architecti goroutines
+	// consume a significant portion of the budget.  Clamp to a minimum of 1s
+	// so sessions always get a fair chance to signal an outcome.
+	remaining := s.drainTimeout - time.Since(drainStart)
+	if remaining < time.Second {
+		remaining = time.Second
+	}
+	deadline := time.NewTimer(remaining)
 	defer deadline.Stop()
 	ticker := time.NewTicker(s.pollInterval)
 	defer ticker.Stop()
