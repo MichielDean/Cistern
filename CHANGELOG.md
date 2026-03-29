@@ -39,6 +39,17 @@ Cataractae instructions (CLAUDE.md, PERSONA.md, INSTRUCTIONS.md) can now use Go 
 **Example use case:**
 A step's outcome instructions can now adapt to its configuration — recirculate outcome only appears if the step has an upstream recirculate target, and escalate outcome only appears if the step has an escalate target configured.
 
+### Castellarius: dispatch-loop recovery for missing feature branches (ci-pwdep)
+
+When the dispatch-loop recovery path attempts to recreate a worktree and the feature branch has been deleted from git, the Castellarius now detects the pathspec error and creates a fresh branch from origin/main instead of retrying indefinitely.
+
+**Key changes:**
+- **Pathspec error detection**: when worktree recreation fails with "did not match any file(s) known to git", the original feature branch has been deleted — immediately attempt fresh-branch creation from origin/main instead of failing or retrying the missing branch
+- **Removal prerequisite**: before retrying with a fresh branch, remove the stale worktree directory. If removal fails, log at WARN level and escalate immediately with diagnostic reason — do not retry with corrupted state
+- **Fresh-branch creation failure**: if fresh-branch creation also fails, escalate the droplet to stagnant with a diagnostic note containing the original branch name and failure reason — stop retrying and require human intervention
+- **Single-cycle recovery**: a droplet whose feature branch has been deleted stops consuming dispatch ticks after at most one tick cycle; the aqueduct resumes picking up other work within that same cycle
+- **No regression**: normal worktree-recreation path (branch exists, recreation succeeds) is unaffected — all existing test coverage passes
+
 ### Delivery: pre-PR merge-base guard to skip unnecessary rebases (ci-zzqy7)
 
 The delivery cataractae now checks whether a branch is already based on the latest `origin/main` before attempting to rebase. This prevents unnecessary rebases and their associated risks.

@@ -668,6 +668,7 @@ When a dispatch loop is detected, the Castellarius attempts ordered self-recover
 |---|---|
 | Dirty worktree | `git reset --hard HEAD && git clean -fd` on the droplet worktree |
 | Worktree missing or corrupt | Remove and recreate the worktree from the primary clone |
+| Feature branch missing from git (pathspec error) | Remove stale worktree directory and create a fresh branch from origin/main; if fresh-branch creation fails, escalate to stagnant |
 | No applicable pattern found | Note the failure and retry next cycle |
 
 After **3 failed self-fix attempts**, the droplet is escalated to `stagnant` with a note describing the failure. Use `ct droplet show <id>` to inspect the recovery history, then `ct droplet restart <id> --cataractae <step>` to re-enter once the underlying issue is resolved.
