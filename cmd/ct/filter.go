@@ -43,7 +43,6 @@ var (
 	filterFile         bool
 	filterRepo         string
 	filterOutputFormat string
-	filterSkipContext  bool
 )
 
 var filterCmd = &cobra.Command{
@@ -109,23 +108,19 @@ Use --output-format json for scriptable output (session_id + proposals).`,
 		if filterTitle == "" {
 			return fmt.Errorf("--title is required (or use --resume to continue an existing session)")
 		}
-		// Compute the repo worktree path unconditionally so it can be passed to
-		// the agent via --add-dir regardless of whether static context is injected.
+		// Compute the repo worktree path for --add-dir when --repo is set.
 		var repoPath string
 		if filterRepo != "" {
 			if home, err := os.UserHomeDir(); err == nil {
 				repoPath = filepath.Join(home, ".cistern", "sandboxes", filterRepo, "_primary")
 			}
 		}
-		var contextBlock string
-		if !filterSkipContext {
-			contextBlock = gatherFilterContext(filterContextConfig{
-				DBPath:   resolveDBPath(),
-				RepoPath: repoPath,
-				Title:    filterTitle,
-				Desc:     filterDescription,
-			})
-		}
+		contextBlock := gatherFilterContext(filterContextConfig{
+			DBPath:   resolveDBPath(),
+			RepoPath: repoPath,
+			Title:    filterTitle,
+			Desc:     filterDescription,
+		})
 		result, err := invokeFilterNew(preset, filterTitle, filterDescription, contextBlock, repoPath)
 		if err != nil {
 			return err
@@ -135,8 +130,7 @@ Use --output-format json for scriptable output (session_id + proposals).`,
 }
 
 // invokeFilterNew starts a new filtration session and returns proposals with session_id.
-// contextBlock, when non-empty, is prepended before the system prompt so the LLM
-// sees codebase context first. Pass empty string to omit context injection.
+// contextBlock is prepended before the system prompt so the LLM sees codebase context first.
 // repoPath, when non-empty and the preset defines AddDirFlag, is passed via
 // --add-dir so the agent can use read-only file tools to explore the repository.
 func invokeFilterNew(preset provider.ProviderPreset, title, description, contextBlock, repoPath string) (filterSessionResult, error) {
@@ -196,7 +190,7 @@ func callFilterAgent(preset provider.ProviderPreset, extraArgs []string, prompt,
 	}
 	args = append(args, prompt)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 600*time.Second)
 	defer cancel()
 
 	cmd := exec.CommandContext(ctx, preset.Command, args...)
@@ -294,6 +288,5 @@ func init() {
 	filterCmd.Flags().BoolVar(&filterFile, "file", false, "persist the refined result to the cistern (requires --repo)")
 	filterCmd.Flags().StringVar(&filterRepo, "repo", "", "target repository (required with --file)")
 	filterCmd.Flags().StringVar(&filterOutputFormat, "output-format", "human", "output format: human or json")
-	filterCmd.Flags().BoolVar(&filterSkipContext, "skip-context", false, "skip codebase context injection (for testing and comparison)")
 	rootCmd.AddCommand(filterCmd)
 }

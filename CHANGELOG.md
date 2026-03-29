@@ -66,7 +66,6 @@ The `ct filter` command now automatically prepends codebase context to the filtr
 **Key changes:**
 - **Automatic context injection**: `ct filter` gathers and prepends database schema, all INSTRUCTIONS.md files from the repository's cataractae, and relevant ct subcommand help output
 - **Structured context block**: Context appears before the user's problem statement, clearly delimited with `=== CODEBASE CONTEXT ===` header
-- **`--skip-context` flag**: Bypass context injection for testing and comparison runs
 - **Bounded context sizes**: Schema is always included (small, ~10 tables), all INSTRUCTIONS.md files included (expect ~8 files, few hundred lines each), ct help filtered to commands relevant to the title/description
 - **No database mutation**: Database is opened in read-only mode (`?mode=ro`) to safely access the schema without risk of accidental writes
 
@@ -74,9 +73,6 @@ The `ct filter` command now automatically prepends codebase context to the filtr
 ```bash
 ct filter --title 'Add authentication to API'
   # Includes: database schema, all cataractae INSTRUCTIONS.md, and help for auth-related ct commands
-
-ct filter --title 'idea' --skip-context
-  # Disables context injection for baseline comparison
 ```
 
 **Benefits:**
