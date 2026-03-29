@@ -1808,6 +1808,7 @@ func TestDoctorEnvCheck_GeminiProvider_GeminiKeySet_Passes(t *testing.T) {
 // add, rename, or remove a skill, this test will fail. You MUST then update:
 //   - installerStubs below
 //   - _install_skill_stubs in tests/installer/run-tests.sh
+//   - the skill lists in run-installer-tests.sh (3 occurrences)
 func TestRunDoctorExtendedChecks_DefaultWorkflow_InstallerStubs_Passes(t *testing.T) {
 	home := t.TempDir()
 	cisternDir := filepath.Join(home, ".cistern")
@@ -1885,8 +1886,9 @@ max_cataractae: 1
 	result := runDoctorExtendedChecks(cfg, cfgPath, home, dbPath)
 	if !result {
 		t.Error("expected runDoctorExtendedChecks to pass with installer stubs and default workflow; " +
-			"if the default workflow changed its required skills, update installerStubs above " +
-			"and _install_skill_stubs in tests/installer/run-tests.sh")
+			"if the default workflow changed its required skills, update installerStubs above, " +
+			"_install_skill_stubs in tests/installer/run-tests.sh, " +
+			"and the skill lists in run-installer-tests.sh (3 occurrences)")
 	}
 }
 
