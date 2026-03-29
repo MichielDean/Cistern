@@ -1,6 +1,8 @@
 package main
 
 import (
+	"bytes"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -371,3 +373,108 @@ func TestReadPersonaName_FallbackToTitleCaseWhenNoRoleHeader(t *testing.T) {
 		t.Errorf("readPersonaName = %q, want %q", got, "Docs Writer")
 	}
 }
+
+// setRenderStep sets cataractaeRenderStep for the duration of a test and restores
+// the original value in cleanup.
+func setRenderStep(t *testing.T, step string) {
+	t.Helper()
+	old := cataractaeRenderStep
+	cataractaeRenderStep = step
+	t.Cleanup(func() { cataractaeRenderStep = old })
+}
+
+// --- runCataractaeRender ---
+
+// TestRunCataractaeRender_EmptyStep_ReturnsError verifies that --step is required.
+func TestRunCataractaeRender_EmptyStep_ReturnsError(t *testing.T) {
+	setRenderStep(t, "")
+
+	err := runCataractaeRender(cataractaeRenderCmd, nil)
+	if err == nil {
+		t.Fatal("expected error when --step is empty, got nil")
+	}
+	if !strings.Contains(err.Error(), "--step is required") {
+		t.Errorf("error = %q, want '--step is required'", err.Error())
+	}
+}
+
+// TestRunCataractaeRender_StepNotFound_ReturnsError verifies that a step name not
+// present in the workflow produces an appropriate error.
+func TestRunCataractaeRender_StepNotFound_ReturnsError(t *testing.T) {
+	_, wfPath := makeWorkflowDir(t, testWorkflowYAML)
+	setWorkflow(t, wfPath)
+	setRenderStep(t, "nonexistent")
+
+	err := runCataractaeRender(cataractaeRenderCmd, nil)
+	if err == nil {
+		t.Fatal("expected error when step not found in workflow, got nil")
+	}
+	if !strings.Contains(err.Error(), "not found") {
+		t.Errorf("error = %q, want 'not found'", err.Error())
+	}
+}
+
+// TestRunCataractaeRender_NoIdentity_ReturnsError verifies that a step with no
+// identity (e.g. a gate step) produces an appropriate error.
+func TestRunCataractaeRender_NoIdentity_ReturnsError(t *testing.T) {
+	_, wfPath := makeWorkflowDir(t, testWorkflowNoIdentityYAML)
+	setWorkflow(t, wfPath)
+	setRenderStep(t, "gate")
+
+	err := runCataractaeRender(cataractaeRenderCmd, nil)
+	if err == nil {
+		t.Fatal("expected error when step has no identity, got nil")
+	}
+	if !strings.Contains(err.Error(), "no identity") {
+		t.Errorf("error = %q, want 'no identity'", err.Error())
+	}
+}
+
+// TestRunCataractaeRender_HappyPath_RendersTemplate verifies that a valid step
+// with an identity renders template markers in the CLAUDE.md file.
+func TestRunCataractaeRender_HappyPath_RendersTemplate(t *testing.T) {
+	tmpDir, wfPath := makeWorkflowDir(t, testWorkflowYAML)
+	setWorkflow(t, wfPath)
+	setRenderStep(t, "implement")
+
+	// Prevent resolveInstructionsFile from reading the real user config.
+	t.Setenv("HOME", t.TempDir())
+
+	// Create the identity dir with a CLAUDE.md template.
+	identityDir := filepath.Join(tmpDir, "cataractae", "tester")
+	if err := os.MkdirAll(identityDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(identityDir, "CLAUDE.md"),
+		[]byte("You are in step {{.Step.Name}}."), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Capture stdout.
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	origStdout := os.Stdout
+	os.Stdout = w
+
+	runErr := runCataractaeRender(cataractaeRenderCmd, nil)
+	w.Close()
+	os.Stdout = origStdout
+
+	var buf bytes.Buffer
+	if _, err := io.Copy(&buf, r); err != nil {
+		t.Fatal(err)
+	}
+
+	if runErr != nil {
+		t.Fatalf("runCataractaeRender: %v", runErr)
+	}
+	if !strings.Contains(buf.String(), "You are in step implement.") {
+		t.Errorf("output missing rendered content; got:\n%s", buf.String())
+	}
+	if strings.Contains(buf.String(), "{{.Step.Name}}") {
+		t.Error("output still contains unreplaced template marker")
+	}
+}
+
