@@ -143,11 +143,11 @@ func ValidateAqueductConfig(cfg *AqueductConfig) error {
 		}
 	}
 
-	if cfg.Architecti != nil {
-		if cfg.Architecti.ThresholdMinutes < 0 {
+	if a := cfg.Architecti; a != nil {
+		if a.ThresholdMinutes < 0 {
 			return fmt.Errorf("cistern config: architecti.threshold_minutes must not be negative")
 		}
-		if cfg.Architecti.MaxFilesPerRun <= 0 {
+		if a.MaxFilesPerRun <= 0 {
 			return fmt.Errorf("cistern config: architecti.max_files_per_run must be > 0")
 		}
 	}
