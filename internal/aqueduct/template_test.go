@@ -243,6 +243,41 @@ func TestBuildStepTemplateContext_ValidOutcomes_RecirculateOnlyWhenConfigured(t 
 	}
 }
 
+func TestBuildStepTemplateContext_ValidOutcomes_EscalateOnlyWhenConfigured(t *testing.T) {
+	wf := &Workflow{
+		Name: "test",
+		Cataractae: []WorkflowCataractae{
+			{Name: "impl", Type: CataractaeTypeAgent, Identity: "implementer",
+				OnPass: "review", OnFail: "blocked"},
+			{Name: "review", Type: CataractaeTypeAgent, Identity: "reviewer",
+				OnPass: "done", OnEscalate: "human-review"},
+		},
+	}
+
+	// Implementer: no escalate configured — should be absent from ValidOutcomes.
+	implCtx := BuildStepTemplateContext(wf, &wf.Cataractae[0])
+	for _, o := range implCtx.ValidOutcomes {
+		if strings.Contains(o.Command, "escalate") {
+			t.Error("implementer ValidOutcomes should not contain escalate when OnEscalate is empty")
+		}
+	}
+
+	// Reviewer: escalate is configured — should be present with correct target.
+	revCtx := BuildStepTemplateContext(wf, &wf.Cataractae[1])
+	hasEscalate := false
+	for _, o := range revCtx.ValidOutcomes {
+		if strings.Contains(o.Command, "escalate") {
+			hasEscalate = true
+			if !strings.Contains(o.Description, "human-review") {
+				t.Errorf("escalate description should mention target 'human-review', got %q", o.Description)
+			}
+		}
+	}
+	if !hasEscalate {
+		t.Error("reviewer ValidOutcomes should contain escalate when OnEscalate is set")
+	}
+}
+
 // TestRenderTemplate_StaticContent_PassesThrough verifies backward compatibility:
 // files with no template markers are returned unchanged.
 func TestRenderTemplate_StaticContent_PassesThrough(t *testing.T) {
