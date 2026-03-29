@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -556,15 +555,6 @@ var (
 	architectiRunDropletID string
 )
 
-// adHocAction is used only for display of dispatched actions in ct architecti run output.
-type adHocAction struct {
-	Action     string `json:"action"`
-	DropletID  string `json:"droplet_id,omitempty"`
-	Cataractae string `json:"cataractae,omitempty"`
-	Reason     string `json:"reason,omitempty"`
-	Repo       string `json:"repo,omitempty"`
-	Title      string `json:"title,omitempty"`
-}
 
 var architectiRunCmd = &cobra.Command{
 	Use:   "run",
@@ -636,7 +626,7 @@ Use --droplet <id> to provide a specific droplet as trigger context.`,
 		}
 
 		ctx := context.Background()
-		snapshot, rawOutput, err := sched.RunArchitectiAdHoc(ctx, trigger, archCfg, architectiRunDryRun)
+		snapshot, rawOutput, actions, err := sched.RunArchitectiAdHoc(ctx, trigger, archCfg, architectiRunDryRun)
 		if err != nil {
 			return err
 		}
@@ -647,12 +637,6 @@ Use --droplet <id> to provide a specific droplet as trigger context.`,
 			fmt.Println()
 			fmt.Println("=== Proposed Actions (dry-run — not dispatched) ===")
 			fmt.Println(string(rawOutput))
-			return nil
-		}
-
-		var actions []adHocAction
-		if jsonErr := json.Unmarshal(rawOutput, &actions); jsonErr != nil {
-			fmt.Printf("Architecti completed (output not parseable for summary: %v)\n", jsonErr)
 			return nil
 		}
 

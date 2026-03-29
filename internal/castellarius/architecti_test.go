@@ -1038,14 +1038,14 @@ func TestRunArchitectiAdHoc_DryRun_ReturnsSnapshotAndOutput_WithoutDispatching(t
 	}
 
 	// When: RunArchitectiAdHoc is called with dryRun=true
-	snapshot, rawOutput, err := s.RunArchitectiAdHoc(
+	snapshot, rawOutput, actions, err := s.RunArchitectiAdHoc(
 		context.Background(),
 		stagnantDroplet("d-001", 60*time.Minute),
 		*s.config.Architecti,
 		true,
 	)
 
-	// Then: no error, snapshot non-empty, raw output matches agent output
+	// Then: no error, snapshot non-empty, raw output matches agent output, actions nil (not parsed in dry-run)
 	if err != nil {
 		t.Errorf("unexpected error: %v", err)
 	}
@@ -1054,6 +1054,9 @@ func TestRunArchitectiAdHoc_DryRun_ReturnsSnapshotAndOutput_WithoutDispatching(t
 	}
 	if string(rawOutput) != agentOutput {
 		t.Errorf("rawOutput = %q, want %q", rawOutput, agentOutput)
+	}
+	if actions != nil {
+		t.Errorf("actions = %v, want nil (dry-run must not parse)", actions)
 	}
 	// Then: no dispatch — Assign not called
 	client.mu.Lock()
@@ -1075,14 +1078,14 @@ func TestRunArchitectiAdHoc_Normal_DispatchesActions(t *testing.T) {
 	}
 
 	// When: RunArchitectiAdHoc is called with dryRun=false
-	snapshot, rawOutput, err := s.RunArchitectiAdHoc(
+	snapshot, rawOutput, actions, err := s.RunArchitectiAdHoc(
 		context.Background(),
 		stagnantDroplet("d-001", 60*time.Minute),
 		*s.config.Architecti,
 		false,
 	)
 
-	// Then: no error, dispatch occurred
+	// Then: no error, dispatch occurred, returned actions match dispatched actions
 	if err != nil {
 		t.Errorf("unexpected error: %v", err)
 	}
@@ -1091,6 +1094,9 @@ func TestRunArchitectiAdHoc_Normal_DispatchesActions(t *testing.T) {
 	}
 	if len(rawOutput) == 0 {
 		t.Error("expected non-empty rawOutput")
+	}
+	if len(actions) != 1 || actions[0].Action != "restart" || actions[0].DropletID != "d-001" {
+		t.Errorf("actions = %v, want [{restart d-001 implement test}]", actions)
 	}
 	client.mu.Lock()
 	step := client.steps["d-001"]
@@ -1109,16 +1115,19 @@ func TestRunArchitectiAdHoc_Normal_EmptyActions_NoDispatch(t *testing.T) {
 		return []byte(`[]`), nil
 	}
 
-	_, _, err := s.RunArchitectiAdHoc(
+	_, _, actions, err := s.RunArchitectiAdHoc(
 		context.Background(),
 		stagnantDroplet("d-001", 60*time.Minute),
 		*s.config.Architecti,
 		false,
 	)
 
-	// Then: no error, no dispatch
+	// Then: no error, no dispatch, nil actions
 	if err != nil {
 		t.Errorf("unexpected error: %v", err)
+	}
+	if actions != nil {
+		t.Errorf("actions = %v, want nil (empty actions list)", actions)
 	}
 	client.mu.Lock()
 	assigns := client.assignCalls
@@ -1139,7 +1148,7 @@ func TestRunArchitectiAdHoc_ExecError_ReturnsError(t *testing.T) {
 	}
 
 	// When: RunArchitectiAdHoc is called
-	_, _, err := s.RunArchitectiAdHoc(
+	_, _, _, err := s.RunArchitectiAdHoc(
 		context.Background(),
 		stagnantDroplet("d-001", 60*time.Minute),
 		*s.config.Architecti,
@@ -1174,7 +1183,7 @@ func TestRunArchitectiAdHoc_SnapshotContainsTriggerDropletID(t *testing.T) {
 	}
 
 	// When: RunArchitectiAdHoc is called
-	snapshot, _, err := s.RunArchitectiAdHoc(
+	snapshot, _, _, err := s.RunArchitectiAdHoc(
 		context.Background(),
 		trigger,
 		*s.config.Architecti,
@@ -1187,5 +1196,76 @@ func TestRunArchitectiAdHoc_SnapshotContainsTriggerDropletID(t *testing.T) {
 	}
 	if !strings.Contains(snapshot, "my-trigger-droplet") {
 		t.Errorf("snapshot does not contain trigger droplet ID; snapshot = %q", snapshot)
+	}
+}
+
+func TestRunArchitectiAdHoc_Normal_MarkdownWrappedJSON_ReturnsParsedActions(t *testing.T) {
+	// Given: LLM output wraps JSON in markdown code block (typical LLM output)
+	client := newMockClient()
+	client.items["d-001"] = stagnantDroplet("d-001", 60*time.Minute)
+	s := testSchedulerWithArchitecti(client)
+
+	// LLM commonly wraps JSON in a markdown fenced code block
+	agentOutput := "Here are my proposed actions:\n\n```json\n" +
+		`[{"action":"restart","droplet_id":"d-001","cataractae":"implement","reason":"stagnant"}]` +
+		"\n```\n"
+	s.architectiExecFn = func(_ context.Context, _ string) ([]byte, error) {
+		return []byte(agentOutput), nil
+	}
+
+	// When: RunArchitectiAdHoc dispatches (non-dry-run)
+	_, _, actions, err := s.RunArchitectiAdHoc(
+		context.Background(),
+		stagnantDroplet("d-001", 60*time.Minute),
+		*s.config.Architecti,
+		false,
+	)
+
+	// Then: actions are parsed correctly despite markdown wrapping
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(actions) != 1 {
+		t.Fatalf("len(actions) = %d, want 1", len(actions))
+	}
+	if actions[0].Action != "restart" || actions[0].DropletID != "d-001" {
+		t.Errorf("actions[0] = %+v, want {action:restart droplet_id:d-001}", actions[0])
+	}
+}
+
+func TestRunArchitectiAdHoc_Normal_ReturnsFilteredActions_MaxFilesPerRun(t *testing.T) {
+	// Given: LLM returns more file actions than MaxFilesPerRun allows
+	client := newMockClient()
+	s := testSchedulerWithArchitecti(client)
+
+	// Build output with 4 file actions; MaxFilesPerRun in testSchedulerWithArchitecti is 3
+	agentOutput := `[` +
+		`{"action":"file","repo":"r","title":"t1","reason":"r1"},` +
+		`{"action":"file","repo":"r","title":"t2","reason":"r2"},` +
+		`{"action":"file","repo":"r","title":"t3","reason":"r3"},` +
+		`{"action":"file","repo":"r","title":"t4","reason":"r4"}` +
+		`]`
+	s.architectiExecFn = func(_ context.Context, _ string) ([]byte, error) {
+		return []byte(agentOutput), nil
+	}
+
+	// When: RunArchitectiAdHoc dispatches (non-dry-run)
+	_, rawOutput, actions, err := s.RunArchitectiAdHoc(
+		context.Background(),
+		stagnantDroplet("d-001", 60*time.Minute),
+		*s.config.Architecti,
+		false,
+	)
+
+	// Then: rawOutput is unfiltered (3 actions), returned actions are filtered (≤MaxFilesPerRun)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(rawOutput) == 0 {
+		t.Fatal("expected non-empty rawOutput")
+	}
+	maxFiles := s.config.Architecti.MaxFilesPerRun
+	if len(actions) != maxFiles {
+		t.Errorf("len(actions) = %d, want %d (capped by MaxFilesPerRun; rawOutput had 4)", len(actions), maxFiles)
 	}
 }
