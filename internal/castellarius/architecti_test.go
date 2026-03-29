@@ -1233,6 +1233,32 @@ func TestRunArchitectiAdHoc_Normal_MarkdownWrappedJSON_ReturnsParsedActions(t *t
 	}
 }
 
+func TestRunArchitectiAdHoc_ParseError_ReturnsError(t *testing.T) {
+	// Given: exec fn returns plain text with no JSON array
+	client := newMockClient()
+	s := testSchedulerWithArchitecti(client)
+
+	s.architectiExecFn = func(_ context.Context, _ string) ([]byte, error) {
+		return []byte("The agent could not determine any actions at this time."), nil
+	}
+
+	// When: RunArchitectiAdHoc is called with dryRun=false
+	_, _, _, err := s.RunArchitectiAdHoc(
+		context.Background(),
+		stagnantDroplet("d-001", 60*time.Minute),
+		*s.config.Architecti,
+		false,
+	)
+
+	// Then: error is non-nil and wraps 'parse'
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if !strings.Contains(err.Error(), "parse") {
+		t.Errorf("expected error to mention parse, got: %v", err)
+	}
+}
+
 func TestRunArchitectiAdHoc_Normal_ReturnsFilteredActions_MaxFilesPerRun(t *testing.T) {
 	// Given: LLM returns more file actions than MaxFilesPerRun allows
 	client := newMockClient()
