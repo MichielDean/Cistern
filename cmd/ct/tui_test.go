@@ -3,6 +3,7 @@ package main
 import (
 	"errors"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -1433,5 +1434,241 @@ func TestTabApp_Detail_View_ActionHints_InFooter(t *testing.T) {
 		if !strings.Contains(view, hint) {
 			t.Errorf("view footer should contain action hint %q, got:\n%s", hint, view)
 		}
+	}
+}
+
+// ── execActionCmd success paths ──────────────────────────────────────────────
+
+// newTestDBWithDroplet creates a fresh cistern DB in a temp directory, seeds it
+// with one open droplet, and returns the dbPath and dropletID. The client is
+// closed before returning so execActionCmd can reopen the DB via cistern.New.
+func newTestDBWithDroplet(t *testing.T) (dbPath, dropletID string) {
+	t.Helper()
+	dbPath = filepath.Join(t.TempDir(), "test.db")
+	c, err := cistern.New(dbPath, "ci")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	d, err := c.Add("test-repo", "test droplet", "", 2, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return dbPath, d.ID
+}
+
+// TestExecActionCmd_Cancel_SetsDropletCancelled verifies that execActionCmd with
+// actionCancel sets the droplet status to "cancelled".
+//
+// Given: a real cistern DB with an open droplet
+// When:  execActionCmd with actionCancel is executed
+// Then:  tuiActionResultMsg.err is nil and droplet status is "cancelled"
+func TestExecActionCmd_Cancel_SetsDropletCancelled(t *testing.T) {
+	dbPath, id := newTestDBWithDroplet(t)
+	m := newTabAppModel("", dbPath)
+
+	cmd := m.execActionCmd(id, actionCancel, "")
+	msg := cmd()
+
+	am, ok := msg.(tuiActionResultMsg)
+	if !ok {
+		t.Fatalf("expected tuiActionResultMsg, got %T", msg)
+	}
+	if am.dropletID != id {
+		t.Errorf("dropletID = %q, want %q", am.dropletID, id)
+	}
+	if am.err != nil {
+		t.Errorf("err = %v, want nil", am.err)
+	}
+
+	c, err := cistern.New(dbPath, "ci")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	d, err := c.Get(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d.Status != "cancelled" {
+		t.Errorf("status = %q, want %q", d.Status, "cancelled")
+	}
+}
+
+// TestExecActionCmd_Escalate_SetsDropletStagnant verifies that execActionCmd
+// with actionEscalate sets the droplet status to "stagnant".
+//
+// Given: a real cistern DB with an open droplet
+// When:  execActionCmd with actionEscalate is executed
+// Then:  tuiActionResultMsg.err is nil and droplet status is "stagnant"
+func TestExecActionCmd_Escalate_SetsDropletStagnant(t *testing.T) {
+	dbPath, id := newTestDBWithDroplet(t)
+	m := newTabAppModel("", dbPath)
+
+	cmd := m.execActionCmd(id, actionEscalate, "")
+	msg := cmd()
+
+	am, ok := msg.(tuiActionResultMsg)
+	if !ok {
+		t.Fatalf("expected tuiActionResultMsg, got %T", msg)
+	}
+	if am.dropletID != id {
+		t.Errorf("dropletID = %q, want %q", am.dropletID, id)
+	}
+	if am.err != nil {
+		t.Errorf("err = %v, want nil", am.err)
+	}
+
+	c, err := cistern.New(dbPath, "ci")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	d, err := c.Get(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d.Status != "stagnant" {
+		t.Errorf("status = %q, want %q", d.Status, "stagnant")
+	}
+}
+
+// TestExecActionCmd_Restart_SetsDropletOpen verifies that execActionCmd with
+// actionRestart sets the droplet status to "open".
+//
+// Given: a real cistern DB with a droplet
+// When:  execActionCmd with actionRestart and a step name is executed
+// Then:  tuiActionResultMsg.err is nil and droplet status is "open"
+func TestExecActionCmd_Restart_SetsDropletOpen(t *testing.T) {
+	dbPath, id := newTestDBWithDroplet(t)
+	m := newTabAppModel("", dbPath)
+
+	cmd := m.execActionCmd(id, actionRestart, "implement")
+	msg := cmd()
+
+	am, ok := msg.(tuiActionResultMsg)
+	if !ok {
+		t.Fatalf("expected tuiActionResultMsg, got %T", msg)
+	}
+	if am.dropletID != id {
+		t.Errorf("dropletID = %q, want %q", am.dropletID, id)
+	}
+	if am.err != nil {
+		t.Errorf("err = %v, want nil", am.err)
+	}
+
+	c, err := cistern.New(dbPath, "ci")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	d, err := c.Get(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d.Status != "open" {
+		t.Errorf("status = %q, want %q", d.Status, "open")
+	}
+}
+
+// TestExecActionCmd_AddNote_CreatesNote verifies that execActionCmd with
+// actionAddNote inserts a note for the droplet.
+//
+// Given: a real cistern DB with an open droplet and no notes
+// When:  execActionCmd with actionAddNote and "hello" is executed
+// Then:  tuiActionResultMsg.err is nil and a note with content "hello" exists
+func TestExecActionCmd_AddNote_CreatesNote(t *testing.T) {
+	dbPath, id := newTestDBWithDroplet(t)
+	m := newTabAppModel("", dbPath)
+
+	cmd := m.execActionCmd(id, actionAddNote, "hello")
+	msg := cmd()
+
+	am, ok := msg.(tuiActionResultMsg)
+	if !ok {
+		t.Fatalf("expected tuiActionResultMsg, got %T", msg)
+	}
+	if am.dropletID != id {
+		t.Errorf("dropletID = %q, want %q", am.dropletID, id)
+	}
+	if am.err != nil {
+		t.Errorf("err = %v, want nil", am.err)
+	}
+
+	c, err := cistern.New(dbPath, "ci")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	notes, err := c.GetNotes(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(notes) != 1 {
+		t.Fatalf("note count = %d, want 1", len(notes))
+	}
+	if notes[0].Content != "hello" {
+		t.Errorf("note content = %q, want %q", notes[0].Content, "hello")
+	}
+}
+
+// TestExecActionCmd_SetStep_UpdatesCataractae verifies that execActionCmd with
+// actionSetStep updates the droplet's current_cataractae field.
+//
+// Given: a real cistern DB with an open droplet
+// When:  execActionCmd with actionSetStep and "review" is executed
+// Then:  tuiActionResultMsg.err is nil and droplet's CurrentCataractae is "review"
+func TestExecActionCmd_SetStep_UpdatesCataractae(t *testing.T) {
+	dbPath, id := newTestDBWithDroplet(t)
+	m := newTabAppModel("", dbPath)
+
+	cmd := m.execActionCmd(id, actionSetStep, "review")
+	msg := cmd()
+
+	am, ok := msg.(tuiActionResultMsg)
+	if !ok {
+		t.Fatalf("expected tuiActionResultMsg, got %T", msg)
+	}
+	if am.dropletID != id {
+		t.Errorf("dropletID = %q, want %q", am.dropletID, id)
+	}
+	if am.err != nil {
+		t.Errorf("err = %v, want nil", am.err)
+	}
+
+	c, err := cistern.New(dbPath, "ci")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	d, err := c.Get(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d.CurrentCataractae != "review" {
+		t.Errorf("CurrentCataractae = %q, want %q", d.CurrentCataractae, "review")
+	}
+}
+
+// TestTabApp_Detail_ConfirmOverlay_UppercaseY_ClosesOverlayAndReturnsCmd verifies
+// that pressing 'Y' (uppercase) in the confirm overlay closes it and returns an
+// action cmd, matching the lowercase 'y' behaviour at tui.go:167.
+//
+// Given: a model with overlayConfirm active for cancel action
+// When:  'Y' is pressed
+// Then:  overlayMode=overlayNone, cmd != nil
+func TestTabApp_Detail_ConfirmOverlay_UppercaseY_ClosesOverlayAndReturnsCmd(t *testing.T) {
+	m := detailModelWithDroplet()
+	m.overlayMode = overlayConfirm
+	m.overlayAction = actionCancel
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'Y'}})
+	um := updated.(tabAppModel)
+
+	if um.overlayMode != overlayNone {
+		t.Errorf("overlayMode = %d, want overlayNone (%d) after 'Y'", um.overlayMode, overlayNone)
+	}
+	if cmd == nil {
+		t.Error("expected non-nil cmd after 'Y' in confirm overlay, got nil")
 	}
 }
