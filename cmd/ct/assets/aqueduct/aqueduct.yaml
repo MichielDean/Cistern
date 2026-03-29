@@ -40,12 +40,12 @@ cataractae:
       - name: code-simplifier
         path: skills/code-simplifier/SKILL.md
     timeout_minutes: 20
-    on_pass: adversarial-review
+    on_pass: review
     on_fail: implement
     on_recirculate: implement
     on_escalate: human
 
-  - name: adversarial-review
+  - name: review
     type: agent
     identity: reviewer
     model: opus         # adversarial reviewer benefits from the strongest available model
@@ -59,8 +59,8 @@ cataractae:
         path: skills/cistern-git/SKILL.md
       - name: cistern-github
         path: skills/cistern-github/SKILL.md
-      - name: adversarial-reviewer
-        path: skills/adversarial-reviewer/SKILL.md
+      - name: reviewer
+        path: skills/reviewer/SKILL.md
     timeout_minutes: 15
     on_pass: qa
     on_fail: implement

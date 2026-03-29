@@ -59,7 +59,7 @@ ct dashboard
 Every droplet flows through the same sequence of cataractae, regardless of complexity level:
 
 ```
-All:      implement → simplify → adversarial-review → qa → security-review → docs → delivery → done
+All:      implement → simplify → review → qa → security-review → docs → delivery → done
 ```
 
 Complexity levels control one thing: whether a droplet pauses for human approval before delivery.
@@ -76,7 +76,7 @@ Filtration is an optional pre-intake step that refines vague ideas before they e
 
 2. **Simplify** (`simplify`) — Refines the implementation for clarity, consistency, and maintainability without changing behaviour. Runs on all branches with new commits since `origin/main`.
 
-3. **Adversarial Review** (`adversarial-review`) — Reviews a diff with full codebase access. Checks for bugs, security issues, missing tests, logic errors, and orphaned code (unreferenced files, imports, or type values left behind by deletions). Also looks for duplicate implementations, broken contracts, and pattern violations in the broader codebase.
+3. **Adversarial Review** (`review`) — Reviews a diff with full codebase access. Checks for bugs, security issues, missing tests, logic errors, and orphaned code (unreferenced files, imports, or type values left behind by deletions). Also looks for duplicate implementations, broken contracts, and pattern violations in the broader codebase.
 
 4. **QA** (`qa`) — Active verification with full codebase access: runs tests, checks each deliverable exists via `grep`, verifies CLI flags, checks mirror file consistency. Recirculates to implement on any failure.
 
@@ -110,7 +110,7 @@ Accepts numeric (`1`–`3`) or named values.
 
 ## Two-Phase Review
 
-The adversarial-review step uses a structured two-phase protocol that prevents reviewer anchoring and ensures prior issues are actually fixed.
+The review step uses a structured two-phase protocol that prevents reviewer anchoring and ensures prior issues are actually fixed.
 
 **Phase 1 — Verify prior issues.** If the droplet has been recirculated, the reviewer checks each previously filed issue first: mark it `RESOLVED` with evidence (test name, line number) or `UNRESOLVED` with the gap. The reviewer cannot skip to fresh review until all prior issues are assessed.
 
@@ -120,7 +120,7 @@ This protocol prevents common failure modes: rubber-stamping recirculations, anc
 
 ## Issue Tracking
 
-Cistern maintains a `droplet_issues` table for structured findings from adversarial-review. Each issue has a description, a filer, and a resolution state.
+Cistern maintains a `droplet_issues` table for structured findings from review. Each issue has a description, a filer, and a resolution state.
 
 ```bash
 ct droplet issue add <id> "<description>"         File a finding against a droplet
@@ -157,7 +157,7 @@ Aqueduct names are **concurrency slots** — they control how many droplets run 
 All per-droplet worktrees share a single primary clone object store at `~/.cistern/sandboxes/<repo>/_primary/` — objects are shared, only the working tree is per-droplet, keeping disk cost low. Each tmux session is named `<repo>-<aqueduct>`. Every `tmux ls` shows the cistern in motion:
 
 ```
-myproject-virgo: 1 windows (adversarial-review)
+myproject-virgo: 1 windows (review)
 myproject-marcia: 1 windows (implement)
 ```
 
@@ -235,9 +235,9 @@ Skills are referenced by name in your aqueduct YAML under each cataractae's `ski
 |---|---|---|
 | `cistern-droplet-state` | Signal pass/recirculate/block with `ct` CLI | All |
 | `cistern-git` | Git conventions: exclude CONTEXT.md, merge-base diff, no stash | implement, simplify, docs, delivery |
-| `cistern-github` | PR creation, CI checks, squash-merge, and automatic conflict resolution for Cistern delivery | implement, adversarial-review, delivery |
+| `cistern-github` | PR creation, CI checks, squash-merge, and automatic conflict resolution for Cistern delivery | implement, review, delivery |
 | `code-simplifier` | Simplification heuristics and patterns | simplify |
-| `cistern-reviewer` | Adversarial code review for Go, TypeScript/Next.js, and TypeScript/React — all findings equal, recirculate on any finding, pass only when nothing remains | adversarial-review |
+| `cistern-reviewer` | Adversarial code review for Go, TypeScript/Next.js, and TypeScript/React — all findings equal, recirculate on any finding, pass only when nothing remains | review |
 
 The `cistern-git` skill encodes hard-won rules: always use `git add -A -- ':!CONTEXT.md'`, always use merge-base diff (`git diff $(git merge-base HEAD origin/main)..HEAD`) instead of two-dot — two-dot includes other PRs that merged to main after branching on unrebased branches, never stash in per-droplet worktrees.
 
@@ -536,7 +536,7 @@ ct droplet peek <id> --snapshot --lines 100                       With --snapsho
 ct droplet peek <id> --snapshot --follow                          With --snapshot: re-capture every 3 seconds (Ctrl-C to stop)
 ct droplet peek <id> --raw                                        Read the session log file directly without requiring tmux (useful for programmatic consumption)
 
-# Droplet issues — structured findings from adversarial-review
+# Droplet issues — structured findings from review
 ct droplet issue add <id> "<description>"                         File a finding
 ct droplet issue list <id>                                        List all issues
 ct droplet issue list <id> --open                                 List only open issues

@@ -17,7 +17,7 @@ The adversarial reviewer cataractae now has full repository access to catch issu
 All droplets now flow through the same 7-step pipeline regardless of complexity level. Complexity no longer gates which cataractae execute — it exclusively gates human approval before delivery.
 
 **Pipeline changes:**
-- `standard`, `full`, and `critical` droplets all run: implement → simplify → adversarial-review → qa → security-review → docs → delivery
+- `standard`, `full`, and `critical` droplets all run: implement → simplify → review → qa → security-review → docs → delivery
 - Simplify, Adversarial Review, QA, Security Review, and Docs steps now run for all droplets (previously skipped for standard/full)
 - Complexity level (`--complexity`) now exclusively controls the human gate (critical only)
 - No references to skip_cataractae or skip_for remain in source, config, tests, or documentation
