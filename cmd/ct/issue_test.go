@@ -462,6 +462,27 @@ func TestDropletBlock_WhenDelivered_ReturnsError(t *testing.T) {
 	}
 }
 
+// TestDropletBlock_WhenCancelled_ReturnsError verifies that blocking a cancelled droplet
+// returns a clear error.
+func TestDropletBlock_WhenCancelled_ReturnsError(t *testing.T) {
+	db := filepath.Join(t.TempDir(), "test.db")
+	t.Setenv("CT_DB", db)
+	t.Setenv("CT_NO_ASCII_LOGO", "1")
+
+	c, _ := cistern.New(db, "ct")
+	item, _ := c.Add("myrepo", "Task", "", 1, 3)
+	c.Cancel(item.ID, "no longer needed")
+	c.Close()
+
+	err := execCmd(t, "droplet", "block", item.ID)
+	if err == nil {
+		t.Fatal("expected error: cannot block a cancelled droplet")
+	}
+	if !strings.Contains(err.Error(), "cancelled") {
+		t.Errorf("error %q should mention 'cancelled'", err.Error())
+	}
+}
+
 // --- recirculate: stagnant / terminal status tests ---
 
 // TestDropletRecirculate_WhenStagnant_SetsStatusOpen verifies that recirculating a
@@ -582,6 +603,28 @@ func TestDropletRecirculate_WhenDelivered_ReturnsError(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "delivered") {
 		t.Errorf("error %q should mention 'delivered'", err.Error())
+	}
+}
+
+// TestDropletRecirculate_WhenCancelled_ReturnsError verifies that recirculating a
+// cancelled droplet returns a clear error.
+func TestDropletRecirculate_WhenCancelled_ReturnsError(t *testing.T) {
+	t.Cleanup(func() { recirculateTo = "" })
+	db := filepath.Join(t.TempDir(), "test.db")
+	t.Setenv("CT_DB", db)
+	t.Setenv("CT_NO_ASCII_LOGO", "1")
+
+	c, _ := cistern.New(db, "ct")
+	item, _ := c.Add("myrepo", "Task", "", 1, 3)
+	c.Cancel(item.ID, "no longer needed")
+	c.Close()
+
+	err := execCmd(t, "droplet", "recirculate", item.ID)
+	if err == nil {
+		t.Fatal("expected error: cannot recirculate a cancelled droplet")
+	}
+	if !strings.Contains(err.Error(), "cancelled") {
+		t.Errorf("error %q should mention 'cancelled'", err.Error())
 	}
 }
 
