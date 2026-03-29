@@ -136,3 +136,16 @@ func (p *AqueductPool) FindByName(name string) *Aqueduct {
 	}
 	return nil
 }
+
+// FindByDropletID returns the aqueduct currently flowing for the given droplet,
+// or nil if no aqueduct in the pool is assigned to it.
+func (p *AqueductPool) FindByDropletID(dropletID string) *Aqueduct {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	for i := range p.aqueducts {
+		if p.aqueducts[i].DropletID == dropletID {
+			return p.aqueducts[i]
+		}
+	}
+	return nil
+}

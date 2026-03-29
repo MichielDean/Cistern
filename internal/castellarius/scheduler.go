@@ -15,7 +15,6 @@ import (
 	"path/filepath"
 	"runtime/debug"
 	"strings"
-	"sync/atomic"
 	"time"
 
 	"github.com/MichielDean/cistern/internal/aqueduct"
@@ -111,12 +110,6 @@ type Castellarius struct {
 	// sessionLogRoot is the directory containing per-session output logs.
 	// Defaults to ~/.cistern/session-logs when empty.
 	sessionLogRoot string
-
-	// droughtRunning and droughtStartedAt are written by the drought goroutine
-	// (via OnDroughtStart/OnDroughtEnd callbacks) and read by writeHealthFile on
-	// the main tick goroutine. atomic fields ensure safe concurrent access.
-	droughtRunning   atomic.Bool
-	droughtStartedAt atomic.Pointer[time.Time]
 }
 
 // isSupervisedProcess returns true when the Castellarius is being managed by
@@ -450,7 +443,6 @@ func (s *Castellarius) Run(ctx context.Context) error {
 						}
 					}()
 					s.heartbeatInProgress(ctx)
-					s.checkHungDrought()
 				}()
 			}
 		}
@@ -707,14 +699,6 @@ func (s *Castellarius) tick(ctx context.Context) {
 				StartupCfgMtime:    s.startupCfgMtime,
 				Supervised:         s.supervised,
 				OnReload:           reloadFn,
-				OnDroughtStart: func(t time.Time) {
-					s.droughtRunning.Store(true)
-					s.droughtStartedAt.Store(&t)
-				},
-				OnDroughtEnd: func() {
-					s.droughtRunning.Store(false)
-					s.droughtStartedAt.Store(nil)
-				},
 			})
 		}
 	}
@@ -849,6 +833,10 @@ func (s *Castellarius) observeRepo(_ context.Context, repo aqueduct.RepoConfig) 
 			}
 			continue
 		}
+
+		// Apply complexity skip rules.
+		skipSteps := wf.SkipCataractaeForLevel(item.Complexity)
+		next = advanceSkippedCataractae(next, wf, skipSteps)
 
 		// For critical droplets, insert a human gate before delivery.
 		if wf.Complexity.RequireHumanForLevel(item.Complexity) && next == "delivery" {
@@ -1119,6 +1107,28 @@ func route(step aqueduct.WorkflowCataractae, result Result) string {
 	}
 }
 
+// advanceSkippedCataractae walks the workflow from nextStep, skipping any step whose name
+// appears in skipSteps. It follows on_pass links to find the next non-skipped step.
+// Returns "done" if all remaining steps are skipped.
+func advanceSkippedCataractae(nextStep string, wf *aqueduct.Workflow, skipSteps []string) string {
+	if len(skipSteps) == 0 {
+		return nextStep
+	}
+	skip := make(map[string]bool, len(skipSteps))
+	for _, s := range skipSteps {
+		skip[s] = true
+	}
+	current := nextStep
+	for skip[current] {
+		step := lookupCataracta(wf, current)
+		if step == nil || step.OnPass == "" {
+			return "done"
+		}
+		current = step.OnPass
+	}
+	return current
+}
+
 // isTerminal returns true if the target is a terminal state.
 func isTerminal(name string) bool {
 	switch strings.ToLower(name) {
@@ -1203,29 +1213,6 @@ func (s *Castellarius) heartbeatInProgress(ctx context.Context) {
 			return
 		}
 		s.heartbeatRepo(ctx, repo)
-	}
-}
-
-// checkHungDrought reads the health file and emits a warning log if the drought
-// goroutine has been running for more than 5 minutes without completing. A hung
-// drought is invisible otherwise because the goroutine runs in the background.
-func (s *Castellarius) checkHungDrought() {
-	if s.dbPath == "" {
-		return
-	}
-	hf, err := ReadHealthFile(filepath.Dir(s.dbPath))
-	if err != nil {
-		return // health file absent — nothing to check
-	}
-	if !hf.DroughtRunning || hf.DroughtStartedAt == nil {
-		return
-	}
-	elapsed := time.Since(*hf.DroughtStartedAt)
-	if elapsed > 5*time.Minute {
-		s.logger.Warn("drought goroutine may be hung",
-			"started_at", hf.DroughtStartedAt.Format(time.RFC3339),
-			"elapsed", elapsed.Round(time.Second).String(),
-		)
 	}
 }
 
@@ -1349,10 +1336,29 @@ func (s *Castellarius) heartbeatRepo(ctx context.Context, repo aqueduct.RepoConf
 		// session.Spawn() detects prior Claude session files and uses --continue
 		// when they exist, or spawns fresh when priorSessionCount == 0.
 		// Status and assignee are intentionally left unchanged.
-		if item.Assignee != "" {
+		assignee := item.Assignee
+		if assignee == "" {
+			// assigned_aqueduct not persisted (ci-dko75). Look it up from the
+			// in-memory pool — the Castellarius knows which aqueduct it dispatched
+			// this droplet to, even if it forgot to write it to the DB.
+			if pool, ok := s.pools[repo.Name]; ok {
+				if w := pool.FindByDropletID(item.ID); w != nil {
+					assignee = w.Name
+					s.logger.Warn("heartbeat: recovered missing assignee from pool",
+						"droplet", item.ID, "aqueduct", assignee)
+				}
+			}
+		}
+		if assignee == "" {
+			// Truly orphaned — no aqueduct claims it. Log once and leave debounce set.
+			s.logger.Warn("heartbeat: stall detected but no assignee found — droplet orphaned",
+				"droplet", item.ID,
+			)
+		} else {
+			// Patch assignee on the item so respawnStalledDroplet can use it.
+			item.Assignee = assignee
 			if err := s.respawnStalledDroplet(ctx, client, repo, item); err != nil {
-				// Clear the debounce so the next heartbeat re-detects the stall
-				// and retries — spawn failures are often transient.
+				// Spawn failure may be transient — clear debounce so next heartbeat retries.
 				delete(s.lastStallNoted, item.ID)
 			}
 		}
