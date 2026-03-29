@@ -54,9 +54,9 @@ func (s *Castellarius) architectiConfigOrDefault() aqueduct.ArchitectiConfig {
 // providing the one-to-one guarantee: each bad-state transition triggers at
 // most one Architecti invocation.
 //
-// The invocation note is written BEFORE the droplet is sent to the queue so
-// that subsequent poll cycles — and restarts — can detect the enqueue without
-// reading the channel.
+// The channel send is attempted first. The invocation note is written only
+// after a successful send, so that a full queue does not permanently silence
+// a droplet by recording a dedup note that was never backed by an actual enqueue.
 func (s *Castellarius) tryEnqueueArchitecti(client CisternClient, droplet *cistern.Droplet) {
 	if s.architectiQueue == nil {
 		return
@@ -73,15 +73,20 @@ func (s *Castellarius) tryEnqueueArchitecti(client CisternClient, droplet *ciste
 			return
 		}
 	}
-	// Write the invocation note before sending to the queue (crash-safe).
-	noteContent := architectiInvocationNotePrefix + " " + droplet.Status
-	if err := client.AddNote(droplet.ID, "architecti", noteContent); err != nil {
-		s.logger.Error("architecti: write invocation note failed",
-			"droplet", droplet.ID, "error", err)
-		return
-	}
+	// Attempt non-blocking send first. Only write the invocation note on
+	// success so a full queue does not permanently silence the droplet.
 	select {
 	case s.architectiQueue <- droplet:
+		// Send succeeded. Write the invocation note so subsequent poll cycles
+		// and restarts see it and skip re-enqueue (crash-safe dedup guard).
+		noteContent := architectiInvocationNotePrefix + " " + droplet.Status
+		if err := client.AddNote(droplet.ID, "architecti", noteContent); err != nil {
+			s.logger.Error("architecti: write invocation note failed",
+				"droplet", droplet.ID, "error", err)
+			// Droplet is already queued and will be processed. Missing note
+			// means the next poll cycle may attempt a duplicate enqueue;
+			// the drainer's seen-map handles within-burst deduplication.
+		}
 		s.logger.Info("architecti: enqueued", "droplet", droplet.ID, "status", droplet.Status)
 	default:
 		s.logger.Warn("architecti: queue full — droplet not enqueued", "droplet", droplet.ID)
@@ -91,15 +96,16 @@ func (s *Castellarius) tryEnqueueArchitecti(client CisternClient, droplet *ciste
 // startArchitectiQueue starts the single background goroutine that drains the
 // serial Architecti queue. It processes one droplet at a time: reads from the
 // buffered channel, deduplicates within the current queue contents (race
-// between enqueue and note write), calls runArchitectiFn, then reads the next.
-// The goroutine exits when ctx is cancelled.
+// between channel send and note write), calls runArchitectiFn, then reads the
+// next. The goroutine exits when ctx is cancelled.
 func (s *Castellarius) startArchitectiQueue(ctx context.Context) {
 	s.architectiWg.Add(1)
 	go func() {
 		defer s.architectiWg.Done()
 		// seen deduplicates duplicate IDs within the in-flight queue.
 		// Note-based dedup in tryEnqueueArchitecti prevents most duplicates;
-		// seen handles the narrow race between note write and queue send.
+		// seen handles the narrow race between channel send and note write.
+		// It is cleared when the channel drains to bound its size.
 		seen := make(map[string]struct{})
 		for {
 			select {
@@ -111,17 +117,31 @@ func (s *Castellarius) startArchitectiQueue(ctx context.Context) {
 				}
 				if _, dup := seen[droplet.ID]; dup {
 					s.logger.Debug("architecti: drainer: duplicate — skipping", "droplet", droplet.ID)
+					if len(s.architectiQueue) == 0 {
+						seen = make(map[string]struct{})
+					}
 					continue
 				}
 				seen[droplet.ID] = struct{}{}
-				cfg := s.architectiConfigOrDefault()
-				if err := s.runArchitectiFn(ctx, droplet, cfg); err != nil {
-					s.logger.Error("architecti: run failed",
-						"droplet", droplet.ID, "error", err)
+				func() {
+					defer func() {
+						if r := recover(); r != nil {
+							s.logger.Error("architecti: drainer: panic recovered",
+								"droplet", droplet.ID, "panic", r)
+						}
+					}()
+					cfg := s.architectiConfigOrDefault()
+					if err := s.runArchitectiFn(ctx, droplet, cfg); err != nil {
+						s.logger.Error("architecti: run failed",
+							"droplet", droplet.ID, "error", err)
+					}
+				}()
+				// Clear seen when the channel is drained — bounds map size to
+				// the queue capacity; safe because all in-burst duplicates have
+				// been consumed before the channel appears empty.
+				if len(s.architectiQueue) == 0 {
+					seen = make(map[string]struct{})
 				}
-				// Do not delete from seen: if the same ID appears again in
-				// the queue (narrow race), it must be discarded. The note-based
-				// dedup in tryEnqueueArchitecti prevents future re-enqueues.
 			}
 		}
 	}()

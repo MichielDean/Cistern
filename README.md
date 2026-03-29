@@ -428,12 +428,10 @@ dashboard_font_family: 'Liberation Mono, DejaVu Sans Mono, Menlo, Consolas, mono
 #   per_token_requests: 120
 #   window: 1m
 
-# Architecti: autonomous diagnosis trigger for stagnant droplets (optional)
-# Omit or set enabled: false to disable (default). When enabled, Castellarius spawns
-# a diagnostician goroutine when a droplet has been stagnant/blocked for threshold_minutes.
+# Architecti: autonomous diagnosis for stagnant/blocked droplets (always active).
+# Triggered by state-machine transitions; no polling threshold required.
+# Omit to use built-in defaults.
 architecti:
-  enabled: true
-  threshold_minutes: 30
   max_files_per_run: 100
 
 # Drought protocols run when the cistern goes idle

@@ -141,23 +141,36 @@ func TestTryEnqueueArchitecti_OtherArchitectiNote_DoesEnqueue(t *testing.T) {
 	}
 }
 
-func TestTryEnqueueArchitecti_AddNoteFails_DoesNotEnqueue(t *testing.T) {
-	// Given: AddNote returns an error — note write failure must abort before channel send
+func TestTryEnqueueArchitecti_AddNoteFails_EnqueuesWithoutNote(t *testing.T) {
+	// Given: AddNote returns an error — channel send happens first, so the
+	// droplet is still queued even though the dedup note could not be written.
 	client := newMockClient()
 	droplet := stagnantDroplet("d-001", 5*time.Minute)
 	client.addNoteErr = errors.New("db error")
 
 	s := testScheduler(client, newMockRunner(client))
 
-	// When: tryEnqueueArchitecti writes the note but note write fails
+	// When: tryEnqueueArchitecti sends to channel then attempts note write
 	s.tryEnqueueArchitecti(client, droplet)
 
-	// Then: nothing was enqueued (AddNote failure aborts before channel send)
+	// Then: droplet IS in the queue (send-before-note; note failure does not block processing)
 	select {
 	case got := <-s.architectiQueue:
-		t.Errorf("expected empty queue after note-write failure, but got droplet %q", got.ID)
+		if got.ID != "d-001" {
+			t.Errorf("queue got droplet ID %q, want %q", got.ID, "d-001")
+		}
 	default:
-		// correct: queue is empty
+		t.Fatal("expected droplet in queue after AddNote failure, but queue was empty")
+	}
+
+	// Then: no invocation note was written (AddNote failed)
+	client.mu.Lock()
+	notes := client.notes["d-001"]
+	client.mu.Unlock()
+	for _, n := range notes {
+		if n.CataractaeName == "architecti" && strings.HasPrefix(n.Content, architectiInvocationNotePrefix) {
+			t.Error("unexpected invocation note written despite AddNote error")
+		}
 	}
 }
 
@@ -199,7 +212,7 @@ func TestTryEnqueueArchitecti_BlockedDroplet_EnqueuesAndWritesNote(t *testing.T)
 	}
 }
 
-func TestTryEnqueueArchitecti_QueueFull_DoesNotBlock(t *testing.T) {
+func TestTryEnqueueArchitecti_QueueFull_DoesNotBlockAndDoesNotWriteNote(t *testing.T) {
 	// Given: queue is already at capacity
 	client := newMockClient()
 	droplet := stagnantDroplet("d-001", 5*time.Minute)
@@ -223,6 +236,17 @@ func TestTryEnqueueArchitecti_QueueFull_DoesNotBlock(t *testing.T) {
 		// correct: returned without blocking
 	case <-time.After(200 * time.Millisecond):
 		t.Fatal("tryEnqueueArchitecti blocked on full queue")
+	}
+
+	// Then: no invocation note was written — queue-full must not permanently
+	// silence the droplet by recording a dedup note without a queued entry.
+	client.mu.Lock()
+	notes := client.notes["d-001"]
+	client.mu.Unlock()
+	for _, n := range notes {
+		if n.CataractaeName == "architecti" && strings.HasPrefix(n.Content, architectiInvocationNotePrefix) {
+			t.Error("invocation note written despite queue-full drop — droplet would be permanently silenced")
+		}
 	}
 }
 
@@ -416,9 +440,9 @@ func TestTryEnqueueArchitecti_RestartSafe_ExistingNoteBlocksReEnqueue(t *testing
 	}
 }
 
-func TestTryEnqueueArchitecti_NoteWrittenBeforeSend(t *testing.T) {
-	// Given: note write and channel send happen atomically from the caller's perspective.
-	// Verify the note exists before the drainer could see the droplet.
+func TestTryEnqueueArchitecti_SuccessfulEnqueue_WritesBothNoteAndQueues(t *testing.T) {
+	// Given: successful enqueue — channel send happens first, then note write.
+	// Verify both the queue entry and the invocation note are present after the call.
 	client := newMockClient()
 	droplet := stagnantDroplet("d-001", 5*time.Minute)
 
@@ -426,7 +450,7 @@ func TestTryEnqueueArchitecti_NoteWrittenBeforeSend(t *testing.T) {
 
 	s.tryEnqueueArchitecti(client, droplet)
 
-	// Check note was written (note is present regardless of drainer state)
+	// Then: invocation note was written
 	client.mu.Lock()
 	notes := client.notes["d-001"]
 	client.mu.Unlock()
@@ -438,10 +462,10 @@ func TestTryEnqueueArchitecti_NoteWrittenBeforeSend(t *testing.T) {
 		}
 	}
 	if !invocationNote {
-		t.Error("invocation note not written before channel send")
+		t.Error("invocation note not written after successful channel send")
 	}
 
-	// Drain the queue to confirm the droplet was also sent
+	// Then: droplet is also in the queue
 	select {
 	case <-s.architectiQueue:
 	default:
@@ -705,6 +729,88 @@ func TestRunArchitecti_NoteAction_AddsNoteToDroplet(t *testing.T) {
 	}
 	if !found {
 		t.Error("expected note from 'architecti', found none")
+	}
+}
+
+func TestStartArchitectiQueue_PanicInRunFn_DrainerContinues(t *testing.T) {
+	// Given: runArchitectiFn panics on the first droplet. The drainer must
+	// recover and continue processing subsequent droplets — a panic must not
+	// kill the goroutine permanently.
+	client := newMockClient()
+	s := testScheduler(client, newMockRunner(client))
+	s.config.Architecti = architectiConfig(10)
+
+	processed := make(chan string, 4)
+	s.runArchitectiFn = func(_ context.Context, d *cistern.Droplet, _ aqueduct.ArchitectiConfig) error {
+		if d.ID == "d-panic" {
+			panic("simulated panic")
+		}
+		processed <- d.ID
+		return nil
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	s.startArchitectiQueue(ctx)
+
+	// Enqueue the panicking droplet first, then a normal one
+	s.architectiQueue <- &cistern.Droplet{ID: "d-panic", Status: "stagnant"}
+	s.architectiQueue <- stagnantDroplet("d-ok", 5*time.Minute)
+
+	// Then: drainer recovers from panic and processes d-ok
+	select {
+	case id := <-processed:
+		if id != "d-ok" {
+			t.Errorf("got %q, want d-ok", id)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("d-ok not processed within 1s — drainer goroutine may have died on panic")
+	}
+}
+
+func TestStartArchitectiQueue_SeenMap_ClearedBetweenBursts(t *testing.T) {
+	// Given: the drainer's seen-map is cleared when the channel drains.
+	// A droplet processed in one burst must not be blocked by a stale seen-map
+	// entry when it appears in a later burst (e.g., re-queued directly for testing).
+	client := newMockClient()
+	s := testScheduler(client, newMockRunner(client))
+	s.config.Architecti = architectiConfig(10)
+
+	processed := make(chan string, 4)
+	s.runArchitectiFn = func(_ context.Context, d *cistern.Droplet, _ aqueduct.ArchitectiConfig) error {
+		processed <- d.ID
+		return nil
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	s.startArchitectiQueue(ctx)
+
+	// First burst: enqueue d-001 and drain it
+	s.architectiQueue <- stagnantDroplet("d-001", 5*time.Minute)
+	select {
+	case id := <-processed:
+		if id != "d-001" {
+			t.Fatalf("first burst: got %q, want d-001", id)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("first burst: d-001 not processed within 1s")
+	}
+
+	// Allow drainer to detect empty channel and clear seen-map
+	time.Sleep(20 * time.Millisecond)
+
+	// Second burst: enqueue d-001 again; seen-map should be cleared so it runs
+	s.architectiQueue <- stagnantDroplet("d-001", 5*time.Minute)
+	select {
+	case id := <-processed:
+		if id != "d-001" {
+			t.Fatalf("second burst: got %q, want d-001", id)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("second burst: d-001 not processed within 1s — seen-map not cleared between bursts")
 	}
 }
 
