@@ -1493,6 +1493,16 @@ func (s *Castellarius) heartbeatArchitecti(ctx context.Context) {
 				)
 				s.architectiWg.Add(1)
 				go func(ctx context.Context, d cistern.Droplet, c aqueduct.ArchitectiConfig) {
+					defer func() {
+						if r := recover(); r != nil {
+							stack := debug.Stack()
+							s.logger.Error("heartbeat: architecti: panic recovered",
+								"droplet", d.ID,
+								"panic", r,
+								"stack", string(stack),
+							)
+						}
+					}()
 					defer s.architectiWg.Done()
 					defer func() {
 						s.architectiInFlightMu.Lock()
