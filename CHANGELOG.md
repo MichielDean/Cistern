@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+<<<<<<< HEAD
 ### Remove require_human gate for critical complexity (ci-mguos)
 
 Critical complexity droplets no longer pause for human approval before delivery. All droplets now flow through the complete pipeline (implement → simplify → review → qa → security-review → docs → delivery) and auto-merge identically, regardless of complexity level.
@@ -49,6 +50,23 @@ When the dispatch-loop recovery path attempts to recreate a worktree and the fea
 - **Fresh-branch creation failure**: if fresh-branch creation also fails, escalate the droplet to stagnant with a diagnostic note containing the original branch name and failure reason — stop retrying and require human intervention
 - **Single-cycle recovery**: a droplet whose feature branch has been deleted stops consuming dispatch ticks after at most one tick cycle; the aqueduct resumes picking up other work within that same cycle
 - **No regression**: normal worktree-recreation path (branch exists, recreation succeeds) is unaffected — all existing test coverage passes
+
+### Fix: release aqueduct pool slot when droplet cancelled externally (ci-keup4)
+
+When a droplet is cancelled externally (via `ct droplet cancel` or database status change to `cancelled`/`stagnant`), the Castellarius now properly releases its aqueduct pool slot in the observe phase.
+
+**Issue**: Previously, when a droplet was cancelled while in-progress, the pool slot remained locked and unavailable for new work, requiring a Castellarius restart to free it.
+
+**Fix**: After the primary observe loop processes outcome-bearing droplets, a secondary check scans for in_progress droplets whose DB status has been changed externally to `cancelled` or `stagnant`. For each such droplet:
+- Session ID is constructed from repo name + aqueduct assignee
+- The running tmux agent session is terminated (`killSessionFn`)
+- The aqueduct pool slot is released (`pool.Release`)
+- Per-droplet worktree is cleaned up if configured
+- INFO log message emitted: `aqueduct freed: droplet changed externally`
+
+**Behavior**: The aqueduct now picks up new work within one poll cycle (~10s) with no restart required, matching the behavior of outcome-driven pool release (pass/recirculate/block).
+
+**Testing**: Unit test `TestObserve_ExternallyChangedStatus_FreesPoolSlot` verifies both cancel and stagnant paths, confirms the INFO log, and ensures normal outcome-driven release is unaffected.
 
 ### Delivery: pre-PR merge-base guard to skip unnecessary rebases (ci-zzqy7)
 
