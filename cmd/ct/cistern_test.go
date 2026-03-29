@@ -203,6 +203,62 @@ func TestCisternListTableOutput(t *testing.T) {
 	listOutput = "table"
 }
 
+func TestCisternList_StagnantItems_NoFlowingMessage(t *testing.T) {
+	dir := t.TempDir()
+	db := filepath.Join(dir, "test.db")
+	t.Setenv("CT_DB", db)
+
+	c, err := cistern.New(db, "ts")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s1, _ := c.Add("repo", "Stagnant one", "", 1, 3)
+	s2, _ := c.Add("repo", "Stagnant two", "", 1, 3)
+	c.Escalate(s1.ID, "timed out")
+	c.Escalate(s2.ID, "timed out")
+	c.Close()
+
+	t.Run("status open filter with only stagnant items shows No flowing droplets message", func(t *testing.T) {
+		listOutput = "table"
+		listRepo = ""
+		listStatus = "open"
+		listAll = false
+		listCancelled = false
+		defer func() { listStatus = "" }()
+
+		out := captureStdout(t, func() {
+			if err := dropletListCmd.RunE(dropletListCmd, nil); err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+		})
+		want := "No flowing droplets. 2 droplet(s) stagnant."
+		if strings.TrimSpace(out) != want {
+			t.Fatalf("expected %q, got %q", want, out)
+		}
+	})
+
+	t.Run("truly empty cistern still shows Cistern dry", func(t *testing.T) {
+		dir2 := t.TempDir()
+		db2 := filepath.Join(dir2, "test.db")
+		t.Setenv("CT_DB", db2)
+
+		listOutput = "table"
+		listRepo = ""
+		listStatus = ""
+		listAll = false
+		listCancelled = false
+
+		out := captureStdout(t, func() {
+			if err := dropletListCmd.RunE(dropletListCmd, nil); err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+		})
+		if strings.TrimSpace(out) != "Cistern dry." {
+			t.Fatalf("expected 'Cistern dry.', got %q", out)
+		}
+	})
+}
+
 func TestParseComplexity(t *testing.T) {
 	tests := []struct {
 		input   string
@@ -936,6 +992,32 @@ func TestDropletSearch(t *testing.T) {
 		err := dropletSearchCmd.RunE(dropletSearchCmd, nil)
 		if err == nil {
 			t.Fatal("expected error for invalid --output value")
+		}
+	})
+
+	t.Run("empty results with stagnant items shows No flowing droplets message", func(t *testing.T) {
+		// Add a stagnant item to the shared test DB.
+		cs, err := cistern.New(db, "ts")
+		if err != nil {
+			t.Fatal(err)
+		}
+		stuck, _ := cs.Add("repo", "Stuck integration", "", 1, 3)
+		cs.Escalate(stuck.ID, "timed out")
+		cs.Close()
+
+		// Search for a term that matches nothing; stagnant item has title "Stuck integration".
+		searchQuery = "xyz-no-match"
+		searchStatus = ""
+		searchPriority = 0
+		searchOutput = "table"
+		out := captureStdout(t, func() {
+			if err := dropletSearchCmd.RunE(dropletSearchCmd, nil); err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+		})
+		want := "No flowing droplets. 1 droplet(s) stagnant."
+		if strings.TrimSpace(out) != want {
+			t.Fatalf("expected %q, got %q", want, out)
 		}
 	})
 

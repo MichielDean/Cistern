@@ -214,7 +214,12 @@ var dropletListCmd = &cobra.Command{
 			}
 
 			if len(active) == 0 && (!listAll || len(dimmed) == 0) {
-				fmt.Println("Cistern dry.")
+				stats, statsErr := c.Stats()
+				if statsErr == nil && stats.Stagnant > 0 {
+					fmt.Printf("No flowing droplets. %d droplet(s) stagnant.\n", stats.Stagnant)
+				} else {
+					fmt.Println("Cistern dry.")
+				}
 				return nil
 			}
 
@@ -410,7 +415,12 @@ var dropletSearchCmd = &cobra.Command{
 		}
 
 		if len(items) == 0 {
-			fmt.Println("Cistern dry.")
+			stats, statsErr := c.Stats()
+			if statsErr == nil && stats.Stagnant > 0 {
+				fmt.Printf("No flowing droplets. %d droplet(s) stagnant.\n", stats.Stagnant)
+			} else {
+				fmt.Println("Cistern dry.")
+			}
 			return nil
 		}
 
