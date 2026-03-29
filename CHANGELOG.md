@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+### Remove ASCII logo from CLI startup (ci-492q3)
+
+The `ct` CLI no longer displays an ASCII logo on startup, simplifying the startup experience.
+
+**Key changes:**
+- **Removed `displayASCIILogo()` function** from root.go — no longer attempts to print ASCII art on command startup
+- **Removed environment variables** — `CT_ASCII_LOGO` and `CT_NO_ASCII_LOGO` are no longer recognized or used
+- **Cleaner startup** — CLI responds faster with no logo display overhead
+
+**Impact:** If you had configured a custom logo via `CT_ASCII_LOGO` or opted out via `CT_NO_ASCII_LOGO`, those configurations are now ignored. The CLI starts cleanly without any logo output.
+
 ### Dashboard: add stagnant droplets section to TUI (ci-lru8d)
 
 The flow dashboard (`ct dashboard`) now displays a dedicated **Stagnant** section showing all escalated droplets that require intervention.
