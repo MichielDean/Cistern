@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"io"
 	"os"
-	"strings"
 	"testing"
 )
 
@@ -33,7 +32,8 @@ func TestRootCmd_NoLogoOnCommandExecution(t *testing.T) {
 		t.Fatalf("failed to read captured stdout: %v", err)
 	}
 
-	if strings.Contains(buf.String(), "%%%%CISTERN_LOGO%%%%") {
-		t.Error("ASCII logo must not be printed on command execution; got logo in stdout")
+	got := buf.String()
+	if want := "ct dev\n"; got != want {
+		t.Errorf("unexpected stdout output: got %q, want %q", got, want)
 	}
 }
