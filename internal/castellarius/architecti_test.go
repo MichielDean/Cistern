@@ -2,6 +2,8 @@ package castellarius
 
 import (
 	"context"
+	"encoding/json"
+	"os"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -295,5 +297,339 @@ func TestHeartbeatArchitecti_AfterInFlightCompletes_AllowsRespawn(t *testing.T) 
 
 	if n := atomic.LoadInt32(&called); n != 2 {
 		t.Errorf("runArchitectiFn called %d times, want 2", n)
+	}
+}
+
+// --- runArchitecti method tests ---
+
+// testSchedulerWithArchitecti returns a Castellarius configured for architecti tests.
+// It injects a no-op exec function so tests don't need a real claude or system prompt.
+func testSchedulerWithArchitecti(client *mockClient) *Castellarius {
+	s := testScheduler(client, newMockRunner(client))
+	s.config.Architecti = architectiConfig(30, 3)
+	// Default exec: return empty array (no actions).
+	s.architectiExecFn = func(_ context.Context, _ string) ([]byte, error) {
+		return []byte("[]"), nil
+	}
+	s.architectiRestartCastellariusFn = func() error { return nil }
+	return s
+}
+
+func TestRunArchitecti_GlobalSingletonGuard_SkipsWhenRunning(t *testing.T) {
+	// Given: architectiRunning is already set (another goroutine is running)
+	client := newMockClient()
+	s := testSchedulerWithArchitecti(client)
+
+	var execCalled int32
+	s.architectiExecFn = func(_ context.Context, _ string) ([]byte, error) {
+		atomic.AddInt32(&execCalled, 1)
+		return []byte("[]"), nil
+	}
+	s.architectiRunning.Store(true)
+
+	// When: runArchitecti is called
+	err := s.runArchitecti(context.Background(), stagnantDroplet("d-001", 60*time.Minute), *s.config.Architecti)
+
+	// Then: no error, exec not called (singleton guard fired)
+	if err != nil {
+		t.Errorf("unexpected error: %v", err)
+	}
+	if n := atomic.LoadInt32(&execCalled); n != 0 {
+		t.Errorf("architectiExecFn called %d times, want 0", n)
+	}
+	// architectiRunning remains true (we didn't own it)
+	if !s.architectiRunning.Load() {
+		t.Error("architectiRunning was cleared by non-owner")
+	}
+}
+
+func TestRunArchitecti_GlobalSingletonGuard_ClearsAfterRun(t *testing.T) {
+	// Given: architectiRunning starts false
+	client := newMockClient()
+	client.items["d-001"] = stagnantDroplet("d-001", 60*time.Minute)
+	s := testSchedulerWithArchitecti(client)
+
+	// When: runArchitecti completes normally
+	err := s.runArchitecti(context.Background(), stagnantDroplet("d-001", 60*time.Minute), *s.config.Architecti)
+
+	// Then: no error, architectiRunning is cleared
+	if err != nil {
+		t.Errorf("unexpected error: %v", err)
+	}
+	if s.architectiRunning.Load() {
+		t.Error("architectiRunning not cleared after run")
+	}
+}
+
+func TestRunArchitecti_EmptyArray_LogsNoAction(t *testing.T) {
+	// Given: agent returns empty action array
+	client := newMockClient()
+	client.items["d-001"] = stagnantDroplet("d-001", 60*time.Minute)
+	s := testSchedulerWithArchitecti(client)
+
+	s.architectiExecFn = func(_ context.Context, _ string) ([]byte, error) {
+		return []byte("[]"), nil
+	}
+
+	// When: runArchitecti runs
+	err := s.runArchitecti(context.Background(), stagnantDroplet("d-001", 60*time.Minute), *s.config.Architecti)
+
+	// Then: no error, no client mutations
+	if err != nil {
+		t.Errorf("unexpected error: %v", err)
+	}
+	client.mu.Lock()
+	assigns := client.assignCalls
+	cancels := len(client.cancelled)
+	filed := len(client.filed)
+	client.mu.Unlock()
+	if assigns != 0 || cancels != 0 || filed != 0 {
+		t.Errorf("expected no client actions, got assigns=%d cancels=%d filed=%d", assigns, cancels, filed)
+	}
+}
+
+func TestRunArchitecti_RestartAction_ResetsDropletToNamedCataractae(t *testing.T) {
+	// Given: agent returns a restart action for d-001 → implement
+	client := newMockClient()
+	client.items["d-001"] = stagnantDroplet("d-001", 60*time.Minute)
+	s := testSchedulerWithArchitecti(client)
+
+	s.architectiExecFn = func(_ context.Context, _ string) ([]byte, error) {
+		return []byte(`[{"action":"restart","droplet_id":"d-001","cataractae":"implement","reason":"transient failure"}]`), nil
+	}
+
+	// When: runArchitecti runs
+	err := s.runArchitecti(context.Background(), stagnantDroplet("d-001", 60*time.Minute), *s.config.Architecti)
+
+	// Then: Assign called with empty worker and "implement" step
+	if err != nil {
+		t.Errorf("unexpected error: %v", err)
+	}
+	client.mu.Lock()
+	step := client.steps["d-001"]
+	client.mu.Unlock()
+	if step != "implement" {
+		t.Errorf("step = %q, want %q", step, "implement")
+	}
+}
+
+func TestRunArchitecti_RestartRateLimit_BlocksSecondRestartWithin24h(t *testing.T) {
+	// Given: agent returns a restart action for d-001
+	client := newMockClient()
+	client.items["d-001"] = stagnantDroplet("d-001", 60*time.Minute)
+	s := testSchedulerWithArchitecti(client)
+
+	restartJSON := `[{"action":"restart","droplet_id":"d-001","cataractae":"implement","reason":"test"}]`
+	s.architectiExecFn = func(_ context.Context, _ string) ([]byte, error) {
+		return []byte(restartJSON), nil
+	}
+
+	d := stagnantDroplet("d-001", 60*time.Minute)
+
+	// First run: restart should be executed
+	if err := s.runArchitecti(context.Background(), d, *s.config.Architecti); err != nil {
+		t.Fatalf("first run error: %v", err)
+	}
+	client.mu.Lock()
+	firstAssigns := client.assignCalls
+	client.mu.Unlock()
+	if firstAssigns != 1 {
+		t.Errorf("after first run: assignCalls = %d, want 1", firstAssigns)
+	}
+
+	// Second run within 24h: restart should be rate-limited
+	if err := s.runArchitecti(context.Background(), d, *s.config.Architecti); err != nil {
+		t.Fatalf("second run error: %v", err)
+	}
+	client.mu.Lock()
+	secondAssigns := client.assignCalls
+	client.mu.Unlock()
+	if secondAssigns != 1 {
+		t.Errorf("after second run: assignCalls = %d, want 1 (rate limited)", secondAssigns)
+	}
+}
+
+func TestRunArchitecti_CancelAction_CancelsDroplet(t *testing.T) {
+	// Given: agent returns a cancel action for d-001
+	client := newMockClient()
+	client.items["d-001"] = stagnantDroplet("d-001", 60*time.Minute)
+	s := testSchedulerWithArchitecti(client)
+
+	s.architectiExecFn = func(_ context.Context, _ string) ([]byte, error) {
+		return []byte(`[{"action":"cancel","droplet_id":"d-001","reason":"irrecoverable"}]`), nil
+	}
+
+	err := s.runArchitecti(context.Background(), stagnantDroplet("d-001", 60*time.Minute), *s.config.Architecti)
+
+	if err != nil {
+		t.Errorf("unexpected error: %v", err)
+	}
+	client.mu.Lock()
+	cancelReason := client.cancelled["d-001"]
+	client.mu.Unlock()
+	if cancelReason == "" {
+		t.Error("expected d-001 to be cancelled, but cancelled map is empty")
+	}
+}
+
+func TestRunArchitecti_FileAction_CreatesNewDroplet(t *testing.T) {
+	// Given: agent returns a file action for test-repo
+	client := newMockClient()
+	s := testSchedulerWithArchitecti(client)
+
+	s.architectiExecFn = func(_ context.Context, _ string) ([]byte, error) {
+		return []byte(`[{"action":"file","repo":"test-repo","title":"Fix the thing","description":"details","complexity":"standard","reason":"structural bug"}]`), nil
+	}
+
+	err := s.runArchitecti(context.Background(), stagnantDroplet("d-001", 60*time.Minute), *s.config.Architecti)
+
+	if err != nil {
+		t.Errorf("unexpected error: %v", err)
+	}
+	client.mu.Lock()
+	filedCount := len(client.filed)
+	var filedItem filedDroplet
+	if filedCount > 0 {
+		filedItem = client.filed[0]
+	}
+	client.mu.Unlock()
+	if filedCount != 1 {
+		t.Errorf("filed count = %d, want 1", filedCount)
+	}
+	if filedItem.Title != "Fix the thing" {
+		t.Errorf("filed title = %q, want %q", filedItem.Title, "Fix the thing")
+	}
+}
+
+func TestRunArchitecti_FileAction_MaxFilesPerRun_LimitsActions(t *testing.T) {
+	// Given: agent returns 5 file actions but MaxFilesPerRun = 3
+	client := newMockClient()
+	s := testSchedulerWithArchitecti(client) // config has MaxFilesPerRun=3
+
+	s.architectiExecFn = func(_ context.Context, _ string) ([]byte, error) {
+		return []byte(`[
+			{"action":"file","repo":"test-repo","title":"Fix 1","complexity":"standard","reason":"r"},
+			{"action":"file","repo":"test-repo","title":"Fix 2","complexity":"standard","reason":"r"},
+			{"action":"file","repo":"test-repo","title":"Fix 3","complexity":"standard","reason":"r"},
+			{"action":"file","repo":"test-repo","title":"Fix 4","complexity":"standard","reason":"r"},
+			{"action":"file","repo":"test-repo","title":"Fix 5","complexity":"standard","reason":"r"}
+		]`), nil
+	}
+
+	err := s.runArchitecti(context.Background(), stagnantDroplet("d-001", 60*time.Minute), *s.config.Architecti)
+
+	if err != nil {
+		t.Errorf("unexpected error: %v", err)
+	}
+	client.mu.Lock()
+	filedCount := len(client.filed)
+	client.mu.Unlock()
+	if filedCount != 3 {
+		t.Errorf("filed count = %d, want 3 (MaxFilesPerRun enforced)", filedCount)
+	}
+}
+
+func TestRunArchitecti_NoteAction_AddsNoteToDroplet(t *testing.T) {
+	// Given: agent returns a note action for d-001
+	client := newMockClient()
+	client.items["d-001"] = stagnantDroplet("d-001", 60*time.Minute)
+	s := testSchedulerWithArchitecti(client)
+
+	s.architectiExecFn = func(_ context.Context, _ string) ([]byte, error) {
+		return []byte(`[{"action":"note","droplet_id":"d-001","body":"looks like a known transient","reason":"r"}]`), nil
+	}
+
+	err := s.runArchitecti(context.Background(), stagnantDroplet("d-001", 60*time.Minute), *s.config.Architecti)
+
+	if err != nil {
+		t.Errorf("unexpected error: %v", err)
+	}
+	client.mu.Lock()
+	notes := client.notes["d-001"]
+	client.mu.Unlock()
+	var found bool
+	for _, n := range notes {
+		if n.CataractaeName == "architecti" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("expected note from 'architecti', found none")
+	}
+}
+
+func TestRunArchitecti_RestartCastellarius_WhenSchedulerHung(t *testing.T) {
+	// Given: agent returns restart_castellarius; health file shows scheduler hung
+	client := newMockClient()
+	s := testSchedulerWithArchitecti(client)
+
+	// Make health file check think scheduler is hung by setting a very short
+	// poll interval — without a real health file, the check is skipped and
+	// restart proceeds.
+	s.pollInterval = 1 * time.Second
+
+	var restartCalled int32
+	s.architectiRestartCastellariusFn = func() error {
+		atomic.AddInt32(&restartCalled, 1)
+		return nil
+	}
+	s.architectiExecFn = func(_ context.Context, _ string) ([]byte, error) {
+		return []byte(`[{"action":"restart_castellarius","reason":"scheduler appears hung"}]`), nil
+	}
+
+	err := s.runArchitecti(context.Background(), stagnantDroplet("d-001", 60*time.Minute), *s.config.Architecti)
+
+	if err != nil {
+		t.Errorf("unexpected error: %v", err)
+	}
+	if n := atomic.LoadInt32(&restartCalled); n != 1 {
+		t.Errorf("restartCastellariusFn called %d times, want 1", n)
+	}
+}
+
+func TestRunArchitecti_RestartCastellarius_SkipsWhenSchedulerHealthy(t *testing.T) {
+	// Given: health file shows scheduler ticked recently
+	client := newMockClient()
+	s := testSchedulerWithArchitecti(client)
+
+	// Write a fresh health file to a temp dir so the guard reads it.
+	tmpDir := t.TempDir()
+	s.dbPath = tmpDir + "/cistern.db"
+	hf := HealthFile{
+		LastTickAt:      time.Now(), // just ticked
+		PollIntervalSec: 10,
+	}
+	writeTestHealthFile(t, tmpDir, hf)
+
+	var restartCalled int32
+	s.architectiRestartCastellariusFn = func() error {
+		atomic.AddInt32(&restartCalled, 1)
+		return nil
+	}
+	s.architectiExecFn = func(_ context.Context, _ string) ([]byte, error) {
+		return []byte(`[{"action":"restart_castellarius","reason":"just testing"}]`), nil
+	}
+
+	err := s.runArchitecti(context.Background(), stagnantDroplet("d-001", 60*time.Minute), *s.config.Architecti)
+
+	if err != nil {
+		t.Errorf("unexpected error: %v", err)
+	}
+	if n := atomic.LoadInt32(&restartCalled); n != 0 {
+		t.Errorf("restartCastellariusFn called %d times, want 0 (scheduler healthy)", n)
+	}
+}
+
+// writeTestHealthFile writes a HealthFile JSON to {dir}/castellarius.health for testing.
+func writeTestHealthFile(t *testing.T, dir string, hf HealthFile) {
+	t.Helper()
+	path := dir + "/castellarius.health"
+	b, err := json.Marshal(hf)
+	if err != nil {
+		t.Fatalf("marshal health file: %v", err)
+	}
+	if err := os.WriteFile(path, b, 0o644); err != nil {
+		t.Fatalf("write health file: %v", err)
 	}
 }

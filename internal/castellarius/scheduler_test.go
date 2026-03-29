@@ -26,6 +26,11 @@ func newTestLogger(buf *bytes.Buffer) *slog.Logger {
 
 // --- mocks ---
 
+type filedDroplet struct {
+	Repo, Title, Description string
+	Priority, Complexity     int
+}
+
 type mockClient struct {
 	mu                  sync.Mutex
 	readyItems          []*cistern.Droplet
@@ -40,6 +45,9 @@ type mockClient struct {
 	addNoteErr          error // if set, AddNote returns this error
 	getReadyErr         error // if set, GetReady returns this error once then clears
 	listErr             error // if set, List returns this error
+	cancelled           map[string]string // id → cancel reason
+	filed               []filedDroplet    // FileDroplet calls
+	assignCalls         int               // total Assign call count
 }
 
 type attachedNote struct {
@@ -54,6 +62,7 @@ func newMockClient() *mockClient {
 		escalated:           make(map[string]string),
 		closed:              make(map[string]bool),
 		lastReviewedCommits: make(map[string]string),
+		cancelled:           make(map[string]string),
 	}
 }
 
@@ -99,6 +108,7 @@ func (m *mockClient) SetAssignedAqueduct(id, aqueductName string) error {
 func (m *mockClient) Assign(id, worker, step string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	m.assignCalls++
 	m.steps[id] = step
 	if item, ok := m.items[id]; ok {
 		item.CurrentCataractae = step
@@ -157,6 +167,28 @@ func (m *mockClient) CloseItem(id string) error {
 	m.closed[id] = true
 	m.steps[id] = "done"
 	return nil
+}
+
+func (m *mockClient) Cancel(id, reason string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.cancelled[id] = reason
+	if item, ok := m.items[id]; ok {
+		item.Status = "cancelled"
+	}
+	return nil
+}
+
+func (m *mockClient) FileDroplet(repo, title, description string, priority, complexity int) (*cistern.Droplet, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	d := &cistern.Droplet{
+		ID:    fmt.Sprintf("mock-filed-%d", len(m.filed)),
+		Repo:  repo,
+		Title: title,
+	}
+	m.filed = append(m.filed, filedDroplet{repo, title, description, priority, complexity})
+	return d, nil
 }
 
 func (m *mockClient) List(repo, status string) ([]*cistern.Droplet, error) {

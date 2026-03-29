@@ -204,6 +204,14 @@ func (c *pipelineClient) GetLastReviewedCommit(id string) (string, error) {
 	return "", nil
 }
 
+func (c *pipelineClient) Cancel(id, reason string) error {
+	return nil
+}
+
+func (c *pipelineClient) FileDroplet(repo, title, description string, priority, complexity int) (*cistern.Droplet, error) {
+	return &cistern.Droplet{ID: "smoke-filed", Repo: repo}, nil
+}
+
 // resultToOutcome converts an Outcome Result to the DB outcome string
 // written by `ct droplet` commands.
 func resultToOutcome(r Result) string {

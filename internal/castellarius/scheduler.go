@@ -46,6 +46,12 @@ type CisternClient interface {
 	// droplet. Called after each dispatch so in_progress droplets always carry a
 	// non-empty assigned_aqueduct for status display.
 	SetAssignedAqueduct(id, aqueductName string) error
+	// Cancel marks a droplet as cancelled. Used by the Architecti for
+	// irrecoverable droplets.
+	Cancel(id, reason string) error
+	// FileDroplet creates a new droplet in the given repo. Used by the Architecti
+	// to file structural/code fix work items.
+	FileDroplet(repo, title, description string, priority, complexity int) (*cistern.Droplet, error)
 }
 
 // CataractaeRunner executes a single workflow step.
@@ -124,7 +130,7 @@ type Castellarius struct {
 	droughtStartedAt atomic.Pointer[time.Time]
 
 	// runArchitectiFn is invoked for stagnant/blocked droplets when architecti
-	// is enabled. Defaults to runArchitecti; injectable for testing.
+	// is enabled. Defaults to s.runArchitecti; injectable for testing.
 	runArchitectiFn func(context.Context, *cistern.Droplet, aqueduct.ArchitectiConfig) error
 
 	// architectiInFlight tracks droplet IDs for which runArchitecti is currently
@@ -135,6 +141,27 @@ type Castellarius struct {
 	// architectiWg tracks in-flight architecti goroutines for graceful shutdown.
 	// drainInFlight waits on this before returning.
 	architectiWg sync.WaitGroup
+
+	// architectiRunning is a global singleton guard: at most one Architecti
+	// session runs at a time across all droplets. Set before spawning, cleared
+	// on exit. When true, new triggers skip execution.
+	architectiRunning atomic.Bool
+
+	// architectiRestarts tracks the most recent restart action per droplet ID
+	// to enforce the 24h rate limit (at most 1 restart per droplet per 24h).
+	// Protected by architectiRestartsMu.
+	architectiRestarts   map[string]time.Time
+	architectiRestartsMu sync.Mutex
+
+	// architectiExecFn runs the Architecti agent with the given context document
+	// and returns the raw output bytes. The default implementation resolves the
+	// system prompt file and runs claude in a tmux session named "architecti".
+	// Injectable for testing.
+	architectiExecFn func(ctx context.Context, contextDoc string) ([]byte, error)
+
+	// architectiRestartCastellariusFn executes the restart_castellarius action.
+	// Default: systemctl --user restart castellarius. Injectable for testing.
+	architectiRestartCastellariusFn func() error
 }
 
 // isSupervisedProcess returns true when the Castellarius is being managed by
@@ -235,9 +262,12 @@ func New(config aqueduct.AqueductConfig, dbPath string, runner CataractaeRunner,
 		ghMergeFn:          defaultGhMerge,
 		dispatchLoop:       newDispatchLoopTracker(),
 		lastStallNoted:     make(map[string]time.Time),
-		runArchitectiFn:    runArchitecti,
 		architectiInFlight: make(map[string]struct{}),
+		architectiRestarts: make(map[string]time.Time),
 	}
+	s.runArchitectiFn = s.runArchitecti
+	s.architectiExecFn = s.defaultArchitectiExec
+	s.architectiRestartCastellariusFn = defaultRestartCastellarius
 	for _, o := range opts {
 		o(s)
 	}
@@ -330,9 +360,12 @@ func NewFromParts(
 		ghMergeFn:         defaultGhMerge,
 		dispatchLoop:       newDispatchLoopTracker(),
 		lastStallNoted:     make(map[string]time.Time),
-		runArchitectiFn:    runArchitecti,
 		architectiInFlight: make(map[string]struct{}),
+		architectiRestarts: make(map[string]time.Time),
 	}
+	s.runArchitectiFn = s.runArchitecti
+	s.architectiExecFn = s.defaultArchitectiExec
+	s.architectiRestartCastellariusFn = defaultRestartCastellarius
 	for _, o := range opts {
 		o(s)
 	}

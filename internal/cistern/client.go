@@ -592,6 +592,12 @@ func (c *Client) Cancel(id, reason string) error {
 	return nil
 }
 
+// FileDroplet creates a new droplet in the given repo. It is a convenience
+// wrapper around Add used by the Architecti to file structural fix work items.
+func (c *Client) FileDroplet(repo, title, description string, priority, complexity int) (*Droplet, error) {
+	return c.Add(repo, title, description, priority, complexity)
+}
+
 // CloseItem marks a droplet as delivered.
 // assigned_aqueduct is cleared atomically so no ghost assignments linger.
 func (c *Client) CloseItem(id string) error {
