@@ -205,10 +205,10 @@ ct dashboard --web --addr 127.0.0.1:8080  # Custom listen address
 The flow dashboard displays a live view of the aqueduct system with sections:
 
 **Aqueduct Arches** — ASCII art showing configured aqueducts and their status
-
-**Current Flow** — Droplets currently in progress, grouped by aqueduct operator
-- Shows droplet ID, current step, elapsed time, and title
-- Each row indicates which cataractae is currently processing the droplet
+- For each active aqueduct: displays the progress bar with the droplet's current flow notes below it
+  - Shows droplet ID, current step, elapsed time, and title
+  - Indicates which cataractae is currently processing the droplet
+- Idle aqueducts display as compact single-line rows
 
 **Cistern** — Queued droplets waiting to enter the flow
 - Lists all open droplets not yet started
