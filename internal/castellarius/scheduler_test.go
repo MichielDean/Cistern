@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -1552,6 +1553,93 @@ func TestObserve_FirstPass(t *testing.T) {
 	// First pass: route normally to review.
 	if client.steps["ph-3"] != "review" {
 		t.Errorf("expected first pass to route to 'review', got %q", client.steps["ph-3"])
+	}
+}
+
+// TestObserve_ExternallyChangedStatus_FreesPoolSlot verifies that when a droplet's
+// status is changed to 'cancelled' or 'stagnant' externally while in_progress (without
+// signaling an outcome), the observe phase detects it, kills the agent session, and
+// releases the aqueduct pool slot.
+func TestObserve_ExternallyChangedStatus_FreesPoolSlot(t *testing.T) {
+	for _, extStatus := range []string{"cancelled", "stagnant"} {
+		t.Run(extStatus, func(t *testing.T) {
+			var logBuf bytes.Buffer
+			client := newMockClient()
+			item := &cistern.Droplet{
+				ID:                "ext-" + extStatus + "-1",
+				Repo:              "test-repo",
+				CurrentCataractae: "implement",
+				Assignee:          "alpha",
+				Status:            "in_progress",
+			}
+			client.items[item.ID] = item
+
+			runner := newMockRunner(nil) // no auto-outcomes; agent is still "running"
+			config := testConfig()
+			workflows := map[string]*aqueduct.Workflow{"test-repo": testWorkflow()}
+			clients := map[string]CisternClient{"test-repo": client}
+			sched := NewFromParts(config, workflows, clients, runner,
+				WithLogger(newTestLogger(&logBuf)))
+
+			// Inject a mock killSessionFn that records which sessions were killed.
+			var killedSessions []string
+			sched.killSessionFn = func(sessionID string) error {
+				killedSessions = append(killedSessions, sessionID)
+				return nil
+			}
+
+			// Claim the pool slot to reflect the in-progress dispatch state.
+			pool := sched.pools["test-repo"]
+			w := pool.FindByName("alpha")
+			pool.Assign(w, item.ID, "implement")
+
+			// Simulate external status change without an outcome signal.
+			client.mu.Lock()
+			client.items[item.ID].Status = extStatus
+			client.mu.Unlock()
+
+			sched.Tick(context.Background())
+
+			if pool.IsFlowing("alpha") {
+				t.Errorf("expected alpha aqueduct to be idle after external %s, got flowing", extStatus)
+			}
+
+			// Verify that the agent session was killed before the pool slot was freed.
+			wantSession := "test-repo-alpha"
+			if !slices.Contains(killedSessions, wantSession) {
+				t.Errorf("expected session %q to be killed on external %s, killed sessions: %v", wantSession, extStatus, killedSessions)
+			}
+
+			// Verify that the INFO log line was emitted.
+			if !strings.Contains(logBuf.String(), "aqueduct freed") {
+				t.Errorf("expected INFO log containing 'aqueduct freed' on external %s, got: %s", extStatus, logBuf.String())
+			}
+		})
+	}
+}
+
+// TestObserve_ExternalCancel_NormalFlowUnaffected verifies that the external-cancel
+// secondary check does not interfere with normal outcome-driven pool release.
+func TestObserve_ExternalCancel_NormalFlowUnaffected(t *testing.T) {
+	client := newMockClient()
+	client.readyItems = []*cistern.Droplet{{ID: "normal-1", Title: "normal flow"}}
+
+	runner := newMockRunner(client) // default outcome is "pass"
+	sched := testScheduler(client, runner)
+
+	// Dispatch tick.
+	sched.Tick(context.Background())
+	if !runner.waitCalls(1, time.Second) {
+		t.Fatal("timed out waiting for spawn")
+	}
+	// Observe tick: routes "pass" → "review".
+	sched.Tick(context.Background())
+	time.Sleep(10 * time.Millisecond)
+
+	client.mu.Lock()
+	defer client.mu.Unlock()
+	if client.steps["normal-1"] != "review" {
+		t.Errorf("normal pass routing broken: expected 'review', got %q", client.steps["normal-1"])
 	}
 }
 
