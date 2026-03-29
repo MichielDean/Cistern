@@ -53,8 +53,9 @@ func (e *Executor) PRCreate(ctx context.Context, bc DropletContext) (*StepOutcom
 		_ = fetchOut
 	}
 
-	// Stash any uncommitted changes (e.g. CONTEXT.md, .claude/) before rebasing
-	// so the worktree is clean. We pop the stash after the rebase regardless.
+	// Stash any uncommitted changes (e.g. CONTEXT.md, .claude/) before the
+	// merge-base check and any potential rebase so the worktree is clean.
+	// We pop the stash on exit regardless of whether a rebase was needed.
 	stashOut, _ := e.ExecFn(ctx, bc.WorkDir, "git", "stash", "--include-untracked", "--message", "pre-rebase-stash")
 	didStash := !strings.Contains(string(stashOut), "No local changes")
 	defer func() {
@@ -63,18 +64,30 @@ func (e *Executor) PRCreate(ctx context.Context, bc DropletContext) (*StepOutcom
 		}
 	}()
 
-	// Rebase onto base branch before pushing to avoid merge conflicts in the PR.
-	rebaseOut, rebaseErr := e.ExecFn(ctx, bc.WorkDir, "git", "rebase", "origin/"+baseBranch)
-	if rebaseErr != nil {
-		// Rebase conflict — abort so the worktree stays clean, then recirculate.
-		e.ExecFn(ctx, bc.WorkDir, "git", "rebase", "--abort") //nolint:errcheck
-		return &StepOutcome{
-			Result: ResultRecirculate,
-			Notes: fmt.Sprintf(
-				"rebase conflict with %s — resolve conflicts and re-commit before this can be merged: %s",
-				baseBranch, strings.TrimSpace(string(rebaseOut)),
-			),
-		}, nil
+	// Check whether the branch needs rebasing. Skip the rebase when the branch
+	// is already based on the tip of origin/baseBranch to avoid spurious rebases.
+	needsRebase := true
+	mergeBaseOut, mergeBaseErr := e.ExecFn(ctx, bc.WorkDir, "git", "merge-base", "HEAD", "origin/"+baseBranch)
+	originTipOut, originTipErr := e.ExecFn(ctx, bc.WorkDir, "git", "rev-parse", "origin/"+baseBranch)
+	if mergeBaseErr == nil && originTipErr == nil &&
+		strings.TrimSpace(string(mergeBaseOut)) == strings.TrimSpace(string(originTipOut)) {
+		needsRebase = false
+	}
+
+	if needsRebase {
+		// Rebase onto base branch before pushing to avoid merge conflicts in the PR.
+		rebaseOut, rebaseErr := e.ExecFn(ctx, bc.WorkDir, "git", "rebase", "origin/"+baseBranch)
+		if rebaseErr != nil {
+			// Rebase conflict — abort so the worktree stays clean, then recirculate.
+			e.ExecFn(ctx, bc.WorkDir, "git", "rebase", "--abort") //nolint:errcheck
+			return &StepOutcome{
+				Result: ResultRecirculate,
+				Notes: fmt.Sprintf(
+					"rebase conflict with %s — resolve conflicts and re-commit before this can be merged: %s",
+					baseBranch, strings.TrimSpace(string(rebaseOut)),
+				),
+			}, nil
+		}
 	}
 
 	// Push the (now-rebased) feature branch.

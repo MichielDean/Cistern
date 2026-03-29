@@ -47,6 +47,8 @@ func TestPRCreate_Success(t *testing.T) {
 		{out: []byte("feature-branch\n")},                      // git branch --show-current
 		{out: []byte("ok\n")},                                  // git fetch origin main
 		{out: []byte("No local changes to save\n")},            // git stash (nothing to stash)
+		{out: []byte("abc123\n")},                              // git merge-base (behind origin)
+		{out: []byte("def456\n")},                              // git rev-parse origin/main (different → rebase needed)
 		{out: []byte("ok\n")},                                  // git rebase origin/main
 		{out: []byte("ok\n")},                                  // git push --force-with-lease
 		{out: []byte("https://github.com/org/repo/pull/42\n")}, // gh pr create
@@ -74,8 +76,9 @@ func TestPRCreate_Success(t *testing.T) {
 		t.Errorf("want pr_number=42, got %q", out.Annotations[AnnoPRNumber])
 	}
 
-	// Verify gh pr create was called with correct args (index 5: branch, fetch, stash, rebase, push, gh).
-	ghCall := rec.calls[5]
+	// Verify gh pr create was called with correct args
+	// (index 7: branch, fetch, stash, merge-base, rev-parse, rebase, push, gh).
+	ghCall := rec.calls[7]
 	if ghCall.name != "gh" {
 		t.Errorf("want gh command, got %q", ghCall.name)
 	}
@@ -94,9 +97,11 @@ func TestPRCreate_BranchProvided(t *testing.T) {
 	rec := &recorder{responses: []response{
 		{out: []byte("ok\n")},                                  // git fetch origin main
 		{out: []byte("No local changes to save\n")},            // git stash (nothing)
+		{out: []byte("abc123\n")},                              // git merge-base (behind origin)
+		{out: []byte("def456\n")},                              // git rev-parse origin/main (different → rebase needed)
 		{out: []byte("ok\n")},                                  // git rebase origin/main
 		{out: []byte("ok\n")},                                  // git push --force-with-lease
-		{out: []byte("https://github.com/org/repo/pull/7\n")}, // gh pr create
+		{out: []byte("https://github.com/org/repo/pull/7\n")},  // gh pr create
 	}}
 
 	e := newExecutor(rec)
@@ -114,15 +119,16 @@ func TestPRCreate_BranchProvided(t *testing.T) {
 	if out.Result != ResultPass {
 		t.Fatalf("want pass, got %s: %s", out.Result, out.Notes)
 	}
-	// Should have called fetch + stash + rebase + push + gh (no git branch --show-current when branch provided).
-	if len(rec.calls) != 5 {
-		t.Fatalf("want 5 calls (fetch+stash+rebase+push+gh), got %d: %v", len(rec.calls), rec.calls)
+	// Should have called fetch + stash + merge-base + rev-parse + rebase + push + gh
+	// (no git branch --show-current when branch provided).
+	if len(rec.calls) != 7 {
+		t.Fatalf("want 7 calls (fetch+stash+merge-base+rev-parse+rebase+push+gh), got %d: %v", len(rec.calls), rec.calls)
 	}
-	if rec.calls[3].name != "git" || rec.calls[3].args[0] != "push" {
-		t.Errorf("want git push at index 3, got %q %v", rec.calls[3].name, rec.calls[3].args)
+	if rec.calls[5].name != "git" || rec.calls[5].args[0] != "push" {
+		t.Errorf("want git push at index 5, got %q %v", rec.calls[5].name, rec.calls[5].args)
 	}
-	if rec.calls[4].name != "gh" {
-		t.Errorf("want gh at index 4, got %q", rec.calls[4].name)
+	if rec.calls[6].name != "gh" {
+		t.Errorf("want gh at index 6, got %q", rec.calls[6].name)
 	}
 }
 
@@ -132,6 +138,8 @@ func TestPRCreate_GhFails(t *testing.T) {
 		{out: []byte("feature\n")},                       // git branch --show-current
 		{out: []byte("ok\n")},                            // git fetch
 		{out: []byte("No local changes to save\n")},      // git stash
+		{out: []byte("abc123\n")},                        // git merge-base (behind)
+		{out: []byte("def456\n")},                        // git rev-parse (different → rebase)
 		{out: []byte("ok\n")},                            // git rebase
 		{out: []byte("ok\n")},                            // git push
 		{out: []byte("authentication required"), err: errors.New("exit 1")}, // gh pr create
@@ -161,6 +169,8 @@ func TestPRCreate_AlreadyExists(t *testing.T) {
 		{out: []byte("feature\n")},            // git branch --show-current
 		{out: []byte("ok\n")},                 // git fetch
 		{out: []byte("No local changes to save\n")}, // git stash
+		{out: []byte("abc123\n")},             // git merge-base (behind)
+		{out: []byte("def456\n")},             // git rev-parse (different → rebase)
 		{out: []byte("ok\n")},                 // git rebase
 		{out: []byte("ok\n")},                 // git push
 		{out: []byte(existingMsg), err: errors.New("exit 1")}, // gh pr create
@@ -189,6 +199,8 @@ func TestPRCreate_RebaseConflict(t *testing.T) {
 		{out: []byte("feature\n")},                                     // git branch --show-current
 		{out: []byte("ok\n")},                                          // git fetch
 		{out: []byte("stash@{0}: On feature: pre-rebase-stash\n")},     // git stash (stashed)
+		{out: []byte("abc123\n")},                                       // git merge-base (behind)
+		{out: []byte("def456\n")},                                       // git rev-parse (different → rebase)
 		{out: []byte("CONFLICT (content): Merge conflict in foo.go\n"), err: errors.New("exit 1")}, // git rebase
 		{out: []byte("ok\n")},                                          // git rebase --abort
 		{out: []byte("ok\n")},                                          // git stash pop (deferred)
@@ -234,6 +246,8 @@ func TestPRCreate_DefaultTitle(t *testing.T) {
 	rec := &recorder{responses: []response{
 		{out: []byte("ok\n")},                                 // git fetch
 		{out: []byte("No local changes to save\n")},           // git stash (nothing)
+		{out: []byte("abc123\n")},                             // git merge-base (behind)
+		{out: []byte("def456\n")},                             // git rev-parse (different → rebase)
 		{out: []byte("ok\n")},                                 // git rebase
 		{out: []byte("ok\n")},                                 // git push
 		{out: []byte("https://github.com/org/repo/pull/1\n")}, // gh pr create
@@ -254,7 +268,7 @@ func TestPRCreate_DefaultTitle(t *testing.T) {
 		t.Fatalf("want pass, got %s: %s", out.Result, out.Notes)
 	}
 
-	ghCall := rec.calls[4] // fetch + stash + rebase + push + gh
+	ghCall := rec.calls[6] // fetch + stash + merge-base + rev-parse + rebase + push + gh
 	// Title should be "droplet bf-xyz".
 	for i, a := range ghCall.args {
 		if a == "--title" && i+1 < len(ghCall.args) {
@@ -262,6 +276,89 @@ func TestPRCreate_DefaultTitle(t *testing.T) {
 				t.Errorf("want default title 'droplet bf-xyz', got %q", ghCall.args[i+1])
 			}
 		}
+	}
+}
+
+func TestPRCreate_AlreadyOnLatestMain_SkipsRebase(t *testing.T) {
+	// When merge-base == origin tip the branch is already up-to-date; no rebase should occur.
+	const sha = "abc123def456abc123def456abc123def456abc123"
+	rec := &recorder{responses: []response{
+		{out: []byte("ok\n")},                                  // git fetch origin main
+		{out: []byte("No local changes to save\n")},            // git stash (nothing)
+		{out: []byte(sha + "\n")},                              // git merge-base → same as origin tip
+		{out: []byte(sha + "\n")},                              // git rev-parse origin/main → same SHA
+		{out: []byte("ok\n")},                                  // git push --force-with-lease (no rebase)
+		{out: []byte("https://github.com/org/repo/pull/99\n")}, // gh pr create
+	}}
+
+	e := newExecutor(rec)
+	out, err := e.PRCreate(context.Background(), DropletContext{
+		ID:         "bf-latest",
+		Title:      "Already on latest",
+		Branch:     "feature",
+		BaseBranch: "main",
+		WorkDir:    "/tmp/repo",
+	})
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if out.Result != ResultPass {
+		t.Fatalf("want pass, got %s: %s", out.Result, out.Notes)
+	}
+	// Verify no rebase was called — total calls: fetch + stash + merge-base + rev-parse + push + gh = 6.
+	if len(rec.calls) != 6 {
+		t.Fatalf("want 6 calls (fetch+stash+merge-base+rev-parse+push+gh), got %d: %v", len(rec.calls), rec.calls)
+	}
+	for i, c := range rec.calls {
+		if c.name == "git" && len(c.args) > 0 && c.args[0] == "rebase" {
+			t.Errorf("unexpected git rebase at index %d: %v", i, c.args)
+		}
+	}
+	// Push is at index 4, gh at index 5.
+	if rec.calls[4].name != "git" || rec.calls[4].args[0] != "push" {
+		t.Errorf("want git push at index 4, got %q %v", rec.calls[4].name, rec.calls[4].args)
+	}
+	if rec.calls[5].name != "gh" {
+		t.Errorf("want gh at index 5, got %q", rec.calls[5].name)
+	}
+}
+
+func TestPRCreate_MergeBaseCheckFails_RebasesUnconditionally(t *testing.T) {
+	// When the merge-base command fails, fall back to unconditional rebase.
+	rec := &recorder{responses: []response{
+		{out: []byte("ok\n")},                                  // git fetch origin main
+		{out: []byte("No local changes to save\n")},            // git stash (nothing)
+		{out: nil, err: errors.New("exit 128")},                // git merge-base (fails)
+		{out: []byte("abc123\n")},                              // git rev-parse origin/main (ok, but mergeBaseErr != nil → rebase)
+		{out: []byte("ok\n")},                                  // git rebase (unconditional fallback)
+		{out: []byte("ok\n")},                                  // git push --force-with-lease
+		{out: []byte("https://github.com/org/repo/pull/5\n")},  // gh pr create
+	}}
+
+	e := newExecutor(rec)
+	out, err := e.PRCreate(context.Background(), DropletContext{
+		ID:         "bf-fallback",
+		Branch:     "my-branch",
+		BaseBranch: "main",
+		WorkDir:    "/tmp/repo",
+	})
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if out.Result != ResultPass {
+		t.Fatalf("want pass (unconditional rebase fallback), got %s: %s", out.Result, out.Notes)
+	}
+	// Rebase must have been called even though merge-base check failed.
+	rebaseSeen := false
+	for _, c := range rec.calls {
+		if c.name == "git" && len(c.args) > 0 && c.args[0] == "rebase" && len(c.args) > 1 && c.args[1] != "--abort" {
+			rebaseSeen = true
+		}
+	}
+	if !rebaseSeen {
+		t.Error("want git rebase called when merge-base check fails")
 	}
 }
 
