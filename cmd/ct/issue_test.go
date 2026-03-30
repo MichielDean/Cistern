@@ -490,6 +490,7 @@ func TestDropletRecirculate_WhenPooled_SetsStatusOpen(t *testing.T) {
 	db := filepath.Join(t.TempDir(), "test.db")
 	t.Setenv("CT_DB", db)
 	t.Setenv("CT_NO_ASCII_LOGO", "1")
+	t.Setenv("CT_CATARACTA_NAME", "reviewer")
 
 	c, _ := cistern.New(db, "ct")
 	item, _ := c.Add("myrepo", "Task", "", 1, 3)
@@ -522,6 +523,7 @@ func TestDropletRecirculate_WhenPooled_DefaultsToCurrentCataractae(t *testing.T)
 	db := filepath.Join(t.TempDir(), "test.db")
 	t.Setenv("CT_DB", db)
 	t.Setenv("CT_NO_ASCII_LOGO", "1")
+	t.Setenv("CT_CATARACTA_NAME", "reviewer")
 
 	c, _ := cistern.New(db, "ct")
 	item, _ := c.Add("myrepo", "Task", "", 1, 3)
@@ -554,6 +556,7 @@ func TestDropletRecirculate_WhenPooled_WithTo_SetsCurrentCataractae(t *testing.T
 	db := filepath.Join(t.TempDir(), "test.db")
 	t.Setenv("CT_DB", db)
 	t.Setenv("CT_NO_ASCII_LOGO", "1")
+	t.Setenv("CT_CATARACTA_NAME", "reviewer")
 
 	c, _ := cistern.New(db, "ct")
 	item, _ := c.Add("myrepo", "Task", "", 1, 3)
@@ -586,6 +589,7 @@ func TestDropletRecirculate_WhenDelivered_ReturnsError(t *testing.T) {
 	db := filepath.Join(t.TempDir(), "test.db")
 	t.Setenv("CT_DB", db)
 	t.Setenv("CT_NO_ASCII_LOGO", "1")
+	t.Setenv("CT_CATARACTA_NAME", "reviewer")
 
 	c, _ := cistern.New(db, "ct")
 	item, _ := c.Add("myrepo", "Task", "", 1, 3)
@@ -608,6 +612,7 @@ func TestDropletRecirculate_WhenCancelled_ReturnsError(t *testing.T) {
 	db := filepath.Join(t.TempDir(), "test.db")
 	t.Setenv("CT_DB", db)
 	t.Setenv("CT_NO_ASCII_LOGO", "1")
+	t.Setenv("CT_CATARACTA_NAME", "reviewer")
 
 	c, _ := cistern.New(db, "ct")
 	item, _ := c.Add("myrepo", "Task", "", 1, 3)
@@ -620,6 +625,81 @@ func TestDropletRecirculate_WhenCancelled_ReturnsError(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "cancelled") {
 		t.Errorf("error %q should mention 'cancelled'", err.Error())
+	}
+}
+
+// TestRecirculate_RejectedFromImplementer verifies that ct droplet recirculate
+// returns a non-zero error when CT_CATARACTA_NAME=implementer.
+// Given CT_CATARACTA_NAME=implementer,
+// When ct droplet recirculate is called,
+// Then it returns an error directing the caller to ct droplet pass.
+func TestRecirculate_RejectedFromImplementer(t *testing.T) {
+	t.Cleanup(func() { recirculateTo = "" })
+	db := filepath.Join(t.TempDir(), "test.db")
+	t.Setenv("CT_DB", db)
+	t.Setenv("CT_NO_ASCII_LOGO", "1")
+	t.Setenv("CT_CATARACTA_NAME", "implementer")
+
+	c, _ := cistern.New(db, "ct")
+	item, _ := c.Add("myrepo", "Task", "", 1, 3)
+	c.UpdateStatus(item.ID, "in_progress")
+	c.Close()
+
+	err := execCmd(t, "droplet", "recirculate", item.ID)
+	if err == nil {
+		t.Fatal("expected error: recirculate should be rejected from implementer")
+	}
+	if !strings.Contains(err.Error(), "ct droplet pass") {
+		t.Errorf("error %q should mention 'ct droplet pass'", err.Error())
+	}
+}
+
+// TestRecirculate_AllowedFromReviewer verifies that ct droplet recirculate
+// succeeds when CT_CATARACTA_NAME=reviewer (guard must not fire for other roles).
+// Given CT_CATARACTA_NAME=reviewer and a stagnant droplet,
+// When ct droplet recirculate is called,
+// Then it succeeds.
+func TestRecirculate_AllowedFromReviewer(t *testing.T) {
+	t.Cleanup(func() { recirculateTo = "" })
+	db := filepath.Join(t.TempDir(), "test.db")
+	t.Setenv("CT_DB", db)
+	t.Setenv("CT_NO_ASCII_LOGO", "1")
+	t.Setenv("CT_CATARACTA_NAME", "reviewer")
+
+	c, _ := cistern.New(db, "ct")
+	item, _ := c.Add("myrepo", "Task", "", 1, 3)
+	c.SetCataractae(item.ID, "implement")
+	c.Escalate(item.ID, "timed out")
+	c.Close()
+
+	if err := execCmd(t, "droplet", "recirculate", item.ID); err != nil {
+		t.Fatalf("recirculate from reviewer should succeed: %v", err)
+	}
+}
+
+// TestRecirculate_RejectedFromImplementShortName verifies that the guard also
+// fires for the short-name variant CT_CATARACTA_NAME=implement.
+// Given CT_CATARACTA_NAME=implement,
+// When ct droplet recirculate is called,
+// Then it returns an error.
+func TestRecirculate_RejectedFromImplementShortName(t *testing.T) {
+	t.Cleanup(func() { recirculateTo = "" })
+	db := filepath.Join(t.TempDir(), "test.db")
+	t.Setenv("CT_DB", db)
+	t.Setenv("CT_NO_ASCII_LOGO", "1")
+	t.Setenv("CT_CATARACTA_NAME", "implement")
+
+	c, _ := cistern.New(db, "ct")
+	item, _ := c.Add("myrepo", "Task", "", 1, 3)
+	c.UpdateStatus(item.ID, "in_progress")
+	c.Close()
+
+	err := execCmd(t, "droplet", "recirculate", item.ID)
+	if err == nil {
+		t.Fatal("expected error for CT_CATARACTA_NAME=implement")
+	}
+	if !strings.Contains(err.Error(), "ct droplet pass") {
+		t.Errorf("error %q should mention 'ct droplet pass'", err.Error())
 	}
 }
 

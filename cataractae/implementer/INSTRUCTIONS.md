@@ -139,6 +139,8 @@ Use the `ct` CLI (the item ID is in CONTEXT.md):
 ct droplet pass <id> --notes "Implemented X using TDD. Added N tests covering happy path, edge cases, and error paths. All tests pass."
 ```
 
+**NEVER use recirculate.** Recirculate is the reviewer's signal. If you have addressed open issues, signal pass — the reviewer will verify. You cannot resolve your own issues; only the reviewer can close them. Signaling recirculate from implement causes a routing failure. The CLI enforces this — calling `ct droplet recirculate` from an implementer session will be rejected with an error directing you to `ct droplet pass`.
+
 **Pool (genuinely pooled — waiting on external dependency or fundamentally unclear requirements):**
 ```
 ct droplet pool <id> --notes "Pooled: <specific reason>"

@@ -1073,6 +1073,11 @@ var dropletRecirculateCmd = &cobra.Command{
 	Short: "Signal recirculate outcome — needs rework, send back upstream",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
+		name := strings.ToLower(os.Getenv("CT_CATARACTA_NAME"))
+		if name == "implementer" || name == "implement" {
+			return fmt.Errorf("recirculate is not a valid outcome at the implement cataractae — use ct droplet pass <id> to signal completion")
+		}
+
 		c, err := cistern.New(resolveDBPath(), "")
 		if err != nil {
 			return err
