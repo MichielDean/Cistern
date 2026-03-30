@@ -771,7 +771,7 @@ var (
 
 var dropletPurgeCmd = &cobra.Command{
 	Use:   "purge",
-		Short: "Delete closed/pooled droplets older than a threshold",
+	Short: "Delete closed/pooled droplets older than a threshold",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if purgeOlderThan == "" {
 			return fmt.Errorf("--older-than is required")
