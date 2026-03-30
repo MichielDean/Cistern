@@ -170,6 +170,12 @@ type Castellarius struct {
 	// architectiRestartCastellariusFn executes the restart_castellarius action.
 	// Default: systemctl --user restart castellarius. Injectable for testing.
 	architectiRestartCastellariusFn func() error
+
+	// repoMu serializes per-repo _primary clone operations (git fetch, worktree
+	// add/remove, git config) to prevent races when multiple dispatch goroutines
+	// operate concurrently against the same shared primary clone.
+	// Keyed by repo name; initialized alongside pools in New() and NewFromParts().
+	repoMu map[string]*sync.Mutex
 }
 
 // isSupervisedProcess returns true when the Castellarius is being managed by
@@ -255,6 +261,7 @@ func New(config aqueduct.AqueductConfig, dbPath string, runner CataractaeRunner,
 		workflows:          make(map[string]*aqueduct.Workflow),
 		clients:            make(map[string]CisternClient),
 		pools:              make(map[string]*AqueductPool),
+		repoMu:             make(map[string]*sync.Mutex),
 		runner:             runner,
 		logger:             slog.Default(),
 		pollInterval:       10 * time.Second,
@@ -340,6 +347,7 @@ func New(config aqueduct.AqueductConfig, dbPath string, runner CataractaeRunner,
 			names = defaultAqueductNames(repo.Cataractae)
 		}
 		s.pools[repo.Name] = NewAqueductPool(repo.Name, names)
+		s.repoMu[repo.Name] = &sync.Mutex{}
 	}
 
 	return s, nil
@@ -358,6 +366,7 @@ func NewFromParts(
 		workflows:         workflows,
 		clients:           clients,
 		pools:             make(map[string]*AqueductPool),
+		repoMu:            make(map[string]*sync.Mutex),
 		runner:            runner,
 		logger:            slog.Default(),
 		pollInterval:      10 * time.Second,
@@ -386,6 +395,7 @@ func NewFromParts(
 			names = defaultAqueductNames(repo.Cataractae)
 		}
 		s.pools[repo.Name] = NewAqueductPool(repo.Name, names)
+		s.repoMu[repo.Name] = &sync.Mutex{}
 	}
 
 	return s
@@ -855,7 +865,9 @@ func (s *Castellarius) observeRepo(_ context.Context, repo aqueduct.RepoConfig) 
 		cleanupBranch := func(keepBranch bool) {
 			if s.sandboxRoot != "" {
 				primaryDir := filepath.Join(s.sandboxRoot, repo.Name, "_primary")
+				s.repoMu[repo.Name].Lock()
 				removeDropletWorktreeWithLogger(slog.Default(), primaryDir, s.sandboxRoot, repo.Name, item.ID, keepBranch)
+				s.repoMu[repo.Name].Unlock()
 			}
 		}
 
@@ -1020,7 +1032,9 @@ func (s *Castellarius) observeRepo(_ context.Context, repo aqueduct.RepoConfig) 
 			pool.Release(w)
 			if s.sandboxRoot != "" {
 				primaryDir := filepath.Join(s.sandboxRoot, repo.Name, "_primary")
-				removeDropletWorktreeWithLogger(slog.Default(), primaryDir, s.sandboxRoot, repo.Name, item.ID, extStatus == "stagnant")
+s.repoMu[repo.Name].Lock()
+			removeDropletWorktreeWithLogger(slog.Default(), primaryDir, s.sandboxRoot, repo.Name, item.ID, extStatus == "stagnant")
+			s.repoMu[repo.Name].Unlock()
 			}
 			s.logger.Info("aqueduct freed: droplet changed externally",
 				"aqueduct", item.Assignee, "droplet", item.ID, "status", extStatus)
@@ -1137,7 +1151,10 @@ func (s *Castellarius) dispatchRepo(ctx context.Context, repo aqueduct.RepoConfi
 				req.Step.Type == aqueduct.CataractaeTypeAgent &&
 				req.Step.Context != aqueduct.ContextSpecOnly {
 				primaryDir := filepath.Join(s.sandboxRoot, req.RepoConfig.Name, "_primary")
+				repoMu := s.repoMu[req.RepoConfig.Name]
+				repoMu.Lock()
 				sandboxDir, err := prepareDropletWorktree(primaryDir, s.sandboxRoot, req.RepoConfig.Name, req.Item.ID)
+				repoMu.Unlock()
 				if err != nil {
 					s.logger.Error("prepare worktree failed",
 						"repo", req.RepoConfig.Name,
