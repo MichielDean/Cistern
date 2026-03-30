@@ -562,7 +562,7 @@ var dropletRenameCmd = &cobra.Command{
 
 var dropletShowCmd = &cobra.Command{
 	Use:   "show <id>",
-		Short: "Show details of a droplet",
+	Short: "Show details of a droplet",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		c, err := cistern.New(resolveDBPath(), "")
@@ -611,7 +611,7 @@ var dropletShowCmd = &cobra.Command{
 
 var dropletNoteCmd = &cobra.Command{
 	Use:   "note <id> <content>",
-		Short: "Add a note to a droplet",
+	Short: "Add a note to a droplet",
 	Args:  cobra.ExactArgs(2),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		c, err := cistern.New(resolveDBPath(), "")
@@ -623,7 +623,7 @@ var dropletNoteCmd = &cobra.Command{
 		if err := c.AddNote(args[0], cataractaeName(), args[1]); err != nil {
 			return err
 		}
-			fmt.Printf("note added to droplet %s\n", args[0])
+		fmt.Printf("note added to droplet %s\n", args[0])
 		return nil
 	},
 }
@@ -644,7 +644,7 @@ var dropletCloseCmd = &cobra.Command{
 		if err := c.CloseItem(args[0]); err != nil {
 			return err
 		}
-			fmt.Printf("droplet %s delivered\n", args[0])
+		fmt.Printf("droplet %s delivered\n", args[0])
 		return nil
 	},
 }
@@ -653,7 +653,7 @@ var dropletCloseCmd = &cobra.Command{
 
 var dropletReopenCmd = &cobra.Command{
 	Use:   "reopen <id>",
-		Short: "Return a droplet to the cistern",
+	Short: "Return a droplet to the cistern",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		c, err := cistern.New(resolveDBPath(), "")
@@ -665,7 +665,7 @@ var dropletReopenCmd = &cobra.Command{
 		if err := c.UpdateStatus(args[0], "open"); err != nil {
 			return err
 		}
-			fmt.Printf("droplet %s returned to cistern\n", args[0])
+		fmt.Printf("droplet %s returned to cistern\n", args[0])
 		return nil
 	},
 }
@@ -791,9 +791,9 @@ var dropletPurgeCmd = &cobra.Command{
 			return err
 		}
 		if purgeDryRun {
-				fmt.Printf("dry-run: would purge %d droplet(s)\n", n)
-			} else {
-				fmt.Printf("purged %d droplet(s)\n", n)
+			fmt.Printf("dry-run: would purge %d droplet(s)\n", n)
+		} else {
+			fmt.Printf("purged %d droplet(s)\n", n)
 		}
 		return nil
 	},

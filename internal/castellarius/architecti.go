@@ -16,11 +16,11 @@ import (
 )
 
 const (
-	architectiSessionName              = "architecti"
-	architectiRateLimitWindow          = 24 * time.Hour
+	architectiSessionName               = "architecti"
+	architectiRateLimitWindow           = 24 * time.Hour
 	architectiRestartCastellariusFactor = 5 // lastTickAt must exceed this multiple of pollInterval
-	architectiSessionTimeout           = 10 * time.Minute
-	maxActionsPerRun                   = 1000 // cap total actions per invocation for defense-in-depth
+	architectiSessionTimeout            = 10 * time.Minute
+	maxActionsPerRun                    = 1000 // cap total actions per invocation for defense-in-depth
 
 	// architectiQueueCap is the capacity of the serial in-memory queue.
 	// Sized generously to accommodate transient bursts of pooled transitions.
