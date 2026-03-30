@@ -188,11 +188,6 @@ func TestDropletIssueReject_ImplementShortName(t *testing.T) {
 	}
 }
 
-// TestDropletPass_SucceedsWithOpenIssues verifies that pass succeeds even when
-// the droplet has one or more open issues.
-// Given a droplet with an open issue,
-// When ct droplet pass is called,
-// Then outcome=pass and no error is returned.
 func TestDropletPass_SucceedsWithOpenIssues(t *testing.T) {
 	db := filepath.Join(t.TempDir(), "test.db")
 	t.Setenv("CT_DB", db)
