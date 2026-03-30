@@ -314,8 +314,7 @@ func TestRemoveDropletWorktree_KeepBranch_WhenStagnant_PreservesFeatureBranch(t 
 	if err != nil {
 		t.Fatalf("prepareDropletWorktree: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(worktreePath, "work.go"), []byte("// work
-"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(worktreePath, "work.go"), []byte("// work\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	branchMustRun(t, branchGitCmd(worktreePath, "add", "."))
@@ -377,8 +376,7 @@ func TestPrepareDropletWorktree_ResumesFromExistingBranch_AfterStagnantCleanup(t
 	if err != nil {
 		t.Fatalf("prepareDropletWorktree (first): %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(worktreePath, "impl.go"), []byte("// implementation
-"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(worktreePath, "impl.go"), []byte("// implementation\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	branchMustRun(t, branchGitCmd(worktreePath, "add", "."))
@@ -415,6 +413,9 @@ func TestPrepareDropletWorktree_ResumesFromExistingBranch_AfterStagnantCleanup(t
 	before, after := strings.TrimSpace(string(beforeSHA)), strings.TrimSpace(string(afterSHA))
 	if before != after {
 		t.Errorf("prior commits lost: HEAD before=%s after=%s", before, after)
+	}
+}
+
 // --- repoMu serialization tests ---
 
 // TestPrepareDropletWorktree_ConcurrentSameRepo verifies that two goroutines
