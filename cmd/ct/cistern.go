@@ -1134,7 +1134,6 @@ var dropletRecirculateCmd = &cobra.Command{
 	},
 }
 
-
 // --- cistern cancel ---
 
 var cancelNotes string

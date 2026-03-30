@@ -245,4 +245,4 @@ ct droplet pool $DROPLET_ID --notes "Cannot merge: <exact reason> — $PR_URL"
 - go build + go test must pass before every push
 - Fix CI, conflicts, and review comments yourself — do not recirculate for routine failures
 - Recirculate after 2 failed fix attempts on the same code-level CI check (see Step 4 recirculate path)
-- Recirculate only for code-level failures — never recirculate for infrastructure/pooled failures (block instead)
+- Recirculate only for code-level failures — never recirculate for infrastructure/pooled failures (pool instead)
