@@ -1198,7 +1198,7 @@ func TestBuildArchitectiSnapshot_Notes_RenderedForStagnantDroplet(t *testing.T) 
 	t0 := time.Date(2024, 1, 15, 10, 0, 0, 0, time.UTC)
 	t1 := time.Date(2024, 1, 15, 11, 0, 0, 0, time.UTC)
 
-	d := &cistern.Droplet{ID: "ci-stag1", Repo: "test-repo", Status: "stagnant", UpdatedAt: time.Now().Add(-5 * time.Minute)}
+	d := &cistern.Droplet{ID: "ci-stag1", Repo: "test-repo", Status: "pooled", UpdatedAt: time.Now().Add(-5 * time.Minute)}
 	client.items["ci-stag1"] = d
 	client.notes["ci-stag1"] = []cistern.CataractaeNote{
 		{DropletID: "ci-stag1", CataractaeName: "qa", Content: "criterion not met", CreatedAt: t0},
@@ -1206,7 +1206,7 @@ func TestBuildArchitectiSnapshot_Notes_RenderedForStagnantDroplet(t *testing.T) 
 	}
 
 	// When: snapshot is built
-	snapshot, _ := s.buildArchitectiSnapshot(context.Background(), stagnantDroplet("trigger", 1*time.Minute), *s.config.Architecti)
+	snapshot, _ := s.buildArchitectiSnapshot(context.Background(), pooledDroplet("trigger", 1*time.Minute), *s.config.Architecti)
 
 	// Then: notes section is present with droplet heading
 	if !strings.Contains(snapshot, "#### ci-stag1") {
@@ -1228,7 +1228,7 @@ func TestBuildArchitectiSnapshot_Notes_ChronologicalOrder(t *testing.T) {
 	earlier := time.Date(2024, 1, 15, 9, 0, 0, 0, time.UTC)
 	later := time.Date(2024, 1, 15, 12, 0, 0, 0, time.UTC)
 
-	d := &cistern.Droplet{ID: "ci-order1", Repo: "test-repo", Status: "stagnant", UpdatedAt: time.Now().Add(-5 * time.Minute)}
+	d := &cistern.Droplet{ID: "ci-order1", Repo: "test-repo", Status: "pooled", UpdatedAt: time.Now().Add(-5 * time.Minute)}
 	client.items["ci-order1"] = d
 	// Intentionally insert later note first.
 	client.notes["ci-order1"] = []cistern.CataractaeNote{
@@ -1236,7 +1236,7 @@ func TestBuildArchitectiSnapshot_Notes_ChronologicalOrder(t *testing.T) {
 		{DropletID: "ci-order1", CataractaeName: "implement", Content: "first note", CreatedAt: earlier},
 	}
 
-	snapshot, _ := s.buildArchitectiSnapshot(context.Background(), stagnantDroplet("trigger", 1*time.Minute), *s.config.Architecti)
+	snapshot, _ := s.buildArchitectiSnapshot(context.Background(), pooledDroplet("trigger", 1*time.Minute), *s.config.Architecti)
 
 	// Then: "first note" appears before "second note" in the snapshot
 	firstPos := strings.Index(snapshot, "first note")
@@ -1281,7 +1281,7 @@ func TestBuildArchitectiSnapshot_Notes_Table_DriveGroupCoverage(t *testing.T) {
 				{DropletID: d.ID, CataractaeName: "implement", Content: tt.noteText, CreatedAt: time.Now().Add(-1 * time.Minute)},
 			}
 
-			snapshot, _ := s.buildArchitectiSnapshot(context.Background(), stagnantDroplet("trigger", 1*time.Minute), *s.config.Architecti)
+			snapshot, _ := s.buildArchitectiSnapshot(context.Background(), pooledDroplet("trigger", 1*time.Minute), *s.config.Architecti)
 
 			if !strings.Contains(snapshot, tt.noteText) {
 				t.Errorf("snapshot missing note %q for %s droplet; snapshot = %q", tt.noteText, tt.name, snapshot)
@@ -1295,8 +1295,8 @@ func TestBuildArchitectiSnapshot_Notes_OmittedWhenDropletHasNoNotes(t *testing.T
 	client := newMockClient()
 	s := testSchedulerWithArchitecti(client)
 
-	d1 := &cistern.Droplet{ID: "ci-with-notes", Repo: "test-repo", Status: "stagnant", UpdatedAt: time.Now().Add(-5 * time.Minute)}
-	d2 := &cistern.Droplet{ID: "ci-no-notes", Repo: "test-repo", Status: "stagnant", UpdatedAt: time.Now().Add(-5 * time.Minute)}
+	d1 := &cistern.Droplet{ID: "ci-with-notes", Repo: "test-repo", Status: "pooled", UpdatedAt: time.Now().Add(-5 * time.Minute)}
+	d2 := &cistern.Droplet{ID: "ci-no-notes", Repo: "test-repo", Status: "pooled", UpdatedAt: time.Now().Add(-5 * time.Minute)}
 	client.items[d1.ID] = d1
 	client.items[d2.ID] = d2
 	client.notes[d1.ID] = []cistern.CataractaeNote{
@@ -1304,7 +1304,7 @@ func TestBuildArchitectiSnapshot_Notes_OmittedWhenDropletHasNoNotes(t *testing.T
 	}
 	// d2 has no notes (nothing in client.notes["ci-no-notes"])
 
-	snapshot, _ := s.buildArchitectiSnapshot(context.Background(), stagnantDroplet("trigger", 1*time.Minute), *s.config.Architecti)
+	snapshot, _ := s.buildArchitectiSnapshot(context.Background(), pooledDroplet("trigger", 1*time.Minute), *s.config.Architecti)
 
 	// Then: ci-with-notes has a heading; ci-no-notes does not
 	if !strings.Contains(snapshot, "#### ci-with-notes") {
@@ -1324,11 +1324,11 @@ func TestBuildArchitectiSnapshot_Notes_GetNotesError_LoggedAndContinued(t *testi
 	s := testSchedulerWithArchitecti(client)
 	s.logger = newTestLogger(&logBuf)
 
-	d := &cistern.Droplet{ID: "ci-err1", Repo: "test-repo", Status: "stagnant", UpdatedAt: time.Now().Add(-5 * time.Minute)}
+	d := &cistern.Droplet{ID: "ci-err1", Repo: "test-repo", Status: "pooled", UpdatedAt: time.Now().Add(-5 * time.Minute)}
 	client.items[d.ID] = d
 
 	// When: snapshot is built despite GetNotes errors
-	snapshot, _ := s.buildArchitectiSnapshot(context.Background(), stagnantDroplet("trigger", 1*time.Minute), *s.config.Architecti)
+	snapshot, _ := s.buildArchitectiSnapshot(context.Background(), pooledDroplet("trigger", 1*time.Minute), *s.config.Architecti)
 
 	// Then: snapshot is non-empty (not aborted by note error)
 	if snapshot == "" {
@@ -1350,13 +1350,13 @@ func TestBuildArchitectiSnapshot_Notes_TimestampAndCataractaeNameIncluded(t *tes
 	s := testSchedulerWithArchitecti(client)
 
 	noteTime := time.Date(2024, 6, 1, 14, 30, 0, 0, time.UTC)
-	d := &cistern.Droplet{ID: "ci-ts1", Repo: "test-repo", Status: "stagnant", UpdatedAt: time.Now().Add(-5 * time.Minute)}
+	d := &cistern.Droplet{ID: "ci-ts1", Repo: "test-repo", Status: "pooled", UpdatedAt: time.Now().Add(-5 * time.Minute)}
 	client.items[d.ID] = d
 	client.notes[d.ID] = []cistern.CataractaeNote{
 		{DropletID: d.ID, CataractaeName: "reviewer", Content: "looks good", CreatedAt: noteTime},
 	}
 
-	snapshot, _ := s.buildArchitectiSnapshot(context.Background(), stagnantDroplet("trigger", 1*time.Minute), *s.config.Architecti)
+	snapshot, _ := s.buildArchitectiSnapshot(context.Background(), pooledDroplet("trigger", 1*time.Minute), *s.config.Architecti)
 
 	// Then: snapshot contains formatted timestamp and cataractae name
 	if !strings.Contains(snapshot, "2024-06-01T14:30:00Z") {
@@ -1448,146 +1448,6 @@ func TestResolveArchitectiSystemPrompt_NotFound_ReturnsError(t *testing.T) {
 	}
 }
 
-// --- scanBadStates tests ---
-
-func TestScanBadStates_StagnantDroplet_NoNote_Enqueued(t *testing.T) {
-	// Given: a stagnant droplet with no invocation note
-	client := newMockClient()
-	client.items["d-001"] = &cistern.Droplet{ID: "d-001", Repo: "test-repo", Status: "stagnant"}
-	s := testScheduler(client, newMockRunner(client))
-
-	// When: scanBadStates is called
-	s.scanBadStates()
-
-	// Then: droplet was enqueued
-	select {
-	case got := <-s.architectiQueue:
-		if got.ID != "d-001" {
-			t.Errorf("queue got droplet ID %q, want %q", got.ID, "d-001")
-		}
-	default:
-		t.Fatal("expected d-001 in architectiQueue, but queue was empty")
-	}
-}
-
-func TestScanBadStates_BlockedDroplet_NoNote_Enqueued(t *testing.T) {
-	// Given: a blocked droplet with no invocation note
-	client := newMockClient()
-	client.items["d-002"] = &cistern.Droplet{ID: "d-002", Repo: "test-repo", Status: "blocked"}
-	s := testScheduler(client, newMockRunner(client))
-
-	// When: scanBadStates is called
-	s.scanBadStates()
-
-	// Then: droplet was enqueued
-	select {
-	case got := <-s.architectiQueue:
-		if got.ID != "d-002" {
-			t.Errorf("queue got droplet ID %q, want %q", got.ID, "d-002")
-		}
-	default:
-		t.Fatal("expected d-002 in architectiQueue, but queue was empty")
-	}
-}
-
-func TestScanBadStates_ExistingInvocationNote_NotEnqueued(t *testing.T) {
-	// Given: stagnant droplet already has an [architecti] invocation note (dedup guard)
-	client := newMockClient()
-	client.items["d-001"] = &cistern.Droplet{ID: "d-001", Repo: "test-repo", Status: "stagnant"}
-	client.notes["d-001"] = []cistern.CataractaeNote{
-		{
-			DropletID:      "d-001",
-			CataractaeName: "architecti",
-			Content:        architectiInvocationNotePrefix + " stagnant",
-			CreatedAt:      time.Now(),
-		},
-	}
-	s := testScheduler(client, newMockRunner(client))
-
-	// When: scanBadStates is called
-	s.scanBadStates()
-
-	// Then: nothing enqueued — note-based dedup in tryEnqueueArchitecti applies
-	select {
-	case got := <-s.architectiQueue:
-		t.Errorf("expected empty queue, but got droplet %q", got.ID)
-	default:
-		// correct
-	}
-}
-
-func TestScanBadStates_OpenDroplet_NotEnqueued(t *testing.T) {
-	// Given: an open droplet alongside a stagnant one; scanBadStates only scans stagnant/blocked
-	client := newMockClient()
-	client.items["open-1"] = &cistern.Droplet{ID: "open-1", Repo: "test-repo", Status: "open"}
-	client.items["stagnant-1"] = &cistern.Droplet{ID: "stagnant-1", Repo: "test-repo", Status: "stagnant"}
-	s := testScheduler(client, newMockRunner(client))
-
-	// When: scanBadStates is called
-	s.scanBadStates()
-
-	// Then: only stagnant-1 enqueued; open-1 is not scanned
-	ids := map[string]bool{}
-	for len(s.architectiQueue) > 0 {
-		select {
-		case got := <-s.architectiQueue:
-			ids[got.ID] = true
-		default:
-		}
-	}
-	if !ids["stagnant-1"] {
-		t.Error("expected stagnant-1 in queue")
-	}
-	if ids["open-1"] {
-		t.Error("open-1 must not appear in queue — only stagnant/blocked statuses are scanned")
-	}
-}
-
-func TestScanBadStates_ListError_LogsAndContinues(t *testing.T) {
-	// Given: List returns an error for all calls
-	client := newMockClient()
-	client.items["d-001"] = &cistern.Droplet{ID: "d-001", Repo: "test-repo", Status: "stagnant"}
-	client.listErr = errors.New("db error")
-	s := testScheduler(client, newMockRunner(client))
-
-	// When: scanBadStates is called (must not panic)
-	s.scanBadStates()
-
-	// Then: nothing enqueued (List failed for all statuses)
-	select {
-	case got := <-s.architectiQueue:
-		t.Errorf("expected empty queue on list error, but got droplet %q", got.ID)
-	default:
-		// correct: error path handled gracefully
-	}
-}
-
-func TestScanBadStates_MultipleDroplets_AllEnqueued(t *testing.T) {
-	// Given: two stagnant and one blocked droplet, none with invocation notes
-	client := newMockClient()
-	client.items["s1"] = &cistern.Droplet{ID: "s1", Repo: "test-repo", Status: "stagnant"}
-	client.items["s2"] = &cistern.Droplet{ID: "s2", Repo: "test-repo", Status: "stagnant"}
-	client.items["b1"] = &cistern.Droplet{ID: "b1", Repo: "test-repo", Status: "blocked"}
-	s := testScheduler(client, newMockRunner(client))
-
-	// When: scanBadStates is called
-	s.scanBadStates()
-
-	// Then: all three droplets are in the architectiQueue
-	ids := map[string]bool{}
-	for len(s.architectiQueue) > 0 {
-		select {
-		case got := <-s.architectiQueue:
-			ids[got.ID] = true
-		default:
-		}
-	}
-	for _, id := range []string{"s1", "s2", "b1"} {
-		if !ids[id] {
-			t.Errorf("expected %q in architectiQueue, but was not found", id)
-		}
-	}
-}
 
 func TestRunArchitectiAdHoc_Normal_ReturnsFilteredActions_MaxFilesPerRun(t *testing.T) {
 	// Given: LLM returns more file actions than MaxFilesPerRun allows

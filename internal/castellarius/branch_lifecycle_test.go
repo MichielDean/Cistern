@@ -320,8 +320,8 @@ func TestRemoveDropletWorktree_KeepBranch_WhenStagnant_PreservesFeatureBranch(t 
 	branchMustRun(t, branchGitCmd(worktreePath, "add", "."))
 	branchMustRun(t, branchGitCmd(worktreePath, "commit", "-m", "agent work"))
 
-	// When: stagnant cleanup — keepBranch=true.
-	removeDropletWorktreeWithLogger(l, primaryDir, sandboxRoot, "myrepo", "drop-stagnant", true)
+	// When: stagnant cleanup.
+	removeDropletWorktreeWithLogger(l, primaryDir, sandboxRoot, "myrepo", "drop-stagnant")
 
 	// Then: worktree directory is gone.
 	if _, statErr := os.Stat(worktreePath); statErr == nil {
@@ -348,8 +348,8 @@ func TestRemoveDropletWorktree_DeletesBranchAndDir_WhenDone(t *testing.T) {
 		t.Fatalf("prepareDropletWorktree: %v", err)
 	}
 
-	// When: done/cancelled cleanup — keepBranch=false.
-	removeDropletWorktreeWithLogger(l, primaryDir, sandboxRoot, "myrepo", "drop-done", false)
+	// When: done/cancelled cleanup.
+	removeDropletWorktreeWithLogger(l, primaryDir, sandboxRoot, "myrepo", "drop-done")
 
 	// Then: worktree directory is gone.
 	if _, statErr := os.Stat(worktreePath); statErr == nil {
@@ -388,7 +388,7 @@ func TestPrepareDropletWorktree_ResumesFromExistingBranch_AfterStagnantCleanup(t
 	}
 
 	// Stagnant cleanup: remove worktree dir but keep branch.
-	removeDropletWorktreeWithLogger(l, primaryDir, sandboxRoot, "myrepo", "drop-resume-stagnant", true)
+	removeDropletWorktreeWithLogger(l, primaryDir, sandboxRoot, "myrepo", "drop-resume-stagnant")
 
 	if _, statErr := os.Stat(worktreePath); statErr == nil {
 		t.Fatal("worktree directory should be gone after stagnant cleanup")
