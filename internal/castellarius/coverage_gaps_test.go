@@ -340,7 +340,12 @@ func TestHeartbeatRepo_StallDetected_ForAssignedDroplet(t *testing.T) {
 
 func TestHeartbeatRepo_ActiveDroplet_NotStalled(t *testing.T) {
 	// A droplet whose newest note signal is within the stall threshold should
-	// not receive a stall note.
+	// not receive a stall note. Mock tmux as alive so the liveness check passes
+	// through to the stall detector.
+	orig := isTmuxAliveFn
+	isTmuxAliveFn = func(_ string) bool { return true }
+	t.Cleanup(func() { isTmuxAliveFn = orig })
+
 	client := newMockClient()
 	item := &cistern.Droplet{
 		ID:                "hb-active",
@@ -389,6 +394,83 @@ func TestHeartbeatRepo_UnknownAssignee_WritesStallNote(t *testing.T) {
 	defer client.mu.Unlock()
 	if len(client.attached) != 1 {
 		t.Errorf("expected 1 stall note for unknown-assignee droplet with no signals, got %d", len(client.attached))
+	}
+}
+
+// TestHeartbeatRepo_ZombieDetected_AddsNoteAndResetsToOpen verifies that when
+// a tmux session is dead and the item is old enough, heartbeatRepo writes a
+// zombie note (containing session name, worker, and cataractae) and resets the
+// droplet to open via client.Assign.
+func TestHeartbeatRepo_ZombieDetected_AddsNoteAndResetsToOpen(t *testing.T) {
+	orig := isTmuxAliveFn
+	isTmuxAliveFn = func(_ string) bool { return false }
+	t.Cleanup(func() { isTmuxAliveFn = orig })
+
+	client := newMockClient()
+	item := &cistern.Droplet{
+		ID:                "zombie-1",
+		CurrentCataractae: "implement",
+		Status:            "in_progress",
+		Assignee:          "alpha",
+		Outcome:           "",
+		UpdatedAt:         time.Now().Add(-10 * time.Minute), // old enough
+	}
+	client.items[item.ID] = item
+
+	sched := testScheduler(client, newMockRunner(client))
+	sched.heartbeatRepo(context.Background(), sched.config.Repos[0])
+
+	client.mu.Lock()
+	defer client.mu.Unlock()
+
+	if len(client.attached) != 1 {
+		t.Fatalf("expected 1 zombie note, got %d", len(client.attached))
+	}
+	note := client.attached[0]
+	if note.fromStep != "scheduler" {
+		t.Errorf("note fromStep = %q, want %q", note.fromStep, "scheduler")
+	}
+	// Note must mention session name, aqueduct worker, and cataractae.
+	for _, want := range []string{"test-repo-alpha", "alpha", "implement"} {
+		if !strings.Contains(note.notes, want) {
+			t.Errorf("zombie note missing %q; got: %s", want, note.notes)
+		}
+	}
+	// Droplet must be reset to open.
+	if got := client.items[item.ID].Status; got != "open" {
+		t.Errorf("droplet status after zombie reset = %q, want %q", got, "open")
+	}
+}
+
+// TestHeartbeatRepo_ZombieYoungSession_Skipped verifies that a droplet whose
+// tmux session is dead but was dispatched very recently is skipped (age guard).
+func TestHeartbeatRepo_ZombieYoungSession_Skipped(t *testing.T) {
+	orig := isTmuxAliveFn
+	isTmuxAliveFn = func(_ string) bool { return false }
+	t.Cleanup(func() { isTmuxAliveFn = orig })
+
+	client := newMockClient()
+	item := &cistern.Droplet{
+		ID:                "zombie-young",
+		CurrentCataractae: "implement",
+		Status:            "in_progress",
+		Assignee:          "alpha",
+		Outcome:           "",
+		UpdatedAt:         time.Now(), // very recent — within age guard
+	}
+	client.items[item.ID] = item
+
+	sched := testScheduler(client, newMockRunner(client))
+	sched.heartbeatRepo(context.Background(), sched.config.Repos[0])
+
+	client.mu.Lock()
+	defer client.mu.Unlock()
+
+	if len(client.attached) != 0 {
+		t.Errorf("young zombie session should be skipped; got %d notes", len(client.attached))
+	}
+	if client.assignCalls != 0 {
+		t.Errorf("young zombie session should not trigger Assign; got %d calls", client.assignCalls)
 	}
 }
 

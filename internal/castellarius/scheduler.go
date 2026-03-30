@@ -1411,9 +1411,9 @@ func (s *Castellarius) heartbeatRepo(ctx context.Context, repo aqueduct.RepoConf
 			continue
 		}
 
-		// Fast liveness check: if the tmux session is dead, re-spawn immediately
-		// using --continue so the agent resumes where it left off. This runs on
-		// every heartbeat tick (~30s) — no threshold, no waiting.
+		// Fast liveness check: if the tmux session is dead, record a zombie note
+		// and reset the droplet to open for re-dispatch. This runs on every
+		// heartbeat tick (~30s) — no threshold, no waiting.
 		if item.Assignee != "" {
 			sessionID := repo.Name + "-" + item.Assignee
 			if !isTmuxAlive(sessionID) {
@@ -1428,27 +1428,32 @@ func (s *Castellarius) heartbeatRepo(ctx context.Context, repo aqueduct.RepoConf
 						"repo", repo.Name, "droplet", item.ID)
 					continue
 				}
-				notes, _ := client.GetNotes(item.ID)
-				req := CataractaeRequest{
-					Item:         item,
-					Step:         *step,
-					Workflow:     wf,
-					RepoConfig:   repo,
-					AqueductName: item.Assignee,
-					Notes:        notes,
+				// Release the pool slot for the dead worker so the next dispatch
+				// cycle can reassign it to another droplet.
+				if pool := s.pools[repo.Name]; pool != nil {
+					if w := pool.FindByName(item.Assignee); w != nil {
+						pool.Release(w)
+					}
 				}
-				if s.sandboxRoot != "" && step.Type == aqueduct.CataractaeTypeAgent && step.Context != aqueduct.ContextSpecOnly {
-					req.SandboxDir = filepath.Join(s.sandboxRoot, repo.Name, item.ID)
+				// Append a history note so the zombie event is visible in
+				// `ct droplet show` and the TUI timeline.
+				zombieNote := fmt.Sprintf(
+					"Session zombie detected: tmux session %s dead, no outcome recorded. Aqueduct worker: %s, cataractae: %s. Resetting to open for re-dispatch. [%s]",
+					sessionID, item.Assignee, step.Name, time.Now().UTC().Format(time.RFC3339),
+				)
+				if err := client.AddNote(item.ID, "scheduler", zombieNote); err != nil {
+					s.logger.Warn("heartbeat: AddNote failed for zombie reset",
+						"droplet", item.ID, "error", err)
 				}
-				s.logger.Info("heartbeat: dead session — re-spawning with --continue",
+				s.logger.Info("heartbeat: zombie detected — resetting to open",
 					"repo", repo.Name,
 					"droplet", item.ID,
 					"assignee", item.Assignee,
 					"cataractae", step.Name,
 					"session_age", time.Since(item.UpdatedAt).Round(time.Second).String(),
 				)
-				if err := s.runner.Spawn(ctx, req); err != nil {
-					s.logger.Error("heartbeat: re-spawn failed",
+				if err := client.Assign(item.ID, "", step.Name); err != nil {
+					s.logger.Error("heartbeat: zombie reset failed",
 						"repo", repo.Name, "droplet", item.ID, "error", err)
 				}
 				continue // handled — skip progress check for this item
