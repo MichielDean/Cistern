@@ -1501,7 +1501,7 @@ func TestExecActionCmd_Cancel_SetsDropletCancelled(t *testing.T) {
 // Given: a real cistern DB with an open droplet
 // When:  execActionCmd with actionPool is executed
 // Then:  tuiActionResultMsg.err is nil and droplet status is "pooled"
-func TestExecActionCmd_Escalate_SetsDropletPooled(t *testing.T) {
+func TestExecActionCmd_Pool_SetsDropletPooled(t *testing.T) {
 	dbPath, id := newTestDBWithDroplet(t)
 	m := newTabAppModel("", dbPath)
 

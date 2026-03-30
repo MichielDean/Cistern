@@ -32,7 +32,7 @@ type Droplet struct {
 	Status            string `json:"status"`
 	Assignee          string `json:"assignee"` // empty string when unassigned
 	CurrentCataractae string `json:"current_cataractae"`
-	// Outcome is set by agents via `ct droplet pass/recirculate/block`.
+	// Outcome is set by agents via `ct droplet pass/recirculate/pool`.
 	// Empty string means no outcome yet (NULL in DB).
 	Outcome string `json:"outcome,omitempty"`
 	// AssignedAqueduct records which aqueduct operator is currently holding this
@@ -612,7 +612,7 @@ func (c *Client) CloseItem(id string) error {
 }
 
 // SetOutcome records the agent outcome on a droplet. Pass empty string to clear
-// (sets the column to NULL). Agents call this via `ct droplet pass/recirculate/block`.
+// (sets the column to NULL). Agents call this via `ct droplet pass/recirculate/pool`.
 func (c *Client) SetOutcome(id, outcome string) error {
 	var err error
 	var res sql.Result
