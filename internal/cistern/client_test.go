@@ -876,7 +876,7 @@ func TestUpdateTitle_NotFound(t *testing.T) {
 }
 
 func TestSetOutcome(t *testing.T) {
-	for _, outcome := range []string{"pass", "recirculate", "block"} {
+	for _, outcome := range []string{"pass", "recirculate", "pool"} {
 		t.Run(outcome, func(t *testing.T) {
 			c := testClient(t)
 			item, _ := c.Add("myrepo", "Task", "", 1, 3)

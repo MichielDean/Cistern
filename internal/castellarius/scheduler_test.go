@@ -1413,6 +1413,7 @@ func TestParseOutcome(t *testing.T) {
 		{"pass", ResultPass, ""},
 		{"recirculate", ResultRecirculate, ""},
 		{"recirculate:implement", ResultRecirculate, "implement"},
+		{"pool", ResultPool, ""},
 		{"block", ResultFail, ""},
 		{"unknown", ResultFail, ""},
 	}

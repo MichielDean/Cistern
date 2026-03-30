@@ -66,7 +66,7 @@ type pipelineClient struct {
 	stepLog   []string       // every Assign call in order
 	attached  []attachedNote // notes attached by steps
 	notes     []cistern.CataractaeNote
-	escalated string
+	pooled string
 	attempts  map[string]int
 	terminal  bool
 }
@@ -164,7 +164,7 @@ func (c *pipelineClient) GetNotes(id string) ([]cistern.CataractaeNote, error) {
 func (c *pipelineClient) Pool(id, reason string) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	c.escalated = reason
+	c.pooled = reason
 	c.terminal = true
 	return nil
 }
@@ -410,9 +410,9 @@ func TestSmoke_FeatureWorkflow_HappyPath(t *testing.T) {
 		}
 	}
 
-	// No escalation.
-	if client.escalated != "" {
-		t.Errorf("unexpected escalation: %s", client.escalated)
+	// No pooling.
+	if client.pooled != "" {
+		t.Errorf("unexpected pooling: %s", client.pooled)
 	}
 }
 

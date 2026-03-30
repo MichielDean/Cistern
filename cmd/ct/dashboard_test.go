@@ -549,7 +549,7 @@ func TestFetchDashboardData_PooledItems_PopulatedCorrectly(t *testing.T) {
 	// Add a pooled item and a delivered item.
 	pooled, _ := c.Add("myrepo", "Stuck Feature", "", 1, 2)
 	c.GetReady("myrepo")
-	c.Pool(pooled.ID, "test escalation")
+	c.Pool(pooled.ID, "test pooling")
 
 	delivered, _ := c.Add("myrepo", "Done Feature", "", 1, 2)
 	c.GetReady("myrepo")
