@@ -303,15 +303,11 @@ func TestArchitectiAction_Note_AddsNoteToDroplet(t *testing.T) {
 	client.mu.Lock()
 	notes := client.notes["d-001"]
 	client.mu.Unlock()
-	var found bool
-	for _, n := range notes {
-		if n.CataractaeName == "architecti" {
-			found = true
-			break
-		}
+	if len(notes) == 0 {
+		t.Fatalf("expected note from 'architecti', found none")
 	}
-	if !found {
-		t.Error("expected note from 'architecti', found none")
+	if notes[0].CataractaeName != "architecti" {
+		t.Errorf("note CataractaeName = %q, want %q", notes[0].CataractaeName, "architecti")
 	}
 }
 
