@@ -3115,7 +3115,7 @@ func TestRemoveDropletWorktree_LogsWorktreeDeleted(t *testing.T) {
 	}
 	buf.Reset()
 
-	removeDropletWorktreeWithLogger(l, primary, sandboxRoot, repoName, "ci-wt-del")
+	removeDropletWorktreeWithLogger(l, primary, sandboxRoot, repoName, "ci-wt-del", false)
 
 	out := buf.String()
 	if !strings.Contains(out, "worktree deleted") {
@@ -3139,7 +3139,7 @@ func TestRemoveDropletWorktree_LogsWarn_WhenWorktreeMissing(t *testing.T) {
 	dropletID := "ci-wt-missing"
 
 	// Do NOT create the worktree — removal should fail.
-	removeDropletWorktreeWithLogger(l, primary, sandboxRoot, repoName, dropletID)
+	removeDropletWorktreeWithLogger(l, primary, sandboxRoot, repoName, dropletID, false)
 
 	out := buf.String()
 	if strings.Contains(out, "worktree deleted") {

@@ -526,7 +526,7 @@ func TestRemoveDropletWorktree_NonGitDir_NoOp(t *testing.T) {
 	// The key behavior is that it does not panic or crash.
 	primaryDir := t.TempDir()
 	sandboxRoot := t.TempDir()
-	removeDropletWorktree(primaryDir, sandboxRoot, "myrepo", "drop-noop")
+	removeDropletWorktree(primaryDir, sandboxRoot, "myrepo", "drop-noop", false)
 }
 
 // TestRemoveDropletWorktree_DeletesBranchFromPrimary verifies that removing a
@@ -548,7 +548,7 @@ func TestRemoveDropletWorktree_DeletesBranchFromPrimary(t *testing.T) {
 		t.Fatalf("worktree path should exist: %v", statErr)
 	}
 
-	removeDropletWorktree(primaryDir, sandboxRoot, "myrepo", "drop-rm")
+	removeDropletWorktree(primaryDir, sandboxRoot, "myrepo", "drop-rm", false)
 
 	if branchExists(t, primaryDir, "feat/drop-rm") {
 		t.Error("feat/drop-rm should have been deleted from primary by removeDropletWorktree")

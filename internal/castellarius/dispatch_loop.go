@@ -158,7 +158,7 @@ func (s *Castellarius) recoverDispatchLoop(client CisternClient, item *cistern.D
 			"droplet", item.ID,
 			"attempt", attempt,
 		)
-		removeDropletWorktree(primaryDir, s.sandboxRoot, repo.Name, item.ID)
+		removeDropletWorktree(primaryDir, s.sandboxRoot, repo.Name, item.ID, true)
 		if _, err := prepareDropletWorktree(primaryDir, s.sandboxRoot, repo.Name, item.ID); err != nil {
 			if strings.Contains(err.Error(), "did not match any file(s) known to git") {
 				// The feature branch no longer exists in git. Remove any lingering
