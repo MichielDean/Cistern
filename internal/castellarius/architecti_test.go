@@ -661,14 +661,40 @@ func TestRunArchitectiAdHoc_ParseError_ReturnsError(t *testing.T) {
 	}
 }
 
+func TestResolveArchitectiSystemPrompt_HomeDir_ReturnsPath(t *testing.T) {
+	// Given: HOME points to a temp dir that contains the expected SYSTEM_PROMPT.md.
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	dir := filepath.Join(home, ".cistern", "cataractae", "architecti")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	want := filepath.Join(dir, "SYSTEM_PROMPT.md")
+	if err := os.WriteFile(want, []byte("prompt"), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	client := newMockClient()
+	s := testScheduler(client, newMockRunner(client))
+
+	// When: resolveArchitectiSystemPrompt is called
+	got, err := s.resolveArchitectiSystemPrompt()
+
+	// Then: the home-dir path is returned with no error
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
 func TestResolveArchitectiSystemPrompt_NotFound_ReturnsError(t *testing.T) {
-	// Given: HOME points to a temp dir (no SYSTEM_PROMPT.md there),
-	// and sandboxRoot also points to a temp dir with no SYSTEM_PROMPT.md.
+	// Given: HOME points to a temp dir with no SYSTEM_PROMPT.md.
 	t.Setenv("HOME", t.TempDir())
 
 	client := newMockClient()
 	s := testScheduler(client, newMockRunner(client))
-	s.sandboxRoot = t.TempDir()
 
 	// When: resolveArchitectiSystemPrompt is called
 	path, err := s.resolveArchitectiSystemPrompt()

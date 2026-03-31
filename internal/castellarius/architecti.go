@@ -600,9 +600,8 @@ func (s *Castellarius) defaultArchitectiExec(ctx context.Context, contextDoc str
 	return data, nil
 }
 
-// resolveArchitectiSystemPrompt locates the Architecti SYSTEM_PROMPT.md.
-// Checks ~/.cistern/cataractae/architecti/ first, then the primary clone of the
-// first configured repo.
+// resolveArchitectiSystemPrompt locates the Architecti SYSTEM_PROMPT.md
+// at ~/.cistern/cataractae/architecti/SYSTEM_PROMPT.md.
 func (s *Castellarius) resolveArchitectiSystemPrompt() (string, error) {
 	home, err := os.UserHomeDir()
 	if err == nil {
@@ -611,14 +610,7 @@ func (s *Castellarius) resolveArchitectiSystemPrompt() (string, error) {
 			return p, nil
 		}
 	}
-	if len(s.config.Repos) > 0 {
-		p := filepath.Join(s.sandboxRoot, s.config.Repos[0].Name, "_primary",
-			"cataractae", "architecti", "SYSTEM_PROMPT.md")
-		if _, err := os.Stat(p); err == nil {
-			return p, nil
-		}
-	}
-	return "", fmt.Errorf("SYSTEM_PROMPT.md not found: check ~/.cistern/cataractae/architecti/ or the primary clone")
+	return "", fmt.Errorf("SYSTEM_PROMPT.md not found: check ~/.cistern/cataractae/architecti/")
 }
 
 // architectiWaitSession polls until the tmux session exits, ctx is cancelled,

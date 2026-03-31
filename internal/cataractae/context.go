@@ -246,21 +246,37 @@ func writeContextFile(path string, p ContextParams) error {
 		b.WriteString("---\n\n")
 	}
 
-	// Always show the last 4 notes as background context (capped to prevent anchoring hallucination).
-	if len(p.Notes) > 0 {
-		recent := p.Notes
-		if len(recent) > 4 {
-			recent = recent[:4]
+	// Partition notes in one pass:
+	//   ownNotes       — same cataractae only (avoids anchoring on unrelated stages)
+	//   manualNotes    — operator annotations via `ct droplet note` (never step-filtered)
+	//   schedulerNotes — scheduler system notes (zombie detection, timeouts, etc.)
+	var ownNotes, manualNotes, schedulerNotes []cistern.CataractaeNote
+	for _, n := range p.Notes {
+		switch n.CataractaeName {
+		case p.Step.Name:
+			ownNotes = append(ownNotes, n)
+		case "manual":
+			manualNotes = append(manualNotes, n)
+		case "scheduler":
+			schedulerNotes = append(schedulerNotes, n)
 		}
-		b.WriteString("## Recent Step Notes\n\n")
-		for _, n := range recent {
-			if n.CataractaeName != "" {
-				b.WriteString(fmt.Sprintf("### From: %s\n\n", n.CataractaeName))
-			}
+	}
+	if len(ownNotes) > 4 {
+		ownNotes = ownNotes[:4]
+	}
+	writeNoteSection := func(heading string, notes []cistern.CataractaeNote) {
+		if len(notes) == 0 {
+			return
+		}
+		b.WriteString(heading + "\n\n")
+		for _, n := range notes {
 			b.WriteString(n.Content)
 			b.WriteString("\n\n")
 		}
 	}
+	writeNoteSection("## Recent Step Notes", ownNotes)
+	writeNoteSection("## Manual Notes", manualNotes)
+	writeNoteSection("## Scheduler Notes", schedulerNotes)
 
 	if len(p.Step.Skills) > 0 {
 		b.WriteString("<available_skills>\n")

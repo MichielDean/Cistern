@@ -304,7 +304,8 @@ func TestWriteContextFile(t *testing.T) {
 		"bf-123",
 		"Test item",
 		"implementer",
-		"From: review",
+		// "review" note appears in the REVISION REQUIRED section (revisionCycleNotes),
+		// not in Recent Step Notes — cross-cataractae notes are filtered from that section.
 		"Looks good but needs tests",
 		"ct droplet pass",
 	}
@@ -312,6 +313,11 @@ func TestWriteContextFile(t *testing.T) {
 		if !strings.Contains(content, want) {
 			t.Errorf("CONTEXT.md missing %q", want)
 		}
+	}
+	// The "From: <name>" header is no longer emitted in Recent Step Notes; confirm
+	// the note appears via the REVISION REQUIRED section instead.
+	if strings.Contains(content, "## Recent Step Notes") {
+		t.Error("Recent Step Notes must not appear — the only note is from a different cataractae")
 	}
 }
 
@@ -1061,12 +1067,12 @@ func TestWriteContextFile_NotesTruncated(t *testing.T) {
 	item := &cistern.Droplet{ID: "trunc-1", Title: "Truncation test", Status: "open", Priority: 1}
 	step := &aqueduct.WorkflowCataractae{Name: "implement", Type: aqueduct.CataractaeTypeAgent}
 
-	// 6 notes from "implementer" — they appear in Recent Step Notes only,
-	// not in revision cycle notes (which filters for review/qa/security names).
+	// 6 notes from the "implement" cataractae — name must match step.Name so they
+	// pass the same-cataractae filter and appear in Recent Step Notes (capped at 4).
 	var notes []cistern.CataractaeNote
 	for i := 1; i <= 6; i++ {
 		notes = append(notes, cistern.CataractaeNote{
-			CataractaeName: "implementer",
+			CataractaeName: "implement",
 			Content:        fmt.Sprintf("Note number %d", i),
 		})
 	}
