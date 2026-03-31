@@ -488,6 +488,9 @@ func (s *Castellarius) architectiRestartCastellarius(action ArchitectiAction) er
 	}
 
 	s.logger.Warn("architecti: restarting castellarius", "reason", action.Reason)
+	if s.restartCastellariusFn != nil {
+		return s.restartCastellariusFn()
+	}
 	return defaultRestartCastellarius()
 }
 
@@ -661,7 +664,11 @@ func architectiShellQuote(s string) string {
 func (s *Castellarius) RunArchitectiAdHoc(ctx context.Context, trigger *cistern.Droplet, maxFilesPerRun int, dryRun bool) (snapshot string, rawOutput []byte, actions []ArchitectiAction, err error) {
 	snapshot, repoByDroplet := s.buildArchitectiSnapshot(ctx, trigger, maxFilesPerRun)
 
-	rawOutput, err = s.defaultArchitectiExec(ctx, snapshot)
+	execFn := s.defaultArchitectiExec
+	if s.architectiExecFn != nil {
+		execFn = s.architectiExecFn
+	}
+	rawOutput, err = execFn(ctx, snapshot)
 	if err != nil {
 		return snapshot, nil, nil, fmt.Errorf("architecti: exec: %w", err)
 	}

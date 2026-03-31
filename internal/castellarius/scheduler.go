@@ -128,6 +128,13 @@ type Castellarius struct {
 	droughtRunning   atomic.Bool
 	droughtStartedAt atomic.Pointer[time.Time]
 
+	// architectiExecFn runs the Architecti agent and returns its raw output.
+	// When nil, defaultArchitectiExec is used. Set in tests to inject mock output.
+	architectiExecFn func(ctx context.Context, contextDoc string) ([]byte, error)
+
+	// restartCastellariusFn restarts the Castellarius process. When nil,
+	// defaultRestartCastellarius is used. Set in tests to avoid systemctl calls.
+	restartCastellariusFn func() error
 }
 
 // isSupervisedProcess returns true when the Castellarius is being managed by
