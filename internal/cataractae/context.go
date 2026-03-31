@@ -188,10 +188,21 @@ func writeContextFile(path string, p ContextParams) error {
 	b.WriteString("\n")
 
 	isReviewer := isReviewerCataractae(p.Step)
-	revisionNotes := revisionCycleNotes(p.Notes)
+	revisionNotes := revisionCycleNotes(p.Notes, p.Step)
 
-	if isReviewer && len(p.OpenIssues) > 0 {
-		// Reviewer with DB-tracked open issues: two-phase structure.
+	// Partition open issues: own (flagged by this cataractae) vs other cataractae.
+	// Fix ci-0y5ha: Phase 1 must only contain own issues; foreign issues are read-only context.
+	var ownIssues, otherIssues []cistern.DropletIssue
+	for _, iss := range p.OpenIssues {
+		if iss.FlaggedBy == p.Step.Name || (p.Step.Identity != "" && iss.FlaggedBy == p.Step.Identity) {
+			ownIssues = append(ownIssues, iss)
+		} else {
+			otherIssues = append(otherIssues, iss)
+		}
+	}
+
+	if isReviewer && len(ownIssues) > 0 {
+		// Reviewer with own DB-tracked open issues: two-phase structure.
 		// Phase 1 is evidence-based verification — no opinions, just grep/test results.
 		// Phase 2 is a clean fresh review of the diff for new issues.
 		b.WriteString("## ⚠️ TWO-PHASE REVIEW — Read carefully before doing anything\n\n")
@@ -202,7 +213,7 @@ func writeContextFile(path string, p ContextParams) error {
 		b.WriteString("- `ct droplet issue reject <id> --evidence \"<command + output>\"` — if still present\n\n")
 		b.WriteString("No opinions. No pattern-matching from memory. Run the command. Paste the output.\n")
 		b.WriteString("If you cannot verify with a command, state what you checked and what you found.\n\n")
-		for i, iss := range p.OpenIssues {
+		for i, iss := range ownIssues {
 			b.WriteString(fmt.Sprintf("#### Issue %d — %s (flagged by: %s)\n\n", i+1, iss.ID, iss.FlaggedBy))
 			b.WriteString(iss.Description)
 			b.WriteString("\n\n")
@@ -246,6 +257,21 @@ func writeContextFile(path string, p ContextParams) error {
 		b.WriteString("---\n\n")
 	}
 
+	// Background section: open issues from other cataractae — for reviewer steps only.
+	// These are shown for context; the current reviewer must NOT resolve or reject them.
+	// Fix ci-0y5ha: foreign issues are never mixed into Phase 1.
+	if isReviewer && len(otherIssues) > 0 {
+		b.WriteString("## Background — Open Issues from Other Cataractae (read-only)\n\n")
+		b.WriteString("These issues were flagged by other cataractae. Do NOT resolve or reject them —\n")
+		b.WriteString("they are provided for context only. Only the cataractae that flagged them can verify them.\n\n")
+		for i, iss := range otherIssues {
+			b.WriteString(fmt.Sprintf("### [Background] Issue %d — %s (flagged by: %s)\n\n", i+1, iss.ID, iss.FlaggedBy))
+			b.WriteString(iss.Description)
+			b.WriteString("\n\n")
+		}
+		b.WriteString("---\n\n")
+	}
+
 	// Partition notes in one pass:
 	//   ownNotes       — same cataractae only (avoids anchoring on unrelated stages)
 	//   manualNotes    — operator annotations via `ct droplet note` (never step-filtered)
@@ -253,12 +279,14 @@ func writeContextFile(path string, p ContextParams) error {
 	var ownNotes, manualNotes, schedulerNotes []cistern.CataractaeNote
 	for _, n := range p.Notes {
 		switch n.CataractaeName {
-		case p.Step.Name:
-			ownNotes = append(ownNotes, n)
 		case "manual":
 			manualNotes = append(manualNotes, n)
 		case "scheduler":
 			schedulerNotes = append(schedulerNotes, n)
+		default:
+			if n.CataractaeName == p.Step.Name || (p.Step.Identity != "" && n.CataractaeName == p.Step.Identity) {
+				ownNotes = append(ownNotes, n)
+			}
 		}
 	}
 	if len(ownNotes) > 4 {
@@ -352,8 +380,15 @@ func buildSpecContent(item *cistern.Droplet) string {
 
 // revisionCycleNotes returns the notes from the most recent recirculate cycle —
 // i.e. all notes appended since the last "pass" or "pool" note from a cataractae.
-// These are surfaced at the top of CONTEXT.md so the implementer sees them first.
-func revisionCycleNotes(notes []cistern.CataractaeNote) []cistern.CataractaeNote {
+// These are surfaced at the top of CONTEXT.md so the step sees them first.
+//
+// step controls which notes are returned after the cycle boundary is found:
+//   - If step is a reviewer cataractae: only notes whose CataractaeName exactly
+//     matches step.Name or step.Identity are returned. This prevents security from
+//     seeing QA's notes and vice versa (fix ci-0y5ha).
+//   - Otherwise: notes from any reviewer-like cataractae (containing "review",
+//     "qa", or "security") are returned — implementers need to see review feedback.
+func revisionCycleNotes(notes []cistern.CataractaeNote, step *aqueduct.WorkflowCataractae) []cistern.CataractaeNote {
 	// Walk newest-to-oldest to find the start of the latest recirculate cycle.
 	// A new cycle begins after any note whose content starts with "pass" or contains "No issues".
 	// Notes are ordered newest-first (DESC), so we iterate forward.
@@ -377,12 +412,23 @@ func revisionCycleNotes(notes []cistern.CataractaeNote) []cistern.CataractaeNote
 	for i, j := 0, len(cycle)-1; i < j; i, j = i+1, j-1 {
 		cycle[i], cycle[j] = cycle[j], cycle[i]
 	}
-	// Only return notes from reviewer/security/qa cataractae — not implementer self-notes.
 	var filtered []cistern.CataractaeNote
-	for _, n := range cycle {
-		name := strings.ToLower(n.CataractaeName)
-		if strings.Contains(name, "review") || strings.Contains(name, "qa") || strings.Contains(name, "security") {
-			filtered = append(filtered, n)
+	if step != nil && isReviewerCataractae(step) {
+		// Fix ci-0y5ha: reviewer cataractae only see their own prior notes — not other
+		// reviewers'. Match by step name or identity (notes may be stored under either).
+		for _, n := range cycle {
+			if n.CataractaeName == step.Name || (step.Identity != "" && n.CataractaeName == step.Identity) {
+				filtered = append(filtered, n)
+			}
+		}
+	} else {
+		// Non-reviewer (e.g. implementer): include notes from any reviewer-like cataractae
+		// so that implementers see the review feedback they need to fix.
+		for _, n := range cycle {
+			name := strings.ToLower(n.CataractaeName)
+			if strings.Contains(name, "review") || strings.Contains(name, "qa") || strings.Contains(name, "security") {
+				filtered = append(filtered, n)
+			}
 		}
 	}
 	return filtered

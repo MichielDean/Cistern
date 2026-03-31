@@ -331,3 +331,204 @@ func TestWriteContextFile_SchedulerNotes_ShownSeparately(t *testing.T) {
 		t.Error("cross-cataractae note 'deliver note X' must not appear anywhere in CONTEXT.md")
 	}
 }
+
+// TestRevisionCycleNotes_ReviewerExcludesOtherReviewerCataractae verifies that
+// when a reviewer cataractae calls revisionCycleNotes, it only receives its own
+// prior notes — not notes from other reviewer-like cataractae (ci-0y5ha fix 2).
+//
+// Given: notes from "security" and "qa" — both reviewer-like cataractae
+// When:  revisionCycleNotes is called with step="security"
+// Then:  only "security" notes are returned; "qa" notes are excluded
+func TestRevisionCycleNotes_ReviewerExcludesOtherReviewerCataractae(t *testing.T) {
+	notes := []cistern.CataractaeNote{
+		{CataractaeName: "security", Content: "Missing auth check in login handler"},
+		{CataractaeName: "qa", Content: "Unit test coverage is insufficient"},
+	}
+	step := &aqueduct.WorkflowCataractae{Name: "security", Identity: "security", Type: "agent"}
+
+	got := revisionCycleNotes(notes, step)
+
+	if len(got) != 1 {
+		t.Fatalf("revisionCycleNotes returned %d notes, want 1; got: %v", len(got), got)
+	}
+	if got[0].CataractaeName != "security" {
+		t.Errorf("expected security note, got CataractaeName=%q", got[0].CataractaeName)
+	}
+}
+
+// TestRevisionCycleNotes_ReviewerMatchesByIdentity verifies that when
+// CataractaeName matches the step's Identity (not Name), the note is included.
+// This is needed when notes are stored under the identity ("reviewer") but the
+// step name is different ("review").
+//
+// Given: note with CataractaeName="reviewer", step.Name="review", step.Identity="reviewer"
+// When:  revisionCycleNotes is called for the "review" step
+// Then:  the note is returned (identity match)
+func TestRevisionCycleNotes_ReviewerMatchesByIdentity(t *testing.T) {
+	notes := []cistern.CataractaeNote{
+		{CataractaeName: "reviewer", Content: "Needs better documentation"},
+	}
+	step := &aqueduct.WorkflowCataractae{Name: "review", Identity: "reviewer", Type: "agent"}
+
+	got := revisionCycleNotes(notes, step)
+
+	if len(got) != 1 {
+		t.Fatalf("revisionCycleNotes returned %d notes, want 1; got: %v", len(got), got)
+	}
+	if got[0].Content != "Needs better documentation" {
+		t.Errorf("unexpected note content: %q", got[0].Content)
+	}
+}
+
+// TestWriteContextFile_Phase1OnlyContainsOwnIssues verifies that a reviewer's
+// Phase 1 section only shows issues flagged by that reviewer — not issues from
+// other cataractae (ci-0y5ha fix 1 & 3).
+//
+// Given: "security" step with OpenIssues from both "security" and "qa" flaggers
+// When:  writeContextFile is called for the "security" step
+// Then:  Phase 1 contains only the security issue; qa issue is NOT in Phase 1
+//
+//	qa issue appears in a clearly labeled read-only background section
+func TestWriteContextFile_Phase1OnlyContainsOwnIssues(t *testing.T) {
+	item := &cistern.Droplet{ID: "ci-0y5ha-t1", Title: "Test", Status: "in_progress"}
+	step := &aqueduct.WorkflowCataractae{Name: "security", Identity: "security", Type: "agent"}
+
+	issues := []cistern.DropletIssue{
+		{ID: "sec-abc01", FlaggedBy: "security", Description: "SQL injection in login endpoint"},
+		{ID: "qa-abc02", FlaggedBy: "qa", Description: "Missing unit tests for auth module"},
+	}
+
+	p := ContextParams{Item: item, Step: step, OpenIssues: issues}
+	ctxPath := filepath.Join(t.TempDir(), "CONTEXT.md")
+	if err := writeContextFile(ctxPath, p); err != nil {
+		t.Fatalf("writeContextFile: %v", err)
+	}
+
+	content, err := os.ReadFile(ctxPath)
+	if err != nil {
+		t.Fatalf("ReadFile: %v", err)
+	}
+	got := string(content)
+
+	// Phase 1 must exist and show the security issue.
+	if !strings.Contains(got, "TWO-PHASE REVIEW") {
+		t.Fatal("expected TWO-PHASE REVIEW template when reviewer has own issues")
+	}
+	phase2Idx := strings.Index(got, "### Phase 2")
+	if phase2Idx == -1 {
+		t.Fatal("Phase 2 section not found")
+	}
+	phase1Section := got[:phase2Idx]
+
+	if !strings.Contains(phase1Section, "SQL injection in login endpoint") {
+		t.Error("security's own issue must appear in Phase 1")
+	}
+	if strings.Contains(phase1Section, "Missing unit tests for auth module") {
+		t.Error("qa issue must NOT appear in Phase 1 of security's context (cross-contamination: ci-0y5ha)")
+	}
+
+	// qa issue must appear in a read-only background section, not silently dropped.
+	if !strings.Contains(got, "Missing unit tests for auth module") {
+		t.Error("qa issue must appear in a read-only background section")
+	}
+	// The background section must include the qa issue ID.
+	if !strings.Contains(got, "qa-abc02") {
+		t.Error("qa issue ID must appear in the background section")
+	}
+}
+
+// TestWriteContextFile_RecentStepNotes_MatchesByIdentity verifies that notes
+// stored under step.Identity appear in "Recent Step Notes" even when
+// step.Identity != step.Name (ci-0y5ha: ownNotes partition fix).
+//
+// Given: a step with Name="review" and Identity="reviewer", and a note with
+//
+//	CataractaeName="reviewer" (CLI-sourced notes use Identity, not Name)
+//
+// When:  writeContextFile is called
+// Then:  the note appears in "## Recent Step Notes"
+func TestWriteContextFile_RecentStepNotes_MatchesByIdentity(t *testing.T) {
+	item := &cistern.Droplet{ID: "ci-0y5ha-id", Title: "Identity test", Status: "in_progress"}
+	step := &aqueduct.WorkflowCataractae{Name: "review", Identity: "reviewer", Type: "agent"}
+
+	notes := []cistern.CataractaeNote{
+		{CataractaeName: "reviewer", Content: "note stored under identity"},
+		{CataractaeName: "review", Content: "note stored under name"},
+		{CataractaeName: "implement", Content: "foreign note must be excluded"},
+	}
+
+	p := ContextParams{Item: item, Step: step, Notes: notes}
+	ctxPath := filepath.Join(t.TempDir(), "CONTEXT.md")
+	if err := writeContextFile(ctxPath, p); err != nil {
+		t.Fatalf("writeContextFile: %v", err)
+	}
+
+	content, err := os.ReadFile(ctxPath)
+	if err != nil {
+		t.Fatalf("ReadFile: %v", err)
+	}
+	got := string(content)
+
+	sectionStart := strings.Index(got, "## Recent Step Notes")
+	if sectionStart == -1 {
+		t.Fatal("'## Recent Step Notes' section not found")
+	}
+	section := got[sectionStart:]
+
+	if !strings.Contains(section, "note stored under identity") {
+		t.Error("note stored under step.Identity must appear in Recent Step Notes (ci-0y5ha fix)")
+	}
+	if !strings.Contains(section, "note stored under name") {
+		t.Error("note stored under step.Name must appear in Recent Step Notes")
+	}
+	if strings.Contains(section, "foreign note must be excluded") {
+		t.Error("foreign note must NOT appear in Recent Step Notes")
+	}
+}
+
+// TestWriteContextFile_NoTwoPhaseWhenOnlyForeignIssues verifies that the
+// two-phase review template is NOT shown when all OpenIssues belong to other
+// cataractae — the current reviewer has no own issues to verify (ci-0y5ha fix 3).
+//
+// Given: "security" step with OpenIssues ONLY from "qa" (security has none)
+// When:  writeContextFile is called for the "security" step
+// Then:  no TWO-PHASE REVIEW header; no Phase 1 resolve/reject instructions
+//
+//	qa issue appears in a clearly labeled read-only background section
+func TestWriteContextFile_NoTwoPhaseWhenOnlyForeignIssues(t *testing.T) {
+	item := &cistern.Droplet{ID: "ci-0y5ha-t2", Title: "Test", Status: "in_progress"}
+	step := &aqueduct.WorkflowCataractae{Name: "security", Identity: "security", Type: "agent"}
+
+	// Only qa issues — security has none of its own.
+	issues := []cistern.DropletIssue{
+		{ID: "qa-xyz01", FlaggedBy: "qa", Description: "Test coverage below threshold"},
+	}
+
+	p := ContextParams{Item: item, Step: step, OpenIssues: issues}
+	ctxPath := filepath.Join(t.TempDir(), "CONTEXT.md")
+	if err := writeContextFile(ctxPath, p); err != nil {
+		t.Fatalf("writeContextFile: %v", err)
+	}
+
+	content, err := os.ReadFile(ctxPath)
+	if err != nil {
+		t.Fatalf("ReadFile: %v", err)
+	}
+	got := string(content)
+
+	// Must NOT trigger the two-phase template (no own issues).
+	if strings.Contains(got, "TWO-PHASE REVIEW") {
+		t.Error("security must NOT get two-phase review when it has no own issues (ci-0y5ha fix 3)")
+	}
+	if strings.Contains(got, "ct droplet issue resolve") {
+		t.Error("security must NOT be instructed to resolve qa's issues")
+	}
+	if strings.Contains(got, "ct droplet issue reject") {
+		t.Error("security must NOT be instructed to reject qa's issues")
+	}
+
+	// qa issue must still be visible as background context.
+	if !strings.Contains(got, "Test coverage below threshold") {
+		t.Error("qa issue must appear in read-only background section even when security has no own issues")
+	}
+}

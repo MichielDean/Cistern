@@ -1180,8 +1180,9 @@ func TestRevisionCycleNotes_StopsAtPassSignal(t *testing.T) {
 		{CataractaeName: "reviewer", Content: "No issues found — all tests pass"},
 		{CataractaeName: "reviewer", Content: "Old issue from before the pass signal"},
 	}
+	step := &aqueduct.WorkflowCataractae{Name: "reviewer", Identity: "reviewer", Type: "agent"}
 
-	got := revisionCycleNotes(notes)
+	got := revisionCycleNotes(notes, step)
 	if len(got) != 1 {
 		t.Fatalf("revisionCycleNotes returned %d notes, want 1", len(got))
 	}
@@ -1371,8 +1372,9 @@ func TestRevisionCycleNotes_AllPrefixNotPassSignal(t *testing.T) {
 		{CataractaeName: "reviewer", Content: "All tests are still failing"},
 		{CataractaeName: "reviewer", Content: "Older issue"},
 	}
+	step := &aqueduct.WorkflowCataractae{Name: "reviewer", Identity: "reviewer", Type: "agent"}
 
-	got := revisionCycleNotes(notes)
+	got := revisionCycleNotes(notes, step)
 	// All three notes are from a reviewer and none is a pass signal, so all
 	// three should be in the cycle (oldest-first order).
 	if len(got) != 3 {
