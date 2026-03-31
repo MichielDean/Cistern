@@ -6,6 +6,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/MichielDean/cistern/internal/aqueduct"
+	"github.com/MichielDean/cistern/internal/cistern"
 )
 
 // runGit runs a git command in dir, failing the test on error.
@@ -88,5 +91,103 @@ func TestGenerateDiff_EmptyOnMain(t *testing.T) {
 	}
 	if len(diff) != 0 {
 		t.Errorf("expected empty diff when HEAD == origin/main; got %d bytes:\n%s", len(diff), diff)
+	}
+}
+
+// TestWriteContextFile_RecentStepNotes_ExcludesOtherCataractae verifies that the
+// 'Recent Step Notes' section only contains notes from the current step's cataractae,
+// not notes from other steps (ci-tgj96).
+//
+// Given: notes from multiple cataractae (implement + deliver)
+// When:  writeContextFile is called with step "implement"
+// Then:  'Recent Step Notes' contains only the implement notes, not deliver notes
+func TestWriteContextFile_RecentStepNotes_ExcludesOtherCataractae(t *testing.T) {
+	item := &cistern.Droplet{ID: "ci-test", Title: "Test item", Status: "in_progress"}
+	step := &aqueduct.WorkflowCataractae{Name: "implement", Type: "agent"}
+
+	// Notes ordered newest-first; "deliver" notes are foreign to the current step.
+	notes := []cistern.CataractaeNote{
+		{CataractaeName: "implement", Content: "implement note A"},
+		{CataractaeName: "deliver", Content: "deliver note X"},
+		{CataractaeName: "implement", Content: "implement note B"},
+		{CataractaeName: "deliver", Content: "deliver note Y"},
+	}
+
+	p := ContextParams{
+		Item:  item,
+		Step:  step,
+		Notes: notes,
+	}
+
+	ctxPath := filepath.Join(t.TempDir(), "CONTEXT.md")
+	if err := writeContextFile(ctxPath, p); err != nil {
+		t.Fatalf("writeContextFile: %v", err)
+	}
+
+	content, err := os.ReadFile(ctxPath)
+	if err != nil {
+		t.Fatalf("ReadFile: %v", err)
+	}
+	got := string(content)
+
+	// Extract only the Recent Step Notes section to avoid false matches in other sections.
+	sectionStart := strings.Index(got, "## Recent Step Notes")
+	if sectionStart == -1 {
+		t.Fatal("'## Recent Step Notes' section not found in CONTEXT.md")
+	}
+	// Trim everything before the section.
+	section := got[sectionStart:]
+
+	if !strings.Contains(section, "implement note A") {
+		t.Error("expected own-cataractae note 'implement note A' in Recent Step Notes")
+	}
+	if !strings.Contains(section, "implement note B") {
+		t.Error("expected own-cataractae note 'implement note B' in Recent Step Notes")
+	}
+	if strings.Contains(section, "deliver note X") {
+		t.Error("cross-cataractae note 'deliver note X' must not appear in Recent Step Notes")
+	}
+	if strings.Contains(section, "deliver note Y") {
+		t.Error("cross-cataractae note 'deliver note Y' must not appear in Recent Step Notes")
+	}
+}
+
+// TestWriteContextFile_RecentStepNotes_EmptyWhenNoOwnNotes verifies that the
+// 'Recent Step Notes' section is omitted entirely when the current cataractae
+// has no prior notes (ci-tgj96).
+//
+// Given: notes exist only from a different cataractae ("deliver")
+// When:  writeContextFile is called with step "implement"
+// Then:  no 'Recent Step Notes' section appears at all
+func TestWriteContextFile_RecentStepNotes_EmptyWhenNoOwnNotes(t *testing.T) {
+	item := &cistern.Droplet{ID: "ci-test2", Title: "Test item 2", Status: "in_progress"}
+	step := &aqueduct.WorkflowCataractae{Name: "implement", Type: "agent"}
+
+	notes := []cistern.CataractaeNote{
+		{CataractaeName: "deliver", Content: "deliver note only"},
+	}
+
+	p := ContextParams{
+		Item:  item,
+		Step:  step,
+		Notes: notes,
+	}
+
+	ctxPath := filepath.Join(t.TempDir(), "CONTEXT.md")
+	if err := writeContextFile(ctxPath, p); err != nil {
+		t.Fatalf("writeContextFile: %v", err)
+	}
+
+	content, err := os.ReadFile(ctxPath)
+	if err != nil {
+		t.Fatalf("ReadFile: %v", err)
+	}
+	got := string(content)
+
+	if strings.Contains(got, "## Recent Step Notes") {
+		t.Error("'## Recent Step Notes' section must not appear when no own-cataractae notes exist")
+	}
+	if strings.Contains(got, "deliver note only") {
+		t.Error("cross-cataractae note 'deliver note only' must not appear anywhere in Recent Step Notes")
 	}
 }

@@ -246,17 +246,20 @@ func writeContextFile(path string, p ContextParams) error {
 		b.WriteString("---\n\n")
 	}
 
-	// Always show the last 4 notes as background context (capped to prevent anchoring hallucination).
-	if len(p.Notes) > 0 {
-		recent := p.Notes
-		if len(recent) > 4 {
-			recent = recent[:4]
+	// Show the last 4 notes from this cataractae only — cross-cataractae notes would
+	// anchor agents on prior work from unrelated stages (cross-contamination).
+	var ownNotes []cistern.CataractaeNote
+	for _, n := range p.Notes {
+		if n.CataractaeName == p.Step.Name {
+			ownNotes = append(ownNotes, n)
 		}
+	}
+	if len(ownNotes) > 4 {
+		ownNotes = ownNotes[:4]
+	}
+	if len(ownNotes) > 0 {
 		b.WriteString("## Recent Step Notes\n\n")
-		for _, n := range recent {
-			if n.CataractaeName != "" {
-				b.WriteString(fmt.Sprintf("### From: %s\n\n", n.CataractaeName))
-			}
+		for _, n := range ownNotes {
 			b.WriteString(n.Content)
 			b.WriteString("\n\n")
 		}
