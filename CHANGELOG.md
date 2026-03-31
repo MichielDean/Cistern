@@ -36,6 +36,21 @@ The Architecti snapshot now includes the complete note history for every droplet
 
 **Impact**: Architecti now has complete visibility into why droplets are stuck and whether previous recovery attempts have been tried, enabling more informed decisions about restart vs. cancel+file actions and preventing repeat failures from consuming resources endlessly.
 
+### Heartbeat: add diagnostic notes on zombie session reset (ci-p6vhy)
+
+When the heartbeat detects a dead tmux session (zombie droplet with no outcome recorded) and resets it to open for re-dispatch, a diagnostic note is now recorded in the droplet history before the reset occurs.
+
+**Key changes:**
+- **Zombie detection**: When heartbeat finds a dead tmux session (session dead but no outcome recorded), it records the event with full context
+- **Diagnostic note content**: Each zombie note includes: (1) session name (`<repo>-<assignee>`), (2) aqueduct worker name, (3) current cataractae name, and (4) UTC timestamp in RFC3339 format
+- **Note timing**: The note is added via `client.AddNote` **before** the droplet is reset via `client.Assign`, ensuring the note is persisted even if reset fails
+- **Pool slot released**: The aqueduct pool slot for the dead worker is released, freeing resources for other droplets
+- **Example note format**: `"Session zombie detected: tmux session repo-worker dead, no outcome recorded. Resetting to open for re-dispatch. [2026-03-29T22:10:14Z]"`
+
+**Impact**: Operators running `ct droplet show <id>` can now see when and why a droplet was reset due to a dead session, making it easier to diagnose infrastructure issues and correlate them with external events (e.g., tmux server crash, worker process termination).
+
+**Acceptance criteria met**: (1) Heartbeat adds note before Assign on zombie detection; (2) note includes all four required fields (session, worker, cataractae, UTC timestamp); (3) test asserts note presence and timestamp format; (4) no change to reset logic or pool release behavior.
+
 ### Fix: preserve feature branch when droplet goes stagnant — enables proper commit preservation on restart (ci-r67uy)
 
 This fix addresses a data-loss bug in the droplet lifecycle where commits from prior implementation cycles were silently discarded when a droplet was restarted after going stagnant.
