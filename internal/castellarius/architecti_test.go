@@ -523,8 +523,10 @@ func TestRunArchitecti_GlobalSingletonGuard_ClearsAfterRun(t *testing.T) {
 	}
 }
 
-func TestRunArchitecti_EmptyArray_LogsNoAction(t *testing.T) {
-	// Given: agent returns empty action array
+func TestRunArchitecti_EmptyActions_PooledTrigger_FilesAmbiguityDroplet(t *testing.T) {
+	// Given: pooled trigger, agent returns empty action array.
+	// New policy: 'do nothing' is never acceptable for a pooled droplet —
+	// Architecti must auto-file an ambiguity droplet.
 	client := newMockClient()
 	client.items["d-001"] = pooledDroplet("d-001", 60*time.Minute)
 	s := testSchedulerWithArchitecti(client)
@@ -536,6 +538,43 @@ func TestRunArchitecti_EmptyArray_LogsNoAction(t *testing.T) {
 	// When: runArchitecti runs
 	err := s.runArchitecti(context.Background(), pooledDroplet("d-001", 60*time.Minute), *s.config.Architecti)
 
+	// Then: no error, no assigns or cancels, but ONE ambiguity droplet filed
+	if err != nil {
+		t.Errorf("unexpected error: %v", err)
+	}
+	client.mu.Lock()
+	assigns := client.assignCalls
+	cancels := len(client.cancelled)
+	filed := len(client.filed)
+	client.mu.Unlock()
+	if assigns != 0 || cancels != 0 {
+		t.Errorf("expected no assigns or cancels, got assigns=%d cancels=%d", assigns, cancels)
+	}
+	if filed != 1 {
+		t.Errorf("filed = %d, want 1 (ambiguity droplet must be auto-filed for pooled trigger with no action)", filed)
+	}
+}
+
+func TestRunArchitecti_EmptyActions_NonPooledTrigger_NoAutoFile(t *testing.T) {
+	// Given: non-pooled trigger (e.g., in_progress stuck-routing), agent returns empty actions.
+	// Auto-file only applies to pooled triggers; non-pooled triggers keep the old behaviour.
+	client := newMockClient()
+	trigger := &cistern.Droplet{
+		ID:        "d-001",
+		Repo:      "test-repo",
+		Status:    "in_progress",
+		UpdatedAt: time.Now().Add(-60 * time.Minute),
+	}
+	client.items["d-001"] = trigger
+	s := testSchedulerWithArchitecti(client)
+
+	s.architectiExecFn = func(_ context.Context, _ string) ([]byte, error) {
+		return []byte("[]"), nil
+	}
+
+	// When: runArchitecti runs
+	err := s.runArchitecti(context.Background(), trigger, *s.config.Architecti)
+
 	// Then: no error, no client mutations
 	if err != nil {
 		t.Errorf("unexpected error: %v", err)
@@ -546,7 +585,84 @@ func TestRunArchitecti_EmptyArray_LogsNoAction(t *testing.T) {
 	filed := len(client.filed)
 	client.mu.Unlock()
 	if assigns != 0 || cancels != 0 || filed != 0 {
-		t.Errorf("expected no client actions, got assigns=%d cancels=%d filed=%d", assigns, cancels, filed)
+		t.Errorf("expected no client actions for non-pooled trigger, got assigns=%d cancels=%d filed=%d", assigns, cancels, filed)
+	}
+}
+
+func TestRunArchitecti_RestartAction_PriorRestartNote_EscalatesToCancelAndFile(t *testing.T) {
+	// Given: pooled droplet that was already restarted by Architecti (prior restart note exists).
+	// When Architecti requests another restart, the dispatcher must escalate:
+	// cancel the droplet and file a bug instead of restarting again.
+	client := newMockClient()
+	droplet := pooledDroplet("d-001", 60*time.Minute)
+	client.items["d-001"] = droplet
+	client.notes["d-001"] = []cistern.CataractaeNote{
+		{
+			DropletID:      "d-001",
+			CataractaeName: "architecti",
+			Content:        "Architecti restart → implement: transient orphan",
+			CreatedAt:      time.Now().Add(-25 * time.Hour),
+		},
+	}
+
+	s := testSchedulerWithArchitecti(client)
+	s.architectiExecFn = func(_ context.Context, _ string) ([]byte, error) {
+		return []byte(`[{"action":"restart","droplet_id":"d-001","cataractae":"implement","reason":"pooled again after restart"}]`), nil
+	}
+
+	// When: runArchitecti runs
+	err := s.runArchitecti(context.Background(), droplet, *s.config.Architecti)
+
+	// Then: no error
+	if err != nil {
+		t.Errorf("unexpected error: %v", err)
+	}
+	client.mu.Lock()
+	assigns := client.assignCalls
+	cancelReason := client.cancelled["d-001"]
+	filedCount := len(client.filed)
+	client.mu.Unlock()
+
+	// Then: restart NOT executed (assign not called)
+	if assigns != 0 {
+		t.Errorf("assignCalls = %d, want 0 (restart must be escalated, not executed)", assigns)
+	}
+	// Then: droplet cancelled
+	if cancelReason == "" {
+		t.Error("expected d-001 to be cancelled (escalation path), got empty reason")
+	}
+	// Then: bug droplet filed
+	if filedCount != 1 {
+		t.Errorf("filed = %d, want 1 (bug droplet must be filed on escalation)", filedCount)
+	}
+}
+
+func TestRunArchitecti_RestartAction_GetNotesFails_ProceedsWithRestart(t *testing.T) {
+	// Given: GetNotes returns an error — escalation check cannot determine prior restarts.
+	// Fail-open: proceed with the restart rather than blocking.
+	client := newMockClient()
+	client.items["d-001"] = pooledDroplet("d-001", 60*time.Minute)
+	client.getNotesErr = errors.New("db read error")
+	s := testSchedulerWithArchitecti(client)
+
+	s.architectiExecFn = func(_ context.Context, _ string) ([]byte, error) {
+		return []byte(`[{"action":"restart","droplet_id":"d-001","cataractae":"implement","reason":"test"}]`), nil
+	}
+
+	// When: runArchitecti runs (GetNotes fails so escalation check is skipped)
+	err := s.runArchitecti(context.Background(), pooledDroplet("d-001", 60*time.Minute), *s.config.Architecti)
+
+	// Then: no error; restart proceeds (fail-open when notes are unreadable)
+	if err != nil {
+		t.Errorf("unexpected error: %v", err)
+	}
+	// getNotesErr blocks AddNote too in mockClient — so we only check assignCalls.
+	// The key invariant: restart was attempted (Assign called), not silently dropped.
+	client.mu.Lock()
+	assigns := client.assignCalls
+	client.mu.Unlock()
+	if assigns != 1 {
+		t.Errorf("assignCalls = %d, want 1 (restart should proceed when escalation note lookup fails)", assigns)
 	}
 }
 

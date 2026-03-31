@@ -22,6 +22,12 @@ const (
 	architectiSessionTimeout            = 10 * time.Minute
 	maxActionsPerRun                    = 1000 // cap total actions per invocation for defense-in-depth
 
+	// architectiRestartNotePrefix is the prefix of the note written when Architecti
+	// successfully restarts a droplet. Used by the escalation check to detect prior
+	// restarts: if a note with this prefix already exists, the droplet has been pooled
+	// again after a restart and must be cancelled + filed rather than restarted again.
+	architectiRestartNotePrefix = "Architecti restart →"
+
 	// architectiQueueCap is the capacity of the serial in-memory queue.
 	// Sized generously to accommodate transient bursts of pooled transitions.
 	architectiQueueCap = 64
@@ -199,6 +205,28 @@ func (s *Castellarius) runArchitecti(ctx context.Context, droplet *cistern.Dropl
 
 	if len(actions) == 0 {
 		s.logger.Info("architecti: no action taken", "droplet", droplet.ID)
+		// New policy: 'do nothing' is never acceptable for a pooled droplet.
+		// If the agent returned an empty array for a pooled trigger, auto-file an
+		// ambiguity droplet so the situation is tracked and acted on by a human.
+		if droplet.Status == "pooled" {
+			s.logger.Warn("architecti: pooled trigger produced no action — auto-filing ambiguity droplet",
+				"droplet", droplet.ID)
+			fileAction := ArchitectiAction{
+				Action: "file",
+				Repo:   droplet.Repo,
+				Title:  fmt.Sprintf("Architecti: ambiguous pooled droplet %s — no action taken", droplet.ID),
+				Description: fmt.Sprintf(
+					"Architecti could not determine what action to take for pooled droplet %s. "+
+						"Manual review is required.",
+					droplet.ID),
+				Complexity: "standard",
+				Reason:     fmt.Sprintf("pooled droplet %s produced no action from Architecti", droplet.ID),
+			}
+			if err := s.architectiFile(fileAction); err != nil {
+				s.logger.Error("architecti: auto-file ambiguity droplet failed",
+					"droplet", droplet.ID, "error", err)
+			}
+		}
 		return nil
 	}
 
@@ -449,7 +477,7 @@ func (s *Castellarius) dispatchArchitectiActions(ctx context.Context, actions []
 func (s *Castellarius) dispatchArchitectiAction(_ context.Context, action ArchitectiAction, repoByDroplet map[string]string) error {
 	switch action.Action {
 	case "restart":
-		return s.architectiRestart(action, repoByDroplet)
+		return s.architectiRestartOrEscalate(action, repoByDroplet)
 	case "cancel":
 		return s.architectiCancel(action, repoByDroplet)
 	case "file":
@@ -496,12 +524,6 @@ func (s *Castellarius) architectiRestart(action ArchitectiAction, repoByDroplet 
 		"cataractae", action.Cataractae,
 		"reason", action.Reason)
 
-	// Note the restart so history is preserved.
-	if noteErr := client.AddNote(action.DropletID, "architecti",
-		fmt.Sprintf("Architecti restart → %s: %s", action.Cataractae, action.Reason)); noteErr != nil {
-		s.logger.Warn("architecti: restart note failed",
-			"droplet", action.DropletID, "error", noteErr)
-	}
 	if err := client.Assign(action.DropletID, "", action.Cataractae); err != nil {
 		return err
 	}
@@ -510,7 +532,72 @@ func (s *Castellarius) architectiRestart(action ArchitectiAction, repoByDroplet 
 	s.architectiRestartsMu.Lock()
 	s.architectiRestarts[action.DropletID] = time.Now()
 	s.architectiRestartsMu.Unlock()
+
+	// Write the restart note after a successful Assign so it only appears in
+	// history when the restart actually happened. The escalation check in
+	// architectiRestartOrEscalate uses this note to detect repeat pooling.
+	if noteErr := client.AddNote(action.DropletID, "architecti",
+		fmt.Sprintf("%s %s: %s", architectiRestartNotePrefix, action.Cataractae, action.Reason)); noteErr != nil {
+		s.logger.Warn("architecti: restart note failed",
+			"droplet", action.DropletID, "error", noteErr)
+	}
 	return nil
+}
+
+// architectiRestartOrEscalate handles a "restart" action. If the droplet already
+// has a prior restart note from Architecti, it escalates to cancel + file instead
+// of restarting again — a repeat pool after a restart signals a structural problem
+// that warrants cancellation and a bug droplet, not another restart attempt.
+//
+// If the notes check is unavailable (e.g., client error), the function falls
+// through to the regular restart path (fail-open) so transient note failures do
+// not permanently block recovery.
+func (s *Castellarius) architectiRestartOrEscalate(action ArchitectiAction, repoByDroplet map[string]string) error {
+	client, err := s.architectiClient(action.DropletID, repoByDroplet)
+	if err != nil {
+		// No client means architectiRestart will produce the same error — let it.
+		return s.architectiRestart(action, repoByDroplet)
+	}
+
+	notes, noteErr := client.GetNotes(action.DropletID)
+	if noteErr != nil {
+		s.logger.Warn("architecti: restart escalation check: notes unavailable — proceeding with restart",
+			"droplet", action.DropletID, "error", noteErr)
+	} else {
+		for _, n := range notes {
+			if n.CataractaeName == "architecti" && strings.HasPrefix(n.Content, architectiRestartNotePrefix) {
+				// Prior successful restart found — this droplet has been pooled again.
+				// Escalate: cancel the droplet and file a bug to track the repeat failure.
+				s.logger.Info("architecti: prior restart note found — escalating to cancel+file",
+					"droplet", action.DropletID, "prior_note", n.Content)
+
+				cancelAction := ArchitectiAction{
+					Action:    "cancel",
+					DropletID: action.DropletID,
+					Reason:    fmt.Sprintf("pooled again after prior architecti restart — escalating: %s", action.Reason),
+				}
+				if err := s.architectiCancel(cancelAction, repoByDroplet); err != nil {
+					return fmt.Errorf("restart escalation: cancel: %w", err)
+				}
+
+				repo := repoByDroplet[action.DropletID]
+				fileAction := ArchitectiAction{
+					Action: "file",
+					Repo:   repo,
+					Title:  fmt.Sprintf("Architecti escalation: %s pooled again after restart", action.DropletID),
+					Description: fmt.Sprintf(
+						"Droplet %s was previously restarted by Architecti but pooled again.\n\n"+
+							"Prior restart note: %s\nEscalation reason: %s",
+						action.DropletID, n.Content, action.Reason),
+					Complexity: "standard",
+					Reason:     fmt.Sprintf("droplet %s pooled again after prior architecti restart", action.DropletID),
+				}
+				return s.architectiFile(fileAction)
+			}
+		}
+	}
+
+	return s.architectiRestart(action, repoByDroplet)
 }
 
 func (s *Castellarius) architectiCancel(action ArchitectiAction, repoByDroplet map[string]string) error {
