@@ -264,27 +264,19 @@ func writeContextFile(path string, p ContextParams) error {
 	if len(ownNotes) > 4 {
 		ownNotes = ownNotes[:4]
 	}
-	if len(ownNotes) > 0 {
-		b.WriteString("## Recent Step Notes\n\n")
-		for _, n := range ownNotes {
+	writeNoteSection := func(heading string, notes []cistern.CataractaeNote) {
+		if len(notes) == 0 {
+			return
+		}
+		b.WriteString(heading + "\n\n")
+		for _, n := range notes {
 			b.WriteString(n.Content)
 			b.WriteString("\n\n")
 		}
 	}
-	if len(manualNotes) > 0 {
-		b.WriteString("## Manual Notes\n\n")
-		for _, n := range manualNotes {
-			b.WriteString(n.Content)
-			b.WriteString("\n\n")
-		}
-	}
-	if len(schedulerNotes) > 0 {
-		b.WriteString("## Scheduler Notes\n\n")
-		for _, n := range schedulerNotes {
-			b.WriteString(n.Content)
-			b.WriteString("\n\n")
-		}
-	}
+	writeNoteSection("## Recent Step Notes", ownNotes)
+	writeNoteSection("## Manual Notes", manualNotes)
+	writeNoteSection("## Scheduler Notes", schedulerNotes)
 
 	if len(p.Step.Skills) > 0 {
 		b.WriteString("<available_skills>\n")
