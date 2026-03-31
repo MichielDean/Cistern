@@ -437,6 +437,19 @@ drought_hooks:
     action: cataractae_generate
   - name: prune-worktrees
     action: worktree_prune
+
+# External issue tracker integrations — configure providers to import droplets from external trackers
+# trackers:
+#   - name: jira                              # Provider name (e.g. "jira", "linear")
+#     url: https://myorg.atlassian.net        # Base URL of the tracker instance
+#     email: user@example.com                 # User email (for authentication, tracker-dependent)
+#     token: my-api-token                     # Literal API token (TokenEnv preferred for production)
+#     # OR use an environment variable for the token:
+#     # token_env: JIRA_TOKEN                 # Reads from $JIRA_TOKEN at runtime (takes precedence)
+#
+#   - name: linear
+#     url: https://linear.app
+#     token_env: LINEAR_TOKEN                 # Reads from $LINEAR_TOKEN at runtime
 ```
 
 See `cistern.yaml` in this repo for all options.

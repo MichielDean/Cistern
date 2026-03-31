@@ -1,6 +1,9 @@
 package aqueduct
 
-import "sort"
+import (
+	"os"
+	"sort"
+)
 
 // CataractaeType classifies what runs in a workflow step.
 type CataractaeType string
@@ -160,6 +163,36 @@ type LLMConfig struct {
 	APIKeyEnv string `yaml:"api_key_env,omitempty"`
 }
 
+// TrackerConfig configures a single external issue tracker provider.
+// It is used to connect Cistern to issue trackers (e.g. Jira, Linear)
+// so that droplets can be imported from external work items.
+type TrackerConfig struct {
+	// Name is the provider identifier (e.g. "jira", "linear").
+	Name string `yaml:"name"`
+	// URL is the base URL of the tracker instance (e.g. "https://myorg.atlassian.net").
+	URL string `yaml:"url,omitempty"`
+	// Email is the user email used for authentication (e.g. Jira Cloud basic auth).
+	Email string `yaml:"email,omitempty"`
+	// Token is a literal API token or personal access token.
+	// When TokenEnv is also set, TokenEnv takes precedence.
+	Token string `yaml:"token,omitempty"`
+	// TokenEnv is the name of an environment variable whose value is the API token.
+	// When non-empty, the token is read from this variable at runtime.
+	TokenEnv string `yaml:"token_env,omitempty"`
+}
+
+// ResolvedToken returns the API token for this tracker config.
+// When TokenEnv is set and the named environment variable is non-empty,
+// its value is returned. Otherwise Token is returned.
+func (tc TrackerConfig) ResolvedToken() string {
+	if tc.TokenEnv != "" {
+		if v := os.Getenv(tc.TokenEnv); v != "" {
+			return v
+		}
+	}
+	return tc.Token
+}
+
 // AqueductConfig is the top-level configuration for a Cistern instance.
 type AqueductConfig struct {
 	Repos                 []RepoConfig `yaml:"repos"`
@@ -201,4 +234,8 @@ type AqueductConfig struct {
 	// dashboard UI. Defaults to a monospace stack when empty.
 	DashboardFontFamily string `yaml:"dashboard_font_family,omitempty"`
 
+	// Trackers configures external issue tracker providers. Each entry describes
+	// one provider instance (e.g. a Jira project or a Linear workspace).
+	// Used by tracker integrations to import droplets from external work items.
+	Trackers []TrackerConfig `yaml:"trackers,omitempty"`
 }

@@ -704,3 +704,134 @@ func TestScaffoldCataractaeDir_ErrorIfInstructionsExists(t *testing.T) {
 		t.Errorf("error = %q, want it to contain 'already exists'", err)
 	}
 }
+
+// --- TrackerConfig tests ---
+
+// TestTrackerConfig_ResolvedToken_UsesLiteralToken verifies that when TokenEnv is
+// empty, the literal Token value is returned.
+func TestTrackerConfig_ResolvedToken_UsesLiteralToken(t *testing.T) {
+	tc := TrackerConfig{Token: "my-secret-token"}
+	if got := tc.ResolvedToken(); got != "my-secret-token" {
+		t.Errorf("ResolvedToken() = %q, want %q", got, "my-secret-token")
+	}
+}
+
+// TestTrackerConfig_ResolvedToken_UsesEnvVarWhenSet verifies that when TokenEnv
+// names a populated environment variable, its value is returned.
+func TestTrackerConfig_ResolvedToken_UsesEnvVarWhenSet(t *testing.T) {
+	t.Setenv("TEST_TRACKER_TOKEN", "env-token-value")
+	tc := TrackerConfig{TokenEnv: "TEST_TRACKER_TOKEN"}
+	if got := tc.ResolvedToken(); got != "env-token-value" {
+		t.Errorf("ResolvedToken() = %q, want %q", got, "env-token-value")
+	}
+}
+
+// TestTrackerConfig_ResolvedToken_EnvVarTakesPrecedenceOverLiteral verifies that
+// when both Token and TokenEnv are set, the env var value wins.
+func TestTrackerConfig_ResolvedToken_EnvVarTakesPrecedenceOverLiteral(t *testing.T) {
+	t.Setenv("TEST_TRACKER_TOKEN2", "from-env")
+	tc := TrackerConfig{Token: "literal", TokenEnv: "TEST_TRACKER_TOKEN2"}
+	if got := tc.ResolvedToken(); got != "from-env" {
+		t.Errorf("ResolvedToken() = %q, want env value %q", got, "from-env")
+	}
+}
+
+// TestTrackerConfig_ResolvedToken_FallsBackToTokenWhenEnvUnset verifies that when
+// TokenEnv is set but the variable is not in the environment, Token is returned.
+func TestTrackerConfig_ResolvedToken_FallsBackToTokenWhenEnvUnset(t *testing.T) {
+	// Set the variable to empty string — os.Getenv returns "" for both unset and empty, so this exercises the fallback path.
+	t.Setenv("TEST_TRACKER_MISSING", "")
+	tc := TrackerConfig{Token: "fallback-token", TokenEnv: "TEST_TRACKER_MISSING"}
+	if got := tc.ResolvedToken(); got != "fallback-token" {
+		t.Errorf("ResolvedToken() = %q, want %q", got, "fallback-token")
+	}
+}
+
+// TestTrackerConfig_ResolvedToken_EmptyWhenNeitherSet verifies that an empty string
+// is returned when neither Token nor TokenEnv is configured.
+func TestTrackerConfig_ResolvedToken_EmptyWhenNeitherSet(t *testing.T) {
+	tc := TrackerConfig{}
+	if got := tc.ResolvedToken(); got != "" {
+		t.Errorf("ResolvedToken() = %q, want empty string", got)
+	}
+}
+
+// TestAqueductConfig_Trackers_ParsedFromYAML verifies that the trackers: key is
+// parsed correctly from a cistern.yaml config.
+func TestAqueductConfig_Trackers_ParsedFromYAML(t *testing.T) {
+	yaml := `
+repos:
+  - name: myrepo
+    cataractae: 1
+    prefix: mr
+trackers:
+  - name: jira
+    url: https://myorg.atlassian.net
+    email: me@example.com
+    token: secret123
+  - name: linear
+    url: https://linear.app
+    token_env: LINEAR_TOKEN
+`
+	tmpDir := t.TempDir()
+	cfgPath := filepath.Join(tmpDir, "cistern.yaml")
+	if err := os.WriteFile(cfgPath, []byte(yaml), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := ParseAqueductConfig(cfgPath)
+	if err != nil {
+		t.Fatalf("ParseAqueductConfig: %v", err)
+	}
+
+	if len(cfg.Trackers) != 2 {
+		t.Fatalf("Trackers: got %d entries, want 2", len(cfg.Trackers))
+	}
+
+	jira := cfg.Trackers[0]
+	if jira.Name != "jira" {
+		t.Errorf("Trackers[0].Name = %q, want %q", jira.Name, "jira")
+	}
+	if jira.URL != "https://myorg.atlassian.net" {
+		t.Errorf("Trackers[0].URL = %q, want expected URL", jira.URL)
+	}
+	if jira.Email != "me@example.com" {
+		t.Errorf("Trackers[0].Email = %q, want %q", jira.Email, "me@example.com")
+	}
+	if jira.Token != "secret123" {
+		t.Errorf("Trackers[0].Token = %q, want %q", jira.Token, "secret123")
+	}
+
+	linear := cfg.Trackers[1]
+	if linear.Name != "linear" {
+		t.Errorf("Trackers[1].Name = %q, want %q", linear.Name, "linear")
+	}
+	if linear.TokenEnv != "LINEAR_TOKEN" {
+		t.Errorf("Trackers[1].TokenEnv = %q, want %q", linear.TokenEnv, "LINEAR_TOKEN")
+	}
+}
+
+// TestAqueductConfig_Trackers_OmittedWhenAbsent verifies that the Trackers field
+// is nil when the trackers: key is absent from the config.
+func TestAqueductConfig_Trackers_OmittedWhenAbsent(t *testing.T) {
+	yaml := `
+repos:
+  - name: myrepo
+    cataractae: 1
+    prefix: mr
+`
+	tmpDir := t.TempDir()
+	cfgPath := filepath.Join(tmpDir, "cistern.yaml")
+	if err := os.WriteFile(cfgPath, []byte(yaml), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := ParseAqueductConfig(cfgPath)
+	if err != nil {
+		t.Fatalf("ParseAqueductConfig: %v", err)
+	}
+
+	if cfg.Trackers != nil {
+		t.Errorf("Trackers = %v, want nil when trackers: absent", cfg.Trackers)
+	}
+}

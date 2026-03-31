@@ -80,3 +80,16 @@ drought_hooks:
 
   - name: cleanup-tmp
     action: tmp_cleanup         # Remove stale ct-diff/ct-review temp dirs (>2h old)
+
+# External issue tracker integrations — configure tracker providers for droplet import
+# trackers:
+#   - name: jira
+#     url: https://myorg.atlassian.net
+#     email: user@example.com
+#     token: api-token-here                    # Literal token (not recommended for production)
+#     # OR use environment variable:
+#     # token_env: JIRA_TOKEN                  # Reads from $JIRA_TOKEN at runtime
+#
+#   - name: linear
+#     url: https://linear.app
+#     token_env: LINEAR_TOKEN                  # Reads from $LINEAR_TOKEN at runtime
