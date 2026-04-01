@@ -647,33 +647,7 @@ func TestPrintAuditFindings_PrintsAllFindings(t *testing.T) {
 func TestAuditRunCmd_DryRun_PrintsFindingsWithoutFiling(t *testing.T) {
 	fakeagentBin := buildTestBin(t, "fakeauditagent", "github.com/MichielDean/cistern/internal/testutil/fakeauditagent")
 
-	repoName := fmt.Sprintf("AuditTestRepo-%d", time.Now().UnixNano())
-
-	// Create a fake repo worktree directory so Stat() passes.
-	home := t.TempDir()
-	repoWorktree := filepath.Join(home, ".cistern", "sandboxes", repoName, "_primary")
-	if err := os.MkdirAll(repoWorktree, 0o755); err != nil {
-		t.Fatalf("MkdirAll: %v", err)
-	}
-
-	db := filepath.Join(t.TempDir(), "test.db")
-	cfgPath := writeTestConfigWithAgent(t, repoName, fakeagentBin)
-	t.Setenv("CT_CONFIG", cfgPath)
-	t.Setenv("CT_DB", db)
-	t.Setenv("CT_NO_ASCII_LOGO", "1")
-	// Override UserHomeDir so filepath.Join(home, ".cistern",...) resolves correctly.
-	t.Setenv("HOME", home)
-	// Reset audit flag globals before the command runs to prevent cross-test contamination.
-	auditRunRepo = ""
-	auditRunDryRun = false
-	auditRunModel = ""
-	auditRunPriority = 1
-	t.Cleanup(func() {
-		auditRunRepo = ""
-		auditRunDryRun = false
-		auditRunModel = ""
-		auditRunPriority = 1
-	})
+	repoName, db := setupAuditRunTest(t, fakeagentBin)
 
 	out := captureStdout(t, func() {
 		err := execCmd(t, "audit", "run", "--repo", repoName, "--dry-run")
@@ -712,31 +686,7 @@ func TestAuditRunCmd_DryRun_PrintsFindingsWithoutFiling(t *testing.T) {
 func TestAuditRunCmd_FilesDropletsForFindings(t *testing.T) {
 	fakeagentBin := buildTestBin(t, "fakeauditagent", "github.com/MichielDean/cistern/internal/testutil/fakeauditagent")
 
-	repoName := fmt.Sprintf("AuditTestRepo-%d", time.Now().UnixNano())
-
-	home := t.TempDir()
-	repoWorktree := filepath.Join(home, ".cistern", "sandboxes", repoName, "_primary")
-	if err := os.MkdirAll(repoWorktree, 0o755); err != nil {
-		t.Fatalf("MkdirAll: %v", err)
-	}
-
-	db := filepath.Join(t.TempDir(), "test.db")
-	cfgPath := writeTestConfigWithAgent(t, repoName, fakeagentBin)
-	t.Setenv("CT_CONFIG", cfgPath)
-	t.Setenv("CT_DB", db)
-	t.Setenv("CT_NO_ASCII_LOGO", "1")
-	t.Setenv("HOME", home)
-	// Reset audit flag globals before the command runs to prevent cross-test contamination.
-	auditRunRepo = ""
-	auditRunDryRun = false
-	auditRunModel = ""
-	auditRunPriority = 1
-	t.Cleanup(func() {
-		auditRunRepo = ""
-		auditRunDryRun = false
-		auditRunModel = ""
-		auditRunPriority = 1
-	})
+	repoName, db := setupAuditRunTest(t, fakeagentBin)
 
 	err := execCmd(t, "audit", "run", "--repo", repoName)
 	if err != nil {
@@ -779,31 +729,7 @@ func TestAuditRunCmd_MultipleFindings_SummaryShowsCorrectSeverityPerFinding(t *t
 	fakeagentBin := buildTestBin(t, "fakeauditagent", "github.com/MichielDean/cistern/internal/testutil/fakeauditagent")
 	t.Setenv("FAKEAUDITAGENT_MODE", "multi")
 
-	repoName := fmt.Sprintf("AuditTestRepo-%d", time.Now().UnixNano())
-
-	home := t.TempDir()
-	repoWorktree := filepath.Join(home, ".cistern", "sandboxes", repoName, "_primary")
-	if err := os.MkdirAll(repoWorktree, 0o755); err != nil {
-		t.Fatalf("MkdirAll: %v", err)
-	}
-
-	db := filepath.Join(t.TempDir(), "test.db")
-	cfgPath := writeTestConfigWithAgent(t, repoName, fakeagentBin)
-	t.Setenv("CT_CONFIG", cfgPath)
-	t.Setenv("CT_DB", db)
-	t.Setenv("CT_NO_ASCII_LOGO", "1")
-	t.Setenv("HOME", home)
-	// Reset audit flag globals before the command runs to prevent cross-test contamination.
-	auditRunRepo = ""
-	auditRunDryRun = false
-	auditRunModel = ""
-	auditRunPriority = 1
-	t.Cleanup(func() {
-		auditRunRepo = ""
-		auditRunDryRun = false
-		auditRunModel = ""
-		auditRunPriority = 1
-	})
+	repoName, _ := setupAuditRunTest(t, fakeagentBin)
 
 	out := captureStdout(t, func() {
 		err := execCmd(t, "audit", "run", "--repo", repoName)
@@ -820,6 +746,44 @@ func TestAuditRunCmd_MultipleFindings_SummaryShowsCorrectSeverityPerFinding(t *t
 			t.Errorf("summary missing [%s]: %s", sev, out)
 		}
 	}
+}
+
+// setupAuditRunTest creates an isolated environment for end-to-end audit run tests.
+// It generates a unique repo name, sets up a temporary home dir with the required
+// worktree, creates an isolated DB, writes a config, sets all required env vars,
+// and resets the package-level audit flag globals before and after the test to
+// prevent cross-test contamination.
+// Returns the unique repo name and path to the isolated DB.
+func setupAuditRunTest(t *testing.T, fakeagentBin string) (repoName, db string) {
+	t.Helper()
+	repoName = fmt.Sprintf("AuditTestRepo-%d", time.Now().UnixNano())
+
+	// Create a fake repo worktree directory so Stat() passes.
+	home := t.TempDir()
+	repoWorktree := filepath.Join(home, ".cistern", "sandboxes", repoName, "_primary")
+	if err := os.MkdirAll(repoWorktree, 0o755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+
+	db = filepath.Join(t.TempDir(), "test.db")
+	cfgPath := writeTestConfigWithAgent(t, repoName, fakeagentBin)
+	t.Setenv("CT_CONFIG", cfgPath)
+	t.Setenv("CT_DB", db)
+	t.Setenv("CT_NO_ASCII_LOGO", "1")
+	// Override UserHomeDir so filepath.Join(home, ".cistern",...) resolves correctly.
+	t.Setenv("HOME", home)
+	// Reset audit flag globals before and after to prevent cross-test contamination.
+	auditRunRepo = ""
+	auditRunDryRun = false
+	auditRunModel = ""
+	auditRunPriority = 1
+	t.Cleanup(func() {
+		auditRunRepo = ""
+		auditRunDryRun = false
+		auditRunModel = ""
+		auditRunPriority = 1
+	})
+	return repoName, db
 }
 
 // writeTestConfigWithAgent writes a cistern.yaml that overrides the agent command
