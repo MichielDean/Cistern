@@ -166,7 +166,14 @@ func writePipelinePositionFile(cataractaeDir, identity string, w *Workflow) (str
 		}
 	}
 
-	var predLine, succLine string
+	var roleLine, predLine, succLine string
+
+	if idx >= 0 {
+		roleLine = neighborLine(w.Cataractae[idx], cataractaeDir)
+	} else {
+		data, _ := os.ReadFile(filepath.Join(cataractaeDir, identity, "PERSONA.md"))
+		roleLine = identity + " — " + personaDescription(data, identity)
+	}
 
 	if idx < 0 || idx == 0 {
 		predLine = "none — you are first"
@@ -181,7 +188,7 @@ func writePipelinePositionFile(cataractaeDir, identity string, w *Workflow) (str
 	}
 
 	content := "# Pipeline Position\n\n" +
-		"- Your role: " + identity + "\n" +
+		"- Your role: " + roleLine + "\n" +
 		"- Predecessor: " + predLine + "\n" +
 		"- Successor: " + succLine + "\n"
 
@@ -194,7 +201,7 @@ func writePipelinePositionFile(cataractaeDir, identity string, w *Workflow) (str
 
 // injectProtocolSkill copies the cataractae-protocol SKILL.md into
 // <cataractaeDir>/<identity>/skills/cataractae-protocol/SKILL.md.
-// Returns the destination path and true when copied; returns "", nil when the
+// Returns the destination path when copied; returns "", nil when the
 // source is absent or empty (graceful skip for fresh environments).
 func injectProtocolSkill(cataractaeDir, identity string) (string, error) {
 	src := protocolSkillPathFn()

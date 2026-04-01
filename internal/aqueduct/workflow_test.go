@@ -912,8 +912,8 @@ func TestGenerateCataractaeFiles_WritesPipelinePosition(t *testing.T) {
 
 	// Check implementer (first): no predecessor, successor = reviewer.
 	implPos := readFileOrFail(t, filepath.Join(tmpDir, "implementer", "PIPELINE_POSITION.md"))
-	if !strings.Contains(implPos, "Your role: implementer") {
-		t.Errorf("implementer PIPELINE_POSITION.md missing 'Your role: implementer'; got:\n%s", implPos)
+	if !strings.Contains(implPos, "Your role: implementer — Writes code.") {
+		t.Errorf("implementer PIPELINE_POSITION.md missing 'Your role: implementer — Writes code.'; got:\n%s", implPos)
 	}
 	if !strings.Contains(implPos, "Predecessor: none — you are first") {
 		t.Errorf("implementer should have no predecessor; got:\n%s", implPos)
@@ -924,6 +924,9 @@ func TestGenerateCataractaeFiles_WritesPipelinePosition(t *testing.T) {
 
 	// Check reviewer (middle): predecessor = implementer, successor = qa.
 	revPos := readFileOrFail(t, filepath.Join(tmpDir, "reviewer", "PIPELINE_POSITION.md"))
+	if !strings.Contains(revPos, "Your role: reviewer — Reviews code.") {
+		t.Errorf("reviewer PIPELINE_POSITION.md missing 'Your role: reviewer — Reviews code.'; got:\n%s", revPos)
+	}
 	if !strings.Contains(revPos, "Predecessor: implementer") {
 		t.Errorf("reviewer predecessor should be implementer; got:\n%s", revPos)
 	}
@@ -933,6 +936,9 @@ func TestGenerateCataractaeFiles_WritesPipelinePosition(t *testing.T) {
 
 	// Check qa (last): predecessor = reviewer, no successor.
 	qaPos := readFileOrFail(t, filepath.Join(tmpDir, "qa", "PIPELINE_POSITION.md"))
+	if !strings.Contains(qaPos, "Your role: qa — Tests code.") {
+		t.Errorf("qa PIPELINE_POSITION.md missing 'Your role: qa — Tests code.'; got:\n%s", qaPos)
+	}
 	if !strings.Contains(qaPos, "Predecessor: reviewer") {
 		t.Errorf("qa predecessor should be reviewer; got:\n%s", qaPos)
 	}
@@ -1004,6 +1010,29 @@ func TestGenerateCataractaeFiles_PipelinePosition_DescriptionFromPersona(t *test
 	// Predecessor description should come from implementer's PERSONA.md.
 	if !strings.Contains(revPos, "Writes production code.") {
 		t.Errorf("reviewer's predecessor description should include implementer's persona; got:\n%s", revPos)
+	}
+}
+
+// TestGenerateCataractaeFiles_PipelinePosition_OwnRoleIncludesDescription verifies
+// that the "Your role:" line includes the description from the identity's own PERSONA.md,
+// not just the bare identity name.
+func TestGenerateCataractaeFiles_PipelinePosition_OwnRoleIncludesDescription(t *testing.T) {
+	orig := protocolSkillPathFn
+	protocolSkillPathFn = func() string { return "" }
+	t.Cleanup(func() { protocolSkillPathFn = orig })
+
+	tmpDir := t.TempDir()
+	setupIdentityDir(t, tmpDir, "implementer", "# Role: Implementer\n\nWrites production-quality code.\n")
+
+	wf := workflowWithIdentity("implementer")
+	_, err := GenerateCataractaeFiles(wf, tmpDir, "")
+	if err != nil {
+		t.Fatalf("GenerateCataractaeFiles: %v", err)
+	}
+
+	pos := readFileOrFail(t, filepath.Join(tmpDir, "implementer", "PIPELINE_POSITION.md"))
+	if !strings.Contains(pos, "Your role: implementer — Writes production-quality code.") {
+		t.Errorf("expected 'Your role: implementer — Writes production-quality code.' in PIPELINE_POSITION.md; got:\n%s", pos)
 	}
 }
 
