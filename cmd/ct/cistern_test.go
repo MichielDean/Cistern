@@ -479,8 +479,6 @@ func TestDropletAddCmd_NormalizesRepoCase(t *testing.T) {
 	addTitle = "Test droplet"
 	addRepo = "portfoliowebsite"
 	addComplexity = "1"
-	addFilter = false
-	addYes = false
 	addDescription = ""
 	addPriority = 1
 	addDependsOn = nil
@@ -524,7 +522,6 @@ func TestDropletAddCmd_UnknownRepo_ReturnsError(t *testing.T) {
 	addTitle = "Test droplet"
 	addRepo = "nonexistent"
 	addComplexity = "1"
-	addFilter = false
 	defer func() {
 		addTitle = ""
 		addRepo = ""

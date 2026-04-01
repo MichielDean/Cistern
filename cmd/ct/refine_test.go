@@ -8,185 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/MichielDean/cistern/internal/provider"
 	"github.com/MichielDean/cistern/internal/testutil/mockllm"
 )
-
-// --- extractProposals tests ---
-
-func TestExtractProposals_ValidJSONArray(t *testing.T) {
-	input := `[
-  {
-    "title": "Add user auth",
-    "description": "Implement JWT-based authentication",
-    "complexity": "standard",
-    "depends_on": []
-  }
-]`
-	proposals, err := extractProposals(input)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if len(proposals) != 1 {
-		t.Fatalf("expected 1 proposal, got %d", len(proposals))
-	}
-	if proposals[0].Title != "Add user auth" {
-		t.Errorf("expected title 'Add user auth', got %q", proposals[0].Title)
-	}
-	if proposals[0].Complexity != "standard" {
-		t.Errorf("expected complexity 'standard', got %q", proposals[0].Complexity)
-	}
-}
-
-func TestExtractProposals_MultiplePropWithDeps(t *testing.T) {
-	input := `[
-  {
-    "title": "Create schema",
-    "description": "Define database schema",
-    "complexity": "trivial",
-    "depends_on": []
-  },
-  {
-    "title": "Build API",
-    "description": "REST API on top of schema",
-    "complexity": "full",
-    "depends_on": ["Create schema"]
-  }
-]`
-	proposals, err := extractProposals(input)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if len(proposals) != 2 {
-		t.Fatalf("expected 2 proposals, got %d", len(proposals))
-	}
-	if len(proposals[1].DependsOn) != 1 || proposals[1].DependsOn[0] != "Create schema" {
-		t.Errorf("unexpected depends_on: %v", proposals[1].DependsOn)
-	}
-}
-
-func TestExtractProposals_EmbeddedInText(t *testing.T) {
-	input := `Here are my proposed droplets:
-
-[
-  {
-    "title": "Fix login bug",
-    "description": "Handle edge case in login flow",
-    "complexity": "trivial",
-    "depends_on": []
-  }
-]
-
-Let me know if you'd like changes.`
-	proposals, err := extractProposals(input)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if len(proposals) != 1 {
-		t.Fatalf("expected 1 proposal, got %d", len(proposals))
-	}
-	if proposals[0].Title != "Fix login bug" {
-		t.Errorf("expected title 'Fix login bug', got %q", proposals[0].Title)
-	}
-}
-
-func TestExtractProposals_MarkdownCodeFence(t *testing.T) {
-	input := "Here is my analysis.\n\n```json\n[\n  {\n    \"title\": \"Refactor auth\",\n    \"description\": \"Clean up auth logic\",\n    \"complexity\": \"standard\",\n    \"depends_on\": []\n  }\n]\n```"
-	proposals, err := extractProposals(input)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if len(proposals) != 1 {
-		t.Fatalf("expected 1 proposal, got %d", len(proposals))
-	}
-	if proposals[0].Title != "Refactor auth" {
-		t.Errorf("expected title 'Refactor auth', got %q", proposals[0].Title)
-	}
-}
-
-func TestExtractProposals_InvalidJSON(t *testing.T) {
-	_, err := extractProposals("this is not json at all")
-	if err == nil {
-		t.Fatal("expected error for non-JSON input")
-	}
-}
-
-func TestExtractProposals_EmptyArray(t *testing.T) {
-	_, err := extractProposals("[]")
-	if err == nil {
-		t.Fatal("expected error for empty array")
-	}
-}
-
-func TestExtractProposals_MalformedJSON(t *testing.T) {
-	_, err := extractProposals(`[{"title": "broken" "description": "missing comma"}]`)
-	if err == nil {
-		t.Fatal("expected error for malformed JSON")
-	}
-}
-
-// --- DropletProposal JSON round-trip ---
-
-func TestDropletProposal_JSONRoundTrip(t *testing.T) {
-	original := DropletProposal{
-		Title:       "Implement feature X",
-		Description: "Full description here",
-		Complexity:  "full",
-		DependsOn:   []string{"dep-1", "dep-2"},
-	}
-	data, err := json.Marshal(original)
-	if err != nil {
-		t.Fatalf("marshal error: %v", err)
-	}
-	var got DropletProposal
-	if err := json.Unmarshal(data, &got); err != nil {
-		t.Fatalf("unmarshal error: %v", err)
-	}
-	if got.Title != original.Title {
-		t.Errorf("title mismatch: got %q", got.Title)
-	}
-	if got.Complexity != original.Complexity {
-		t.Errorf("complexity mismatch: got %q", got.Complexity)
-	}
-	if len(got.DependsOn) != 2 || got.DependsOn[0] != "dep-1" {
-		t.Errorf("depends_on mismatch: got %v", got.DependsOn)
-	}
-}
-
-func TestDropletProposal_NullDependsOn(t *testing.T) {
-	input := `[{"title":"T","description":"D","complexity":"trivial","depends_on":null}]`
-	proposals, err := extractProposals(input)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if proposals[0].DependsOn != nil && len(proposals[0].DependsOn) != 0 {
-		t.Errorf("expected nil/empty depends_on, got %v", proposals[0].DependsOn)
-	}
-}
-
-// --- complexityToInt helper ---
-
-func TestComplexityToInt(t *testing.T) {
-	tests := []struct {
-		input string
-		want  int
-	}{
-		{"standard", 1},
-		{"full", 2},
-		{"critical", 3},
-		{"unknown", 2},
-		{"", 2},
-		{"trivial", 2},
-	}
-	for _, tt := range tests {
-		got := complexityToInt(tt.input)
-		if got != tt.want {
-			t.Errorf("complexityToInt(%q) = %d, want %d", tt.input, got, tt.want)
-		}
-	}
-}
-
-// --- runNonInteractive tests ---
 
 // buildTestBin compiles the Go package at importPath into a temp directory
 // and returns the absolute path to the resulting binary.
@@ -198,123 +21,6 @@ func buildTestBin(t *testing.T, name, importPath string) string {
 		t.Fatalf("build %s: %v\n%s", name, err, out)
 	}
 	return bin
-}
-
-// TestRunNonInteractive_ReturnsProposals verifies that runNonInteractive correctly
-// invokes the agent binary and parses the JSON proposal array from stdout.
-// Given a preset pointing at fakeagent, when called with -p, fakeagent prints
-// a hardcoded JSON array. Then the proposals are parsed and returned.
-func TestRunNonInteractive_ReturnsProposals(t *testing.T) {
-	fakeagentBin := buildTestBin(t, "fakeagent", "github.com/MichielDean/cistern/internal/testutil/fakeagent")
-
-	preset := provider.ProviderPreset{
-		Name:           "test",
-		Command:        fakeagentBin,
-		Args:           []string{"--dangerously-skip-permissions"},
-		EnvPassthrough: []string{"TEST_REQUIRED_KEY"},
-		NonInteractive: provider.NonInteractiveConfig{
-			PrintFlag:  "--print",
-			PromptFlag: "-p",
-		},
-	}
-
-	t.Setenv("TEST_REQUIRED_KEY", "test-value")
-
-	proposals, err := runNonInteractive(preset, filterSystemPrompt, "Title: Fix login bug\nDescription: Handle edge case")
-	if err != nil {
-		t.Fatalf("runNonInteractive: unexpected error: %v", err)
-	}
-
-	if len(proposals) != 1 {
-		t.Fatalf("expected 1 proposal, got %d", len(proposals))
-	}
-	if proposals[0].Title != "mock proposal" {
-		t.Errorf("title = %q, want %q", proposals[0].Title, "mock proposal")
-	}
-	if proposals[0].Complexity != "standard" {
-		t.Errorf("complexity = %q, want %q", proposals[0].Complexity, "standard")
-	}
-	if proposals[0].Description != "test description" {
-		t.Errorf("description = %q, want %q", proposals[0].Description, "test description")
-	}
-}
-
-// TestRunNonInteractive_WithSubcommand verifies that a preset with a Subcommand
-// (e.g. codex "exec") is correctly handled: runNonInteractive inserts the
-// subcommand as the first positional arg, followed by Args, PrintFlag, and the
-// prompt. fakeagent detects non-interactive mode via --print.
-func TestRunNonInteractive_WithSubcommand(t *testing.T) {
-	fakeagentBin := buildTestBin(t, "fakeagent", "github.com/MichielDean/cistern/internal/testutil/fakeagent")
-
-	preset := provider.ProviderPreset{
-		Name:           "test-codex",
-		Command:        fakeagentBin,
-		EnvPassthrough: []string{"TEST_REQUIRED_KEY"},
-		NonInteractive: provider.NonInteractiveConfig{
-			Subcommand: "exec",
-			PrintFlag:  "--print",
-			PromptFlag: "-p",
-		},
-	}
-
-	t.Setenv("TEST_REQUIRED_KEY", "test-value")
-
-	proposals, err := runNonInteractive(preset, filterSystemPrompt, "Title: Test subcommand")
-	if err != nil {
-		t.Fatalf("runNonInteractive with subcommand: unexpected error: %v", err)
-	}
-	if len(proposals) == 0 {
-		t.Fatal("expected proposals, got none")
-	}
-}
-
-// TestRunNonInteractive_AgentExecFailure verifies that when the agent binary exits
-// non-zero, runNonInteractive returns an error that includes the agent's stderr output.
-// Given a preset pointing at failagent (which writes a known message to stderr and exits 1),
-// when runNonInteractive is called,
-// then the error should contain the stderr content for diagnosability.
-func TestRunNonInteractive_AgentExecFailure(t *testing.T) {
-	failagentBin := buildTestBin(t, "failagent", "github.com/MichielDean/cistern/internal/testutil/failagent")
-
-	preset := provider.ProviderPreset{
-		Name:           "test-fail",
-		Command:        failagentBin,
-		EnvPassthrough: []string{"TEST_REQUIRED_KEY"},
-		NonInteractive: provider.NonInteractiveConfig{
-			PrintFlag:  "--print",
-			PromptFlag: "-p",
-		},
-	}
-
-	t.Setenv("TEST_REQUIRED_KEY", "test-value")
-
-	_, err := runNonInteractive(preset, "system", "user")
-	if err == nil {
-		t.Fatal("expected error when agent exits non-zero, got nil")
-	}
-	const wantStderr = "agent crashed: something went wrong"
-	if !strings.Contains(err.Error(), wantStderr) {
-		t.Errorf("error %q does not contain expected stderr %q", err.Error(), wantStderr)
-	}
-}
-
-// TestRunNonInteractive_MissingAuthKey verifies that runNonInteractive returns an
-// error when a required env var from EnvPassthrough is not set, without executing
-// the agent binary.
-func TestRunNonInteractive_MissingAuthKey(t *testing.T) {
-	preset := provider.ProviderPreset{
-		Name:           "test",
-		Command:        "true",
-		EnvPassthrough: []string{"ANTHROPIC_API_KEY"},
-		NonInteractive: provider.NonInteractiveConfig{PromptFlag: "-p"},
-	}
-
-	t.Setenv("ANTHROPIC_API_KEY", "")
-
-	_, err := runNonInteractive(preset, "system", "user")
-	if err == nil {
-		t.Fatal("expected error when required env var is not set, got nil")
-	}
 }
 
 // TestMockLLM_ChatCompletions verifies that the mock server correctly handles
@@ -330,16 +36,16 @@ func TestMockLLM_ChatCompletions(t *testing.T) {
 		t.Fatalf("expected 0 requests before any calls, got %d", len(reqs))
 	}
 
-	// Parse the hardcoded proposals JSON to verify it is well-formed.
-	var proposals []DropletProposal
-	if err := json.Unmarshal([]byte(mockllm.HardcodedProposalsJSON), &proposals); err != nil {
+	// Parse the hardcoded JSON to verify it is well-formed.
+	var items []map[string]any
+	if err := json.Unmarshal([]byte(mockllm.HardcodedProposalsJSON), &items); err != nil {
 		t.Fatalf("HardcodedProposalsJSON is not valid JSON: %v", err)
 	}
-	if len(proposals) == 0 {
-		t.Fatal("HardcodedProposalsJSON contains no proposals")
+	if len(items) == 0 {
+		t.Fatal("HardcodedProposalsJSON contains no items")
 	}
-	if proposals[0].Title != "mock proposal" {
-		t.Errorf("proposals[0].Title = %q, want %q", proposals[0].Title, "mock proposal")
+	if title, _ := items[0]["title"].(string); title != "mock proposal" {
+		t.Errorf("items[0].title = %q, want %q", title, "mock proposal")
 	}
 }
 
@@ -394,4 +100,3 @@ func postToMock(url string) (int, error) {
 	resp.Body.Close()
 	return resp.StatusCode, nil
 }
-

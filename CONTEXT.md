@@ -27,6 +27,31 @@ Acceptance criteria: ct filter starts a refinement conversation, asks probing qu
 - **Role:** implementer
 - **Context:** full_codebase
 
+## ⚠️ REVISION REQUIRED — Fix these issues before anything else
+
+This droplet was recirculated. The following issues were found and **must** be fixed.
+Do not proceed to implementation until you have read and understood each issue.
+
+### Issue 1 (from: reviewer)
+
+♻ 1 finding. filterSystemPrompt (refine.go:27-73) now instructs the LLM to produce plain-text numbered specs, but runNonInteractive (refine.go:129) — called from cistern.go:74 for ct droplet add --filter — still calls extractProposals which expects a JSON array. This will break ct droplet add --filter in production. Tests pass only because fakeagent returns canned JSON regardless of prompt. See issue ci-gez0d-954y2 for details and fix options.
+
+---
+
+## Recent Step Notes
+
+### From: reviewer
+
+♻ 1 finding. filterSystemPrompt (refine.go:27-73) now instructs the LLM to produce plain-text numbered specs, but runNonInteractive (refine.go:129) — called from cistern.go:74 for ct droplet add --filter — still calls extractProposals which expects a JSON array. This will break ct droplet add --filter in production. Tests pass only because fakeagent returns canned JSON regardless of prompt. See issue ci-gez0d-954y2 for details and fix options.
+
+### From: simplifier
+
+Simplified: removed dead repoPath parameter from invokeFilterNew (--repo flag was deleted, repoPath was always ""). Updated call site in filter.go and 3 test call sites in filter_test.go. Tests: all packages pass (go test ./cmd/ct/... ok).
+
+### From: implementer
+
+Implemented all changes using TDD. Removed --file and --repo flags from ct filter, deleted filterFinalizePrompt constant and its --file branch (filter.go), updated filterSystemPrompt to output numbered plain-text spec with prose dependency statements and probing questions at each round, changed filterSessionResult from Proposals []DropletProposal to Text string, updated callFilterAgent to return raw text instead of parsing JSON proposals, updated printFilterResult to print text directly. addProposals and extractProposals kept (other callers remain in refine.go). Updated filter_test.go: removed 6 tests covering --file/--repo/filterFinalizePrompt paths, updated 12 tests to assert result.Text instead of result.Proposals, added 2 new rejection tests for --file and --repo flags. All tests pass (go test ./cmd/ct/... ok).
+
 <available_skills>
   <skill>
     <name>cistern-droplet-state</name>

@@ -46,8 +46,6 @@ var (
 	addRepo        string
 	addComplexity  string
 	addDependsOn   []string
-	addFilter      bool
-	addYes         bool
 )
 
 var dropletAddCmd = &cobra.Command{
@@ -63,27 +61,6 @@ var dropletAddCmd = &cobra.Command{
 		repo, err := resolveCanonicalRepo(addRepo)
 		if err != nil {
 			return err
-		}
-
-		if addFilter {
-			userPrompt := "Title: " + addTitle
-			if addDescription != "" {
-				userPrompt += "\nDescription: " + addDescription
-			}
-			preset := resolveFilterPreset(repo)
-			proposals, err := runNonInteractive(preset, filterSystemPrompt, userPrompt)
-			if err != nil {
-				return err
-			}
-			c, err := cistern.New(resolveDBPath(), inferPrefix(repo))
-			if err != nil {
-				return err
-			}
-			defer c.Close()
-			if addYes {
-				return runFilterNonInteractive(c, proposals, repo, addPriority)
-			}
-			return runFilterInteractive(c, proposals, repo, addPriority)
 		}
 
 		c, err := cistern.New(resolveDBPath(), inferPrefix(repo))
@@ -1427,8 +1404,6 @@ func init() {
 	dropletAddCmd.Flags().StringVar(&addRepo, "repo", "", "target repository (required)")
 	dropletAddCmd.Flags().StringVarP(&addComplexity, "complexity", "x", "2", "droplet complexity: 1/standard, 2/full (default), 3/critical")
 	dropletAddCmd.Flags().StringArrayVar(&addDependsOn, "depends-on", nil, "dependency droplet ID (repeatable)")
-	dropletAddCmd.Flags().BoolVar(&addFilter, "filter", false, "run filtration — LLM-assisted pass to refine ideas into well-specified droplets")
-	dropletAddCmd.Flags().BoolVar(&addYes, "yes", false, "skip confirmation prompts (for non-interactive/agent use)")
 
 	dropletDepsCmd.Flags().StringVar(&depsAdd, "add", "", "add a dependency (dep ID)")
 	dropletDepsCmd.Flags().StringVar(&depsRemove, "remove", "", "remove a dependency (dep ID)")
