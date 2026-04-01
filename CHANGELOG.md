@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+### Cataractae Protocol: universal behavioral standard for pipeline stages (ci-dtg02)
+
+Added a shared skill file (`skills/cataractae-protocol/SKILL.md`) injected into every cataractae at generation time. This skill establishes:
+
+- **Pipeline Position**: Each cataractae understands its role, predecessors, and successors in the pipeline
+- **Pass Criteria**: Clear conditions for signaling work completion (own work done, issues resolved, counter-arguments addressed)
+- **Recirculate Protocol**: Requirements for sending work back upstream (must specify what's unresolved, next focus, and whether it's a new or existing issue)
+- **Discourse Protocol**: Standard conventions for opening issues and responding with counter-arguments, verified fixes, and rejections
+- **Cycle Cap**: Mechanism to prevent infinite cycling — after 4 consecutive unresolved cycles, droplet pools with a discourse summary
+- **Note Conventions**: Five structured tags (`[issue:<id>]`, `[counter-argument:<id>]`, `[verified-fix:<id>]`, `[rejected-argument:<id>]`, `[discourse-summary]`) for issue tracking and resolution
+
+This standardizes cross-cataractae communication, issue resolution, and ensures all agents in the pipeline follow consistent protocols for work signaling and feedback.
+
 ### Scheduler: restart at implement when cataractae recirculates with no route (ci-vhn73)
 
 The Castellarius scheduler now safely recovers from recirculate signals that have no configured route, instead of silently auto-promoting to pass.
