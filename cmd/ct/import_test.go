@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -424,26 +423,18 @@ trackers:
 	}
 	c.Close()
 
-	var out bytes.Buffer
-	old := os.Stdout
-	r, w, _ := os.Pipe()
-	os.Stdout = w
-
-	importRepo = "myproject"
-	importFilter = false
-	importPriority = 2
-	importComplexity = "1"
-	err = importCmd.RunE(importCmd, []string{"jira", "PROJ-1"})
-
-	w.Close()
-	os.Stdout = old
-	out.ReadFrom(r)
-
+	out := captureStdout(t, func() {
+		importRepo = "myproject"
+		importFilter = false
+		importPriority = 2
+		importComplexity = "1"
+		err = importCmd.RunE(importCmd, []string{"jira", "PROJ-1"})
+	})
 	if err != nil {
 		t.Fatalf("RunE: %v", err)
 	}
 
-	id := strings.TrimSpace(out.String())
+	id := strings.TrimSpace(out)
 	if id == "" {
 		t.Fatal("expected droplet ID, got empty string")
 	}
