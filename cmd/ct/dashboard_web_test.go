@@ -1387,6 +1387,54 @@ func TestDashboardTUI_FlushTimer_StaleCallbackDoesNotCorruptLastFrame(t *testing
 	}
 }
 
+// TestDashboardTUI_FrameAccumulate_MidChunkMarkerCommitsPendingAsLastFrame verifies
+// that when a single broadcast chunk contains trailing bytes from the previous frame
+// followed by a repaint marker, the accumulated pending data plus the trailing bytes
+// are committed as lastFrame and a new pending frame begins.
+//
+// Given: a DashboardTUI with inFrame=true and pending = marker+"frame-one-content"
+//        (established by broadcasting marker+"frame-one-content")
+// When:  a single chunk "previous-frame-tail"+marker+"next-frame-start" is broadcast
+// Then:  lastFrame == marker+"frame-one-content"+"previous-frame-tail"
+// And:   pending == marker+"next-frame-start"
+func TestDashboardTUI_FrameAccumulate_MidChunkMarkerCommitsPendingAsLastFrame(t *testing.T) {
+	tui := newDashboardTUI("", "", "")
+	marker := string(repaintMarker)
+
+	// Establish inFrame=true with pending = marker+"frame-one-content".
+	tui.broadcast([]byte(marker + "frame-one-content"))
+
+	// Stop the flush timer to prevent it from committing pending during the test.
+	tui.mu.Lock()
+	if tui.flushTimer != nil {
+		tui.flushTimer.Stop()
+		tui.flushTimer = nil
+	}
+	tui.mu.Unlock()
+
+	// Single chunk: trailing bytes from frame-one + repaint marker + start of frame-two.
+	// The marker is at idx > 0, exercising the d.pending = append(d.pending, rest[:idx]...) branch.
+	tui.broadcast([]byte("previous-frame-tail" + marker + "next-frame-start"))
+
+	tui.mu.Lock()
+	gotLastFrame := bytes.Clone(tui.lastFrame)
+	gotPending := bytes.Clone(tui.pending)
+	if tui.flushTimer != nil {
+		tui.flushTimer.Stop()
+		tui.flushTimer = nil
+	}
+	tui.mu.Unlock()
+
+	wantLastFrame := []byte(marker + "frame-one-content" + "previous-frame-tail")
+	if !bytes.Equal(gotLastFrame, wantLastFrame) {
+		t.Errorf("lastFrame = %q, want %q", gotLastFrame, wantLastFrame)
+	}
+	wantPending := []byte(marker + "next-frame-start")
+	if !bytes.Equal(gotPending, wantPending) {
+		t.Errorf("pending = %q, want %q", gotPending, wantPending)
+	}
+}
+
 // readWSTextFrame reads one unmasked WebSocket text frame from br and returns the payload.
 func readWSTextFrame(br *bufio.Reader) (string, error) {
 	header := make([]byte, 2)
