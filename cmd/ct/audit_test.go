@@ -533,7 +533,6 @@ func TestInvokeAuditAgent_AgentExitFailure(t *testing.T) {
 func TestAuditRunCmd_MissingRepo_ReturnsError(t *testing.T) {
 	db := filepath.Join(t.TempDir(), "test.db")
 	t.Setenv("CT_DB", db)
-	t.Setenv("CT_NO_ASCII_LOGO", "1")
 	t.Cleanup(func() {
 		auditRunRepo = ""
 		auditRunDryRun = false
@@ -558,7 +557,6 @@ func TestAuditRunCmd_MissingRepo_ReturnsError(t *testing.T) {
 func TestAuditRunCmd_UnknownRepo_ReturnsError(t *testing.T) {
 	cfgPath := writeTestConfig(t, "MyRepo")
 	t.Setenv("CT_CONFIG", cfgPath)
-	t.Setenv("CT_NO_ASCII_LOGO", "1")
 	t.Cleanup(func() {
 		auditRunRepo = ""
 		auditRunDryRun = false
@@ -588,7 +586,6 @@ func TestAuditRunCmd_WorktreeNotFound(t *testing.T) {
 	cfgPath := writeTestConfigWithAgent(t, "TestRepo", fakeagentBin)
 	t.Setenv("CT_CONFIG", cfgPath)
 	t.Setenv("CT_DB", db)
-	t.Setenv("CT_NO_ASCII_LOGO", "1")
 	t.Setenv("HOME", home)
 	t.Cleanup(func() {
 		auditRunRepo = ""
@@ -769,7 +766,6 @@ func setupAuditRunTest(t *testing.T, fakeagentBin string) (repoName, db string) 
 	cfgPath := writeTestConfigWithAgent(t, repoName, fakeagentBin)
 	t.Setenv("CT_CONFIG", cfgPath)
 	t.Setenv("CT_DB", db)
-	t.Setenv("CT_NO_ASCII_LOGO", "1")
 	// Override UserHomeDir so filepath.Join(home, ".cistern",...) resolves correctly.
 	t.Setenv("HOME", home)
 	// Reset audit flag globals before and after to prevent cross-test contamination.

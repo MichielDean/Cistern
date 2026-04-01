@@ -292,7 +292,6 @@ func TestInvokeFilterResume_DefaultsToResumeFlag(t *testing.T) {
 // TestFilterCmd_NewSession_RequiresTitle verifies that ct filter without --title
 // and without --resume returns an error mentioning --title.
 func TestFilterCmd_NewSession_RequiresTitle(t *testing.T) {
-	t.Setenv("CT_NO_ASCII_LOGO", "1")
 	err := execCmd(t, "filter")
 	if err == nil {
 		t.Fatal("expected error when --title is missing, got nil")
@@ -308,7 +307,6 @@ func TestFilterCmd_NewSession_RequiresTitle(t *testing.T) {
 // When the command is executed,
 // Then an error mentioning "feedback" is returned.
 func TestFilterCmd_Resume_RequiresFeedback(t *testing.T) {
-	t.Setenv("CT_NO_ASCII_LOGO", "1")
 	err := execCmd(t, "filter", "--resume", "some-session-id")
 	if err == nil {
 		t.Fatal("expected error when --resume without feedback, got nil")
@@ -407,7 +405,6 @@ func TestPrintFilterResult_JSONFormat(t *testing.T) {
 // When the command is executed,
 // Then an error containing "unknown flag: --skip-context" is returned.
 func TestFilterCmd_SkipContextFlag_IsRejected(t *testing.T) {
-	t.Setenv("CT_NO_ASCII_LOGO", "1")
 	t.Cleanup(func() {
 		filterTitle = ""
 	})
@@ -427,7 +424,6 @@ func TestFilterCmd_SkipContextFlag_IsRejected(t *testing.T) {
 // When the command is executed,
 // Then an error containing "unknown flag: --file" is returned.
 func TestFilterCmd_FileFlag_IsRejected(t *testing.T) {
-	t.Setenv("CT_NO_ASCII_LOGO", "1")
 	t.Cleanup(func() {
 		filterTitle = ""
 	})
@@ -447,7 +443,6 @@ func TestFilterCmd_FileFlag_IsRejected(t *testing.T) {
 // When the command is executed,
 // Then an error containing "unknown flag: --repo" is returned.
 func TestFilterCmd_RepoFlag_IsRejected(t *testing.T) {
-	t.Setenv("CT_NO_ASCII_LOGO", "1")
 	t.Cleanup(func() {
 		filterTitle = ""
 	})
@@ -479,7 +474,6 @@ func TestFilterCmd_PromptAlwaysHasContextHeader(t *testing.T) {
 	promptFile := filepath.Join(dir, "prompt.txt")
 	t.Setenv("CT_CONFIG", cfgPath)
 	t.Setenv("CT_DB", filepath.Join(dir, "test.db"))
-	t.Setenv("CT_NO_ASCII_LOGO", "1")
 	t.Setenv("FAKEAGENT_PROMPT_FILE", promptFile)
 	// Reset globals that may be polluted by prior tests.
 	filterTitle = ""

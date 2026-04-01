@@ -255,7 +255,6 @@ func TestGatherInstructionFiles_IncludesRelativePathHeader(t *testing.T) {
 // When gatherCTHelp is called,
 // Then the output is non-empty and contains top-level command information.
 func TestGatherCTHelp_ContainsTopLevelHelp(t *testing.T) {
-	t.Setenv("CT_NO_ASCII_LOGO", "1")
 	got := gatherCTHelp("some unrelated title that matches nothing", "")
 	if got == "" {
 		t.Fatal("expected non-empty help output")
@@ -273,7 +272,6 @@ func TestGatherCTHelp_ContainsTopLevelHelp(t *testing.T) {
 // Then the output includes the ct filter command's help text (identifiable by
 // filter-specific content like "filtration").
 func TestGatherCTHelp_IncludesSubcommandHelp_WhenNameInTitle(t *testing.T) {
-	t.Setenv("CT_NO_ASCII_LOGO", "1")
 	got := gatherCTHelp("improve the filter command's performance", "")
 	// The filter command Long description contains "filtration pass"
 	if !strings.Contains(got, "filtration") {
@@ -287,7 +285,6 @@ func TestGatherCTHelp_IncludesSubcommandHelp_WhenNameInTitle(t *testing.T) {
 // When gatherCTHelp is called with a neutral title,
 // Then the output includes the ct filter subcommand help.
 func TestGatherCTHelp_IncludesSubcommandHelp_WhenNameInDesc(t *testing.T) {
-	t.Setenv("CT_NO_ASCII_LOGO", "1")
 	got := gatherCTHelp("improve startup time", "also improve filter caching")
 	if !strings.Contains(got, "filtration") {
 		t.Error("expected filter subcommand help when description mentions 'filter'")
@@ -300,7 +297,6 @@ func TestGatherCTHelp_IncludesSubcommandHelp_WhenNameInDesc(t *testing.T) {
 // When gatherCTHelp is called for each,
 // Then the matching title produces more output (subcommand help appended).
 func TestGatherCTHelp_LongerWhenTitleMatchesSubcommand(t *testing.T) {
-	t.Setenv("CT_NO_ASCII_LOGO", "1")
 	withMatch := gatherCTHelp("add flag to filter command", "")
 	withoutMatch := gatherCTHelp("improve overall speed", "")
 	if len(withMatch) <= len(withoutMatch) {
@@ -316,7 +312,6 @@ func TestGatherCTHelp_LongerWhenTitleMatchesSubcommand(t *testing.T) {
 // When gatherFilterContext is called,
 // Then the output contains the opening and closing delimiter markers.
 func TestGatherFilterContext_AlwaysReturnsDelimitedBlock(t *testing.T) {
-	t.Setenv("CT_NO_ASCII_LOGO", "1")
 	cfg := filterContextConfig{
 		DBPath:   "/nonexistent/cistern.db",
 		RepoPath: "/nonexistent/repo",
@@ -338,7 +333,6 @@ func TestGatherFilterContext_AlwaysReturnsDelimitedBlock(t *testing.T) {
 // When gatherFilterContext is called with that DB path,
 // Then the output contains the DB schema section header and the table definition.
 func TestGatherFilterContext_ContainsDBSchema_WhenDBExists(t *testing.T) {
-	t.Setenv("CT_NO_ASCII_LOGO", "1")
 	dbPath := filepath.Join(t.TempDir(), "test.db")
 	db, err := sql.Open("sqlite3", dbPath)
 	if err != nil {
@@ -370,7 +364,6 @@ func TestGatherFilterContext_ContainsDBSchema_WhenDBExists(t *testing.T) {
 // When gatherFilterContext is called,
 // Then the output does not contain the DB schema section header.
 func TestGatherFilterContext_OmitsDBSchemaSection_WhenDBMissing(t *testing.T) {
-	t.Setenv("CT_NO_ASCII_LOGO", "1")
 	cfg := filterContextConfig{
 		DBPath:   "/nonexistent/cistern.db",
 		RepoPath: "/nonexistent/repo",
@@ -388,7 +381,6 @@ func TestGatherFilterContext_OmitsDBSchemaSection_WhenDBMissing(t *testing.T) {
 // When gatherFilterContext is called with that repo path,
 // Then the output contains the instructions section header and file content.
 func TestGatherFilterContext_ContainsInstructions_WhenFilesExist(t *testing.T) {
-	t.Setenv("CT_NO_ASCII_LOGO", "1")
 	dir := t.TempDir()
 	sub := filepath.Join(dir, "implementer")
 	if err := os.MkdirAll(sub, 0o755); err != nil {
@@ -418,7 +410,6 @@ func TestGatherFilterContext_ContainsInstructions_WhenFilesExist(t *testing.T) {
 // When gatherFilterContext is called,
 // Then the output contains the CT help section header.
 func TestGatherFilterContext_AlwaysContainsCTHelp(t *testing.T) {
-	t.Setenv("CT_NO_ASCII_LOGO", "1")
 	cfg := filterContextConfig{
 		DBPath:   "/nonexistent/cistern.db",
 		RepoPath: "/nonexistent/repo",

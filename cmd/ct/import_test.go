@@ -43,7 +43,6 @@ func TestImportCmd_AddsDropletDirectly(t *testing.T) {
 	dir := t.TempDir()
 	db := filepath.Join(dir, "test.db")
 	t.Setenv("CT_DB", db)
-	t.Setenv("CT_NO_ASCII_LOGO", "1")
 
 	// Seed the DB with a known repo so resolveCanonicalRepo accepts it.
 	c, err := cistern.New(db, "ci")
@@ -96,7 +95,6 @@ func TestImportCmd_OverridesPriorityWhenFlagSet(t *testing.T) {
 	dir := t.TempDir()
 	db := filepath.Join(dir, "test.db")
 	t.Setenv("CT_DB", db)
-	t.Setenv("CT_NO_ASCII_LOGO", "1")
 
 	c, err := cistern.New(db, "ci")
 	if err != nil {
@@ -138,7 +136,6 @@ func TestImportCmd_OverridesPriorityWhenFlagSet(t *testing.T) {
 }
 
 func TestImportCmd_ErrorsOnUnknownProvider(t *testing.T) {
-	t.Setenv("CT_NO_ASCII_LOGO", "1")
 	importRepo = "cistern"
 	importComplexity = "1"
 	err := importCmd.RunE(importCmd, []string{"no-such-provider-zzz", "ISSUE-1"})
@@ -154,7 +151,6 @@ func TestImportCmd_ErrorsOnFetchFailure(t *testing.T) {
 	dir := t.TempDir()
 	db := filepath.Join(dir, "test.db")
 	t.Setenv("CT_DB", db)
-	t.Setenv("CT_NO_ASCII_LOGO", "1")
 
 	c, err := cistern.New(db, "ci")
 	if err != nil {
@@ -171,7 +167,6 @@ func TestImportCmd_ErrorsOnFetchFailure(t *testing.T) {
 }
 
 func TestImportCmd_RequiresRepo(t *testing.T) {
-	t.Setenv("CT_NO_ASCII_LOGO", "1")
 	importRepo = ""
 	err := importCmd.RunE(importCmd, []string{"fake-tracker", "ISSUE-1"})
 	if err == nil {
@@ -298,7 +293,6 @@ func TestImportCmd_JiraProvider_E2E(t *testing.T) {
 	dir := t.TempDir()
 	db := filepath.Join(dir, "test.db")
 	t.Setenv("CT_DB", db)
-	t.Setenv("CT_NO_ASCII_LOGO", "1")
 	t.Setenv("MY_JIRA_TOKEN", "test-token")
 
 	// Write a cistern.yaml with a jira tracker entry.
