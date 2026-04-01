@@ -451,7 +451,7 @@ func (c *Client) SetExternalRef(id, ref string) error {
 			return fmt.Errorf("cistern: invalid external_ref %q: must match provider:key with git-safe characters", ref)
 		}
 		_, key, _ := strings.Cut(ref, ":")
-		if strings.Contains(key, "..") || strings.HasSuffix(key, ".") || strings.HasSuffix(key, ".lock") {
+		if strings.Contains(key, "..") || strings.HasSuffix(key, ".") || strings.HasSuffix(key, ".lock") || strings.HasPrefix(key, ".") {
 			return fmt.Errorf("cistern: invalid external_ref %q: key produces git-invalid branch name", ref)
 		}
 	}

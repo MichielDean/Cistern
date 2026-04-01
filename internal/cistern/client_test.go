@@ -1642,6 +1642,7 @@ func TestSetExternalRef_RejectsInvalidFormat(t *testing.T) {
 		{"consecutive dots in key", "jira:DPF..456"},
 		{"trailing dot in key", "jira:DPF."},
 		{"trailing .lock in key", "jira:DPF.lock"},
+		{"leading dot in key", "jira:.DPF-456"},
 	}
 
 	for _, tc := range cases {
