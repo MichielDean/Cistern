@@ -965,29 +965,26 @@ func (m dashboardTUIModel) viewInlineFlowNotes(ch CataractaeInfo) []string {
 // aqueduct assignment. Each row shows the droplet ID, elapsed time,
 // current cataractae step, and title.
 func (m dashboardTUIModel) viewUnassigned() []string {
-	items := m.data.UnassignedItems
-	lines := make([]string, 0, len(items))
-	for _, item := range items {
+	// Truncate title to fit terminal width (constant per call).
+	fixedW := 2 + 2 + 2 + 10 + 2 + 7 + 2 + 20 + 2
+	titleW := m.width - fixedW
+	if titleW < 8 {
+		titleW = 8
+	}
+
+	lines := make([]string, 0, len(m.data.UnassignedItems))
+	for _, item := range m.data.UnassignedItems {
 		step := item.CurrentCataractae
 		if step == "" {
 			step = "—"
 		}
 		elapsed := formatElapsed(time.Since(item.UpdatedAt))
 		id := padRight(item.ID, 10)
-
-		// Truncate title to fit terminal width.
-		fixedW := 2 + 2 + 2 + 10 + 2 + 7 + 2 + 20 + 2
-		titleW := m.width - fixedW
-		if titleW < 8 {
-			titleW = 8
-		}
-		title := truncate(item.Title, titleW)
-
 		lines = append(lines, fmt.Sprintf("  %s  %s  %-20s  %s",
 			tuiStyleYellow.Render("●  "+id),
 			elapsed,
 			step,
-			title,
+			truncate(item.Title, titleW),
 		))
 	}
 	return lines
