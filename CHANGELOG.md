@@ -2,50 +2,19 @@
 
 ## Unreleased
 
-### Cataractae Protocol: universal behavioral standard for pipeline stages (ci-dtg02)
+### Scheduler: auto-route to reviewer when implementer loops on unresolved reviewer issue (ci-1zeaa)
 
-Added a shared skill file (`skills/cataractae-protocol/SKILL.md`) injected into every cataractae at generation time. This skill establishes:
-
-- **Pipeline Position**: Each cataractae understands its role, predecessors, and successors in the pipeline
-- **Pass Criteria**: Clear conditions for signaling work completion (own work done, issues resolved, counter-arguments addressed)
-- **Recirculate Protocol**: Requirements for sending work back upstream (must specify what's unresolved, next focus, and whether it's a new or existing issue)
-- **Discourse Protocol**: Standard conventions for opening issues and responding with counter-arguments, verified fixes, and rejections
-- **Cycle Cap**: Mechanism to prevent infinite cycling — after 4 consecutive unresolved cycles, droplet pools with a discourse summary
-- **Note Conventions**: Five structured tags (`[issue:<id>]`, `[counter-argument:<id>]`, `[verified-fix:<id>]`, `[rejected-argument:<id>]`, `[discourse-summary]`) for issue tracking and resolution
-
-This standardizes cross-cataractae communication, issue resolution, and ensures all agents in the pipeline follow consistent protocols for work signaling and feedback.
-
-### Scheduler: restart at implement when cataractae recirculates with no route (ci-vhn73)
-
-The Castellarius scheduler now safely recovers from recirculate signals that have no configured route, instead of silently auto-promoting to pass.
+Cistern now detects and automatically breaks deadlock cycles where an implementer recirculates on an unresolved reviewer-opened issue. Previously, droplets could become stuck indefinitely: the reviewer cataractae never runs to verify the fix and close the issue, while the implementer cannot advance without closing it.
 
 **Key changes:**
-- **Recirculate recovery**: When a cataractae signals recirculate but the workflow has no `on_recirculate` route defined, the droplet is restarted at the implement step (first cataractae) instead of being auto-promoted to pass
-- **Visible routing anomalies**: A structured note `[scheduler:routing]` records the anomaly for later analysis, preventing silent failures
-- **Dashboard visibility**: Droplets orphaned by assignment changes are now visible in the new **Unassigned** section of the flow dashboard
-- **Recovery procedures**: Orphaned droplets can be restarted, pooled, or cancelled via `ct droplet` commands
+- **Loop detection**: When a step recirculates to itself, the scheduler checks if an open issue was filed by a different cataractae (typically reviewer)
+- **Automatic routing**: If the same reviewer issue appears in the last 2 consecutive recirculations, the droplet is automatically routed to the reviewer cataractae to verify and close the issue
+- **Structured notes**: Adds clear audit trail with two note types:
+  - `[scheduler:loop-recovery-pending]` — tracks open reviewer issues during first recirculation (pending confirmation)
+  - `[scheduler:loop-recovery]` — confirms loop and routes to reviewer after 2nd recirculation
+- **Fail-safe**: If listing issues or reading notes fails, defaults to normal routing with a warn log (no silent failures or insecure fallbacks)
 
-**Behavior:**
-- Previously, a recirculate signal with no on_recirculate route would auto-promote to pass with a warning note
-- Now, the droplet restarts at implement, allowing the workflow to re-attempt the work
-- A single structured routing note is written: `[scheduler:routing] cataractae=<step> signaled recirculate but has no on_recirculate route — restarting at implement`
-
-**Dashboard enhancements:**
-- **Unassigned** section shows in-progress droplets with missing or invalid aqueduct assignments
-- Lists orphaned droplets with ID, elapsed time, current step, and title
-- Section is omitted when there are no unassigned droplets
-
-**Troubleshooting:**
-- Use `ct dashboard` or `ct dashboard --web` to identify unassigned droplets
-- Recover with `ct droplet restart <id>`, `ct droplet pool <id>`, or `ct droplet cancel <id>`
-- See *Troubleshooting > Orphaned In-Progress Droplets* for detailed recovery procedures
-
-**Testing:**
-- Four recirculate tests verify: with on_pass route present, without on_pass, custom workflows, and non-first-step (qa) recirculation restarting at implement
-- All tests assert the exact structured routing note is written
-- Dashboard tests verify unassigned items display and web endpoint JSON output
-
-**Impact**: Droplets that signal recirculate without a defined route now safely restart rather than silently advancing, improving visibility of routing anomalies and preventing lost work.
+**Impact**: Droplets that encounter unresolved reviewer issues are now automatically unblocked and routed to the reviewer for verification, eliminating permanent deadlock cycles. The system self-recovers without manual intervention within 2 recirculation cycles.
 
 ### Dashboard: fix arch channel overflow on narrow terminals (ci-3247n)
 

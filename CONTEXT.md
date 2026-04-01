@@ -1,20 +1,25 @@
 # Context
 
-## Item: ci-vhn73
+## Item: ci-1zeaa
 
-**Title:** Scheduler: restart at implement when cataractae signals recirculate with no route
+**Title:** Scheduler: auto-route to reviewer when implementer loops on unresolved reviewer issue
 **Status:** in_progress
 **Priority:** 2
 
 ### Description
 
-When a cataractae signals recirculate but the workflow has no on_recirculate route defined for it, the scheduler currently logs a warning and auto-promotes to pass. This silently advances a droplet that the agent explicitly did not want to pass, masking the problem.
+When a reviewer opens an issue on a droplet, only the reviewer cataractae can close it. If the implementer fixes the issue and recirculates back to itself (because implement has no on_recirculate route to reviewer), the droplet is permanently stuck: implementer cannot signal pass while the issue is open, and the reviewer never runs.
 
-Fix: instead of auto-promoting, restart the droplet at implement (the first cataractae in the workflow). Write a single structured note: '[scheduler:routing] cataractae=X signaled recirculate but has no on_recirculate route — restarting at implement'. This ensures the work is re-attempted rather than silently skipped, and the note makes the routing anomaly visible in ct droplet show for later analysis.
+Fix: in the recirculate handler, after determining the cataractae and the open issues for the droplet, check if:
+  (a) the current cataractae is 'implement' (or similar non-reviewer stage)
+  (b) there is at least one open issue opened by a reviewer cataractae
+  (c) the same reviewer issue has appeared in the last N consecutive recirculate notes (detect loop, suggested N=2)
 
-Do not pool or cancel — the agent may have recirculated for a legitimate reason that implement can address. Restarting at implement is the safe recovery path.
+When all three conditions are met, instead of recirculating back to implement, route the droplet directly to the reviewer cataractae so it can verify the fix and close the issue. Write a structured note: '[scheduler:loop-recovery] detected implement→implement loop on reviewer issue <issue-id> — routing to reviewer'.
 
-Acceptance criteria: a recirculate signal with no route restarts the droplet at implement rather than advancing it; exactly one structured routing note is written; the droplet flows normally from implement.
+This removes the deadlock without human intervention. The reviewer runs, sees the implementer's fix, closes the issue, and the droplet advances normally.
+
+Acceptance criteria: a droplet in the implement→implement loop due to an open reviewer issue is automatically routed to reviewer within 2 recirculate cycles; the reviewer can close the issue and the droplet advances; structured recovery note is written; no human intervention required.
 
 ## Current Step: docs
 
@@ -27,41 +32,26 @@ Acceptance criteria: a recirculate signal with no route restarts the droplet at 
 This droplet was recirculated. The following issues were found and **must** be fixed.
 Do not proceed to implementation until you have read and understood each issue.
 
-### Issue 1 (from: reviewer)
+### Issue 1 (from: security)
 
-No findings. The scheduler change correctly replaces auto-promote with restart-at-implement: the guard condition handles recirculate with no on_recirculate route by reading wf.Cataractae[0].Name, writes exactly one structured [scheduler:routing] note, and falls through to the normal Assign path. The len(wf.Cataractae)>0 guard is defensive (workflow validation rejects empty cataractae). The removed diagnostic note in the pool fallthrough is correctly dead code since recirculate now always resolves to a step. Three tests verify the core behavior: with on_pass present, without on_pass, and with a custom workflow. All tests pass.
+No security issues found. Audited all changed files in the diff:
 
-### Issue 2 (from: qa)
+**Scheduler loop recovery (scheduler.go:850-900):**
+- Routing target (issue.FlaggedBy) is validated against the workflow definition via lookupCataracta() before use — prevents routing to arbitrary/non-existent steps.
+- ListIssues uses parameterized SQL queries (client.go:1166-1177) — no injection.
+- loopRecoveryPendingCount uses a trailing-space-terminated marker for string matching — no prefix collision between issue IDs (e.g. iss-1 vs iss-10).
+- Error paths (ListIssues failure, GetNotes failure) fail closed — fall through to normal routing with warn log, no insecure fallback.
 
-♻ Tests pass but two test quality gaps require fixing:
+**Dashboard web (dashboard_web.go):**
+- Ring buffer replaced with frame-based lastFrame approach: shared state protected by mutex, generation counter prevents stale timer corruption, bytes.Clone prevents aliasing.
+- UnassignedItems JSON serialization uses json.NewEncoder which properly escapes strings — no XSS in API response.
+- WebSocket sends PTY output from a controlled child process — no user-input injection vector.
 
-1. TestTick_RecirculateNoOnRecirculateOrPassRoute_RestartsAtImplement has no note assertion. The test checks no-pooling and restart-at-implement but never verifies that the [scheduler:routing] note is written. The acceptance criterion requires the note in all recirculate-with-no-route cases. Add the same note assertion present in Tests 1 and 3: loop client.attached, assert strings.Contains(n.notes, "[scheduler:routing]") for the droplet.
+**Dashboard TUI (dashboard.go, dashboard_tui.go):**
+- Dynamic colW computed from terminal width (not user-controlled input). Minimum floor of 9 enforced.
+- Unassigned items rendered in TUI context from database fields — no web injection surface.
 
-2. Tests 1 and 3 comment 'Exactly one structured routing note must be attached' but assert only a boolean (at least one). The requirement explicitly says 'exactly one'. Change the note-counting logic from a bool flag to a counter and assert count == 1 so a regression that writes two notes is caught.
-
-### Issue 3 (from: reviewer)
-
-Phase 1: both QA issues verified fixed — (1) ci-vhn73-dsx3y: Test 2 now has note assertion with noteCount==1, (2) ci-vhn73-veoog: all three tests use counter, assert noteCount==1. Phase 2: fresh adversarial review of scheduler.go and scheduler_test.go changes — no new findings. Guard condition correct, note written exactly once, dead code properly removed, all three tests pass.
-
-### Issue 4 (from: qa)
-
-♻ Phase 1: both prior QA issues confirmed resolved — all three tests use noteCount counter asserting noteCount==1, and Test 2 now has the note assertion. Phase 2 finding (ci-vhn73-penkv): all three recirculate tests have implement (step 0) as the recirculating cataractae. The code does wf.Cataractae[0].Name — but since all tests have the current step == step 0, no test distinguishes this from 'restart at current step.' Add a test with a non-first step (e.g. qa) recirculating with no on_recirculate route, asserting restart lands at implement (step 0), not qa.
-
-### Issue 5 (from: reviewer)
-
-Phase 1: ci-vhn73-penkv resolved — TestTick_RecirculateNonFirstStep_RestartsAtImplementNotCurrentStep (scheduler_test.go:775) uses qa (step 1) as the recirculating step, asserts restart lands at implement (step 0) not qa, proving wf.Cataractae[0].Name usage. Phase 2: fresh adversarial review of scheduler.go and scheduler_test.go changes — guard condition correct (next=="" && ResultRecirculate && len>0), note written exactly once, dead auto-promote code properly removed, downstream Assign path correct, all 4 recirculate tests pass. Pre-existing flaky test (TestGracefulShutdown_CleanDrain) confirmed flaky on main too — not a regression.
-
-### Issue 6 (from: reviewer)
-
-No findings.
-
-### Issue 7 (from: qa)
-
-Phase 1: both prior QA issues confirmed resolved — (1) all three tests use noteCount counter asserting noteCount==1, (2) TestTick_RecirculateNoOnRecirculateOrPassRoute_RestartsAtImplement has note assertion, (3) TestTick_RecirculateNonFirstStep_RestartsAtImplementNotCurrentStep at :775 uses qa (step 1) and correctly asserts restart at implement (step 0). Phase 2: fresh adversarial review — guard condition correct, note written exactly once, dead diagnostic-note code properly removed, wf.Cataractae[0].Name used dynamically, all 4 recirculate tests pass, full suite passes.
-
-### Issue 8 (from: security)
-
-Phase 1: no open security issues from prior cycles (7 prior issues all previously resolved or no-findings). Phase 2: fresh adversarial review of scheduler.go and dashboard changes — no security issues found. Scheduler: guard condition correct (next=="" && ResultRecirculate && len>0), step names from workflow config (not user input), note written via parameterized addNote, fail-closed on empty cataractae (falls to pool). Dashboard: UnassignedItems exposes same Droplet struct already in CisternItems/PooledItems (no new data exposure), web endpoint uses json.NewEncoder (no XSS), colW division safe (n≥1 guaranteed by existing guard).
+No blocking, required, or suggestion-level findings.
 
 ---
 
@@ -69,11 +59,28 @@ Phase 1: no open security issues from prior cycles (7 prior issues all previousl
 
 ### From: security
 
-Phase 1: no open security issues from prior cycles (7 prior issues all previously resolved or no-findings). Phase 2: fresh adversarial review of scheduler.go and dashboard changes — no security issues found. Scheduler: guard condition correct (next=="" && ResultRecirculate && len>0), step names from workflow config (not user input), note written via parameterized addNote, fail-closed on empty cataractae (falls to pool). Dashboard: UnassignedItems exposes same Droplet struct already in CisternItems/PooledItems (no new data exposure), web endpoint uses json.NewEncoder (no XSS), colW division safe (n≥1 guaranteed by existing guard).
+No security issues found. Audited all changed files in the diff:
+
+**Scheduler loop recovery (scheduler.go:850-900):**
+- Routing target (issue.FlaggedBy) is validated against the workflow definition via lookupCataracta() before use — prevents routing to arbitrary/non-existent steps.
+- ListIssues uses parameterized SQL queries (client.go:1166-1177) — no injection.
+- loopRecoveryPendingCount uses a trailing-space-terminated marker for string matching — no prefix collision between issue IDs (e.g. iss-1 vs iss-10).
+- Error paths (ListIssues failure, GetNotes failure) fail closed — fall through to normal routing with warn log, no insecure fallback.
+
+**Dashboard web (dashboard_web.go):**
+- Ring buffer replaced with frame-based lastFrame approach: shared state protected by mutex, generation counter prevents stale timer corruption, bytes.Clone prevents aliasing.
+- UnassignedItems JSON serialization uses json.NewEncoder which properly escapes strings — no XSS in API response.
+- WebSocket sends PTY output from a controlled child process — no user-input injection vector.
+
+**Dashboard TUI (dashboard.go, dashboard_tui.go):**
+- Dynamic colW computed from terminal width (not user-controlled input). Minimum floor of 9 enforced.
+- Unassigned items rendered in TUI context from database fields — no web injection surface.
+
+No blocking, required, or suggestion-level findings.
 
 ### From: qa
 
-Phase 1: both prior QA issues confirmed resolved — (1) all three tests use noteCount counter asserting noteCount==1, (2) TestTick_RecirculateNoOnRecirculateOrPassRoute_RestartsAtImplement has note assertion, (3) TestTick_RecirculateNonFirstStep_RestartsAtImplementNotCurrentStep at :775 uses qa (step 1) and correctly asserts restart at implement (step 0). Phase 2: fresh adversarial review — guard condition correct, note written exactly once, dead diagnostic-note code properly removed, wf.Cataractae[0].Name used dynamically, all 4 recirculate tests pass, full suite passes.
+All tests pass (10 packages). No open QA issues. Phase 1: no prior QA issues; prior reviewer issues all confirmed resolved. Phase 2: implementation correct — loop recovery fires on ResultRecirculate&&next==step.Name, loopDetectN=2 math correct, both error paths handled with warn+fallback, prefix-match fix in place. 7 tests with descriptive names cover all key paths: no issues, first-cycle pending note, second-cycle routing, structured note format, GetNotes error, ListIssues error, closed issue non-trigger. All acceptance criteria met.
 
 ### From: reviewer
 
@@ -81,7 +88,7 @@ No findings.
 
 ### From: reviewer
 
-Phase 1: ci-vhn73-penkv resolved — TestTick_RecirculateNonFirstStep_RestartsAtImplementNotCurrentStep (scheduler_test.go:775) uses qa (step 1) as the recirculating step, asserts restart lands at implement (step 0) not qa, proving wf.Cataractae[0].Name usage. Phase 2: fresh adversarial review of scheduler.go and scheduler_test.go changes — guard condition correct (next=="" && ResultRecirculate && len>0), note written exactly once, dead auto-promote code properly removed, downstream Assign path correct, all 4 recirculate tests pass. Pre-existing flaky test (TestGracefulShutdown_CleanDrain) confirmed flaky on main too — not a regression.
+Phase 1: resolved both prior issues (ci-1zeaa-phe3g prefix-match fix confirmed, ci-1zeaa-wrcf8 ListIssues error test confirmed). Phase 2: full adversarial review — no new findings. Security, logic, error handling, interface contracts, resource management, and test coverage all clean.
 
 <available_skills>
   <skill>
@@ -101,16 +108,16 @@ Phase 1: ci-vhn73-penkv resolved — TestTick_RecirculateNonFirstStep_RestartsAt
 When your work is done, signal your outcome using the `ct` CLI:
 
 **Pass (work complete, move to next step):**
-    ct droplet pass ci-vhn73
+    ct droplet pass ci-1zeaa
 
 **Recirculate (needs rework — send back upstream):**
-    ct droplet recirculate ci-vhn73
-    ct droplet recirculate ci-vhn73 --to implement
+    ct droplet recirculate ci-1zeaa
+    ct droplet recirculate ci-1zeaa --to implement
 
 **Pool (cannot currently proceed):**
-    ct droplet pool ci-vhn73
+    ct droplet pool ci-1zeaa
 
 Add notes before signaling:
-    ct droplet note ci-vhn73 "What you did / found"
+    ct droplet note ci-1zeaa "What you did / found"
 
 The `ct` binary is on your PATH.

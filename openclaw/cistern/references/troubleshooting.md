@@ -94,6 +94,37 @@ The health file is written after each poll cycle completes. If you see persisten
 journalctl --user -u cistern-castellarius -f | grep -i "health"
 ```
 
+## Reviewer-Opened Issues and Loop Recovery
+
+When a reviewer cataractae opens an issue on a droplet, only that reviewer can close it. If the implementer recirculates while the issue is still open, the scheduler automatically detects this loop condition and routes the droplet back to the reviewer for verification and closure.
+
+**How loop detection works:**
+
+1. An implementer step recirculates back to itself
+2. The scheduler checks if there's an open issue filed by a different cataractae (usually `reviewer`)
+3. On the **first recirculation** with an open reviewer issue, a `[scheduler:loop-recovery-pending]` note is added and the droplet recirculates normally
+4. On the **second consecutive recirculation** with the same open issue, loop is confirmed and the droplet is automatically routed to the reviewer
+
+**Identifying loop recovery in action:**
+
+Check droplet notes:
+```bash
+ct droplet show <id>              # Look for [scheduler:loop-recovery*] notes
+```
+
+You'll see notes like:
+- `[scheduler:loop-recovery-pending] issue=<issue-id> — open reviewer issue found at implement, routing back to implement (cycle 1/2)`
+- `[scheduler:loop-recovery] detected implement→implement loop on reviewer issue <issue-id> — routing to reviewer`
+
+**No action required** — this is automatic recovery. The reviewer cataractae will run, verify the implementer's fix, close the issue, and the droplet will advance normally.
+
+**If a droplet stays stuck despite loop recovery:**
+
+This suggests the reviewer issue is not being closed by the reviewer cataractae. Check:
+1. Is the reviewer issue still open? `ct droplet issues <id>`
+2. Did the reviewer cataractae run? Check its logs: `journalctl --user -u cistern-castellarius --since "10 minutes ago" | grep reviewer`
+3. Is there an issue with the reviewer cataractae itself (crashes, missing skills)? Check `ct doctor` and recent logs
+
 ## Orphaned In-Progress Droplets
 
 Occasionally a droplet can enter `in_progress` status without being assigned to an aqueduct. This may happen due to:
