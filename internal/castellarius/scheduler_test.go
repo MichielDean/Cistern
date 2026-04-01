@@ -2718,7 +2718,10 @@ func TestHeartbeatRepo_Debounce_AddNoteFailure_DoesNotArmDebounce(t *testing.T) 
 
 	workflows := map[string]*aqueduct.Workflow{"test-repo": testWorkflow()}
 	clients := map[string]CisternClient{"test-repo": client}
-	runner := newMockRunner(client)
+	// Use a nil-client runner so Spawn does not write outcomes — this test is
+	// about debounce behaviour, and a mock outcome would cause the item to be
+	// skipped (Outcome != "") on the second heartbeat tick.
+	runner := newMockRunner(nil)
 	sched := NewFromParts(config, workflows, clients, runner)
 
 	// First tick: stalled but AddNote fails → debounce must NOT be armed.

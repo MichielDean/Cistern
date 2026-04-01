@@ -907,19 +907,34 @@ func (s *Castellarius) observeRepo(_ context.Context, repo aqueduct.RepoConfig) 
 			}
 		}
 
-		// When a step signals recirculate but has no on_recirculate route, restart the
-		// droplet at implement (the first cataractae in the workflow) so the work is
-		// re-attempted. A single structured note records the routing anomaly.
-		if next == "" && result == ResultRecirculate && len(wf.Cataractae) > 0 {
-			implementStep := wf.Cataractae[0].Name
-			note := fmt.Sprintf(
-				"[scheduler:routing] cataractae=%s signaled recirculate but has no on_recirculate route — restarting at %s",
-				step.Name, implementStep,
-			)
-			s.logger.Warn("observe: recirculate with no on_recirculate route — restarting at implement",
-				"droplet", item.ID, "step", step.Name, "restart", implementStep)
-			s.addNote(client, item.ID, "scheduler", note)
-			next = implementStep
+		// When a step signals recirculate but has no on_recirculate route, either
+		// auto-promote to pass (routing via on_pass) or pool with a diagnostic note.
+		if next == "" && result == ResultRecirculate {
+			if step.OnPass != "" {
+				// Auto-promote: treat recirculate as pass and route via on_pass.
+				note := fmt.Sprintf(
+					"[scheduler:routing] Auto-promoted: cataractae=%s signaled recirculate but has no on_recirculate route — routing via on_pass to %s",
+					step.Name, step.OnPass,
+				)
+				s.logger.Warn("observe: recirculate auto-promoted to pass via on_pass",
+					"droplet", item.ID, "step", step.Name, "next", step.OnPass)
+				s.addNote(client, item.ID, "scheduler", note)
+				next = step.OnPass
+			} else {
+				// No on_recirculate and no on_pass: pool the droplet with a diagnostic note.
+				note := fmt.Sprintf(
+					"[scheduler:routing] cataractae=%s signaled recirculate but has no on_recirculate route and no on_pass route — droplet pooled",
+					step.Name,
+				)
+				s.logger.Warn("observe: recirculate with no on_recirculate or on_pass route — pooling",
+					"droplet", item.ID, "step", step.Name)
+				s.addNote(client, item.ID, "scheduler", note)
+				cleanupBranch(true)
+				if err := client.Pool(item.ID, note); err != nil {
+					s.logger.Error("observe: pool (no route) failed", "droplet", item.ID, "error", err)
+				}
+				continue
+			}
 		}
 
 		if next == "" {
