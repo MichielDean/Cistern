@@ -370,9 +370,12 @@ func renderAqueductRow(ch CataractaeInfo, termWidth int) string {
 	// Compute colW dynamically so the arch fits within termWidth.
 	// Visual total of the channel-top row:
 	//   prefix(nameW+4) + "╔"(1) + chanW(n*colW-1) + "╗"(1) = nameW+5 + n*colW
-	// For total ≤ termWidth: colW ≤ (termWidth - (nameW+5)) / n.
+	// The channel-bottom row is (2-n) chars wider than the top row, so for
+	// n<2 we add that overhead to keep both rows within termWidth.
+	// For total ≤ termWidth: colW ≤ (termWidth - (nameW+5+max(0,2-n))) / n.
 	const minColW = 9
-	colW := max(minColW, (termWidth-(nameW+5))/n)
+	botExtra := max(0, 2-n)
+	colW := max(minColW, (termWidth-(nameW+5+botExtra))/n)
 
 	// Channel total inner width = n columns of colW, separated by ┬ joints.
 	chanW := n*colW - 1

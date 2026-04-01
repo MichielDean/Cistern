@@ -1133,6 +1133,26 @@ func TestRenderAqueductRow_SecurityReviewLabel_Readable(t *testing.T) {
 	}
 }
 
+// TestRenderAqueductRow_NoOverflow_EmptyAqueduct verifies that an aqueduct with
+// no steps (defaults to a single "(empty)" step, n=1) does not overflow at
+// width=80.  This is a regression test for the chanBot overflow: the bottom
+// row is 1 char wider than the top row when n=1 unless colW accounts for it.
+//
+// Given: an aqueduct with nil steps and terminal width of 80
+// When:  renderAqueductRow is called
+// Then:  every line's visual character count is ≤ termWidth (80)
+func TestRenderAqueductRow_NoOverflow_EmptyAqueduct(t *testing.T) {
+	ch := CataractaeInfo{Name: "virgo"}
+	termWidth := 80
+	out := renderAqueductRow(ch, termWidth)
+	for i, line := range strings.Split(out, "\n") {
+		visual := len([]rune(stripANSITest(line)))
+		if visual > termWidth {
+			t.Errorf("line %d: visual width %d > termWidth %d: %q", i, visual, termWidth, stripANSITest(line))
+		}
+	}
+}
+
 func TestActiveAqueducts_EmptyWhenAllIdle(t *testing.T) {
 	cataractae := []CataractaeInfo{
 		{Name: "virgo", DropletID: ""},
