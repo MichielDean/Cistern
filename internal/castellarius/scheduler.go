@@ -1550,6 +1550,34 @@ func (s *Castellarius) heartbeatRepo(ctx context.Context, repo aqueduct.RepoConf
 				delete(s.lastStallNoted, item.ID)
 			}
 		}
+
+		// Recovery for orphaned in_progress droplets: no assignee means no named
+		// session exists for this droplet. Force-reset to open so the next
+		// dispatch cycle reclaims it. This handles Castellarius crash/restart and
+		// failed dispatch where the droplet was never assigned a worker.
+		if item.Assignee == "" {
+			step := currentCataracta(item, wf)
+			stepName := item.CurrentCataractae
+			if step != nil {
+				stepName = step.Name
+			}
+			if err := client.AddNote(item.ID, "scheduler",
+				"[scheduler:recovery] reset orphaned in_progress droplet to open — no assignee, no active session"); err != nil {
+				s.logger.Warn("heartbeat: orphan recovery note failed",
+					"droplet", item.ID, "error", err)
+			}
+			s.logger.Info("heartbeat: orphan recovery — resetting to open",
+				"repo", repo.Name,
+				"droplet", item.ID,
+				"cataractae", stepName,
+			)
+			if err := client.Assign(item.ID, "", stepName); err != nil {
+				s.logger.Error("heartbeat: orphan recovery reset failed",
+					"repo", repo.Name, "droplet", item.ID, "error", err)
+				// Clear debounce so next tick retries the recovery.
+				delete(s.lastStallNoted, item.ID)
+			}
+		}
 	}
 }
 

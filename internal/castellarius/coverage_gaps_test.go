@@ -274,17 +274,17 @@ func TestHeartbeatRepo(t *testing.T) {
 	tests := []struct {
 		name      string
 		item      *cistern.Droplet
-		wantNotes int // number of stall notes appended
+		wantNotes int // number of scheduler notes appended (stall + optional recovery)
 	}{
 		{
 			name: "writes stall note for droplet with no recent signals",
 			item: &cistern.Droplet{
 				ID: "hb-1", CurrentCataractae: "implement", Status: "in_progress",
 				Assignee: "", Outcome: "",
-				// No notes, no worktree, no session log — zero signals → stalled
-				// (default 45-min threshold; zero time is far older than 45 min).
+				// No notes, no worktree, no session log — zero signals → stalled.
+				// Orphan recovery fires: stall note + recovery note = 2 total.
 			},
-			wantNotes: 1,
+			wantNotes: 2,
 		},
 		{
 			name: "skips item with outcome",
@@ -504,8 +504,8 @@ func TestHeartbeatInProgress_CallsHeartbeatForAllRepos(t *testing.T) {
 
 	client.mu.Lock()
 	defer client.mu.Unlock()
-	if len(client.attached) != 1 {
-		t.Errorf("heartbeatInProgress: expected 1 stall note for stalled item, got %d", len(client.attached))
+	if len(client.attached) != 2 {
+		t.Errorf("heartbeatInProgress: expected 2 notes (stall + recovery) for orphaned item, got %d", len(client.attached))
 	}
 }
 

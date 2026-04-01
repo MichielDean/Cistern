@@ -125,6 +125,7 @@ func (m *mockClient) Assign(id, worker, step string) error {
 		item.Outcome = "" // clear outcome on advance
 		if worker == "" {
 			item.Status = "open"
+			item.AssignedAqueduct = ""
 		} else {
 			item.Status = "in_progress"
 		}
@@ -640,9 +641,9 @@ func TestTick_NotesForwarding(t *testing.T) {
 	}
 }
 
-func TestTick_RecirculateNoOnRecirculateRoute_RestartsAtImplement(t *testing.T) {
+func TestTick_RecirculateAutoPromotesToPass(t *testing.T) {
 	// implement has OnPass="review" but no OnRecirculate.
-	// Signaling recirculate should restart at implement (the first cataractae), not auto-promote.
+	// Signaling recirculate should auto-promote to pass and route to "review".
 	client := newMockClient()
 	client.readyItems = []*cistern.Droplet{{ID: "b1"}}
 
@@ -662,28 +663,29 @@ func TestTick_RecirculateNoOnRecirculateRoute_RestartsAtImplement(t *testing.T) 
 	client.mu.Lock()
 	defer client.mu.Unlock()
 
-	// Should restart at implement, not advance to review or pool.
-	if client.steps["b1"] != "implement" {
-		t.Errorf("expected restart at implement, got %q", client.steps["b1"])
+	// Should route via on_pass → "review", not pool.
+	if client.steps["b1"] != "review" {
+		t.Errorf("expected auto-promote to route to review, got %q", client.steps["b1"])
 	}
 	if _, ok := client.pooled["b1"]; ok {
-		t.Error("expected no pooling when recirculate has no on_recirculate route")
+		t.Error("expected no pooling when recirculate auto-promotes via on_pass")
 	}
-	// Exactly one structured routing note must be attached.
-	noteCount := 0
+	// Warning note must be attached.
+	var hasNote bool
 	for _, n := range client.attached {
-		if n.id == "b1" && strings.Contains(n.notes, "[scheduler:routing]") && strings.Contains(n.notes, "restarting at implement") {
-			noteCount++
+		if n.id == "b1" && strings.Contains(n.notes, "Auto-promoted") && strings.Contains(n.notes, "recirculate") {
+			hasNote = true
+			break
 		}
 	}
-	if noteCount != 1 {
-		t.Errorf("expected exactly one structured routing note, got %d; notes: %v", noteCount, client.attached)
+	if !hasNote {
+		t.Error("expected auto-promote warning note attached to droplet")
 	}
 }
 
-func TestTick_RecirculateNoOnRecirculateOrPassRoute_RestartsAtImplement(t *testing.T) {
-	// A step with neither on_recirculate nor on_pass: recirculate should still
-	// restart at implement (the first cataractae), not pool.
+func TestTick_RecirculateNoPassRoute_StillPools(t *testing.T) {
+	// A step with neither on_recirculate nor on_pass: recirculate cannot be promoted,
+	// so the droplet must still pool.
 	wf := &aqueduct.Workflow{
 		Name: "test",
 		Cataractae: []aqueduct.WorkflowCataractae{
@@ -711,26 +713,14 @@ func TestTick_RecirculateNoOnRecirculateOrPassRoute_RestartsAtImplement(t *testi
 
 	client.mu.Lock()
 	defer client.mu.Unlock()
-	if _, ok := client.pooled["b2"]; ok {
-		t.Error("expected no pooling when recirculate has no on_recirculate route — should restart at implement")
-	}
-	if client.steps["b2"] != "implement" {
-		t.Errorf("expected restart at implement, got %q", client.steps["b2"])
-	}
-	// Exactly one structured routing note must be attached.
-	noteCount := 0
-	for _, n := range client.attached {
-		if n.id == "b2" && strings.Contains(n.notes, "[scheduler:routing]") && strings.Contains(n.notes, "restarting at implement") {
-			noteCount++
-		}
-	}
-	if noteCount != 1 {
-		t.Errorf("expected exactly one structured routing note, got %d; notes: %v", noteCount, client.attached)
+	if _, ok := client.pooled["b2"]; !ok {
+		t.Error("expected pooling when neither on_recirculate nor on_pass exists")
 	}
 }
 
-func TestTick_RecirculateNoRoute_WritesStructuredNoteAndRestartsAtImplement(t *testing.T) {
-	// Given: a droplet at "implement" which has no on_recirculate route and no on_pass route.
+func TestTick_RecirculateNoRoute_BlocksWithDiagnosticNote(t *testing.T) {
+	// Given: a droplet at "implement" which has no on_recirculate route and no on_pass route
+	// (so it can't auto-promote either).
 	client := newMockClient()
 	client.readyItems = []*cistern.Droplet{
 		{ID: "b1", CurrentCataractae: "implement"},
@@ -771,88 +761,23 @@ func TestTick_RecirculateNoRoute_WritesStructuredNoteAndRestartsAtImplement(t *t
 	sched.Tick(context.Background())
 	time.Sleep(10 * time.Millisecond)
 
+	// Then: droplet is pooled.
 	client.mu.Lock()
 	defer client.mu.Unlock()
-
-	// Then: droplet is restarted at implement, not pooled.
-	if _, ok := client.pooled["b1"]; ok {
-		t.Fatal("expected droplet to restart at implement, not be pooled")
-	}
-	if client.steps["b1"] != "implement" {
-		t.Errorf("expected restart at implement, got %q", client.steps["b1"])
+	if _, ok := client.pooled["b1"]; !ok {
+		t.Fatal("expected droplet to be pooled when no on_recirculate route exists")
 	}
 
-	// And: exactly one structured routing note is attached.
-	noteCount := 0
+	// And: a diagnostic note naming the step and missing route is attached.
+	found := false
 	for _, n := range client.attached {
-		if n.id == "b1" && strings.Contains(n.notes, "[scheduler:routing]") && strings.Contains(n.notes, "restarting at implement") {
-			noteCount++
+		if n.id == "b1" && strings.Contains(n.notes, "implement") && strings.Contains(n.notes, "on_recirculate") {
+			found = true
+			break
 		}
 	}
-	if noteCount != 1 {
-		t.Errorf("expected exactly one structured routing note, got %d; notes: %v", noteCount, client.attached)
-	}
-}
-
-func TestTick_RecirculateNonFirstStep_RestartsAtImplementNotCurrentStep(t *testing.T) {
-	// Given: a workflow where "qa" is step 1 (not the first cataractae) and has no
-	// on_recirculate route. The first cataractae is "implement" (step 0).
-	// When "qa" signals recirculate, the restart must land at "implement" (step 0),
-	// not at "qa" (the current step). This distinguishes wf.Cataractae[0].Name from
-	// "restart at current step".
-	wf := &aqueduct.Workflow{
-		Name: "test",
-		Cataractae: []aqueduct.WorkflowCataractae{
-			{
-				Name:   "implement",
-				Type:   aqueduct.CataractaeTypeAgent,
-				OnPass: "qa",
-				OnFail: "pooled",
-				// OnRecirculate intentionally omitted.
-			},
-			{
-				Name:   "qa",
-				Type:   aqueduct.CataractaeTypeAgent,
-				OnPass: "done",
-				OnFail: "implement",
-				// OnRecirculate intentionally omitted.
-			},
-		},
-	}
-	cfg := testConfig()
-	client := newMockClient()
-	client.readyItems = []*cistern.Droplet{{ID: "b5", CurrentCataractae: "qa"}}
-	runner := newMockRunner(client)
-	runner.outcomes["qa"] = "recirculate"
-	sched := NewFromParts(cfg, map[string]*aqueduct.Workflow{"test-repo": wf}, map[string]CisternClient{"test-repo": client}, runner)
-
-	// When: the scheduler dispatches and "qa" signals recirculate.
-	sched.Tick(context.Background())
-	if !runner.waitCalls(1, time.Second) {
-		t.Fatal("timed out waiting for spawn")
-	}
-	sched.Tick(context.Background())
-	time.Sleep(10 * time.Millisecond)
-
-	client.mu.Lock()
-	defer client.mu.Unlock()
-
-	// Then: droplet restarts at implement (step 0), not qa (the recirculating step).
-	if client.steps["b5"] != "implement" {
-		t.Errorf("expected restart at implement (step 0), got %q — must not restart at current step", client.steps["b5"])
-	}
-	if _, ok := client.pooled["b5"]; ok {
-		t.Error("expected no pooling when recirculate has no on_recirculate route")
-	}
-	// And: exactly one structured routing note is attached.
-	noteCount := 0
-	for _, n := range client.attached {
-		if n.id == "b5" && strings.Contains(n.notes, "[scheduler:routing]") && strings.Contains(n.notes, "restarting at implement") {
-			noteCount++
-		}
-	}
-	if noteCount != 1 {
-		t.Errorf("expected exactly one structured routing note, got %d; notes: %v", noteCount, client.attached)
+	if !found {
+		t.Errorf("expected diagnostic note about missing on_recirculate route, got notes: %v", client.attached)
 	}
 }
 
@@ -2495,12 +2420,15 @@ func TestHeartbeatRepo_StallDetected_AppendsNoteAndWarnLog(t *testing.T) {
 
 	sched.heartbeatRepo(context.Background(), config.Repos[0])
 
-	// Note must have been appended.
-	if len(client.attached) != 1 {
-		t.Fatalf("expected 1 stall note, got %d", len(client.attached))
+	// Stall note and recovery note must both be appended.
+	if len(client.attached) != 2 {
+		t.Fatalf("expected 2 notes (stall + recovery), got %d", len(client.attached))
 	}
-	if !strings.HasPrefix(client.attached[0].notes, stallNotePrefix) {
-		t.Errorf("stall note missing structured prefix %q; got: %s", stallNotePrefix, client.attached[0].notes)
+	if !strings.Contains(client.attached[0].notes, "stalled") {
+		t.Errorf("stall note body missing 'stalled'; got: %s", client.attached[0].notes)
+	}
+	if !strings.Contains(client.attached[1].notes, "[scheduler:recovery]") {
+		t.Errorf("recovery note missing '[scheduler:recovery]'; got: %s", client.attached[1].notes)
 	}
 
 	// A Warn-level log entry must be present containing the droplet ID.
@@ -2513,14 +2441,14 @@ func TestHeartbeatRepo_StallDetected_AppendsNoteAndWarnLog(t *testing.T) {
 	}
 }
 
-// TestHeartbeatRepo_RateLimit_SuppressesSecondNote verifies that a second stall
+// TestHeartbeatRepo_Debounce_SuppressesSecondNote verifies that a second stall
 // note is NOT appended on a subsequent heartbeat tick when no progress signal
 // has advanced since the first note was written.
-func TestHeartbeatRepo_RateLimit_SuppressesSecondNote(t *testing.T) {
+func TestHeartbeatRepo_Debounce_SuppressesSecondNote(t *testing.T) {
 	client := newMockClient()
 
 	item := &cistern.Droplet{
-		ID:                "stall-rl",
+		ID:                "stall-debounce",
 		CurrentCataractae: "implement",
 		Status:            "in_progress",
 		Assignee:          "",
@@ -2535,23 +2463,26 @@ func TestHeartbeatRepo_RateLimit_SuppressesSecondNote(t *testing.T) {
 	runner := newMockRunner(client)
 	sched := NewFromParts(config, workflows, clients, runner)
 
-	// First call: no signals → stalled → note written.
+	// First call: no signals → stalled → stall note + recovery note written, item reset to open.
 	sched.heartbeatRepo(context.Background(), config.Repos[0])
-	if len(client.attached) != 1 {
-		t.Fatalf("expected 1 stall note after first tick, got %d", len(client.attached))
+	if len(client.attached) != 2 {
+		t.Fatalf("expected 2 notes (stall + recovery) after first tick, got %d", len(client.attached))
+	}
+	if item.Status != "open" {
+		t.Errorf("expected item reset to open after orphan recovery, got status %q", item.Status)
 	}
 
-	// Second call: signals have not advanced → rate-limit suppresses.
+	// Second call: item is now open (no longer in_progress) → no additional notes.
 	sched.heartbeatRepo(context.Background(), config.Repos[0])
-	if len(client.attached) != 1 {
-		t.Errorf("expected still 1 note after second tick (rate-limited), got %d", len(client.attached))
+	if len(client.attached) != 2 {
+		t.Errorf("expected still 2 notes after second tick (item is open), got %d", len(client.attached))
 	}
 }
 
-// TestHeartbeatRepo_RateLimit_NoteSignalAdvances_ClearsRateLimit verifies that
-// when the newest-note signal advances past the rate-limit time, the rate-limit
+// TestHeartbeatRepo_Debounce_NoteSignalAdvances_ClearsDebounce verifies that
+// when the newest-note signal advances past the debounce time, the debounce
 // entry is cleared and the next stall event re-triggers a note.
-func TestHeartbeatRepo_RateLimit_NoteSignalAdvances_ClearsRateLimit(t *testing.T) {
+func TestHeartbeatRepo_Debounce_NoteSignalAdvances_ClearsDebounce(t *testing.T) {
 	client := newMockClient()
 
 	item := &cistern.Droplet{
@@ -2570,28 +2501,28 @@ func TestHeartbeatRepo_RateLimit_NoteSignalAdvances_ClearsRateLimit(t *testing.T
 	runner := newMockRunner(client)
 	sched := NewFromParts(config, workflows, clients, runner)
 
-	// Pre-set rate-limit entry (simulates a previous stall note).
-	prevNoteTime := time.Now().Add(-10 * time.Minute)
-	sched.lastStallNoted[item.ID] = prevNoteTime
+	// Pre-set debounce entry (simulates a previous stall note).
+	debounceTime := time.Now().Add(-10 * time.Minute)
+	sched.lastStallNoted[item.ID] = debounceTime
 
-	// Add a note whose timestamp is newer than the rate-limit entry but still
+	// Add a note whose timestamp is newer than the debounce entry but still
 	// older than the 1-minute threshold (so the droplet is still stalled).
-	advancedTime := prevNoteTime.Add(3 * time.Minute) // now - 7 min: stalled, but > rate-limit entry
+	advancedTime := debounceTime.Add(3 * time.Minute) // now - 7 min: stalled, but > debounce
 	client.notes[item.ID] = []cistern.CataractaeNote{
 		{CreatedAt: advancedTime},
 	}
 
-	// heartbeatRepo should clear the rate-limit entry (note signal > lastStallNoted)
-	// and then detect stall again → write a new note.
+	// heartbeatRepo should clear the debounce (note signal > debounceTime) and
+	// then detect stall again → write stall note + recovery note, reset item to open.
 	sched.heartbeatRepo(context.Background(), config.Repos[0])
-	if len(client.attached) != 1 {
-		t.Errorf("expected 1 new stall note after note signal reset rate-limit entry, got %d", len(client.attached))
+	if len(client.attached) != 2 {
+		t.Errorf("expected 2 notes (stall + recovery) after debounce reset, got %d", len(client.attached))
 	}
 }
 
-// TestHeartbeatRepo_RateLimit_WorktreeSignalAdvances_ClearsRateLimit verifies
-// that a newer worktree mtime clears the rate-limit entry and allows a new stall note.
-func TestHeartbeatRepo_RateLimit_WorktreeSignalAdvances_ClearsRateLimit(t *testing.T) {
+// TestHeartbeatRepo_Debounce_WorktreeSignalAdvances_ClearsDebounce verifies
+// that a newer worktree mtime clears the debounce and allows a new stall note.
+func TestHeartbeatRepo_Debounce_WorktreeSignalAdvances_ClearsDebounce(t *testing.T) {
 	sandboxRoot := t.TempDir()
 	client := newMockClient()
 
@@ -2612,12 +2543,12 @@ func TestHeartbeatRepo_RateLimit_WorktreeSignalAdvances_ClearsRateLimit(t *testi
 	sched := NewFromParts(config, workflows, clients, runner,
 		WithSandboxRoot(sandboxRoot))
 
-	// Pre-set rate-limit entry.
-	prevNoteTime := time.Now().Add(-10 * time.Minute)
-	sched.lastStallNoted[item.ID] = prevNoteTime
+	// Pre-set debounce entry.
+	debounceTime := time.Now().Add(-10 * time.Minute)
+	sched.lastStallNoted[item.ID] = debounceTime
 
-	// Create worktree dir with a file whose mtime is newer than the rate-limit
-	// entry but still old enough to be stalled (3 min → 7 min ago > 1 min threshold).
+	// Create worktree dir with a file whose mtime is newer than debounceTime
+	// but still old enough to be stalled (3 min → 7 min ago > 1 min threshold).
 	worktreeDir := filepath.Join(sandboxRoot, "test-repo", item.ID)
 	if err := os.MkdirAll(worktreeDir, 0755); err != nil {
 		t.Fatal(err)
@@ -2626,22 +2557,22 @@ func TestHeartbeatRepo_RateLimit_WorktreeSignalAdvances_ClearsRateLimit(t *testi
 	if err := os.WriteFile(testFile, []byte("package main"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	fileMtime := prevNoteTime.Add(3 * time.Minute) // still stalled, but > rate-limit entry
+	fileMtime := debounceTime.Add(3 * time.Minute) // still stalled, but > debounce
 	if err := os.Chtimes(testFile, fileMtime, fileMtime); err != nil {
 		t.Fatal(err)
 	}
 
-	// Rate-limit entry should be cleared (worktree signal > lastStallNoted), droplet is
-	// still stalled → new note written.
+	// Debounce should be cleared (worktree signal > debounceTime), droplet is
+	// still stalled → stall note + recovery note written, item reset to open.
 	sched.heartbeatRepo(context.Background(), config.Repos[0])
-	if len(client.attached) != 1 {
-		t.Errorf("expected 1 new stall note after worktree signal reset rate-limit entry, got %d", len(client.attached))
+	if len(client.attached) != 2 {
+		t.Errorf("expected 2 notes (stall + recovery) after worktree signal reset debounce, got %d", len(client.attached))
 	}
 }
 
-// TestHeartbeatRepo_RateLimit_SessionLogSignalAdvances_ClearsRateLimit verifies
-// that a newer session log mtime clears the rate-limit entry and allows a new stall note.
-func TestHeartbeatRepo_RateLimit_SessionLogSignalAdvances_ClearsRateLimit(t *testing.T) {
+// TestHeartbeatRepo_Debounce_SessionLogSignalAdvances_ClearsDebounce verifies
+// that a newer session log mtime clears the debounce and allows a new stall note.
+func TestHeartbeatRepo_Debounce_SessionLogSignalAdvances_ClearsDebounce(t *testing.T) {
 	// Mock tmux as alive so liveness check passes through to stall detector.
 	orig := isTmuxAliveFn
 	isTmuxAliveFn = func(_ string) bool { return true }
@@ -2671,25 +2602,25 @@ func TestHeartbeatRepo_RateLimit_SessionLogSignalAdvances_ClearsRateLimit(t *tes
 	sched := NewFromParts(config, workflows, clients, runner,
 		WithSessionLogRoot(logDir))
 
-	// Pre-set rate-limit entry.
-	prevNoteTime := time.Now().Add(-10 * time.Minute)
-	sched.lastStallNoted[item.ID] = prevNoteTime
+	// Pre-set debounce entry.
+	debounceTime := time.Now().Add(-10 * time.Minute)
+	sched.lastStallNoted[item.ID] = debounceTime
 
-	// Create session log with mtime newer than rate-limit entry but still stalled.
+	// Create session log with mtime newer than debounce but still stalled.
 	logPath := filepath.Join(logDir, "test-repo-alpha.log")
 	if err := os.WriteFile(logPath, []byte("agent output"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	logMtime := prevNoteTime.Add(3 * time.Minute) // still stalled, but > rate-limit entry
+	logMtime := debounceTime.Add(3 * time.Minute) // still stalled, but > debounce
 	if err := os.Chtimes(logPath, logMtime, logMtime); err != nil {
 		t.Fatal(err)
 	}
 
-	// Rate-limit entry should be cleared (log signal > lastStallNoted), droplet is still
+	// Debounce should be cleared (log signal > debounceTime), droplet is still
 	// stalled → new note written.
 	sched.heartbeatRepo(context.Background(), config.Repos[0])
 	if len(client.attached) != 1 {
-		t.Errorf("expected 1 new stall note after session log signal reset rate-limit entry, got %d", len(client.attached))
+		t.Errorf("expected 1 new stall note after session log signal reset debounce, got %d", len(client.attached))
 	}
 }
 
@@ -2719,8 +2650,8 @@ func TestHeartbeatRepo_StallThreshold_ExplicitMinutesRespected(t *testing.T) {
 
 	sched.heartbeatRepo(context.Background(), config.Repos[0])
 
-	if len(client.attached) != 1 {
-		t.Errorf("expected 1 stall note with 1-min threshold and 2-min-old signals, got %d", len(client.attached))
+	if len(client.attached) != 2 {
+		t.Errorf("expected 2 notes (stall + recovery) with 1-min threshold and 2-min-old signals, got %d", len(client.attached))
 	}
 }
 
@@ -2757,10 +2688,10 @@ func TestHeartbeatRepo_StallThreshold_DefaultsTo45Minutes(t *testing.T) {
 	}
 }
 
-// TestHeartbeatRepo_RateLimit_AddNoteFailure_DoesNotArmRateLimit verifies that
-// when AddNote fails, the rate-limit entry is NOT set, so the next tick can
+// TestHeartbeatRepo_Debounce_AddNoteFailure_DoesNotArmDebounce verifies that
+// when AddNote fails, the debounce entry is NOT set, so the next tick can
 // attempt to write the stall note again.
-func TestHeartbeatRepo_RateLimit_AddNoteFailure_DoesNotArmRateLimit(t *testing.T) {
+func TestHeartbeatRepo_Debounce_AddNoteFailure_DoesNotArmDebounce(t *testing.T) {
 	client := newMockClient()
 	client.addNoteErr = errors.New("db error")
 
@@ -2780,10 +2711,10 @@ func TestHeartbeatRepo_RateLimit_AddNoteFailure_DoesNotArmRateLimit(t *testing.T
 	runner := newMockRunner(client)
 	sched := NewFromParts(config, workflows, clients, runner)
 
-	// First tick: stalled but AddNote fails → rate-limit entry must NOT be set.
+	// First tick: stalled but AddNote fails → debounce must NOT be armed.
 	sched.heartbeatRepo(context.Background(), config.Repos[0])
 	if _, armed := sched.lastStallNoted[item.ID]; armed {
-		t.Error("expected rate-limit entry not set after AddNote failure, but it was set")
+		t.Error("expected debounce not armed after AddNote failure, but it was set")
 	}
 
 	// Second tick: AddNote now succeeds → stall note must be written.
@@ -2792,7 +2723,7 @@ func TestHeartbeatRepo_RateLimit_AddNoteFailure_DoesNotArmRateLimit(t *testing.T
 	// attached[0] is from the failed first call; attached[1] is the successful second call.
 	successNotes := 0
 	for _, n := range client.attached {
-		if n.fromStep == "scheduler" && strings.HasPrefix(n.notes, stallNotePrefix) {
+		if n.fromStep == "scheduler" && strings.Contains(n.notes, "stalled") {
 			successNotes++
 		}
 	}
@@ -2800,14 +2731,14 @@ func TestHeartbeatRepo_RateLimit_AddNoteFailure_DoesNotArmRateLimit(t *testing.T
 		t.Errorf("expected at least 1 successful stall note after AddNote failure recovery, got %d", successNotes)
 	}
 	if _, armed := sched.lastStallNoted[item.ID]; !armed {
-		t.Error("expected rate-limit entry set after successful AddNote, but it was not set")
+		t.Error("expected debounce armed after successful AddNote, but it was not set")
 	}
 }
 
-// TestHeartbeatRepo_RateLimit_SchedulerNote_DoesNotResetRateLimit verifies that
-// a scheduler-generated note returned by GetNotes does not clear the rate-limit
+// TestHeartbeatRepo_Debounce_SchedulerNote_DoesNotResetDebounce verifies that
+// a scheduler-generated note returned by GetNotes does not clear the debounce
 // entry, preventing the periodic re-triggering feedback loop.
-func TestHeartbeatRepo_RateLimit_SchedulerNote_DoesNotResetRateLimit(t *testing.T) {
+func TestHeartbeatRepo_Debounce_SchedulerNote_DoesNotResetDebounce(t *testing.T) {
 	client := newMockClient()
 
 	item := &cistern.Droplet{
@@ -2826,19 +2757,19 @@ func TestHeartbeatRepo_RateLimit_SchedulerNote_DoesNotResetRateLimit(t *testing.
 	runner := newMockRunner(client)
 	sched := NewFromParts(config, workflows, clients, runner)
 
-	// Pre-set rate-limit entry 10 minutes ago.
-	prevNoteTime := time.Now().Add(-10 * time.Minute)
-	sched.lastStallNoted[item.ID] = prevNoteTime
+	// Pre-arm debounce 10 minutes ago.
+	debounceTime := time.Now().Add(-10 * time.Minute)
+	sched.lastStallNoted[item.ID] = debounceTime
 
 	// Inject a scheduler-generated note whose timestamp is newer than the
-	// rate-limit entry but still older than the threshold (simulates the stall
+	// debounce entry but still older than the threshold (simulates the stall
 	// note written on the previous tick being fed back through GetNotes).
-	schedulerNoteTime := prevNoteTime.Add(3 * time.Minute) // 7 min ago — stalled, > rate-limit entry
+	schedulerNoteTime := debounceTime.Add(3 * time.Minute) // 7 min ago — stalled, > debounce
 	client.notes[item.ID] = []cistern.CataractaeNote{
 		{CataractaeName: "scheduler", CreatedAt: schedulerNoteTime},
 	}
 
-	// heartbeatRepo must filter out the scheduler note, leave rate-limit entry intact,
+	// heartbeatRepo must filter out the scheduler note, leave debounce intact,
 	// and write no new stall note.
 	sched.heartbeatRepo(context.Background(), config.Repos[0])
 	if len(client.attached) != 0 {
@@ -2846,10 +2777,10 @@ func TestHeartbeatRepo_RateLimit_SchedulerNote_DoesNotResetRateLimit(t *testing.
 	}
 }
 
-// TestHeartbeatRepo_StaleRateLimit_PrunedWhenDropletNoLongerInProgress verifies
+// TestHeartbeatRepo_StaleDebounce_PrunedWhenDropletNoLongerInProgress verifies
 // that lastStallNoted entries are removed when the corresponding droplet is no
 // longer in the in_progress list, preventing unbounded map growth.
-func TestHeartbeatRepo_StaleRateLimit_PrunedWhenDropletNoLongerInProgress(t *testing.T) {
+func TestHeartbeatRepo_StaleDebounce_PrunedWhenDropletNoLongerInProgress(t *testing.T) {
 	client := newMockClient()
 	// No in_progress items — simulates all droplets having completed.
 
@@ -2948,10 +2879,11 @@ func TestHeartbeatRepo_StallWithAssignee_SpawnsSession(t *testing.T) {
 	}
 }
 
-// TestHeartbeatRepo_StallWithNoAssignee_NoteOnlyNoSpawn verifies that when a
-// stall is detected but the droplet has no assignee, the stall note is written
-// but runner.Spawn is NOT called (there is no session to resume).
-func TestHeartbeatRepo_StallWithNoAssignee_NoteOnlyNoSpawn(t *testing.T) {
+// TestHeartbeatRepo_StallWithNoAssignee_RecoverAndNoSpawn verifies that when a
+// stall is detected on an orphaned droplet (no assignee), both the stall note and
+// the recovery note are written, the droplet is reset to open, and runner.Spawn is
+// NOT called (there is no session to resume).
+func TestHeartbeatRepo_StallWithNoAssignee_RecoverAndNoSpawn(t *testing.T) {
 	client := newMockClient()
 	runner := newMockRunner(client)
 
@@ -2972,9 +2904,17 @@ func TestHeartbeatRepo_StallWithNoAssignee_NoteOnlyNoSpawn(t *testing.T) {
 
 	sched.heartbeatRepo(context.Background(), config.Repos[0])
 
-	// Stall note must still be written.
-	if len(client.attached) != 1 {
-		t.Fatalf("expected 1 stall note, got %d", len(client.attached))
+	// Stall note and recovery note must both be written.
+	if len(client.attached) != 2 {
+		t.Fatalf("expected 2 notes (stall + recovery) for orphaned droplet, got %d", len(client.attached))
+	}
+	if !strings.Contains(client.attached[1].notes, "[scheduler:recovery]") {
+		t.Errorf("second note should be recovery note; got: %s", client.attached[1].notes)
+	}
+
+	// Item must be reset to open.
+	if item.Status != "open" {
+		t.Errorf("expected item reset to open, got status %q", item.Status)
 	}
 
 	// Spawn must NOT have been called.
@@ -2982,15 +2922,89 @@ func TestHeartbeatRepo_StallWithNoAssignee_NoteOnlyNoSpawn(t *testing.T) {
 	calls := runner.calls
 	runner.mu.Unlock()
 	if len(calls) != 0 {
-		t.Errorf("expected runner.Spawn not called for no-assignee droplet, got %d calls", len(calls))
+		t.Errorf("expected runner.Spawn not called for orphaned droplet, got %d calls", len(calls))
 	}
 }
 
-// TestHeartbeatRepo_SpawnFailure_ClearsRateLimit verifies that when respawnStalledDroplet
-// returns an error (Spawn fails), the rate-limit entry is deleted. On the next heartbeat
-// the DB fallback suppresses a duplicate note (note was written seconds ago) but Spawn
-// is still retried — respawn is decoupled from note writing.
-func TestHeartbeatRepo_SpawnFailure_ClearsRateLimit(t *testing.T) {
+// TestHeartbeatRepo_OrphanRecovery_ClearsAssignedAqueduct verifies that the
+// orphan recovery path clears assigned_aqueduct so the re-opened droplet is not
+// locked to a specific aqueduct operator that may no longer exist.
+func TestHeartbeatRepo_OrphanRecovery_ClearsAssignedAqueduct(t *testing.T) {
+	client := newMockClient()
+	runner := newMockRunner(client)
+
+	item := &cistern.Droplet{
+		ID:               "orphan-aq",
+		CurrentCataractae: "implement",
+		Status:           "in_progress",
+		Assignee:         "",
+		AssignedAqueduct: "virgo", // stale aqueduct from a previous dispatch attempt
+	}
+	client.items[item.ID] = item
+
+	config := testConfig()
+	config.StallThresholdMinutes = 1
+
+	workflows := map[string]*aqueduct.Workflow{"test-repo": testWorkflow()}
+	clients := map[string]CisternClient{"test-repo": client}
+	sched := NewFromParts(config, workflows, clients, runner)
+
+	sched.heartbeatRepo(context.Background(), config.Repos[0])
+
+	if item.Status != "open" {
+		t.Errorf("expected item status=open after recovery, got %q", item.Status)
+	}
+	if item.AssignedAqueduct != "" {
+		t.Errorf("expected assigned_aqueduct cleared after recovery, got %q", item.AssignedAqueduct)
+	}
+}
+
+// TestHeartbeatRepo_OrphanRecovery_AssignFailure_ClearsDebounce verifies that
+// when the Assign reset fails, the debounce entry is cleared so the next
+// heartbeat retries the recovery rather than suppressing it permanently.
+func TestHeartbeatRepo_OrphanRecovery_AssignFailure_ClearsDebounce(t *testing.T) {
+	client := newMockClient()
+	client.assignErr = errors.New("db error")
+	runner := newMockRunner(client)
+
+	item := &cistern.Droplet{
+		ID:                "orphan-assign-fail",
+		CurrentCataractae: "implement",
+		Status:            "in_progress",
+		Assignee:          "",
+	}
+	client.items[item.ID] = item
+
+	config := testConfig()
+	config.StallThresholdMinutes = 1
+
+	workflows := map[string]*aqueduct.Workflow{"test-repo": testWorkflow()}
+	clients := map[string]CisternClient{"test-repo": client}
+	sched := NewFromParts(config, workflows, clients, runner)
+
+	sched.heartbeatRepo(context.Background(), config.Repos[0])
+
+	// Recovery note must be written (best-effort) even when Assign fails.
+	recoveryNotes := 0
+	for _, n := range client.attached {
+		if strings.Contains(n.notes, "[scheduler:recovery]") {
+			recoveryNotes++
+		}
+	}
+	if recoveryNotes < 1 {
+		t.Errorf("expected recovery note even on Assign failure, got %d recovery notes", recoveryNotes)
+	}
+
+	// Debounce must be cleared so the next tick retries.
+	if _, armed := sched.lastStallNoted[item.ID]; armed {
+		t.Error("expected debounce cleared after Assign failure, so next tick can retry")
+	}
+}
+
+// TestHeartbeatRepo_SpawnFailure_ClearsDebounce verifies that when respawnStalledDroplet
+// returns an error (Spawn fails), the debounce entry is deleted so the next heartbeat
+// re-detects the stall and retries the spawn.
+func TestHeartbeatRepo_SpawnFailure_ClearsDebounce(t *testing.T) {
 	// Mock tmux as alive so liveness check passes through to stall detector.
 	orig := isTmuxAliveFn
 	isTmuxAliveFn = func(_ string) bool { return true }
@@ -3019,30 +3033,21 @@ func TestHeartbeatRepo_SpawnFailure_ClearsRateLimit(t *testing.T) {
 	clients := map[string]CisternClient{"test-repo": client}
 	sched := NewFromParts(config, workflows, clients, runner)
 
-	// First tick: stalled → note written → Spawn fails → rate-limit entry cleared.
+	// First tick: stalled → note written → Spawn fails → debounce must be cleared.
 	sched.heartbeatRepo(context.Background(), config.Repos[0])
 
 	if len(client.attached) != 1 {
 		t.Fatalf("expected 1 stall note, got %d", len(client.attached))
 	}
 	if _, armed := sched.lastStallNoted[item.ID]; armed {
-		t.Error("expected rate-limit entry cleared after Spawn failure, but lastStallNoted is still set")
+		t.Error("expected debounce cleared after Spawn failure, but lastStallNoted is still set")
 	}
 
-	// Second tick: rate-limit suppresses a duplicate note (note was written seconds
-	// ago via DB fallback), but Spawn is retried regardless.
+	// Second tick: stall re-detected → second note written → Spawn called again.
 	sched.heartbeatRepo(context.Background(), config.Repos[0])
 
-	// Still only 1 note — rate-limited via DB fallback.
-	if len(client.attached) != 1 {
-		t.Errorf("expected still 1 stall note after retry tick (rate-limited), got %d", len(client.attached))
-	}
-	// Spawn was attempted twice.
-	runner.mu.Lock()
-	spawnCalls := len(runner.calls)
-	runner.mu.Unlock()
-	if spawnCalls != 2 {
-		t.Errorf("expected 2 spawn attempts (respawn decoupled from note), got %d", spawnCalls)
+	if len(client.attached) != 2 {
+		t.Errorf("expected 2 stall notes after retry tick, got %d", len(client.attached))
 	}
 }
 
@@ -3682,386 +3687,6 @@ func TestCheckHungDrought_WhenEmptyDBPath_NoWarning(t *testing.T) {
 
 	if strings.Contains(logBuf.String(), "hung") {
 		t.Errorf("unexpected warning for empty dbPath: %s", logBuf.String())
-	}
-}
-
-// --- stall note format and rate-limiting tests ---
-
-// TestHeartbeatRepo_StallNote_StructuredPrefix verifies that stall notes use the
-// [scheduler:stall] structured prefix so they can be identified programmatically.
-func TestHeartbeatRepo_StallNote_StructuredPrefix(t *testing.T) {
-	client := newMockClient()
-	item := &cistern.Droplet{
-		ID:                "stall-prefix",
-		CurrentCataractae: "implement",
-		Status:            "in_progress",
-		Assignee:          "",
-	}
-	client.items[item.ID] = item
-
-	config := testConfig()
-	config.StallThresholdMinutes = 1
-
-	sched := NewFromParts(config,
-		map[string]*aqueduct.Workflow{"test-repo": testWorkflow()},
-		map[string]CisternClient{"test-repo": client},
-		newMockRunner(client))
-
-	sched.heartbeatRepo(context.Background(), config.Repos[0])
-
-	if len(client.attached) != 1 {
-		t.Fatalf("expected 1 stall note, got %d", len(client.attached))
-	}
-	if !strings.HasPrefix(client.attached[0].notes, stallNotePrefix) {
-		t.Errorf("stall note missing prefix %q; got: %s", stallNotePrefix, client.attached[0].notes)
-	}
-}
-
-// TestHeartbeatRepo_StallNote_DiagnosticFields verifies that stall notes contain
-// all required structured fields: elapsed, note_signal, worktree_signal, session_signal.
-func TestHeartbeatRepo_StallNote_DiagnosticFields(t *testing.T) {
-	client := newMockClient()
-	item := &cistern.Droplet{
-		ID:                "stall-fields",
-		CurrentCataractae: "implement",
-		Status:            "in_progress",
-		Assignee:          "",
-	}
-	client.items[item.ID] = item
-
-	config := testConfig()
-	config.StallThresholdMinutes = 1
-
-	sched := NewFromParts(config,
-		map[string]*aqueduct.Workflow{"test-repo": testWorkflow()},
-		map[string]CisternClient{"test-repo": client},
-		newMockRunner(client))
-
-	sched.heartbeatRepo(context.Background(), config.Repos[0])
-
-	if len(client.attached) != 1 {
-		t.Fatalf("expected 1 stall note, got %d", len(client.attached))
-	}
-	note := client.attached[0].notes
-	for _, field := range []string{"elapsed=", "note_signal=", "worktree_signal=", "session_signal="} {
-		if !strings.Contains(note, field) {
-			t.Errorf("stall note missing field %q; got: %s", field, note)
-		}
-	}
-}
-
-// TestHeartbeatRepo_StallNote_SessionSignal_AbsentWhenNoAssignee verifies that
-// session_signal=absent when no assignee (and thus no session log) is present.
-func TestHeartbeatRepo_StallNote_SessionSignal_AbsentWhenNoAssignee(t *testing.T) {
-	client := newMockClient()
-	item := &cistern.Droplet{
-		ID:                "stall-sess-absent",
-		CurrentCataractae: "implement",
-		Status:            "in_progress",
-		Assignee:          "",
-	}
-	client.items[item.ID] = item
-
-	config := testConfig()
-	config.StallThresholdMinutes = 1
-
-	sched := NewFromParts(config,
-		map[string]*aqueduct.Workflow{"test-repo": testWorkflow()},
-		map[string]CisternClient{"test-repo": client},
-		newMockRunner(client))
-
-	sched.heartbeatRepo(context.Background(), config.Repos[0])
-
-	if len(client.attached) != 1 {
-		t.Fatalf("expected 1 stall note, got %d", len(client.attached))
-	}
-	if !strings.Contains(client.attached[0].notes, "session_signal=absent") {
-		t.Errorf("expected session_signal=absent; got: %s", client.attached[0].notes)
-	}
-}
-
-// TestHeartbeatRepo_StallNote_SessionSignal_PresentWhenLogExists verifies that
-// session_signal=present when a session log file exists for the assignee.
-func TestHeartbeatRepo_StallNote_SessionSignal_PresentWhenLogExists(t *testing.T) {
-	// Mock tmux and agent as alive so the liveness checks pass through.
-	origTmux := isTmuxAliveFn
-	isTmuxAliveFn = func(_ string) bool { return true }
-	t.Cleanup(func() { isTmuxAliveFn = origTmux })
-	origAgent := isAgentAliveFn
-	isAgentAliveFn = func(_ string) bool { return true }
-	t.Cleanup(func() { isAgentAliveFn = origAgent })
-
-	logDir := t.TempDir()
-	client := newMockClient()
-	item := &cistern.Droplet{
-		ID:                "stall-sess-present",
-		CurrentCataractae: "implement",
-		Status:            "in_progress",
-		Assignee:          "alpha",
-	}
-	client.items[item.ID] = item
-
-	config := testConfig()
-	config.StallThresholdMinutes = 1
-
-	sched := NewFromParts(config,
-		map[string]*aqueduct.Workflow{"test-repo": testWorkflow()},
-		map[string]CisternClient{"test-repo": client},
-		newMockRunner(client),
-		WithSessionLogRoot(logDir))
-
-	// Write a stale session log (old enough to be stalled).
-	logPath := filepath.Join(logDir, "test-repo-alpha.log")
-	if err := os.WriteFile(logPath, []byte("agent output"), 0644); err != nil {
-		t.Fatal(err)
-	}
-	staleMtime := time.Now().Add(-10 * time.Minute)
-	if err := os.Chtimes(logPath, staleMtime, staleMtime); err != nil {
-		t.Fatal(err)
-	}
-
-	sched.heartbeatRepo(context.Background(), config.Repos[0])
-
-	if len(client.attached) != 1 {
-		t.Fatalf("expected 1 stall note, got %d", len(client.attached))
-	}
-	if !strings.Contains(client.attached[0].notes, "session_signal=present") {
-		t.Errorf("expected session_signal=present; got: %s", client.attached[0].notes)
-	}
-}
-
-// TestHeartbeatRepo_RateLimit_SuppressesNoteWithin60Minutes verifies that the
-// in-memory rate limit prevents a second stall note within stallNoteInterval.
-func TestHeartbeatRepo_RateLimit_SuppressesNoteWithin60Minutes(t *testing.T) {
-	client := newMockClient()
-	item := &cistern.Droplet{
-		ID:                "stall-rl-suppress",
-		CurrentCataractae: "implement",
-		Status:            "in_progress",
-		Assignee:          "",
-	}
-	client.items[item.ID] = item
-
-	config := testConfig()
-	config.StallThresholdMinutes = 1
-
-	sched := NewFromParts(config,
-		map[string]*aqueduct.Workflow{"test-repo": testWorkflow()},
-		map[string]CisternClient{"test-repo": client},
-		newMockRunner(client))
-
-	// Pre-set rate-limit entry to 30 minutes ago (within the 60-minute window).
-	sched.lastStallNoted[item.ID] = time.Now().Add(-30 * time.Minute)
-
-	sched.heartbeatRepo(context.Background(), config.Repos[0])
-
-	if len(client.attached) != 0 {
-		t.Errorf("expected 0 stall notes (rate-limited, 30m < 60m), got %d", len(client.attached))
-	}
-}
-
-// TestHeartbeatRepo_RateLimit_AllowsNoteAfter60Minutes verifies that a new stall
-// note is written once stallNoteInterval has elapsed since the last note.
-func TestHeartbeatRepo_RateLimit_AllowsNoteAfter60Minutes(t *testing.T) {
-	client := newMockClient()
-	item := &cistern.Droplet{
-		ID:                "stall-rl-allow",
-		CurrentCataractae: "implement",
-		Status:            "in_progress",
-		Assignee:          "",
-	}
-	client.items[item.ID] = item
-
-	config := testConfig()
-	config.StallThresholdMinutes = 1
-
-	sched := NewFromParts(config,
-		map[string]*aqueduct.Workflow{"test-repo": testWorkflow()},
-		map[string]CisternClient{"test-repo": client},
-		newMockRunner(client))
-
-	// Pre-set rate-limit entry to 61 minutes ago (outside the 60-minute window).
-	sched.lastStallNoted[item.ID] = time.Now().Add(-61 * time.Minute)
-
-	sched.heartbeatRepo(context.Background(), config.Repos[0])
-
-	if len(client.attached) != 1 {
-		t.Errorf("expected 1 stall note (rate-limit expired, 61m > 60m), got %d", len(client.attached))
-	}
-}
-
-// TestHeartbeatRepo_RateLimit_DBFallback_SuppressesAfterRestart simulates a process
-// restart: the in-memory lastStallNoted is empty but the DB contains a recent
-// [scheduler:stall] note. Verifies no duplicate note is written within the window.
-func TestHeartbeatRepo_RateLimit_DBFallback_SuppressesAfterRestart(t *testing.T) {
-	client := newMockClient()
-	item := &cistern.Droplet{
-		ID:                "stall-db-suppress",
-		CurrentCataractae: "implement",
-		Status:            "in_progress",
-		Assignee:          "",
-	}
-	client.items[item.ID] = item
-
-	config := testConfig()
-	config.StallThresholdMinutes = 1
-
-	sched := NewFromParts(config,
-		map[string]*aqueduct.Workflow{"test-repo": testWorkflow()},
-		map[string]CisternClient{"test-repo": client},
-		newMockRunner(client))
-
-	// Simulate a stall note written 30 minutes ago (before this process started).
-	recentStallNote := time.Now().Add(-30 * time.Minute)
-	client.notes[item.ID] = []cistern.CataractaeNote{
-		{
-			CataractaeName: "scheduler",
-			Content:        stallNotePrefix + " elapsed=2h note_signal=none worktree_signal=none session_signal=absent",
-			CreatedAt:      recentStallNote,
-		},
-	}
-	// In-memory is empty — simulates process restart.
-
-	sched.heartbeatRepo(context.Background(), config.Repos[0])
-
-	if len(client.attached) != 0 {
-		t.Errorf("expected 0 new stall notes (DB fallback suppresses within 60m), got %d", len(client.attached))
-	}
-}
-
-// TestHeartbeatRepo_RateLimit_DBFallback_AllowsAfterInterval verifies that when the
-// most recent DB stall note is older than stallNoteInterval, a new note is written.
-func TestHeartbeatRepo_RateLimit_DBFallback_AllowsAfterInterval(t *testing.T) {
-	client := newMockClient()
-	item := &cistern.Droplet{
-		ID:                "stall-db-allow",
-		CurrentCataractae: "implement",
-		Status:            "in_progress",
-		Assignee:          "",
-	}
-	client.items[item.ID] = item
-
-	config := testConfig()
-	config.StallThresholdMinutes = 1
-
-	sched := NewFromParts(config,
-		map[string]*aqueduct.Workflow{"test-repo": testWorkflow()},
-		map[string]CisternClient{"test-repo": client},
-		newMockRunner(client))
-
-	// Stall note written 61 minutes ago — outside the rate-limit window.
-	oldStallNote := time.Now().Add(-61 * time.Minute)
-	client.notes[item.ID] = []cistern.CataractaeNote{
-		{
-			CataractaeName: "scheduler",
-			Content:        stallNotePrefix + " elapsed=3h note_signal=none worktree_signal=none session_signal=absent",
-			CreatedAt:      oldStallNote,
-		},
-	}
-	// In-memory is empty — simulates process restart.
-
-	sched.heartbeatRepo(context.Background(), config.Repos[0])
-
-	if len(client.attached) != 1 {
-		t.Errorf("expected 1 new stall note (DB note older than 60m), got %d", len(client.attached))
-	}
-}
-
-// TestHeartbeatRepo_RateLimit_DBFallback_NonStallSchedulerNote_NotSuppressed
-// verifies that scheduler notes without the [scheduler:stall] prefix are NOT
-// counted as stall notes by the DB fallback check.
-func TestHeartbeatRepo_RateLimit_DBFallback_NonStallSchedulerNote_NotSuppressed(t *testing.T) {
-	client := newMockClient()
-	item := &cistern.Droplet{
-		ID:                "stall-db-nonstall",
-		CurrentCataractae: "implement",
-		Status:            "in_progress",
-		Assignee:          "",
-	}
-	client.items[item.ID] = item
-
-	config := testConfig()
-	config.StallThresholdMinutes = 1
-
-	sched := NewFromParts(config,
-		map[string]*aqueduct.Workflow{"test-repo": testWorkflow()},
-		map[string]CisternClient{"test-repo": client},
-		newMockRunner(client))
-
-	// Scheduler note without the stall prefix (e.g. a zombie note) — should not
-	// be counted as a stall note by the DB fallback.
-	client.notes[item.ID] = []cistern.CataractaeNote{
-		{
-			CataractaeName: "scheduler",
-			Content:        "Session zombie detected: tmux session dead.",
-			CreatedAt:      time.Now().Add(-5 * time.Minute),
-		},
-	}
-
-	sched.heartbeatRepo(context.Background(), config.Repos[0])
-
-	if len(client.attached) != 1 {
-		t.Errorf("expected 1 stall note (non-stall scheduler note does not suppress), got %d", len(client.attached))
-	}
-}
-
-// TestFormatStallDuration verifies the compact duration formatter used in stall notes.
-func TestFormatStallDuration(t *testing.T) {
-	tests := []struct {
-		d    time.Duration
-		want string
-	}{
-		{0, "0m"},
-		{29 * time.Second, "0m"},  // rounds down to 0m
-		{30 * time.Second, "1m"},  // rounds up to 1m
-		{time.Minute, "1m"},
-		{45 * time.Minute, "45m"},
-		{59*time.Minute + 29*time.Second, "59m"}, // rounds down
-		{59*time.Minute + 30*time.Second, "1h"},  // rounds up to 1h
-		{time.Hour, "1h"},
-		{2 * time.Hour, "2h"},
-		{2*time.Hour + 30*time.Minute, "2h30m"},
-		{48 * time.Hour, "48h"},
-		{48*time.Hour + 15*time.Minute, "48h15m"},
-	}
-	for _, tc := range tests {
-		got := formatStallDuration(tc.d)
-		if got != tc.want {
-			t.Errorf("formatStallDuration(%v) = %q, want %q", tc.d, got, tc.want)
-		}
-	}
-}
-
-// TestLatestWorktreeSignal_Labels_AreSpaceFree verifies that all labels returned
-// by latestWorktreeSignal contain no spaces, ensuring the structured stall note
-// format (space-delimited key=value pairs) remains machine-readable.
-func TestLatestWorktreeSignal_Labels_AreSpaceFree(t *testing.T) {
-	tests := []struct {
-		name        string
-		sandboxRoot string
-		repoName    string
-		dropletID   string
-	}{
-		{
-			name:        "empty sandbox root",
-			sandboxRoot: "",
-			repoName:    "repo",
-			dropletID:   "drop-1",
-		},
-		{
-			name:        "directory does not exist",
-			sandboxRoot: t.TempDir(),
-			repoName:    "repo",
-			dropletID:   "drop-nonexistent",
-		},
-	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			_, label := latestWorktreeSignal(tc.sandboxRoot, tc.repoName, tc.dropletID)
-			if strings.Contains(label, " ") {
-				t.Errorf("latestWorktreeSignal label contains spaces: %q", label)
-			}
-		})
 	}
 }
 

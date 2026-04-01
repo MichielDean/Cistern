@@ -399,7 +399,7 @@ func (c *Client) Assign(id, worker, step string) error {
 	if worker == "" {
 		res, err = c.db.Exec(
 			`UPDATE droplets SET assignee = ?, current_cataractae = ?, outcome = NULL, status = 'open',
-			 updated_at = ? WHERE id = ?`,
+			 assigned_aqueduct = '', updated_at = ? WHERE id = ?`,
 			worker, step, now, id,
 		)
 	} else {

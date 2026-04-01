@@ -303,6 +303,31 @@ func TestAssign_EmptyWorker_SetsOpen(t *testing.T) {
 	}
 }
 
+// TestAssign_EmptyWorker_ClearsAssignedAqueduct verifies that resetting a droplet
+// to open (worker="") also clears the assigned_aqueduct field so the re-opened
+// droplet is not locked to a stale aqueduct operator.
+func TestAssign_EmptyWorker_ClearsAssignedAqueduct(t *testing.T) {
+	c := testClient(t)
+	item, _ := c.Add("myrepo", "Task", "", 1, 3)
+	c.GetReady("myrepo")
+	c.Assign(item.ID, "alice", "implement")
+	c.SetAssignedAqueduct(item.ID, "cistern-alice")
+
+	pre, _ := c.Get(item.ID)
+	if pre.AssignedAqueduct != "cistern-alice" {
+		t.Fatal("precondition failed: SetAssignedAqueduct did not set the field")
+	}
+
+	if err := c.Assign(item.ID, "", "review"); err != nil {
+		t.Fatal(err)
+	}
+
+	got, _ := c.Get(item.ID)
+	if got.AssignedAqueduct != "" {
+		t.Errorf("assigned_aqueduct after Assign(\"\",step) = %q, want empty", got.AssignedAqueduct)
+	}
+}
+
 func TestUpdateStatus(t *testing.T) {
 	c := testClient(t)
 	item, _ := c.Add("myrepo", "Task", "", 1, 3)
