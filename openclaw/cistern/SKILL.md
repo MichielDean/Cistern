@@ -80,7 +80,7 @@ ct droplet add \
 
 ### Filtered — for non-trivial or exploratory work:
 
-Filtration is a **conversation**, not a batch pass.
+Filtration is a **thinking tool**, not a filing tool. It refines ideas into clear specs — filing is always done separately with `ct droplet add`.
 
 **Step 1 — Start:**
 ```bash
@@ -93,17 +93,22 @@ ct filter --repo <repo> --title "Rough idea" --description "Intent..."
 ct filter --resume <session-id> "answers and context..."
 ```
 
-**Step 3 — File after confirmation:**
+**Step 3 — When spec is approved, file manually:**
 ```bash
-ct filter --resume <session-id> --file --repo <repo>
+# File each droplet explicitly, wiring deps with --depends-on
+ct droplet add --title "First droplet" --repo <repo> --complexity standard \
+  --description "..." --yes
+ct droplet add --title "Second droplet" --repo <repo> --complexity standard \
+  --description "..." --depends-on <first-id> --yes
 ```
 
 **Rules:**
 - Never use `ct droplet add --filter` — fires-and-forgets, no conversation
+- Never use `ct filter --file` — the finalize JSON step is lossy and drops `depends_on`; always file manually after filtration
 - Minimum 3 rounds. Keep going past 3 until the spec is unambiguous — every cataracta (implement, reviewer, QA, delivery) should be able to read CONTEXT.md and have the same understanding of what needs to change, with no guessing about scope, file locations, or acceptance criteria. Stop when the spec is concrete, not when the count hits a number.
+- After each round, present the updated spec as a numbered list with dependencies stated in plain text (e.g. "Droplet 2 requires droplet 1 to be delivered first")
 - After each session, give a recommendation: ready to file, or needs more passes? Say why.
-- Report a single summary of improvements across all rounds, not one message per round
-- Get explicit "yes" before `--file`
+- Get explicit "yes" before filing any droplet
 - File follow-up droplets with `--depends-on <id>` rather than injecting notes into flowing work
 
 ### Telegram buttons during filtration
@@ -132,7 +137,7 @@ openclaw message send --channel telegram --target "$CHAT_ID" \
 ```
 
 Button click responses arrive as `callback_data: filter:file` etc. Map them:
-- `filter:file` → run `ct filter --resume <id> --file --repo <repo>`
+- `filter:file` → file each droplet manually with `ct droplet add`, wiring `--depends-on` explicitly
 - `filter:continue` → ask what to refine, do another round
 - `filter:cancel` → confirm cancellation, do not file
 
