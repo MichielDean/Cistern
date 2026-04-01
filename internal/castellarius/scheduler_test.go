@@ -2718,10 +2718,11 @@ func TestHeartbeatRepo_Debounce_AddNoteFailure_DoesNotArmDebounce(t *testing.T) 
 		t.Error("expected debounce not armed after AddNote failure, but it was set")
 	}
 
-	// Second tick: AddNote now succeeds → stall note must be written.
+	// Second tick: AddNote now succeeds → stall note and recovery note must be written.
+	// The failed first tick produced no entries; attached[0] is the stall note and
+	// attached[1] is the recovery note, both written on this second tick.
 	client.addNoteErr = nil
 	sched.heartbeatRepo(context.Background(), config.Repos[0])
-	// attached[0] is from the failed first call; attached[1] is the successful second call.
 	successNotes := 0
 	for _, n := range client.attached {
 		if n.fromStep == "scheduler" && strings.Contains(n.notes, "stalled") {
