@@ -297,9 +297,16 @@ func wsUpgrade(w http.ResponseWriter, r *http.Request) (net.Conn, *bufio.ReadWri
 	return conn, brw, nil
 }
 
-// tuiOutputBufChunks is the ring-buffer size (in PTY read chunks) replayed to
-// each newly-connecting WebSocket client for an immediate terminal snapshot.
-const tuiOutputBufChunks = 512
+// repaintMarker is the escape sequence Bubble Tea emits at the start of every
+// full-screen repaint when running with WithAltScreen: erase display (\033[2J)
+// followed by cursor home (\033[H). broadcast() uses it to detect frame boundaries.
+var repaintMarker = []byte("\033[2J\033[H")
+
+// tuiFrameFlushDelay is how long broadcast() waits after the most recent PTY
+// chunk before committing the pending frame as lastFrame. This ensures that an
+// idle TUI still exposes a fresh snapshot to new connections even when no second
+// repaint marker arrives to trigger the normal commit path.
+const tuiFrameFlushDelay = 200 * time.Millisecond
 
 // tuiClientChanSize is the per-client send-channel depth. Excess frames are
 // dropped for slow clients so one lagging consumer cannot stall the broadcast loop.
@@ -318,8 +325,8 @@ type tuiClient struct {
 	ch chan []byte
 }
 
-// DashboardTUI manages a singleton ct-dashboard child process, buffers its PTY
-// output in a ring buffer, and fans out to all connected WebSocket clients.
+// DashboardTUI manages a singleton ct-dashboard child process, tracks the last
+// complete repaint frame, and fans out to all connected WebSocket clients.
 // The child process survives WebSocket disconnects; only explicit Stop shuts it down.
 type DashboardTUI struct {
 	exe     string
@@ -330,13 +337,14 @@ type DashboardTUI struct {
 	// Override in tests to inject a controllable in-process connection.
 	spawnFn func() (rwc io.ReadWriteCloser, resizeFn func(cols, rows uint16), waitFn func(), err error)
 
-	mu       sync.Mutex
-	rwc      io.ReadWriteCloser      // current PTY/pipe master (protected by mu)
-	resizeFn func(cols, rows uint16) // current resize callback (protected by mu)
-	clients  map[*tuiClient]struct{} // active WS consumers (protected by mu)
-	ring     [][]byte                // ring buffer of recent PTY chunks (protected by mu)
-	ringHead int                     // index of oldest valid entry (protected by mu)
-	ringLen  int                     // number of valid entries (protected by mu)
+	mu         sync.Mutex
+	rwc        io.ReadWriteCloser      // current PTY/pipe master (protected by mu)
+	resizeFn   func(cols, rows uint16) // current resize callback (protected by mu)
+	clients    map[*tuiClient]struct{} // active WS consumers (protected by mu)
+	lastFrame  []byte                  // last committed complete repaint frame (protected by mu)
+	pending    []byte                  // frame being accumulated since last repaint marker (protected by mu)
+	inFrame    bool                    // true once the first repaint marker has been seen (protected by mu)
+	flushTimer *time.Timer             // commits pending to lastFrame after idle period (protected by mu)
 
 	stopCh chan struct{} // closed by Stop to terminate run loop
 	doneCh chan struct{} // closed when run loop has fully exited
@@ -349,7 +357,6 @@ func newDashboardTUI(exe, cfgPath, dbPath string) *DashboardTUI {
 		cfgPath: cfgPath,
 		dbPath:  dbPath,
 		clients: make(map[*tuiClient]struct{}),
-		ring:    make([][]byte, tuiOutputBufChunks),
 		stopCh:  make(chan struct{}),
 		doneCh:  make(chan struct{}),
 	}
@@ -489,19 +496,11 @@ func (d *DashboardTUI) defaultSpawn() (io.ReadWriteCloser, func(cols, rows uint1
 	return ptmx, resizeFn, waitFn, nil
 }
 
-// broadcast appends chunk to the ring buffer and sends it to all registered clients.
+// broadcast updates the lastFrame state and sends chunk to all registered clients.
 // Slow clients have frames dropped rather than blocking the broadcast loop.
 func (d *DashboardTUI) broadcast(chunk []byte) {
 	d.mu.Lock()
-	// Append to ring buffer.
-	idx := (d.ringHead + d.ringLen) % tuiOutputBufChunks
-	d.ring[idx] = chunk
-	if d.ringLen < tuiOutputBufChunks {
-		d.ringLen++
-	} else {
-		// Ring full: advance head, overwriting the oldest entry.
-		d.ringHead = (d.ringHead + 1) % tuiOutputBufChunks
-	}
+	d.frameAccumulate(chunk)
 	// Snapshot client list under lock to avoid holding the lock during sends.
 	clients := make([]*tuiClient, 0, len(d.clients))
 	for c := range d.clients {
@@ -518,20 +517,75 @@ func (d *DashboardTUI) broadcast(chunk []byte) {
 	}
 }
 
+// frameAccumulate detects repaint boundaries in chunk and updates lastFrame.
+// A repaint boundary is marked by repaintMarker (\033[2J\033[H). When a marker
+// is found, the accumulated pending frame is committed as lastFrame and a new
+// pending frame begins at the marker. An idle-flush timer commits the current
+// pending frame if no second marker arrives within tuiFrameFlushDelay.
+// Must be called with d.mu held.
+func (d *DashboardTUI) frameAccumulate(chunk []byte) {
+	rest := chunk
+	for len(rest) > 0 {
+		idx := bytes.Index(rest, repaintMarker)
+		if idx < 0 {
+			// No marker: append to the current pending frame if we are accumulating.
+			if d.inFrame {
+				d.pending = append(d.pending, rest...)
+				d.scheduleFlush()
+			}
+			return
+		}
+		// Repaint marker found. Everything before it belongs to the current frame.
+		if d.inFrame {
+			d.pending = append(d.pending, rest[:idx]...)
+			// Commit the just-completed frame.
+			if d.flushTimer != nil {
+				d.flushTimer.Stop()
+				d.flushTimer = nil
+			}
+			d.lastFrame = d.pending
+		}
+		// Start accumulating the next frame from the marker.
+		d.pending = bytes.Clone(rest[idx : idx+len(repaintMarker)])
+		d.inFrame = true
+		rest = rest[idx+len(repaintMarker):]
+		if len(rest) == 0 {
+			// Nothing after the marker in this chunk; arm the flush timer so an
+			// idle TUI still exposes a snapshot to new connections.
+			d.scheduleFlush()
+		}
+	}
+}
+
+// scheduleFlush arms (or resets) the idle-flush timer. Must be called with d.mu held.
+func (d *DashboardTUI) scheduleFlush() {
+	if d.flushTimer != nil {
+		d.flushTimer.Stop()
+	}
+	d.flushTimer = time.AfterFunc(tuiFrameFlushDelay, d.flushPendingFrame)
+}
+
+// flushPendingFrame commits the current pending frame as lastFrame. It is called
+// by the flush timer when no second repaint marker has arrived within tuiFrameFlushDelay.
+func (d *DashboardTUI) flushPendingFrame() {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.inFrame && len(d.pending) > 0 {
+		d.lastFrame = d.pending
+	}
+	d.flushTimer = nil
+}
+
 // attach registers a new WebSocket client. It returns the client handle and a
-// snapshot of the ring buffer to send as an initial burst on reconnect.
+// copy of the last complete repaint frame (nil if none has been seen yet) to
+// send as the initial snapshot on connect or reconnect.
 // The caller must call detach when the WebSocket closes.
-func (d *DashboardTUI) attach() (*tuiClient, [][]byte) {
+func (d *DashboardTUI) attach() (*tuiClient, []byte) {
 	c := &tuiClient{ch: make(chan []byte, tuiClientChanSize)}
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	d.clients[c] = struct{}{}
-	// Copy ring buffer snapshot in chronological order.
-	snapshot := make([][]byte, d.ringLen)
-	for i := 0; i < d.ringLen; i++ {
-		snapshot[i] = d.ring[(d.ringHead+i)%tuiOutputBufChunks]
-	}
-	return c, snapshot
+	return c, bytes.Clone(d.lastFrame)
 }
 
 // detach unregisters the client. The child process continues running.
@@ -789,15 +843,15 @@ func newDashboardMuxInternalWith(cfgPath, dbPath string, tui *DashboardTUI, fetc
 			return
 		}
 
-		// Attach to the singleton; receive ring-buffer snapshot for immediate replay.
-		client, snapshot := tui.attach()
+		// Attach to the singleton; receive the last complete repaint frame.
+		client, lastFrame := tui.attach()
 		defer tui.detach(client) // child process continues running on detach
 
-		// Send the ring-buffer snapshot so a reconnecting client sees the current
-		// TUI state before any new live frames arrive.
-		for _, chunk := range snapshot {
+		// Send the last complete frame so a connecting client sees a clean, current
+		// TUI state before any new live frames arrive — no replay flicker.
+		if len(lastFrame) > 0 {
 			conn.SetWriteDeadline(time.Now().Add(wsWriteTimeout)) //nolint:errcheck
-			if wsSendBinary(brw.Writer, chunk) != nil {
+			if wsSendBinary(brw.Writer, lastFrame) != nil {
 				return
 			}
 		}
