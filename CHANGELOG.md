@@ -16,6 +16,27 @@ Cistern now detects and automatically breaks deadlock cycles where an implemente
 
 **Impact**: Droplets that encounter unresolved reviewer issues are now automatically unblocked and routed to the reviewer for verification, eliminating permanent deadlock cycles. The system self-recovers without manual intervention within 2 recirculation cycles.
 
+### Scheduler: auto-reset orphaned in-progress droplets with no assignee or session (ci-ryzhm)
+
+The Castellarius heartbeat now automatically detects and recovers droplets stuck in `in_progress` status with no assigned aqueduct and no active tmux session. These "orphaned" droplets were previously invisible to any aqueduct and could not make progress. The scheduler now force-resets them to `open` status so they can be re-dispatched normally.
+
+**Key features:**
+- **Automatic orphan detection**: Identifies in-progress droplets with empty `assignee` field and no active session
+- **Safe recovery**: Only triggers after the stall threshold (default 2 minutes) to avoid false positives on slow agents
+- **Visibility in dashboard**: New "UNASSIGNED" section in `ct dashboard` shows orphaned droplets with ID, elapsed time, current step, and title
+- **Clear recovery notes**: A structured note `[scheduler:recovery]` marks each recovered droplet so operators understand what happened
+- **Error handling**: Best-effort note writing; recovery retries on assignment failure
+
+**When orphans occur:**
+- Castellarius crash/restart while droplets are mid-dispatch
+- Aqueduct removed or renamed from config while droplets are assigned to it
+- Manual database edits or recovery procedures
+
+**Troubleshooting:**
+See the "Orphaned In-Progress Droplets" section in the troubleshooting guide for identifying and manually recovering orphaned droplets if auto-recovery is disabled or insufficient.
+
+**Impact**: Droplets are no longer permanently stuck after infrastructure events. The scheduler automatically recovers them within 2× the stall detection interval (default ≈4 minutes).
+
 ### Dashboard: fix arch channel overflow on narrow terminals (ci-3247n)
 
 The aqueduct arch diagram in the dashboard now renders correctly at any terminal width, including the default 80-column width. The channel column width is now computed dynamically based on the available width and the number of pipeline steps.
