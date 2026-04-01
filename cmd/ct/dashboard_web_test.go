@@ -1248,7 +1248,7 @@ func TestDashboardTUI_LastFrame_RepaintBoundaryCommitsFrame(t *testing.T) {
 	if frame == nil {
 		t.Fatal("attach() lastFrame is nil, want committed frame")
 	}
-	if !bytes.Equal(frame[:len(marker)], []byte(marker)) {
+	if !bytes.Equal(frame[:len(repaintMarker)], repaintMarker) {
 		t.Errorf("lastFrame does not start with repaint marker: %q", frame)
 	}
 	if !bytes.Contains(frame, []byte("frame-one-content")) {
@@ -1308,7 +1308,7 @@ func TestDashboardTUI_LastFrame_ReconnectGetsCleanFrame(t *testing.T) {
 	if snapshot == nil {
 		t.Fatal("snapshot is nil; want committed frame starting with repaint marker")
 	}
-	if !bytes.Equal(snapshot[:len(marker)], []byte(marker)) {
+	if !bytes.Equal(snapshot[:len(repaintMarker)], repaintMarker) {
 		t.Errorf("snapshot does not start with repaint marker; got %q", snapshot)
 	}
 	if !bytes.Contains(snapshot, []byte("frame-one-body")) {
@@ -1337,7 +1337,7 @@ func TestDashboardTUI_LastFrame_FlushTimer_CommitsOnIdle(t *testing.T) {
 	if frame == nil {
 		t.Fatal("attach() lastFrame is nil after flush timer; want committed frame")
 	}
-	if !bytes.Equal(frame[:len(marker)], []byte(marker)) {
+	if !bytes.Equal(frame[:len(repaintMarker)], repaintMarker) {
 		t.Errorf("lastFrame does not start with repaint marker: %q", frame)
 	}
 	if !bytes.Contains(frame, []byte("idle-frame-content")) {
