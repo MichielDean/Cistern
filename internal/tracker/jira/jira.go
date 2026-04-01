@@ -92,10 +92,10 @@ type jiraIssueResponse struct {
 
 // jiraFields holds the issue fields returned by the Jira API.
 type jiraFields struct {
-	Summary     string        `json:"summary"`
-	Description *adfDocument  `json:"description"`
-	Priority    jiraPriority  `json:"priority"`
-	Labels      []string      `json:"labels"`
+	Summary     string       `json:"summary"`
+	Description *adfDocument `json:"description"`
+	Priority    jiraPriority `json:"priority"`
+	Labels      []string     `json:"labels"`
 }
 
 // jiraPriority holds the priority name from Jira.
