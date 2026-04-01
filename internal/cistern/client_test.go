@@ -1612,6 +1612,75 @@ func TestSetExternalRef_ReturnsError_WhenDropletNotFound(t *testing.T) {
 	}
 }
 
+// TestSetExternalRef_RejectsInvalidFormat verifies that SetExternalRef returns
+// an error when the ref contains characters that are invalid in git branch
+// names or that break the delivery shell awk extraction (spaces, ~, ^, etc.).
+func TestSetExternalRef_RejectsInvalidFormat(t *testing.T) {
+	c := testClient(t)
+	item, err := c.Add("myrepo", "Task", "", 1, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	cases := []struct {
+		name string
+		ref  string
+	}{
+		{"space in key", "jira:DPF 456"},
+		{"tilde in key", "jira:DPF~456"},
+		{"caret in key", "jira:DPF^456"},
+		{"colon in key", "jira:DPF:456"},
+		{"question mark in key", "jira:DPF?456"},
+		{"asterisk in key", "jira:DPF*456"},
+		{"bracket in key", "jira:[DPF456"},
+		{"backslash in key", `jira:\DPF456`},
+		{"space in provider", "jir a:DPF-456"},
+		{"no colon", "DPF-456"},
+		{"empty key", "jira:"},
+		{"empty provider", ":DPF-456"},
+		{"space after colon", "jira: DPF-456"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			// When: SetExternalRef is called with an invalid format.
+			err := c.SetExternalRef(item.ID, tc.ref)
+			// Then: an error is returned and the field is not updated.
+			if err == nil {
+				t.Errorf("SetExternalRef(%q): expected error for invalid format, got nil", tc.ref)
+			}
+		})
+	}
+}
+
+// TestSetExternalRef_AcceptsValidFormats verifies that SetExternalRef accepts
+// well-formed 'provider:key' values with git-branch-safe characters.
+func TestSetExternalRef_AcceptsValidFormats(t *testing.T) {
+	c := testClient(t)
+	item, err := c.Add("myrepo", "Task", "", 1, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	cases := []string{
+		"jira:DPF-456",
+		"linear:LIN-789",
+		"jira:FEAT.99",
+		"jira:FEAT_99",
+		"my-provider:ABC-123",
+		"github:issue-42",
+	}
+
+	for _, ref := range cases {
+		t.Run(ref, func(t *testing.T) {
+			// When: SetExternalRef is called with a valid format.
+			if err := c.SetExternalRef(item.ID, ref); err != nil {
+				t.Errorf("SetExternalRef(%q): unexpected error: %v", ref, err)
+			}
+		})
+	}
+}
+
 // TestGetReadyForAqueduct_CaseInsensitiveRepo_ReturnsDroplet verifies that
 // GetReadyForAqueduct respects case-insensitive repo matching.
 func TestGetReadyForAqueduct_CaseInsensitiveRepo_ReturnsDroplet(t *testing.T) {

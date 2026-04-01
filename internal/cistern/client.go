@@ -10,11 +10,18 @@ import (
 	_ "embed"
 	"fmt"
 	"math/big"
+	"regexp"
 	"strings"
 	"time"
 
 	_ "github.com/mattn/go-sqlite3"
 )
+
+// externalRefRE validates the 'provider:key' format for external_ref values.
+// Both parts must consist solely of characters safe for use in git branch names
+// and shell awk extraction: letters, digits, hyphens, underscores, and (key only)
+// dots. Spaces and git-invalid characters (~, ^, :, ?, *, [, \) are rejected.
+var externalRefRE = regexp.MustCompile(`^[a-zA-Z0-9_-]+:[a-zA-Z0-9._-]+$`)
 
 //go:embed schema.sql
 var schema string
@@ -439,6 +446,9 @@ func (c *Client) GetLastReviewedCommit(id string) (string, error) {
 // to clear the field (stores NULL). Format should be 'provider:key'
 // (e.g. 'jira:DPF-456', 'linear:LIN-789').
 func (c *Client) SetExternalRef(id, ref string) error {
+	if ref != "" && !externalRefRE.MatchString(ref) {
+		return fmt.Errorf("cistern: invalid external_ref %q: must match provider:key with git-safe characters", ref)
+	}
 	var val any
 	if ref != "" {
 		val = ref
