@@ -1,19 +1,20 @@
 # Context
 
-## Item: ci-t8sjc
+## Item: ci-g6so3
 
-**Title:** Remove Architecti from castellarius scheduler — dead code removal
+**Title:** Implement Jira tracker provider
 **Status:** in_progress
-**Priority:** 2
+**Priority:** 1
 
 ### Description
 
-The Architecti autonomous recovery agent has been disabled (config commented out in cistern.yaml) and the decision is to not bake it into the castellarius. Remove all Architecti integration from the scheduler: (1) Delete architecti.go entirely. (2) Remove architecti queue initialization from scheduler.go New()/NewFromParts(). (3) Remove startArchitectiQueue() call from Run(). (4) Remove all tryEnqueueArchitecti() calls from observeRepo(). (5) Remove ArchitectiConfig from aqueduct/types.go. (6) Remove architecti config parsing from aqueduct/parse.go. (7) Update/remove architecti_test.go. (8) Keep the ct architecti run CLI command intact — it may be used as a standalone CLI tool in the future. Acceptance: (1) go build succeeds. (2) All existing tests pass. (3) No references to architecti remain in scheduler.go. (4) ct architecti run still compiles and shows help.
+Implement the Jira provider in internal/tracker/jira/. Uses Jira REST API v3 with Basic Auth (email + API token). Config reads from cistern.yaml trackers.jira section (url, email, token - token supports env var via ${JIRA_API_TOKEN} syntax). FetchIssue(key) calls GET /rest/api/3/issue/{key} with fields=summary,description,priority,labels,status. Maps: summary->Title, description (ADF to plain text)->Description, priority name mapped to int (Highest/High=1, Medium=2, Low=3, Lowest=4), labels->Labels, constructs SourceURL from base URL + browse + key. Returns ExternalIssue. Includes unit tests with HTTP test server mocking Jira responses. Depends on ci-xrgv2.
 
-## Current Step: delivery
+## Current Step: docs
 
 - **Type:** agent
-- **Role:** delivery
+- **Role:** docs_writer
+- **Context:** full_codebase
 
 ## ⚠️ REVISION REQUIRED — Fix these issues before anything else
 
@@ -22,70 +23,53 @@ Do not proceed to implementation until you have read and understood each issue.
 
 ### Issue 1 (from: reviewer)
 
-No findings. Verified: (1) no orphaned references to removed architecti scheduler types/functions across the codebase, (2) go build succeeds, (3) all tests pass, (4) ct architecti run compiles and shows help, (5) no architecti references remain in scheduler.go, (6) rate-limit removal safe due to note-based escalation still in place, (7) drainInFlight remaining-budget logic correct, (8) RunArchitectiAdHoc signature change reflected at sole call site.
+♻ 3 findings. (1) jira.go:51 — SSRF/path traversal: issue key interpolated into URL without validation or url.PathEscape; attacker-controlled key can rewrite the request path. (2) jira.go:31 — HTTP client has no timeout (zero = infinite), violating the established codebase pattern (skills.go:25 sets 30s timeout); a non-responding Jira server hangs the goroutine forever. (3) jira.go:73 — unbounded response body decode with no io.LimitReader, violating the codebase pattern (skills.go:240); a huge response could OOM the process.
 
-### Issue 2 (from: qa)
+### Issue 2 (from: reviewer)
 
-♻ Tests pass but architecti_test.go was deleted in full while architecti.go was not — the retained code has zero test coverage.
+All 3 prior issues verified fixed: (1) url.PathEscape prevents SSRF, (2) 30s HTTP timeout set, (3) io.LimitReader caps response body. Fresh review of full diff found no new issues. All tests pass.
 
-Specifically: RunArchitectiAdHoc (the public API backing ct architecti run), parseArchitectiOutput, extractJSONArray, buildArchitectiSnapshot, architectiRestartOrEscalate, architectiRestart, architectiCancel, architectiFile, architectiNote, and architectiRestartCastellarius all remain in architecti.go with no tests.
+### Issue 3 (from: qa)
 
-The original file had 8 RunArchitectiAdHoc tests (DryRun, Normal, EmptyActions, ExecError, SnapshotContainsTriggerDropletID, MarkdownWrappedJSON, ParseError, ReturnsFilteredActions_MaxFilesPerRun) and 2 buildArchitectiSnapshot tests. All were deleted.
-
-The requirement says 'Update/remove architecti_test.go' — this means remove tests for deleted scheduler-integration code (tryEnqueueArchitecti, startArchitectiQueue, runArchitecti, rate-limit machinery). Tests for retained functions must be preserved.
-
-Fix: restore the RunArchitectiAdHoc tests, the buildArchitectiSnapshot tests, and coverage for the action dispatchers. The scheduler-queue tests (tryEnqueueArchitecti, startArchitectiQueue, singleton guard, rate-limit) may be deleted as their code was removed.
-
-### Issue 3 (from: reviewer)
-
-♻ 1 finding. Prior QA issue ci-t8sjc-ki6ta resolved (24 tests covering all retained functions, all passing). New finding: internal/aqueduct/validate_test.go contains orphaned minimalValidConfig() helper — its 4 callers were deleted but the function was left behind with zero references.
+♻ Tests pass but 3 error-path/coverage gaps found:\n1. ci-g6so3-4ivrz: jira.go:68-70 transport error path (httpClient.Do failure) is untested — needs a test injecting a failing transport.\n2. ci-g6so3-xezaq: jira.go:79-81 malformed JSON error path (200 with non-JSON body) is untested — needs a test where the server returns invalid JSON.\n3. ci-g6so3-aak4f: TestADFToPlainText has no cases for heading, bulletList/orderedList/listItem, codeBlock, or blockquote node types — these are all in the switch at jira.go:149 but only paragraph is exercised.
 
 ### Issue 4 (from: reviewer)
 
-Review (2nd cycle): Phase 1 — resolved ci-t8sjc-97kry (validate_test.go confirmed deleted, minimalValidConfig zero references). Phase 2 — fresh adversarial review found no new issues. All removed scheduler fields (architectiQueue, architectiWg, architectiRunning, architectiStuckRouting, architectiRestarts, runArchitectiFn, architectiRestartCastellariusFn) have zero stale references. ArchitectiConfig type fully removed from aqueduct package. Rate-limit removal is consistent with scheduler integration removal — escalation check (prior restart note) remains intact for ad-hoc path. YAML backward compatibility preserved (omitempty + Go yaml ignore-extra-fields). Build: ok. Tests: all 9 packages pass. No orphaned code, no broken contracts, no security issues.
+Phase 1: all 3 prior QA issues (ci-g6so3-4ivrz, ci-g6so3-xezaq, ci-g6so3-aak4f) verified fixed with evidence — transport error test, malformed JSON test, and ADF node type coverage all present and passing. Phase 2: fresh adversarial review of full diff found no new issues. Security mitigations (PathEscape, 30s timeout, LimitReader) solid. All error paths covered. Race detector clean. Full repo test suite (15 packages) passes.
 
-### Issue 5 (from: reviewer)
+### Issue 5 (from: qa)
 
-No findings. Prior issue ci-t8sjc-97kry resolved. Fresh review: clean removal — no orphans, no broken contracts, no security issues. Build and all tests pass.
+Phase 1: all 3 prior QA issues verified fixed with evidence — transport error test (TestProvider_FetchIssue_ReturnsError_OnTransportFailure), malformed JSON test (TestProvider_FetchIssue_ReturnsError_OnMalformedJSON), and ADF node type coverage (Heading, BulletListWithListItem, OrderedListWithListItem, CodeBlock, Blockquote) all present and passing. Phase 2: fresh adversarial review found no new issues. Security mitigations (PathEscape, 30s timeout, LimitReader) solid. Error paths fully covered. All 23 jira tests and 15 packages pass with race detector clean.
 
-### Issue 6 (from: qa)
+### Issue 6 (from: security)
 
-Phase 1: Prior issue 2 (QA) resolved — 20+ tests covering all retained architecti functions. Prior issue 3 (reviewer) resolved — validate_test.go deleted, confirmed absent. Phase 2: Simplifier changes to TestArchitectiAction_Note and TestArchitectiAction_File are correct (t.Fatalf guards slice access before direct index). TestDrainInFlight_SessionDrainUsesRemainingBudget correctly deleted — it tested the removed architectiWg drain. ArchitectiDefaultMaxFilesPerRun exported constant replaces magic number cleanly. Build ok. All 9 packages pass. ct architecti run --help confirmed.
+Phase 1: all 3 prior security findings (SSRF/PathEscape, 30s HTTP timeout, LimitReader 1MiB) verified fixed in jira.go:52,33,74. QA coverage gaps (transport error, malformed JSON, ADF node types) verified present in tests. Phase 2: fresh adversarial review of full diff — no new issues. Auth credentials not leaked in errors, url.PathEscape prevents injection, response body bounded, timeouts set, defer Close in place. All tests pass with race detector clean.
 
 ### Issue 7 (from: security)
 
-Phase 1: All 6 prior issues verified resolved — tests for retained functions present (20+ tests), validate_test.go deleted, no orphaned references. Phase 2: Fresh adversarial review found no security issues. Rate-limit removal safe (scheduler path removed; note-based escalation still guards ad-hoc restart path). restartCastellariusFn nil-check + health-file guard intact (fail-closed). architectiExecFn nil-check falls through to defaultArchitectiExec. No new user input surfaces, no injection vectors, no auth changes. Build ok. All tests pass.
-
-### Issue 8 (from: security)
-
-No security issues found. Dead code removal with no new attack surface. Prior issues all resolved. Rate-limit removal safe (note-based escalation intact for ad-hoc path). Health-file fail-closed guard intact. Build and all tests pass.
+No security issues found. All prior findings (SSRF, timeout, unbounded body) verified fixed. Fresh adversarial review clean — no new vulnerabilities across auth, injection, secrets, data exposure, or resource safety.
 
 ---
 
 ## Recent Step Notes
 
-### From: docs_writer
+### From: security
 
-Updated docs: Architecti standalone tool. Removed references to automatic scheduler triggering and rate limits. Updated commands.md and README.md to clarify manual-invocation-only workflow. Configuration section preserved for backward compatibility.
+No security issues found. All prior findings (SSRF, timeout, unbounded body) verified fixed. Fresh adversarial review clean — no new vulnerabilities across auth, injection, secrets, data exposure, or resource safety.
 
 ### From: security
 
-No security issues found. Dead code removal with no new attack surface. Prior issues all resolved. Rate-limit removal safe (note-based escalation intact for ad-hoc path). Health-file fail-closed guard intact. Build and all tests pass.
-
-### From: security
-
-Phase 1: All 6 prior issues verified resolved — tests for retained functions present (20+ tests), validate_test.go deleted, no orphaned references. Phase 2: Fresh adversarial review found no security issues. Rate-limit removal safe (scheduler path removed; note-based escalation still guards ad-hoc restart path). restartCastellariusFn nil-check + health-file guard intact (fail-closed). architectiExecFn nil-check falls through to defaultArchitectiExec. No new user input surfaces, no injection vectors, no auth changes. Build ok. All tests pass.
+Phase 1: all 3 prior security findings (SSRF/PathEscape, 30s HTTP timeout, LimitReader 1MiB) verified fixed in jira.go:52,33,74. QA coverage gaps (transport error, malformed JSON, ADF node types) verified present in tests. Phase 2: fresh adversarial review of full diff — no new issues. Auth credentials not leaked in errors, url.PathEscape prevents injection, response body bounded, timeouts set, defer Close in place. All tests pass with race detector clean.
 
 ### From: qa
 
-Phase 1: Prior issue 2 (QA) resolved — 20+ tests covering all retained architecti functions. Prior issue 3 (reviewer) resolved — validate_test.go deleted, confirmed absent. Phase 2: Simplifier changes to TestArchitectiAction_Note and TestArchitectiAction_File are correct (t.Fatalf guards slice access before direct index). TestDrainInFlight_SessionDrainUsesRemainingBudget correctly deleted — it tested the removed architectiWg drain. ArchitectiDefaultMaxFilesPerRun exported constant replaces magic number cleanly. Build ok. All 9 packages pass. ct architecti run --help confirmed.
+Phase 1: all 3 prior QA issues verified fixed with evidence — transport error test (TestProvider_FetchIssue_ReturnsError_OnTransportFailure), malformed JSON test (TestProvider_FetchIssue_ReturnsError_OnMalformedJSON), and ADF node type coverage (Heading, BulletListWithListItem, OrderedListWithListItem, CodeBlock, Blockquote) all present and passing. Phase 2: fresh adversarial review found no new issues. Security mitigations (PathEscape, 30s timeout, LimitReader) solid. Error paths fully covered. All 23 jira tests and 15 packages pass with race detector clean.
+
+### From: reviewer
+
+Phase 1: all 3 prior QA issues (ci-g6so3-4ivrz, ci-g6so3-xezaq, ci-g6so3-aak4f) verified fixed with evidence — transport error test, malformed JSON test, and ADF node type coverage all present and passing. Phase 2: fresh adversarial review of full diff found no new issues. Security mitigations (PathEscape, 30s timeout, LimitReader) solid. All error paths covered. Race detector clean. Full repo test suite (15 packages) passes.
 
 <available_skills>
-  <skill>
-    <name>cistern-github</name>
-    <description>---</description>
-    <location>/home/lobsterdog/.cistern/skills/cistern-github/SKILL.md</location>
-  </skill>
   <skill>
     <name>cistern-droplet-state</name>
     <description>Manage droplet state in the Cistern agentic pipeline using the `ct` CLI.</description>
@@ -103,16 +87,16 @@ Phase 1: Prior issue 2 (QA) resolved — 20+ tests covering all retained archite
 When your work is done, signal your outcome using the `ct` CLI:
 
 **Pass (work complete, move to next step):**
-    ct droplet pass ci-t8sjc
+    ct droplet pass ci-g6so3
 
 **Recirculate (needs rework — send back upstream):**
-    ct droplet recirculate ci-t8sjc
-    ct droplet recirculate ci-t8sjc --to implement
+    ct droplet recirculate ci-g6so3
+    ct droplet recirculate ci-g6so3 --to implement
 
 **Pool (cannot currently proceed):**
-    ct droplet pool ci-t8sjc
+    ct droplet pool ci-g6so3
 
 Add notes before signaling:
-    ct droplet note ci-t8sjc "What you did / found"
+    ct droplet note ci-g6so3 "What you did / found"
 
 The `ct` binary is on your PATH.

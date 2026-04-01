@@ -500,6 +500,56 @@ If no `provider:` block is present, the `claude` preset is used. Existing config
 
 The configured provider is also used for **filtration** (`ct droplet add --filter`). There is no separate API key or config for filtration — the same preset, binary, and env var requirements apply to both cataractae sessions and the filtration pass.
 
+## Tracker Configuration
+
+Cistern can integrate with external issue trackers to import droplets from work items in systems like Jira. Tracker providers fetch issue metadata and convert it to Cistern droplets.
+
+Configure trackers in `~/.cistern/cistern.yaml` at the top level with a `trackers:` list:
+
+```yaml
+trackers:
+  - name: jira
+    url: https://myorg.atlassian.net
+    email: user@example.com
+    token_env: JIRA_API_TOKEN    # reads token from environment variable
+```
+
+Each tracker entry requires:
+
+- **name** *(required)* — provider identifier: `jira`, `linear`, etc.
+- **url** *(required for jira)* — base URL of the tracker instance
+- **email** *(required for jira)* — user email for basic auth (Jira Cloud)
+- **token** *(optional)* — literal API token (not recommended for production)
+- **token_env** *(recommended)* — environment variable name holding the API token (e.g., `JIRA_API_TOKEN`)
+
+**Token precedence:** When both `token` and `token_env` are set, the environment variable takes precedence. Use `token_env` in production to avoid storing secrets in config files.
+
+### Jira Cloud
+
+The Jira provider integrates with Jira Cloud using REST API v3. It requires:
+
+- A Jira Cloud instance URL (e.g., `https://myorg.atlassian.net`)
+- A user email address
+- An API token (generated at https://id.atlassian.com/manage-profile/security/api-tokens)
+
+Example configuration:
+
+```yaml
+trackers:
+  - name: jira
+    url: https://myorg.atlassian.net
+    email: ci-user@example.com
+    token_env: JIRA_API_TOKEN    # export JIRA_API_TOKEN="your-api-token" before running Cistern
+```
+
+When a droplet is imported from Jira, the provider fetches the issue by key (e.g., `PROJ-123`) and maps:
+
+- Issue **summary** → droplet **title**
+- Issue **description** (converted from ADF to plain text) → droplet **description**
+- Issue **priority** → normalized priority (1–4: Highest/High=1, Medium=2, Low=3, Lowest=4)
+- Issue **labels** → droplet **labels**
+- Issue **key** and **base URL** → droplet **source URL** (link back to Jira)
+
 ## Docker
 
 Cistern ships a multi-stage Dockerfile. The image includes `tmux`, `git`, `gh`, and both `ct` and `aqueduct` binaries.

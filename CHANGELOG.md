@@ -2,6 +2,30 @@
 
 ## Unreleased
 
+### Tracker: implement Jira Cloud provider (ci-g6so3)
+
+Cistern now supports importing droplets from Jira Cloud. The new Jira tracker provider fetches issues via REST API v3 with Basic Auth (email + API token) and maps Jira issue fields to Cistern droplet metadata.
+
+**Key features:**
+- **Jira Cloud integration**: Fetches issues by key (e.g., `PROJ-123`) from any Jira Cloud instance
+- **Field mapping**: Maps summary→title, ADF description→plain text, priority→normalized 1-4 scale, labels→labels, constructs source URL back to Jira
+- **Configuration**: Configure in `cistern.yaml` under `trackers:` with URL, email, and API token (supports env var via `token_env`)
+- **Security**: URL path escaping (prevents SSRF), 30s HTTP timeout, bounded response body (1 MiB limit)
+- **Error handling**: Comprehensive error paths for transport failures, malformed JSON, and HTTP error status codes
+- **ADF support**: Converts Jira's Atlassian Document Format descriptions to plain text, handling paragraph, heading, codeBlock, blockquote, and list node types
+
+**Configuration example:**
+
+```yaml
+trackers:
+  - name: jira
+    url: https://myorg.atlassian.net
+    email: user@example.com
+    token_env: JIRA_API_TOKEN
+```
+
+See README "Tracker Configuration" section for full details.
+
 ### Heartbeat: detect agents that exit inside a live tmux session without signaling outcome (ci-7x196)
 
 The heartbeat now detects a second class of zombie droplets: sessions where the tmux server is alive but the claude agent process has exited without signaling an outcome (e.g., OOM kill, hard token limit, non-zero exit). These "agent-dead" zombies are now recovered as aggressively as fully-dead tmux sessions.
