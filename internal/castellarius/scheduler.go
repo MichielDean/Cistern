@@ -870,42 +870,39 @@ func (s *Castellarius) observeRepo(_ context.Context, repo aqueduct.RepoConfig) 
 			if issErr != nil {
 				s.logger.Warn("observe: list issues failed for loop detection",
 					"droplet", item.ID, "error", issErr)
+			} else if notes, notesErr := client.GetNotes(item.ID); notesErr != nil {
+				s.logger.Warn("observe: get notes failed for loop detection",
+					"droplet", item.ID, "error", notesErr)
 			} else {
-				notes, notesErr := client.GetNotes(item.ID)
-				if notesErr != nil {
-					s.logger.Warn("observe: get notes failed for loop detection",
-						"droplet", item.ID, "error", notesErr)
-				} else {
-					for _, issue := range issues {
-						if issue.FlaggedBy == step.Name {
-							continue // skip issues filed by the current step
-						}
-						if lookupCataracta(wf, issue.FlaggedBy) == nil {
-							continue // reviewer step not in workflow
-						}
-						pendingCount := loopRecoveryPendingCount(notes, issue.ID)
-						if pendingCount >= loopDetectN-1 {
-							// Loop confirmed — route to the reviewer cataractae.
-							recoveryNote := fmt.Sprintf(
-								"[scheduler:loop-recovery] detected %s→%s loop on reviewer issue %s — routing to reviewer",
-								step.Name, step.Name, issue.ID,
-							)
-							s.logger.Info("observe: loop recovery — routing to reviewer",
-								"droplet", item.ID, "step", step.Name,
-								"reviewer", issue.FlaggedBy, "issue", issue.ID)
-							s.addNote(client, item.ID, "scheduler", recoveryNote)
-							next = issue.FlaggedBy
-							break
-						}
-						// First (or sub-threshold) recirculation with open reviewer issue:
-						// record a pending marker so the next cycle can confirm the loop.
-						pendingNote := fmt.Sprintf(
-							"[scheduler:loop-recovery-pending] issue=%s — open reviewer issue found at %s, routing back to %s (cycle %d/%d)",
-							issue.ID, step.Name, step.Name, pendingCount+1, loopDetectN,
-						)
-						s.addNote(client, item.ID, "scheduler", pendingNote)
-						break // handle one qualifying issue per observation
+				for _, issue := range issues {
+					if issue.FlaggedBy == step.Name {
+						continue // skip issues filed by the current step
 					}
+					if lookupCataracta(wf, issue.FlaggedBy) == nil {
+						continue // reviewer step not in workflow
+					}
+					pendingCount := loopRecoveryPendingCount(notes, issue.ID)
+					if pendingCount >= loopDetectN-1 {
+						// Loop confirmed — route to the reviewer cataractae.
+						recoveryNote := fmt.Sprintf(
+							"[scheduler:loop-recovery] detected %s→%s loop on reviewer issue %s — routing to reviewer",
+							step.Name, step.Name, issue.ID,
+						)
+						s.logger.Info("observe: loop recovery — routing to reviewer",
+							"droplet", item.ID, "step", step.Name,
+							"reviewer", issue.FlaggedBy, "issue", issue.ID)
+						s.addNote(client, item.ID, "scheduler", recoveryNote)
+						next = issue.FlaggedBy
+						break
+					}
+					// First (or sub-threshold) recirculation with open reviewer issue:
+					// record a pending marker so the next cycle can confirm the loop.
+					pendingNote := fmt.Sprintf(
+						"[scheduler:loop-recovery-pending] issue=%s — open reviewer issue found at %s, routing back to %s (cycle %d/%d)",
+						issue.ID, step.Name, step.Name, pendingCount+1, loopDetectN,
+					)
+					s.addNote(client, item.ID, "scheduler", pendingNote)
+					break // handle one qualifying issue per observation
 				}
 			}
 		}
