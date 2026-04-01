@@ -21,11 +21,10 @@ Changes:
 
 Acceptance criteria: ct filter starts a refinement conversation, asks probing questions at each round, and ends by printing a clear numbered plain-text spec with prose dependency statements. No --file flag exists. Filing is done separately by the caller using ct droplet add.
 
-## Current Step: docs
+## Current Step: delivery
 
 - **Type:** agent
-- **Role:** docs_writer
-- **Context:** full_codebase
+- **Role:** delivery
 
 ## ⚠️ REVISION REQUIRED — Fix these issues before anything else
 
@@ -88,6 +87,10 @@ No security issues found. Diff reduces attack surface (removed extractProposals,
 
 ## Recent Step Notes
 
+### From: docs_writer
+
+Documentation complete. All user-visible changes documented: Jira Cloud tracker integration (CHANGELOG, README, configs), removal of --file/--repo flags from ct filter (SKILL.md, commands.md), external_ref support for PR titles (CLAUDE.md). Fixed stale flag references in commands.md reference docs.
+
 ### From: security
 
 No security issues found. Diff reduces attack surface (removed extractProposals, TUI, --file/--repo). New code (Jira provider, ExternalRef, branchForDroplet) follows security best practices: parameterized SQL, slice-based exec, url.PathEscape, LimitReader, regex validation, no secret leakage. Build ok, all 15 packages pass.
@@ -100,11 +103,12 @@ Phase 1: no open security issues. All prior issues confirmed resolved through 8 
 
 Phase 1: no open QA issues. Phase 2: fresh review — no new findings. All removed symbols zero-referenced. Simplifier's latest commit (50016bd) accurately updated hardcodedProposals and hardcodedJSONEnvelope comments in fakeagent/main.go. Test coverage solid: error paths, JSON fallback, is_error envelope, missing env var, all three removed-flag rejection tests, stdout/stderr capture in printFilterResult tests, AllowedTools passthrough. filterSystemPrompt is plain-text with probing questions. All acceptance criteria have tests. Build ok, all 15 packages pass.
 
-### From: reviewer
-
-Phase 1: all 4 QA issues resolved (stale comments fixed in fakeagent, failagent, mockllm, refine_test). Phase 2: fresh adversarial review — no new findings. All removed symbols zero-referenced. New tracker/jira/ExternalRef/branchForDroplet code reviewed for security, logic, error handling, contracts. Build ok, all 15 packages pass.
-
 <available_skills>
+  <skill>
+    <name>cistern-github</name>
+    <description>---</description>
+    <location>/home/lobsterdog/.cistern/skills/cistern-github/SKILL.md</location>
+  </skill>
   <skill>
     <name>cistern-droplet-state</name>
     <description>Manage droplet state in the Cistern agentic pipeline using the `ct` CLI.</description>
