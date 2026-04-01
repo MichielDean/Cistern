@@ -201,6 +201,25 @@ journalctl --user -u cistern-castellarius --since "1h ago" | grep <id>  # Check 
 **Recovery action:**
 No action is needed — the droplet will be re-dispatched automatically. If it keeps hitting the same limit, file a bug to increase resources or optimize the agent implementation.
 
+### Droplet Reset With "Orphan Recovery" Note
+
+If you see a droplet note like: `"[scheduler:recovery] reset orphaned in_progress droplet to open — no assignee, no active session"`, the Castellarius detected and recovered a droplet that was stuck with no active worker session.
+
+**What this means:**
+- The droplet was in `in_progress` status but had an empty `assignee` field
+- No tmux session was running for this droplet (checked by the Castellarius heartbeat)
+- The droplet was invisible to any aqueduct and could not make progress
+- This typically occurs after Castellarius crash/restart or failed dispatch where the droplet was never assigned to a worker
+- The Castellarius heartbeat automatically recovered it (check interval: 30 seconds by default)
+
+**Expected behavior:**
+1. The recovery note is added to the droplet history
+2. The droplet is reset to `open` status at its current cataractae
+3. The assignee and assigned_aqueduct fields are cleared
+4. It will be re-dispatched on the next cycle as if freshly queued
+
+**No action needed** — the droplet will be re-dispatched automatically. This recovery prevents permanently stuck droplets after infrastructure events.
+
 ### Cataractae Signaled Recirculate But No on_recirculate Route Configured
 
 If you see a diagnostic note like: `"cataractae 'foo' signaled recirculate but has no on_recirculate route configured"`, the droplet is blocked because an agent incorrectly used `ct droplet recirculate` instead of `ct droplet pass` or `ct droplet pool`.
