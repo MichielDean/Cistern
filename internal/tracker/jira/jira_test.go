@@ -461,6 +461,32 @@ func TestNew_ResolvesTokenFromEnv(t *testing.T) {
 	}
 }
 
+// TestProvider_FetchIssue_PathEscapesKey verifies issue keys with path-separator characters are
+// percent-encoded in the request URI to prevent SSRF / path traversal.
+func TestProvider_FetchIssue_PathEscapesKey(t *testing.T) {
+	var gotRawURI string
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotRawURI = r.RequestURI
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(jiraIssueJSON("PROJ-1", "T", nil, "Medium", nil)))
+	})
+	p, _ := newTestProvider(t, handler)
+
+	// Pass a key containing a slash that could enable path traversal.
+	if _, err := p.FetchIssue("PROJ/traversal"); err != nil {
+		t.Fatalf("FetchIssue: unexpected error: %v", err)
+	}
+
+	// The slash must be percent-encoded in the raw request URI.
+	if strings.Contains(gotRawURI, "/traversal") {
+		t.Errorf("raw URI %q contains unescaped slash — path traversal not prevented", gotRawURI)
+	}
+	if !strings.Contains(gotRawURI, "PROJ%2Ftraversal") {
+		t.Errorf("raw URI %q does not contain percent-encoded key PROJ%%2Ftraversal", gotRawURI)
+	}
+}
+
 // TestProvider_FetchIssue_BaseURLTrailingSlashStripped verifies trailing slashes in the base URL do not produce double slashes.
 func TestProvider_FetchIssue_BaseURLTrailingSlashStripped(t *testing.T) {
 	var gotPath string

@@ -5,12 +5,18 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
+	"net/url"
 	"strings"
+	"time"
 
 	"github.com/MichielDean/cistern/internal/aqueduct"
 	"github.com/MichielDean/cistern/internal/tracker"
 )
+
+// maxResponseSize is the maximum bytes read from a Jira API response body (1 MiB).
+const maxResponseSize = 1 << 20
 
 // Provider implements tracker.TrackerProvider for Jira Cloud.
 // It authenticates with Basic Auth (email + API token) and uses REST API v3.
@@ -28,7 +34,7 @@ func New(cfg aqueduct.TrackerConfig) *Provider {
 		baseURL:    strings.TrimRight(cfg.URL, "/"),
 		email:      cfg.Email,
 		token:      cfg.ResolvedToken(),
-		httpClient: &http.Client{},
+		httpClient: &http.Client{Timeout: 30 * time.Second},
 	}
 }
 
@@ -48,9 +54,9 @@ func (p *Provider) Name() string { return "jira" }
 // FetchIssue retrieves a Jira issue by key (e.g. "PROJ-123") using REST API v3.
 // It requests only the fields needed: summary, description, priority, labels, status.
 func (p *Provider) FetchIssue(key string) (*tracker.ExternalIssue, error) {
-	url := fmt.Sprintf("%s/rest/api/3/issue/%s?fields=summary,description,priority,labels,status", p.baseURL, key)
+	apiURL := fmt.Sprintf("%s/rest/api/3/issue/%s?fields=summary,description,priority,labels,status", p.baseURL, url.PathEscape(key))
 
-	req, err := http.NewRequest(http.MethodGet, url, nil)
+	req, err := http.NewRequest(http.MethodGet, apiURL, nil)
 	if err != nil {
 		return nil, fmt.Errorf("jira: create request: %w", err)
 	}
@@ -70,7 +76,7 @@ func (p *Provider) FetchIssue(key string) (*tracker.ExternalIssue, error) {
 	}
 
 	var raw jiraIssueResponse
-	if err := json.NewDecoder(resp.Body).Decode(&raw); err != nil {
+	if err := json.NewDecoder(io.LimitReader(resp.Body, maxResponseSize)).Decode(&raw); err != nil {
 		return nil, fmt.Errorf("jira: decode response: %w", err)
 	}
 
