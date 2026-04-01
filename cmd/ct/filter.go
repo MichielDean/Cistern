@@ -93,7 +93,7 @@ func invokeFilterNew(preset provider.ProviderPreset, title, description, context
 	if description != "" {
 		userPrompt += "\nDescription: " + description
 	}
-	return callFilterAgent(preset, nil, buildFilterPrompt(contextBlock, userPrompt), "")
+	return callFilterAgent(preset, nil, buildFilterPrompt(contextBlock, userPrompt))
 }
 
 // invokeFilterResume resumes an existing filtration session with the given message
@@ -104,34 +104,29 @@ func invokeFilterResume(preset provider.ProviderPreset, sessionID, message strin
 		resumeFlag = "--resume"
 	}
 	extraArgs := []string{resumeFlag, sessionID}
-	return callFilterAgent(preset, extraArgs, message, "")
+	return callFilterAgent(preset, extraArgs, message)
 }
 
 // callFilterAgent invokes the preset command with --print --output-format json,
 // optional extraArgs (e.g. --resume <id>), and the given prompt.
-// When repoPath is non-empty and the preset defines AddDirFlag, --add-dir repoPath
-// is appended so the agent can use file tools to explore the repository.
 // When the preset defines NonInteractive.AllowedToolsFlag, read-only file tools
 // (Glob, Grep, Read) are enabled so the agent can discover context on demand.
 // It returns the raw text response and the session_id from the JSON envelope.
 // If the agent does not support --output-format json, the raw stdout becomes the text
 // (session_id will be empty in that case).
-func callFilterAgent(preset provider.ProviderPreset, extraArgs []string, prompt, repoPath string) (filterSessionResult, error) {
+func callFilterAgent(preset provider.ProviderPreset, extraArgs []string, prompt string) (filterSessionResult, error) {
 	for _, key := range preset.EnvPassthrough {
 		if os.Getenv(key) == "" {
 			return filterSessionResult{}, fmt.Errorf("%s is not set", key)
 		}
 	}
 
-	// Build args: [Subcommand] [preset.Args...] [--add-dir repoPath] [--allowedTools ...] [extraArgs...] [PrintFlag] [--output-format json] [PromptFlag prompt]
+	// Build args: [Subcommand] [preset.Args...] [--allowedTools ...] [extraArgs...] [PrintFlag] [--output-format json] [PromptFlag prompt]
 	var args []string
 	if preset.NonInteractive.Subcommand != "" {
 		args = append(args, preset.NonInteractive.Subcommand)
 	}
 	args = append(args, preset.Args...)
-	if repoPath != "" && preset.AddDirFlag != "" {
-		args = append(args, preset.AddDirFlag, repoPath)
-	}
 	if preset.NonInteractive.AllowedToolsFlag != "" {
 		args = append(args, preset.NonInteractive.AllowedToolsFlag, "Glob,Grep,Read")
 	}
