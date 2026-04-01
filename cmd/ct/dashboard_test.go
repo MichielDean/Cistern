@@ -1313,6 +1313,44 @@ func TestViewUnassigned_ShowsDropletInfo(t *testing.T) {
 	}
 }
 
+// TestFetchDashboardData_AssignedToRemovedAqueduct_AppearsAsUnassigned verifies
+// that a droplet with a non-empty Assignee that does not match any configured
+// aqueduct (e.g. the aqueduct was removed or renamed) appears in UnassignedItems
+// rather than disappearing silently.
+//
+// Given: a droplet assigned to "deleted-aqueduct", which is not in the config
+// When:  fetchDashboardData is called
+// Then:  UnassignedItems contains the droplet
+func TestFetchDashboardData_AssignedToRemovedAqueduct_AppearsAsUnassigned(t *testing.T) {
+	cfgPath := tempCfg(t) // two aqueducts: virgo, marcia
+	dbPath := tempDB(t)
+
+	c, err := cistern.New(dbPath, "mr")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	item, _ := c.Add("myrepo", "Stale Assignment", "", 1, 2)
+	c.GetReady("myrepo")
+	// Assign to an aqueduct that no longer exists in the config.
+	c.Assign(item.ID, "deleted-aqueduct", "implement")
+	c.Close()
+
+	data := fetchDashboardData(cfgPath, dbPath)
+
+	// The droplet must appear in UnassignedItems (visible in UNASSIGNED section).
+	if len(data.UnassignedItems) != 1 {
+		t.Fatalf("UnassignedItems len = %d, want 1 (droplet assigned to removed aqueduct)", len(data.UnassignedItems))
+	}
+	if data.UnassignedItems[0].ID != item.ID {
+		t.Errorf("UnassignedItems[0].ID = %q, want %q", data.UnassignedItems[0].ID, item.ID)
+	}
+	// FlowingCount should still reflect all in_progress droplets.
+	if data.FlowingCount != 1 {
+		t.Errorf("FlowingCount = %d, want 1", data.FlowingCount)
+	}
+}
+
 // TestDashboardStateHash_ChangesWhenUnassignedItemsChange verifies that the
 // state hash changes when an orphaned droplet appears, so the dashboard does
 // not enter idle mode while unassigned items exist.

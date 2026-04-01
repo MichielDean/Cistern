@@ -172,10 +172,14 @@ func fetchDashboardData(cfgPath, dbPath string) *DashboardData {
 	}
 	data.Cataractae = cataractae
 
-	// Collect orphaned in_progress droplets: in_progress but not visible in any aqueduct.
-	assignedIDs := make(map[string]bool, len(assigneeMap))
-	for _, item := range assigneeMap {
-		assignedIDs[item.ID] = true
+	// Collect orphaned in_progress droplets: in_progress but not visible in any aqueduct row.
+	// Use cataractae[].DropletID (actual visibility) rather than assigneeMap so that
+	// droplets assigned to a removed/renamed aqueduct are treated as unassigned.
+	assignedIDs := make(map[string]bool, len(cataractae))
+	for _, ci := range cataractae {
+		if ci.DropletID != "" {
+			assignedIDs[ci.DropletID] = true
+		}
 	}
 	for _, item := range allItems {
 		if item.Status == "in_progress" && !assignedIDs[item.ID] {
