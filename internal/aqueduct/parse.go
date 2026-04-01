@@ -166,14 +166,13 @@ func writePipelinePositionFile(cataractaeDir, identity string, w *Workflow) (str
 		}
 	}
 
-	var roleLine, predLine, succLine string
-
+	roleStep := WorkflowCataractae{Identity: identity}
 	if idx >= 0 {
-		roleLine = neighborLine(w.Cataractae[idx], cataractaeDir)
-	} else {
-		data, _ := os.ReadFile(filepath.Join(cataractaeDir, identity, "PERSONA.md"))
-		roleLine = identity + " — " + personaDescription(data, identity)
+		roleStep = w.Cataractae[idx]
 	}
+	roleLine := neighborLine(roleStep, cataractaeDir)
+
+	var predLine, succLine string
 
 	if idx < 0 || idx == 0 {
 		predLine = "none — you are first"
