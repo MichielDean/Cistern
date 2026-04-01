@@ -1086,8 +1086,6 @@ func TestActiveAqueducts_ReturnsOnlyActive(t *testing.T) {
 	}
 }
 
-// --- TestRenderAqueductRow_NoOverflow ---
-
 // TestRenderAqueductRow_NoOverflow_SevenSteps verifies that with 7 pipeline
 // steps no rendered line exceeds the given terminal width.
 //

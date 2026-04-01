@@ -369,8 +369,8 @@ func renderAqueductRow(ch CataractaeInfo, termWidth int) string {
 
 	// Compute colW dynamically so the arch fits within termWidth.
 	// Visual total of the channel-top row:
-	//   prefix(nameW+4) + "╔"(1) + chanW(n*colW-1) + "╗"(1) = 15 + n*colW
-	// For total ≤ termWidth: colW ≤ (termWidth - 15) / n.
+	//   prefix(nameW+4) + "╔"(1) + chanW(n*colW-1) + "╗"(1) = nameW+5 + n*colW
+	// For total ≤ termWidth: colW ≤ (termWidth - (nameW+5)) / n.
 	const minColW = 9
 	colW := max(minColW, (termWidth-(nameW+5))/n)
 
