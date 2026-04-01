@@ -312,21 +312,20 @@ func writeContextFile(path string, p ContextParams) error {
 	injected := injectedSkillsForIdentity(cataractaeDirFn(p.SandboxDir), p.Step.Identity)
 	if len(injected) > 0 || len(p.Step.Skills) > 0 {
 		b.WriteString("<available_skills>\n")
+		writeSkill := func(name, desc, loc string) {
+			b.WriteString("  <skill>\n")
+			b.WriteString(fmt.Sprintf("    <name>%s</name>\n", xmlEscape(name)))
+			b.WriteString(fmt.Sprintf("    <description>%s</description>\n", xmlEscape(desc)))
+			b.WriteString(fmt.Sprintf("    <location>%s</location>\n", xmlEscape(loc)))
+			b.WriteString("  </skill>\n")
+		}
 		// Injected skills (from the identity's local skills/ dir) appear first.
 		for _, sk := range injected {
-			b.WriteString("  <skill>\n")
-			b.WriteString(fmt.Sprintf("    <name>%s</name>\n", xmlEscape(sk.Name)))
-			b.WriteString(fmt.Sprintf("    <description>%s</description>\n", xmlEscape(readSkillDescription(sk.Path))))
-			b.WriteString(fmt.Sprintf("    <location>%s</location>\n", xmlEscape(sk.Path)))
-			b.WriteString("  </skill>\n")
+			writeSkill(sk.Name, readSkillDescription(sk.Path), sk.Path)
 		}
 		// Then YAML-configured global skills.
 		for _, skill := range p.Step.Skills {
-			b.WriteString("  <skill>\n")
-			b.WriteString(fmt.Sprintf("    <name>%s</name>\n", xmlEscape(skill.Name)))
-			b.WriteString(fmt.Sprintf("    <description>%s</description>\n", xmlEscape(skillDescription(skill.Name))))
-			b.WriteString(fmt.Sprintf("    <location>%s</location>\n", xmlEscape(skills.LocalPath(skill.Name))))
-			b.WriteString("  </skill>\n")
+			writeSkill(skill.Name, skillDescription(skill.Name), skills.LocalPath(skill.Name))
 		}
 		b.WriteString("</available_skills>\n\n")
 	}
