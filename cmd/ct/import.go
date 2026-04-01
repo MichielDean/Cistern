@@ -14,7 +14,6 @@ import (
 
 var (
 	importRepo       string
-	importFilter     bool
 	importPriority   int
 	importComplexity string
 )
@@ -28,10 +27,12 @@ files it as a droplet in the cistern.
 The provider name must match a registered TrackerProvider (e.g. "jira") and a
 matching entry in the trackers section of cistern.yaml.
 
+To refine an imported issue before filing, use ct filter manually and then
+ct droplet add.
+
 Examples:
   ct import jira PROJ-123 --repo myrepo
-  ct import jira PROJ-456 --repo myrepo --filter
-  ct import jira PROJ-789 --repo myrepo --priority 1 --complexity full`,
+  ct import jira PROJ-456 --repo myrepo --priority 1 --complexity full`,
 	Args: cobra.ExactArgs(2),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		providerName := args[0]
@@ -76,35 +77,6 @@ Examples:
 
 		externalRef := providerName + ":" + issueKey
 
-		if importFilter {
-			userPrompt := "Title: " + issue.Title
-			if issue.Description != "" {
-				userPrompt += "\nDescription: " + issue.Description
-			}
-			preset := resolveFilterPreset(repo)
-			proposals, err := runNonInteractive(preset, filterSystemPrompt, userPrompt)
-			if err != nil {
-				return err
-			}
-			if len(proposals) == 0 {
-				return fmt.Errorf("filter returned no proposals for %s/%s", providerName, issueKey)
-			}
-			c, err := cistern.New(resolveDBPath(), inferPrefix(repo))
-			if err != nil {
-				return err
-			}
-			defer c.Close()
-			for _, p := range proposals {
-				cx := complexityToInt(p.Complexity)
-				item, err := c.AddDroplet(repo, p.Title, p.Description, externalRef, priority, cx)
-				if err != nil {
-					return fmt.Errorf("add droplet: %w", err)
-				}
-				fmt.Println(item.ID)
-			}
-			return nil
-		}
-
 		c, err := cistern.New(resolveDBPath(), inferPrefix(repo))
 		if err != nil {
 			return err
@@ -147,7 +119,6 @@ func loadTrackerConfig(providerName string) (tracker.TrackerConfig, error) {
 
 func init() {
 	importCmd.Flags().StringVar(&importRepo, "repo", "", "target repository (required)")
-	importCmd.Flags().BoolVar(&importFilter, "filter", false, "run LLM filtration pass before filing")
 	importCmd.Flags().IntVar(&importPriority, "priority", 2, "override the priority mapped from the tracker")
 	importCmd.Flags().StringVarP(&importComplexity, "complexity", "x", "1", "droplet complexity: 1/standard (default), 2/full, 3/critical")
 	_ = importCmd.MarkFlagRequired("repo")

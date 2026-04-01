@@ -54,7 +54,6 @@ func TestImportCmd_AddsDropletDirectly(t *testing.T) {
 
 	out := captureStdout(t, func() {
 		importRepo = "cistern"
-		importFilter = false
 		importPriority = 2
 		importComplexity = "1"
 		err = importCmd.RunE(importCmd, []string{"fake-tracker", "FAKE-42"})
@@ -113,7 +112,6 @@ func TestImportCmd_OverridesPriorityWhenFlagSet(t *testing.T) {
 
 	out := captureStdout(t, func() {
 		importRepo = "cistern"
-		importFilter = false
 		importPriority = 1
 		importComplexity = "1"
 		// Mark the priority flag as changed.
@@ -142,7 +140,6 @@ func TestImportCmd_OverridesPriorityWhenFlagSet(t *testing.T) {
 func TestImportCmd_ErrorsOnUnknownProvider(t *testing.T) {
 	t.Setenv("CT_NO_ASCII_LOGO", "1")
 	importRepo = "cistern"
-	importFilter = false
 	importComplexity = "1"
 	err := importCmd.RunE(importCmd, []string{"no-such-provider-zzz", "ISSUE-1"})
 	if err == nil {
@@ -166,7 +163,6 @@ func TestImportCmd_ErrorsOnFetchFailure(t *testing.T) {
 	c.Close()
 
 	importRepo = "cistern"
-	importFilter = false
 	importComplexity = "1"
 	err = importCmd.RunE(importCmd, []string{"fake-tracker", "FAIL-1"})
 	if err == nil {
@@ -283,131 +279,6 @@ func TestLoadTrackerConfig_ReturnsDefaultWhenConfigFileMissing(t *testing.T) {
 	}
 }
 
-// TestImportCmd_WithFilter_PreservesExternalRef verifies that when --filter is
-// used, the created droplet retains the external_ref so the source issue
-// remains traceable.
-// Given a fake LLM agent that returns a single proposal,
-// When importCmd is run with importFilter=true,
-// Then the created droplet has ExternalRef set to "fake-tracker:FAKE-42".
-func TestImportCmd_WithFilter_PreservesExternalRef(t *testing.T) {
-	fakeagentBin := buildTestBin(t, "fakeagent", "github.com/MichielDean/cistern/internal/testutil/fakeagent")
-
-	dir := t.TempDir()
-	db := filepath.Join(dir, "test.db")
-	t.Setenv("CT_DB", db)
-	t.Setenv("CT_NO_ASCII_LOGO", "1")
-
-	cfgPath := writeTestConfigWithAgent(t, "cistern", fakeagentBin)
-	t.Setenv("CT_CONFIG", cfgPath)
-
-	c, err := cistern.New(db, "ci")
-	if err != nil {
-		t.Fatal(err)
-	}
-	c.Close()
-
-	t.Cleanup(func() { importFilter = false })
-
-	out := captureStdout(t, func() {
-		importRepo = "cistern"
-		importFilter = true
-		importPriority = 2
-		importComplexity = "1"
-		err = importCmd.RunE(importCmd, []string{"fake-tracker", "FAKE-42"})
-	})
-	if err != nil {
-		t.Fatalf("RunE error: %v", err)
-	}
-
-	id := strings.TrimSpace(out)
-	if id == "" {
-		t.Fatal("expected droplet ID on stdout, got empty string")
-	}
-
-	c2, err := cistern.New(db, "ci")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer c2.Close()
-
-	droplet, err := c2.Get(id)
-	if err != nil {
-		t.Fatalf("Get(%s): %v", id, err)
-	}
-	if droplet.ExternalRef != "fake-tracker:FAKE-42" {
-		t.Errorf("ExternalRef = %q, want %q", droplet.ExternalRef, "fake-tracker:FAKE-42")
-	}
-}
-
-// TestImportCmd_WithFilter_AgentError_ReturnsError verifies that when the LLM
-// agent exits non-zero during the filter path, importCmd returns an error.
-// Given a failing agent binary,
-// When importCmd is run with importFilter=true,
-// Then an error is returned.
-func TestImportCmd_WithFilter_AgentError_ReturnsError(t *testing.T) {
-	failagentBin := buildTestBin(t, "failagent", "github.com/MichielDean/cistern/internal/testutil/failagent")
-
-	dir := t.TempDir()
-	db := filepath.Join(dir, "test.db")
-	t.Setenv("CT_DB", db)
-	t.Setenv("CT_NO_ASCII_LOGO", "1")
-
-	cfgPath := writeTestConfigWithAgent(t, "cistern", failagentBin)
-	t.Setenv("CT_CONFIG", cfgPath)
-
-	c, err := cistern.New(db, "ci")
-	if err != nil {
-		t.Fatal(err)
-	}
-	c.Close()
-
-	t.Cleanup(func() { importFilter = false })
-
-	importRepo = "cistern"
-	importFilter = true
-	importPriority = 2
-	importComplexity = "1"
-	err = importCmd.RunE(importCmd, []string{"fake-tracker", "FAKE-42"})
-	if err == nil {
-		t.Fatal("expected error when agent fails, got nil")
-	}
-}
-
-// TestImportCmd_WithFilter_ZeroProposals_ReturnsError verifies that when the
-// LLM filter returns an empty proposals array, importCmd returns an error
-// rather than silently exiting 0 with no output.
-// Given an agent that outputs "[]",
-// When importCmd is run with importFilter=true,
-// Then an error is returned.
-func TestImportCmd_WithFilter_ZeroProposals_ReturnsError(t *testing.T) {
-	zeroagentBin := buildTestBin(t, "zeroproposalsagent", "github.com/MichielDean/cistern/internal/testutil/zeroproposalsagent")
-
-	dir := t.TempDir()
-	db := filepath.Join(dir, "test.db")
-	t.Setenv("CT_DB", db)
-	t.Setenv("CT_NO_ASCII_LOGO", "1")
-
-	cfgPath := writeTestConfigWithAgent(t, "cistern", zeroagentBin)
-	t.Setenv("CT_CONFIG", cfgPath)
-
-	c, err := cistern.New(db, "ci")
-	if err != nil {
-		t.Fatal(err)
-	}
-	c.Close()
-
-	t.Cleanup(func() { importFilter = false })
-
-	importRepo = "cistern"
-	importFilter = true
-	importPriority = 2
-	importComplexity = "1"
-	err = importCmd.RunE(importCmd, []string{"fake-tracker", "FAKE-42"})
-	if err == nil {
-		t.Fatal("expected error when filter returns zero proposals, got nil")
-	}
-}
-
 func TestImportCmd_JiraProvider_E2E(t *testing.T) {
 	// End-to-end test using a real Jira provider against an httptest server.
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -458,7 +329,6 @@ trackers:
 
 	out := captureStdout(t, func() {
 		importRepo = "myproject"
-		importFilter = false
 		importPriority = 2
 		importComplexity = "1"
 		err = importCmd.RunE(importCmd, []string{"jira", "PROJ-1"})
