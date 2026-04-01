@@ -6,11 +6,9 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strings"
 	"time"
 
-	"github.com/MichielDean/cistern/internal/cistern"
 	"github.com/MichielDean/cistern/internal/provider"
 	"github.com/spf13/cobra"
 )
@@ -29,27 +27,22 @@ type claudeJSONOutput struct {
 // filterSessionResult holds the parsed output from a filtration LLM invocation.
 type filterSessionResult struct {
 	SessionID string
-	Proposals []DropletProposal
+	Text      string
 }
-
-// filterFinalizePrompt is sent to the session when --file is used to retrieve
-// the final accepted proposals in JSON form so they can be persisted.
-const filterFinalizePrompt = "Output the final accepted droplet proposal(s) as a JSON array only, no additional text."
 
 var (
 	filterTitle        string
 	filterDescription  string
 	filterResume       string
-	filterFile         bool
-	filterRepo         string
 	filterOutputFormat string
 )
 
 var filterCmd = &cobra.Command{
 	Use:   "filter",
 	Short: "Run filtration LLM pass — refine ideas without persisting to the cistern",
-	Long: `ct filter runs the same LLM filtration pass used by ct droplet add --filter,
-but does not persist anything to the database until you are ready.
+	Long: `ct filter starts a refinement conversation to help you think through and spec
+out work items before adding them to the cistern. At each round the agent asks
+probing questions to sharpen the spec.
 
 New session:
   ct filter --title 'rough idea' [--description '...']
@@ -57,43 +50,14 @@ New session:
 Continue refinement:
   ct filter --resume <session-id> 'your feedback here'
 
-Persist final result:
-  ct filter --resume <session-id> --file --repo <repo>
+When satisfied, file droplets manually using ct droplet add.
 
-Use --output-format json for scriptable output (session_id + proposals).`,
+Use --output-format json for scriptable output (session_id + text).`,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		// Canonicalize repo name before passing to resolveFilterPreset so that
-		// repo-specific provider overrides are resolved correctly even when the
-		// user supplies a wrong-case name (e.g. "portfoliowebsite" → "PortfolioWebsite").
-		if filterRepo != "" {
-			canonical, err := resolveCanonicalRepo(filterRepo)
-			if err != nil {
-				return err
-			}
-			filterRepo = canonical
-		}
-		preset := resolveFilterPreset(filterRepo)
+		preset := resolveFilterPreset("")
 
 		if filterResume != "" {
-			if filterFile {
-				// --resume --file: finalize and persist to DB.
-				if filterRepo == "" {
-					return fmt.Errorf("--repo is required with --file")
-				}
-				// filterRepo is already canonical; use it directly.
-				result, err := invokeFilterResume(preset, filterResume, filterFinalizePrompt)
-				if err != nil {
-					return err
-				}
-				c, err := cistern.New(resolveDBPath(), inferPrefix(filterRepo))
-				if err != nil {
-					return err
-				}
-				defer c.Close()
-				return addProposals(c, result.Proposals, filterRepo, 2)
-			}
-
-			// --resume without --file: feedback refinement pass.
+			// --resume: feedback refinement pass.
 			if len(args) == 0 {
 				return fmt.Errorf("feedback argument required: ct filter --resume <id> '<feedback>'")
 			}
@@ -108,20 +72,12 @@ Use --output-format json for scriptable output (session_id + proposals).`,
 		if filterTitle == "" {
 			return fmt.Errorf("--title is required (or use --resume to continue an existing session)")
 		}
-		// Compute the repo worktree path for --add-dir when --repo is set.
-		var repoPath string
-		if filterRepo != "" {
-			if home, err := os.UserHomeDir(); err == nil {
-				repoPath = filepath.Join(home, ".cistern", "sandboxes", filterRepo, "_primary")
-			}
-		}
 		contextBlock := gatherFilterContext(filterContextConfig{
-			DBPath:   resolveDBPath(),
-			RepoPath: repoPath,
-			Title:    filterTitle,
-			Desc:     filterDescription,
+			DBPath: resolveDBPath(),
+			Title:  filterTitle,
+			Desc:   filterDescription,
 		})
-		result, err := invokeFilterNew(preset, filterTitle, filterDescription, contextBlock, repoPath)
+		result, err := invokeFilterNew(preset, filterTitle, filterDescription, contextBlock, "")
 		if err != nil {
 			return err
 		}
@@ -129,10 +85,11 @@ Use --output-format json for scriptable output (session_id + proposals).`,
 	},
 }
 
-// invokeFilterNew starts a new filtration session and returns proposals with session_id.
-// contextBlock is prepended before the system prompt so the LLM sees codebase context first.
-// repoPath, when non-empty and the preset defines AddDirFlag, is passed via
-// --add-dir so the agent can use read-only file tools to explore the repository.
+// invokeFilterNew starts a new filtration session and returns the agent's text
+// response with session_id. contextBlock is prepended before the system prompt
+// so the LLM sees codebase context first. repoPath, when non-empty and the
+// preset defines AddDirFlag, is passed via --add-dir so the agent can use
+// read-only file tools to explore the repository.
 func invokeFilterNew(preset provider.ProviderPreset, title, description, contextBlock, repoPath string) (filterSessionResult, error) {
 	userPrompt := "Title: " + title
 	if description != "" {
@@ -142,7 +99,7 @@ func invokeFilterNew(preset provider.ProviderPreset, title, description, context
 }
 
 // invokeFilterResume resumes an existing filtration session with the given message
-// and returns updated proposals with session_id.
+// and returns the updated response with session_id.
 func invokeFilterResume(preset provider.ProviderPreset, sessionID, message string) (filterSessionResult, error) {
 	resumeFlag := preset.ResumeFlag
 	if resumeFlag == "" {
@@ -158,9 +115,9 @@ func invokeFilterResume(preset provider.ProviderPreset, sessionID, message strin
 // is appended so the agent can use file tools to explore the repository.
 // When the preset defines NonInteractive.AllowedToolsFlag, read-only file tools
 // (Glob, Grep, Read) are enabled so the agent can discover context on demand.
-// It returns parsed proposals and the session_id from the JSON envelope.
-// If the agent does not support --output-format json, it falls back to parsing
-// the raw output as proposals (session_id will be empty in that case).
+// It returns the raw text response and the session_id from the JSON envelope.
+// If the agent does not support --output-format json, the raw stdout becomes the text
+// (session_id will be empty in that case).
 func callFilterAgent(preset provider.ProviderPreset, extraArgs []string, prompt, repoPath string) (filterSessionResult, error) {
 	for _, key := range preset.EnvPassthrough {
 		if os.Getenv(key) == "" {
@@ -212,46 +169,31 @@ func callFilterAgent(preset provider.ProviderPreset, extraArgs []string, prompt,
 
 	var envelope claudeJSONOutput
 	if err := json.Unmarshal(out, &envelope); err != nil {
-		// Fallback: the preset may not support --output-format json; try raw.
-		proposals, perr := extractProposals(string(out))
-		if perr != nil {
-			return filterSessionResult{}, fmt.Errorf("failed to parse agent output: %w", perr)
-		}
-		return filterSessionResult{Proposals: proposals}, nil
+		// Fallback: the preset may not support --output-format json; use raw output as text.
+		return filterSessionResult{Text: strings.TrimSpace(string(out))}, nil
 	}
 	if envelope.IsError {
 		return filterSessionResult{}, fmt.Errorf("agent returned error: %s", envelope.Result)
 	}
 
-	proposals, err := extractProposals(envelope.Result)
-	if err != nil {
-		return filterSessionResult{}, fmt.Errorf("failed to parse proposals from agent response: %w", err)
-	}
-
 	return filterSessionResult{
 		SessionID: envelope.SessionID,
-		Proposals: proposals,
+		Text:      envelope.Result,
 	}, nil
 }
 
-// printFilterResult writes the filtration result to stdout (proposals) and stderr
-// (session_id). Human format is the default; --output-format json emits a single
-// JSON object with session_id, title, description, and proposals.
+// printFilterResult writes the filtration result to stdout. Human format prints
+// the agent's text directly. --output-format json emits a JSON object with
+// session_id and text.
 func printFilterResult(result filterSessionResult, outputFormat string) error {
 	if outputFormat == "json" {
 		type jsonOut struct {
-			SessionID   string           `json:"session_id"`
-			Title       string           `json:"title,omitempty"`
-			Description string           `json:"description,omitempty"`
-			Proposals   []DropletProposal `json:"proposals,omitempty"`
+			SessionID string `json:"session_id"`
+			Text      string `json:"text,omitempty"`
 		}
 		out := jsonOut{
 			SessionID: result.SessionID,
-			Proposals: result.Proposals,
-		}
-		if len(result.Proposals) > 0 {
-			out.Title = result.Proposals[0].Title
-			out.Description = result.Proposals[0].Description
+			Text:      result.Text,
 		}
 		data, err := json.MarshalIndent(out, "", "  ")
 		if err != nil {
@@ -261,20 +203,8 @@ func printFilterResult(result filterSessionResult, outputFormat string) error {
 		return nil
 	}
 
-	// Human-readable: print each proposal to stdout, session_id to stderr.
-	for i, p := range result.Proposals {
-		if len(result.Proposals) > 1 {
-			fmt.Printf("--- Proposal %d ---\n", i+1)
-		}
-		fmt.Printf("Title:       %s\n", p.Title)
-		fmt.Printf("Description: %s\n", p.Description)
-		if p.Complexity != "" {
-			fmt.Printf("Complexity:  %s\n", p.Complexity)
-		}
-		if i < len(result.Proposals)-1 {
-			fmt.Println()
-		}
-	}
+	// Human-readable: print text to stdout, session_id to stderr.
+	fmt.Println(result.Text)
 	if result.SessionID != "" {
 		fmt.Fprintln(os.Stderr, result.SessionID)
 	}
@@ -285,8 +215,6 @@ func init() {
 	filterCmd.Flags().StringVar(&filterTitle, "title", "", "rough idea title (required for new sessions)")
 	filterCmd.Flags().StringVar(&filterDescription, "description", "", "rough idea description")
 	filterCmd.Flags().StringVar(&filterResume, "resume", "", "resume an existing filtration session by ID")
-	filterCmd.Flags().BoolVar(&filterFile, "file", false, "persist the refined result to the cistern (requires --repo)")
-	filterCmd.Flags().StringVar(&filterRepo, "repo", "", "target repository (required with --file)")
 	filterCmd.Flags().StringVar(&filterOutputFormat, "output-format", "human", "output format: human or json")
 	rootCmd.AddCommand(filterCmd)
 }

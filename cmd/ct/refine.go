@@ -31,11 +31,6 @@ Cistern vocabulary:
   aqueduct  — a workflow pipeline that processes droplets
   cataractae — a gate/step in an aqueduct (e.g., implement, review, test)
 
-Complexity guide:
-  standard (1) — single focused feature, straightforward implementation
-  full     (2) — multi-part feature or moderate complexity
-  critical (3) — breaking change, major refactor, multi-system coordination
-
 When file tools are available, explore the repository before writing proposals:
   - Use Glob to discover the project layout and find relevant files
   - Use Grep to find existing similar commands, data models, or patterns
@@ -43,28 +38,39 @@ When file tools are available, explore the repository before writing proposals:
   Grounding proposals in the actual codebase avoids duplicating existing work and
   ensures descriptions reference real schema names, flags, and conventions.
 
-Your task: Given a rough idea (title and optional description), reason carefully about:
-  - Scope and acceptance criteria
-  - Whether the idea is too large and should be split into multiple focused droplets
-  - Appropriate complexity level
-  - Dependencies between proposed droplets
+Your task: Engage in an iterative refinement conversation to produce a clear,
+actionable delivery spec that the user can file as droplets with ct droplet add.
 
-Output ONLY a valid JSON array of droplet proposals — no markdown, no explanation, no code fences.
-Each proposal object must have exactly these fields:
+At EACH response you MUST:
 
-[
-  {
-    "title": "short imperative title (max 72 chars)",
-    "description": "clear acceptance criteria and key implementation notes",
-    "complexity": "standard|full|critical",
-    "depends_on": []
-  }
-]
+1. Output a numbered plain-text spec of the current proposed droplets. For each item:
+   - Write a short imperative title (max 72 chars)
+   - Add a prose description covering acceptance criteria and key notes
+   - State any dependencies explicitly in prose, e.g.:
+       "Requires droplet 1 to be delivered first."
+     Use "No dependencies." when the item is standalone.
 
-If the idea naturally decomposes into multiple focused droplets, propose all of them.
-In "depends_on", reference the exact "title" value of an earlier droplet in this same
-array to express ordering (e.g. if droplet 2 requires droplet 1 to be delivered first).
-Keep each droplet focused and deliverable by a single engineer in a reasonable timeframe.`
+   Example format:
+     1. Add external_ref column to droplets schema
+        Adds an optional external_ref TEXT column to the droplets table. Migration
+        handles existing rows gracefully. No dependencies.
+
+     2. Implement Jira tracker provider
+        Implements the JiraProvider type satisfying the TrackerProvider interface,
+        with issue fetch and comment-post methods. Requires droplet 1 to be
+        delivered first.
+
+2. Ask 3-5 targeted probing questions to sharpen the spec. Probe for:
+   - Unclear or missing acceptance criteria
+   - Edge cases and failure modes not yet addressed
+   - Missing context (auth flows, external APIs, existing patterns to follow)
+   - Scope boundaries (what is explicitly out of scope?)
+   - Ordering and dependency rationale
+   - Whether any item is too large and should be split into smaller pieces
+
+Drive the conversation toward a complete, unambiguous spec. Do not wait for the
+user to volunteer information — ask for it directly. When the spec is satisfactory,
+the user will end the session and file the droplets using ct droplet add.`
 
 // runNonInteractive invokes the configured agent binary in non-interactive
 // (single-shot) mode to turn a rough idea into well-specified droplet

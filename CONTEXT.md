@@ -1,14 +1,25 @@
 # Context
 
-## Item: ci-7ecn4
+## Item: ci-gez0d
 
-**Title:** Add ct import CLI subcommand
+**Title:** ct filter: remove --file flag, plain-text output, leading questions
 **Status:** in_progress
-**Priority:** 1
+**Priority:** 2
 
 ### Description
 
-Add 'ct import' subcommand in cmd/ct/import.go. Usage: ct import <provider> <issue-key> [flags]. Flags: --repo (target repo, required), --filter (run through filtration before filing), --priority (override mapped priority), --complexity (override, default 1). Flow: (1) resolve provider from first arg (e.g. 'jira'), (2) load provider config from cistern.yaml trackers section, (3) call provider.FetchIssue(key), (4) map ExternalIssue fields to droplet fields, (5) set external_ref to 'provider:key', (6) if --filter flag: run ct filter with pre-populated title/description, (7) else: add droplet directly via client.AddDroplet(). Print created droplet ID on success. Provider registry maps string names to TrackerProvider constructors. Depends on ci-xrgv2, ci-ikbj2, ci-g6so3.
+Remove the --file flag from ct filter entirely. The finalize JSON step (filterFinalizePrompt) is lossy — the LLM drops depends_on when re-emitting the JSON array, causing all droplets to be filed without dependencies and dispatched simultaneously.
+
+Changes:
+- Remove --file and --repo flags from ct filter
+- Delete filterFinalizePrompt constant and the --file branch in filter.go
+- Remove addProposals and extractProposals if they have no other callers (check refine.go and cistern.go)
+- Update filterSystemPrompt: output a numbered plain-text spec with prose dependency statements (e.g. '2. Implement Jira provider — requires droplet 1 to be delivered first') instead of a JSON array
+- Update filterSystemPrompt: at each refinement round, ask leading questions to help the user sharpen the spec — e.g. probe for edge cases, unclear acceptance criteria, missing context, scope boundaries, and ordering rationale. The agent should drive the conversation toward a complete spec, not just wait for the user to volunteer information.
+- Update runNonInteractive / response parsing accordingly — no more JSON parsing from stdout, just display the refined text and questions to the user
+- Update filter_test.go and refine_test.go to reflect removed functionality
+
+Acceptance criteria: ct filter starts a refinement conversation, asks probing questions at each round, and ends by printing a clear numbered plain-text spec with prose dependency statements. No --file flag exists. Filing is done separately by the caller using ct droplet add.
 
 ## Current Step: implement
 
@@ -39,16 +50,16 @@ Add 'ct import' subcommand in cmd/ct/import.go. Usage: ct import <provider> <iss
 When your work is done, signal your outcome using the `ct` CLI:
 
 **Pass (work complete, move to next step):**
-    ct droplet pass ci-7ecn4
+    ct droplet pass ci-gez0d
 
 **Recirculate (needs rework — send back upstream):**
-    ct droplet recirculate ci-7ecn4
-    ct droplet recirculate ci-7ecn4 --to implement
+    ct droplet recirculate ci-gez0d
+    ct droplet recirculate ci-gez0d --to implement
 
 **Pool (cannot currently proceed):**
-    ct droplet pool ci-7ecn4
+    ct droplet pool ci-gez0d
 
 Add notes before signaling:
-    ct droplet note ci-7ecn4 "What you did / found"
+    ct droplet note ci-gez0d "What you did / found"
 
 The `ct` binary is on your PATH.

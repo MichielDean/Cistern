@@ -8,126 +8,18 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/MichielDean/cistern/internal/cistern"
 	"github.com/MichielDean/cistern/internal/provider"
 )
 
 // --- callFilterAgent tests ---
 
-// TestFilterCmd_NewSession_UnknownRepo_ReturnsError verifies that ct filter --title "..."
-// --repo nonexistent returns an error before any LLM call, even without --file.
-// This tests that resolveCanonicalRepo is called before resolveFilterPreset so that
-// wrong-case repo names in non-file paths also produce errors, not silent fallbacks.
-// Given config with "PortfolioWebsite",
-// When filter --title "idea" --repo nonexistent is called,
-// Then an error mentioning "unknown repo nonexistent" is returned.
-func TestFilterCmd_NewSession_UnknownRepo_ReturnsError(t *testing.T) {
-	cfgPath := writeTestConfig(t, "PortfolioWebsite")
-	t.Setenv("CT_CONFIG", cfgPath)
-	t.Setenv("CT_NO_ASCII_LOGO", "1")
-	t.Cleanup(func() {
-		filterTitle = ""
-		filterRepo = ""
-	})
-
-	err := execCmd(t, "filter", "--title", "test idea", "--repo", "nonexistent")
-	if err == nil {
-		t.Fatal("expected error for unknown repo in new session, got nil")
-	}
-	if !strings.Contains(err.Error(), "unknown repo nonexistent") {
-		t.Errorf("error %q does not mention 'unknown repo nonexistent'", err.Error())
-	}
-}
-
-// TestFilterCmd_UnknownRepo_ReturnsError verifies that ct filter --resume ... --file
-// with an unknown repo name returns a clear error before any LLM call.
-// Given config with "PortfolioWebsite",
-// When filter --resume <id> --file --repo nonexistent is called,
-// Then an error mentioning "unknown repo nonexistent" is returned.
-func TestFilterCmd_UnknownRepo_ReturnsError(t *testing.T) {
-	cfgPath := writeTestConfig(t, "PortfolioWebsite")
-	t.Setenv("CT_CONFIG", cfgPath)
-	t.Setenv("CT_NO_ASCII_LOGO", "1")
-	t.Cleanup(func() {
-		filterResume = ""
-		filterFile = false
-		filterRepo = ""
-	})
-
-	err := execCmd(t, "filter", "--resume", "some-session-id", "--file", "--repo", "nonexistent")
-	if err == nil {
-		t.Fatal("expected error for unknown repo, got nil")
-	}
-	if !strings.Contains(err.Error(), "unknown repo nonexistent") {
-		t.Errorf("error %q does not mention 'unknown repo nonexistent'", err.Error())
-	}
-}
-
-// TestFilterCmd_CanonicalizeRepo_StoresCanonicalName verifies that ct filter
-// --resume --file --repo portfoliowebsite (lower-case) stores the droplet with
-// the canonical name "PortfolioWebsite" from the config.
-// Given config with "PortfolioWebsite" and a fakeagent preset,
-// When filter --resume --file --repo portfoliowebsite is exercised via direct
-// function calls (mirroring what filterCmd.RunE does),
-// Then the droplet is stored with repo = "PortfolioWebsite".
-func TestFilterCmd_CanonicalizeRepo_StoresCanonicalName(t *testing.T) {
-	fakeagentBin := buildTestBin(t, "fakeagent", "github.com/MichielDean/cistern/internal/testutil/fakeagent")
-	cfgPath := writeTestConfig(t, "PortfolioWebsite")
-	db := filepath.Join(t.TempDir(), "test.db")
-	t.Setenv("CT_CONFIG", cfgPath)
-	t.Setenv("CT_DB", db)
-	t.Setenv("CT_NO_ASCII_LOGO", "1")
-
-	// Resolve canonical repo (this is what filterCmd.RunE calls).
-	repo, err := resolveCanonicalRepo("portfoliowebsite")
-	if err != nil {
-		t.Fatalf("resolveCanonicalRepo: %v", err)
-	}
-	if repo != "PortfolioWebsite" {
-		t.Fatalf("resolveCanonicalRepo returned %q, want %q", repo, "PortfolioWebsite")
-	}
-
-	// Simulate the persist path using the canonical repo name.
-	preset := provider.ProviderPreset{
-		Name:       "test",
-		Command:    fakeagentBin,
-		ResumeFlag: "--resume",
-		NonInteractive: provider.NonInteractiveConfig{
-			PrintFlag:  "--print",
-			PromptFlag: "-p",
-		},
-	}
-	result, err := invokeFilterResume(preset, "test-session", filterFinalizePrompt)
-	if err != nil {
-		t.Fatalf("invokeFilterResume: %v", err)
-	}
-
-	c, err := cistern.New(db, "pw")
-	if err != nil {
-		t.Fatalf("cistern.New: %v", err)
-	}
-	defer c.Close()
-
-	if err := addProposals(c, result.Proposals, repo, 2); err != nil {
-		t.Fatalf("addProposals: %v", err)
-	}
-
-	items, err := c.List("PortfolioWebsite", "")
-	if err != nil {
-		t.Fatalf("c.List: %v", err)
-	}
-	if len(items) == 0 {
-		t.Fatal("expected droplet stored with canonical repo name 'PortfolioWebsite', got none")
-	}
-}
-
-// TestCallFilterAgent_ReturnsProposalsAndSessionID verifies that callFilterAgent
-// correctly invokes the agent with --output-format json and parses both the
-// proposals and the session_id from the JSON envelope.
-// Given a preset pointing at fakeagent (updated to support --output-format json),
+// TestCallFilterAgent_ReturnsTextAndSessionID verifies that callFilterAgent
+// correctly invokes the agent with --output-format json and returns both the
+// text response and the session_id from the JSON envelope.
+// Given a preset pointing at fakeagent,
 // When callFilterAgent is called with nil extraArgs,
-// Then proposals and a non-empty session_id are returned.
-func TestCallFilterAgent_ReturnsProposalsAndSessionID(t *testing.T) {
+// Then a non-empty text and non-empty session_id are returned.
+func TestCallFilterAgent_ReturnsTextAndSessionID(t *testing.T) {
 	fakeagentBin := buildTestBin(t, "fakeagent", "github.com/MichielDean/cistern/internal/testutil/fakeagent")
 
 	preset := provider.ProviderPreset{
@@ -146,14 +38,8 @@ func TestCallFilterAgent_ReturnsProposalsAndSessionID(t *testing.T) {
 	if result.SessionID == "" {
 		t.Error("expected non-empty session_id")
 	}
-	if len(result.Proposals) == 0 {
-		t.Fatal("expected at least one proposal")
-	}
-	if result.Proposals[0].Title != "mock proposal" {
-		t.Errorf("title = %q, want %q", result.Proposals[0].Title, "mock proposal")
-	}
-	if result.Proposals[0].Description != "test description" {
-		t.Errorf("description = %q, want %q", result.Proposals[0].Description, "test description")
+	if result.Text == "" {
+		t.Error("expected non-empty text response")
 	}
 }
 
@@ -161,7 +47,7 @@ func TestCallFilterAgent_ReturnsProposalsAndSessionID(t *testing.T) {
 // forwarded to the agent binary and fakeagent handles them gracefully.
 // Given a preset and extraArgs containing --resume,
 // When callFilterAgent is called,
-// Then proposals and session_id are returned.
+// Then a non-empty text and session_id are returned.
 func TestCallFilterAgent_Resume_PassesExtraArgs(t *testing.T) {
 	fakeagentBin := buildTestBin(t, "fakeagent", "github.com/MichielDean/cistern/internal/testutil/fakeagent")
 
@@ -181,8 +67,8 @@ func TestCallFilterAgent_Resume_PassesExtraArgs(t *testing.T) {
 	if result.SessionID == "" {
 		t.Error("expected non-empty session_id")
 	}
-	if len(result.Proposals) == 0 {
-		t.Fatal("expected at least one proposal")
+	if result.Text == "" {
+		t.Error("expected non-empty text response")
 	}
 }
 
@@ -210,12 +96,11 @@ func TestCallFilterAgent_AgentExecFailure(t *testing.T) {
 }
 
 // TestCallFilterAgent_JSONFallback_RawOutput verifies the fallback path where the
-// agent exits 0 but returns non-JSON output (not a JSON envelope).
-// callFilterAgent must fall back to extractProposals on the raw output and return
-// proposals with an empty session_id.
-// Given a fakeagent in raw_fallback mode (returns raw proposals despite --output-format),
+// agent exits 0 but returns non-JSON-envelope output.
+// callFilterAgent must return the raw output as text with an empty session_id.
+// Given a fakeagent in raw_fallback mode (returns raw text despite --output-format),
 // When callFilterAgent is called,
-// Then proposals are returned and session_id is empty.
+// Then non-empty text is returned and session_id is empty.
 func TestCallFilterAgent_JSONFallback_RawOutput(t *testing.T) {
 	fakeagentBin := buildTestBin(t, "fakeagent", "github.com/MichielDean/cistern/internal/testutil/fakeagent")
 	t.Setenv("FAKEAGENT_MODE", "raw_fallback")
@@ -236,11 +121,8 @@ func TestCallFilterAgent_JSONFallback_RawOutput(t *testing.T) {
 	if result.SessionID != "" {
 		t.Errorf("expected empty session_id in fallback mode, got %q", result.SessionID)
 	}
-	if len(result.Proposals) == 0 {
-		t.Fatal("expected at least one proposal from fallback path")
-	}
-	if result.Proposals[0].Title != "mock proposal" {
-		t.Errorf("title = %q, want %q", result.Proposals[0].Title, "mock proposal")
+	if result.Text == "" {
+		t.Error("expected non-empty text from fallback path")
 	}
 }
 
@@ -296,12 +178,12 @@ func TestCallFilterAgent_MissingRequiredEnvVar(t *testing.T) {
 
 // --- invokeFilterNew tests ---
 
-// TestInvokeFilterNew_ReturnsProposalsAndSessionID verifies that invokeFilterNew
-// combines system + user prompts and returns proposals with a session_id.
+// TestInvokeFilterNew_ReturnsTextAndSessionID verifies that invokeFilterNew
+// combines system + user prompts and returns a text response with a session_id.
 // Given a preset pointing at fakeagent,
 // When invokeFilterNew is called with a title and description,
-// Then proposals and a non-empty session_id are returned.
-func TestInvokeFilterNew_ReturnsProposalsAndSessionID(t *testing.T) {
+// Then non-empty text and a non-empty session_id are returned.
+func TestInvokeFilterNew_ReturnsTextAndSessionID(t *testing.T) {
 	fakeagentBin := buildTestBin(t, "fakeagent", "github.com/MichielDean/cistern/internal/testutil/fakeagent")
 
 	preset := provider.ProviderPreset{
@@ -320,8 +202,8 @@ func TestInvokeFilterNew_ReturnsProposalsAndSessionID(t *testing.T) {
 	if result.SessionID == "" {
 		t.Error("expected non-empty session_id from invokeFilterNew")
 	}
-	if len(result.Proposals) == 0 {
-		t.Fatal("expected at least one proposal")
+	if result.Text == "" {
+		t.Error("expected non-empty text response from invokeFilterNew")
 	}
 }
 
@@ -343,18 +225,18 @@ func TestInvokeFilterNew_TitleOnly(t *testing.T) {
 	if err != nil {
 		t.Fatalf("invokeFilterNew title-only: unexpected error: %v", err)
 	}
-	if len(result.Proposals) == 0 {
-		t.Fatal("expected at least one proposal")
+	if result.Text == "" {
+		t.Error("expected non-empty text response")
 	}
 }
 
 // --- invokeFilterResume tests ---
 
 // TestInvokeFilterResume_WithFeedback verifies that invokeFilterResume passes
-// the session ID via the preset's ResumeFlag and returns proposals.
+// the session ID via the preset's ResumeFlag and returns a text response.
 // Given a preset with ResumeFlag="--resume" pointing at fakeagent,
 // When invokeFilterResume is called with a session ID and feedback,
-// Then proposals and a non-empty session_id are returned.
+// Then non-empty text and a non-empty session_id are returned.
 func TestInvokeFilterResume_WithFeedback(t *testing.T) {
 	fakeagentBin := buildTestBin(t, "fakeagent", "github.com/MichielDean/cistern/internal/testutil/fakeagent")
 
@@ -375,8 +257,8 @@ func TestInvokeFilterResume_WithFeedback(t *testing.T) {
 	if result.SessionID == "" {
 		t.Error("expected non-empty session_id from invokeFilterResume")
 	}
-	if len(result.Proposals) == 0 {
-		t.Fatal("expected at least one proposal")
+	if result.Text == "" {
+		t.Error("expected non-empty text response")
 	}
 }
 
@@ -399,8 +281,8 @@ func TestInvokeFilterResume_DefaultsToResumeFlag(t *testing.T) {
 	if err != nil {
 		t.Fatalf("invokeFilterResume (default flag): unexpected error: %v", err)
 	}
-	if len(result.Proposals) == 0 {
-		t.Fatal("expected proposals")
+	if result.Text == "" {
+		t.Error("expected non-empty text response")
 	}
 }
 
@@ -419,32 +301,19 @@ func TestFilterCmd_NewSession_RequiresTitle(t *testing.T) {
 	}
 }
 
-// TestFilterCmd_Resume_RequiresFeedbackOrFile verifies that ct filter --resume
-// without a feedback argument and without --file returns an error.
-// Given ct filter --resume <id> with no positional arg and no --file,
+// TestFilterCmd_Resume_RequiresFeedback verifies that ct filter --resume
+// without a feedback argument returns an error mentioning "feedback".
+// Given ct filter --resume <id> with no positional arg,
 // When the command is executed,
 // Then an error mentioning "feedback" is returned.
-func TestFilterCmd_Resume_RequiresFeedbackOrFile(t *testing.T) {
+func TestFilterCmd_Resume_RequiresFeedback(t *testing.T) {
 	t.Setenv("CT_NO_ASCII_LOGO", "1")
 	err := execCmd(t, "filter", "--resume", "some-session-id")
 	if err == nil {
-		t.Fatal("expected error when --resume without feedback or --file, got nil")
+		t.Fatal("expected error when --resume without feedback, got nil")
 	}
 	if !strings.Contains(err.Error(), "feedback") {
 		t.Errorf("error %q does not mention feedback", err.Error())
-	}
-}
-
-// TestFilterCmd_ResumeFile_RequiresRepo verifies that ct filter --resume ... --file
-// without --repo returns an error mentioning --repo.
-func TestFilterCmd_ResumeFile_RequiresRepo(t *testing.T) {
-	t.Setenv("CT_NO_ASCII_LOGO", "1")
-	err := execCmd(t, "filter", "--resume", "some-session-id", "--file")
-	if err == nil {
-		t.Fatal("expected error when --file without --repo, got nil")
-	}
-	if !strings.Contains(err.Error(), "--repo") {
-		t.Errorf("error %q does not mention --repo", err.Error())
 	}
 }
 
@@ -455,9 +324,7 @@ func TestFilterCmd_ResumeFile_RequiresRepo(t *testing.T) {
 func TestPrintFilterResult_HumanFormat(t *testing.T) {
 	result := filterSessionResult{
 		SessionID: "test-session",
-		Proposals: []DropletProposal{
-			{Title: "Fix login bug", Description: "Handle edge case in auth flow", Complexity: "trivial"},
-		},
+		Text:      "1. Fix login bug\n   Handle edge case in auth flow. No dependencies.",
 	}
 	if err := printFilterResult(result, "human"); err != nil {
 		t.Fatalf("printFilterResult human: unexpected error: %v", err)
@@ -469,46 +336,23 @@ func TestPrintFilterResult_HumanFormat(t *testing.T) {
 func TestPrintFilterResult_JSONFormat(t *testing.T) {
 	result := filterSessionResult{
 		SessionID: "session-xyz",
-		Proposals: []DropletProposal{
-			{Title: "Add caching", Description: "Implement Redis caching", Complexity: "standard"},
-		},
+		Text:      "1. Add caching\n   Implement Redis caching. No dependencies.",
 	}
 	if err := printFilterResult(result, "json"); err != nil {
 		t.Fatalf("printFilterResult json: unexpected error: %v", err)
 	}
 }
 
-// TestPrintFilterResult_HumanFormat_MultipleProposals verifies that human output
-// includes section headers when multiple proposals are present.
-func TestPrintFilterResult_HumanFormat_MultipleProposals(t *testing.T) {
-	result := filterSessionResult{
-		SessionID: "test-session",
-		Proposals: []DropletProposal{
-			{Title: "First task", Description: "Do the first thing", Complexity: "trivial"},
-			{Title: "Second task", Description: "Do the second thing", Complexity: "standard"},
-		},
-	}
-	if err := printFilterResult(result, "human"); err != nil {
-		t.Fatalf("printFilterResult multi-proposal: unexpected error: %v", err)
-	}
-}
-
 // TestFilterJSONOutput_HasRequiredFields verifies that the JSON output structure
-// contains session_id, title, and description — the fields required for scripting.
+// contains session_id and text — the fields required for scripting.
 func TestFilterJSONOutput_HasRequiredFields(t *testing.T) {
 	type filterJSONOutput struct {
-		SessionID   string           `json:"session_id"`
-		Title       string           `json:"title,omitempty"`
-		Description string           `json:"description,omitempty"`
-		Proposals   []DropletProposal `json:"proposals,omitempty"`
+		SessionID string `json:"session_id"`
+		Text      string `json:"text,omitempty"`
 	}
 	out := filterJSONOutput{
-		SessionID:   "abc123",
-		Title:       "Refactor auth",
-		Description: "Clean up auth module",
-		Proposals: []DropletProposal{
-			{Title: "Refactor auth", Description: "Clean up auth module", Complexity: "standard"},
-		},
+		SessionID: "abc123",
+		Text:      "1. Refactor auth\n   Clean up the auth module. No dependencies.",
 	}
 	data, err := json.Marshal(out)
 	if err != nil {
@@ -518,63 +362,10 @@ func TestFilterJSONOutput_HasRequiredFields(t *testing.T) {
 	if err := json.Unmarshal(data, &got); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
-	for _, field := range []string{"session_id", "title", "description"} {
+	for _, field := range []string{"session_id", "text"} {
 		if v, ok := got[field]; !ok || v == "" {
 			t.Errorf("JSON output missing required field %q", field)
 		}
-	}
-}
-
-// --- end-to-end: --resume --file --repo persists a droplet ---
-
-// TestFilterCmd_ResumeFile_PersistsDroplet verifies the full --file path:
-// invokeFilterResume + addProposals produces a droplet in the database.
-// Given a fakeagent preset and an empty database,
-// When invokeFilterResume is called and addProposals writes to the DB,
-// Then the droplet is present in the cistern with the expected title.
-func TestFilterCmd_ResumeFile_PersistsDroplet(t *testing.T) {
-	fakeagentBin := buildTestBin(t, "fakeagent", "github.com/MichielDean/cistern/internal/testutil/fakeagent")
-	db := filepath.Join(t.TempDir(), "test.db")
-	t.Setenv("CT_DB", db)
-	t.Setenv("CT_NO_ASCII_LOGO", "1")
-
-	preset := provider.ProviderPreset{
-		Name:       "test",
-		Command:    fakeagentBin,
-		ResumeFlag: "--resume",
-		NonInteractive: provider.NonInteractiveConfig{
-			PrintFlag:  "--print",
-			PromptFlag: "-p",
-		},
-	}
-
-	result, err := invokeFilterResume(preset, "test-session", filterFinalizePrompt)
-	if err != nil {
-		t.Fatalf("invokeFilterResume: %v", err)
-	}
-	if len(result.Proposals) == 0 {
-		t.Fatal("expected proposals from invokeFilterResume")
-	}
-
-	c, err := cistern.New(db, "ct")
-	if err != nil {
-		t.Fatalf("cistern.New: %v", err)
-	}
-	defer c.Close()
-
-	if err := addProposals(c, result.Proposals, "myrepo", 2); err != nil {
-		t.Fatalf("addProposals: %v", err)
-	}
-
-	items, err := c.List("myrepo", "")
-	if err != nil {
-		t.Fatalf("c.List: %v", err)
-	}
-	if len(items) == 0 {
-		t.Fatal("expected at least one droplet to be persisted")
-	}
-	if items[0].Title != "mock proposal" {
-		t.Errorf("title = %q, want %q", items[0].Title, "mock proposal")
 	}
 }
 
@@ -595,6 +386,46 @@ func TestFilterCmd_SkipContextFlag_IsRejected(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "unknown flag: --skip-context") {
 		t.Errorf("expected 'unknown flag: --skip-context' error, got: %v", err)
+	}
+}
+
+// TestFilterCmd_FileFlag_IsRejected verifies that --file is no longer a
+// recognized flag and produces an "unknown flag" error.
+// Given any ct filter invocation with --file,
+// When the command is executed,
+// Then an error containing "unknown flag: --file" is returned.
+func TestFilterCmd_FileFlag_IsRejected(t *testing.T) {
+	t.Setenv("CT_NO_ASCII_LOGO", "1")
+	t.Cleanup(func() {
+		filterTitle = ""
+	})
+
+	err := execCmd(t, "filter", "--title", "test idea", "--file")
+	if err == nil {
+		t.Fatal("expected error for removed --file flag, got nil")
+	}
+	if !strings.Contains(err.Error(), "unknown flag: --file") {
+		t.Errorf("expected 'unknown flag: --file' error, got: %v", err)
+	}
+}
+
+// TestFilterCmd_RepoFlag_IsRejected verifies that --repo is no longer a
+// recognized flag and produces an "unknown flag" error.
+// Given any ct filter invocation with --repo,
+// When the command is executed,
+// Then an error containing "unknown flag: --repo" is returned.
+func TestFilterCmd_RepoFlag_IsRejected(t *testing.T) {
+	t.Setenv("CT_NO_ASCII_LOGO", "1")
+	t.Cleanup(func() {
+		filterTitle = ""
+	})
+
+	err := execCmd(t, "filter", "--title", "test idea", "--repo", "SomeRepo")
+	if err == nil {
+		t.Fatal("expected error for removed --repo flag, got nil")
+	}
+	if !strings.Contains(err.Error(), "unknown flag: --repo") {
+		t.Errorf("expected 'unknown flag: --repo' error, got: %v", err)
 	}
 }
 
@@ -621,13 +452,9 @@ func TestFilterCmd_PromptAlwaysHasContextHeader(t *testing.T) {
 	// Reset globals that may be polluted by prior tests.
 	filterTitle = ""
 	filterResume = ""
-	filterFile = false
-	filterRepo = ""
 	t.Cleanup(func() {
 		filterTitle = ""
 		filterResume = ""
-		filterFile = false
-		filterRepo = ""
 	})
 
 	if err := execCmd(t, "filter", "--title", "test idea"); err != nil {
@@ -647,7 +474,7 @@ func TestFilterCmd_PromptAlwaysHasContextHeader(t *testing.T) {
 // invokeFilterNew accepts a non-empty contextBlock without error.
 // Given a preset pointing at fakeagent and a non-empty contextBlock,
 // When invokeFilterNew is called,
-// Then proposals and a session_id are returned (fakeagent ignores prompt content).
+// Then non-empty text and a session_id are returned.
 func TestInvokeFilterNew_WithContextBlock_IncludesContextInResult(t *testing.T) {
 	fakeagentBin := buildTestBin(t, "fakeagent", "github.com/MichielDean/cistern/internal/testutil/fakeagent")
 
@@ -668,8 +495,8 @@ func TestInvokeFilterNew_WithContextBlock_IncludesContextInResult(t *testing.T) 
 	if result.SessionID == "" {
 		t.Error("expected non-empty session_id")
 	}
-	if len(result.Proposals) == 0 {
-		t.Fatal("expected at least one proposal")
+	if result.Text == "" {
+		t.Error("expected non-empty text response")
 	}
 }
 
@@ -751,65 +578,6 @@ func TestCallFilterAgent_WithAddDir_PassesDirFlag(t *testing.T) {
 	}
 	if !strings.Contains(args, repoPath) {
 		t.Errorf("expected repoPath %q in agent args, got:\n%s", repoPath, args)
-	}
-}
-
-// TestFilterCmd_WithRepo_ForwardsAddDirToAgent verifies the end-to-end path:
-// filterCmd.RunE → filterRepo != "" → repoPath computed → invokeFilterNew →
-// callFilterAgent → --add-dir <repoPath> forwarded to the agent subprocess.
-// Given a config with fakeagent as the preset command and testRepo in repos,
-// When ct filter --title "..." --repo testRepo is called with FAKEAGENT_ARGS_FILE set,
-// Then the captured subprocess args must contain --add-dir and the expected path.
-func TestFilterCmd_WithRepo_ForwardsAddDirToAgent(t *testing.T) {
-	fakeagentBin := buildTestBin(t, "fakeagent", "github.com/MichielDean/cistern/internal/testutil/fakeagent")
-	dir := t.TempDir()
-
-	// Config that overrides the claude preset command to point at fakeagent
-	// and registers testRepo so resolveCanonicalRepo succeeds.
-	cfgPath := filepath.Join(dir, "cistern.yaml")
-	cfgContent := fmt.Sprintf("provider:\n  command: %s\nrepos:\n  - name: testRepo\n    cataractae: 1\n", fakeagentBin)
-	if err := os.WriteFile(cfgPath, []byte(cfgContent), 0o644); err != nil {
-		t.Fatalf("WriteFile config: %v", err)
-	}
-
-	argsFile := filepath.Join(dir, "args.txt")
-	t.Setenv("CT_CONFIG", cfgPath)
-	t.Setenv("CT_DB", filepath.Join(dir, "test.db"))
-	t.Setenv("CT_NO_ASCII_LOGO", "1")
-	t.Setenv("FAKEAGENT_ARGS_FILE", argsFile)
-	// Reset globals that may be polluted by prior tests.
-	filterTitle = ""
-	filterResume = ""
-	filterFile = false
-	filterRepo = ""
-	t.Cleanup(func() {
-		filterTitle = ""
-		filterResume = ""
-		filterFile = false
-		filterRepo = ""
-	})
-
-	if err := execCmd(t, "filter", "--title", "test idea", "--repo", "testRepo"); err != nil {
-		t.Fatalf("filter --repo testRepo: unexpected error: %v", err)
-	}
-
-	captured, err := os.ReadFile(argsFile)
-	if err != nil {
-		t.Fatalf("reading args file: %v", err)
-	}
-	args := string(captured)
-
-	if !strings.Contains(args, "--add-dir") {
-		t.Errorf("expected --add-dir in agent args, got:\n%s", args)
-	}
-
-	home, err := os.UserHomeDir()
-	if err != nil {
-		t.Fatalf("UserHomeDir: %v", err)
-	}
-	expectedPath := filepath.Join(home, ".cistern", "sandboxes", "testRepo", "_primary")
-	if !strings.Contains(args, expectedPath) {
-		t.Errorf("expected path %q in agent args, got:\n%s", expectedPath, args)
 	}
 }
 
