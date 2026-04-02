@@ -305,9 +305,9 @@ ct tui                           # Launch interactive cockpit (requires active t
 The cockpit provides a two-pane interface: persistent left sidebar for module navigation, and a right pane showing the active module's content.
 
 **Cockpit Layout**
-- **Left sidebar**: Lists all available modules (Droplets, Dashboard, Aqueducts, Inspect, Audit) with keyboard shortcuts (1–9)
+- **Left sidebar**: Lists all available modules (Droplets, Dashboard, Status, Inspect, Audit) with keyboard shortcuts (1–9)
   - Cursor highlight indicates focus: `▶` = panel focused (green), `▷` = sidebar focused (yellow)
-  - Currently, only the Droplets module is fully implemented; others ship as placeholders
+  - Currently, Droplets and Status modules are fully implemented; others ship as placeholders
 - **Right pane**: Displays the active module's content
 
 **Navigation**
@@ -349,6 +349,16 @@ The Droplets module provides three views within the active pane:
 - `s` — **Set Step** — Jump to a different pipeline step; enter step name and press Enter
 
 All actions execute immediately through the cistern database. After any action completes, the detail view re-fetches and displays updated state.
+
+**Status Module** (key: 3)
+
+The Status module displays real-time system health and pipeline status:
+
+- **Cistern Counts**: Total and per-status droplet counts (in progress, open, pooled)
+- **Aqueduct Flow**: Summary of each aqueduct with active/queued droplet counts and current step breakdown
+- **Castellarius Health**: Daemon status, last poll time, and scheduler liveness
+
+The status view auto-refreshes every 5 seconds. When the display hasn't changed for 2+ cycles, it backs off to a 30-second refresh interval to reduce database load. Press `r` at any time to force an immediate refresh.
 
 ## Status & Health
 
