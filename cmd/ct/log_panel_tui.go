@@ -204,7 +204,7 @@ func (p logPanel) View() string {
 	if len(p.sources) > 1 {
 		b.WriteString(fmt.Sprintf("  %s  [%d/%d]  s to switch", srcLabel, p.sourceIdx+1, len(p.sources)))
 	} else {
-		b.WriteString(fmt.Sprintf("  %s", srcLabel))
+		b.WriteString("  " + srcLabel)
 	}
 	b.WriteByte('\n')
 
