@@ -57,7 +57,7 @@ func buildFakeagent(t *testing.T) string { return buildBinary(t, "fakeagent", ".
 func buildCt(t *testing.T) string        { return buildBinary(t, "ct", "./cmd/ct") }
 
 // sessionPrefix returns a 6-hex-char string unique to this test, derived from
-// the SHA-256 of a t.TempDir() basename. Prepended to tmux session names so
+// the SHA-256 of the full t.TempDir() path. Prepended to tmux session names so
 // test sessions cannot collide with production sessions.
 func sessionPrefix(t *testing.T) string {
 	t.Helper()
