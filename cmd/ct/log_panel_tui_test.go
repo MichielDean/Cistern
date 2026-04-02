@@ -466,6 +466,29 @@ func TestLogPanel_Update_ContentMsg_UnpinnedAutoScrolls(t *testing.T) {
 	}
 }
 
+// TestLogPanel_Update_ContentMsg_AutoScroll_LastLineVisible verifies that the last line is
+// visible in auto-scroll mode when content has no trailing newline (ci-owymw-hjakt).
+//
+// Given: a logPanel with height=10 (visible=6), pinned=false
+// When:  a logContentMsg with 7 lines and no trailing newline is processed
+// Then:  View() contains the last line "lastline"
+func TestLogPanel_Update_ContentMsg_AutoScroll_LastLineVisible(t *testing.T) {
+	p := newLogPanel(mockLogReader{}, []string{"/tmp/test.log"})
+	p.height = 10 // visible = 10 - 4 = 6
+	p.width = 80
+	p.pinned = false
+
+	// 7 lines, no trailing newline — strings.Count("\n") = 6, strings.Split = 7 elements.
+	content := "line1\nline2\nline3\nline4\nline5\nline6\nlastline"
+	updated, _ := p.Update(logContentMsg(content))
+	up := updated.(logPanel)
+
+	v := up.View()
+	if !strings.Contains(v, "lastline") {
+		t.Errorf("View() after auto-scroll missing last line; output:\n%s", v)
+	}
+}
+
 // TestLogPanel_Update_ContentMsg_PinnedPreservesScrollY verifies pinned scroll is preserved.
 //
 // Given: a logPanel with pinned=true and scrollY=5
