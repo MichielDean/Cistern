@@ -107,10 +107,11 @@ func castellariusTickCmd() tea.Cmd {
 func (p castellariusPanel) execActionCmd() tea.Cmd {
 	action := p.confirmAction
 	return func() tea.Msg {
-		var (
-			out []byte
-			err error
-		)
+		exe, err := os.Executable()
+		if err != nil {
+			exe = "ct"
+		}
+		var out []byte
 		switch action {
 		case "start":
 			// Try systemctl first (standard deployment via cistern-castellarius.service).
@@ -120,10 +121,6 @@ func (p castellariusPanel) execActionCmd() tea.Cmd {
 			}
 			// Fall back: spawn ct castellarius start as a detached process so the TUI
 			// is not blocked (ct castellarius start is a blocking foreground process).
-			exe, exeErr := os.Executable()
-			if exeErr != nil {
-				exe = "ct"
-			}
 			c := exec.Command(exe, "castellarius", "start")
 			c.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 			if err = c.Start(); err != nil {
@@ -132,10 +129,6 @@ func (p castellariusPanel) execActionCmd() tea.Cmd {
 				out = []byte("Castellarius started (detached process).")
 			}
 		default:
-			exe, exeErr := os.Executable()
-			if exeErr != nil {
-				exe = "ct"
-			}
 			cmd := exec.Command(exe, "castellarius", action)
 			out, err = cmd.CombinedOutput()
 		}
@@ -246,18 +239,8 @@ func (p castellariusPanel) viewConfirm() string {
 	var sb strings.Builder
 	sb.WriteString("\n")
 	sb.WriteString(tuiStyleHeader.Render("  Confirm action") + "\n\n")
-	var prompt string
-	switch p.confirmAction {
-	case "start":
-		prompt = "  Start the Castellarius?"
-	case "stop":
-		prompt = "  Stop the Castellarius?"
-	case "restart":
-		prompt = "  Restart the Castellarius?"
-	default:
-		prompt = fmt.Sprintf("  %s the Castellarius?", p.confirmAction)
-	}
-	sb.WriteString(prompt + "\n\n")
+	a := p.confirmAction
+	sb.WriteString(fmt.Sprintf("  %s the Castellarius?\n\n", strings.ToUpper(a[:1])+a[1:]))
 	sb.WriteString(tuiStyleGreen.Render("  y") + " yes    " + tuiStyleDim.Render("n / esc") + " cancel\n")
 	return sb.String()
 }
