@@ -175,7 +175,7 @@ func (p logPanel) fetchCmd() tea.Cmd {
 		}
 		content, err := reader.ReadTail(src, logPanelTailLines)
 		if err != nil {
-			return logContentMsg(fmt.Sprintf("(error reading log: %s)", err))
+			return logContentMsg("")
 		}
 		return logContentMsg(content)
 	}

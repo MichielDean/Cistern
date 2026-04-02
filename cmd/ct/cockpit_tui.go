@@ -233,8 +233,8 @@ func newCockpitModel(cfgPath, dbPath string) cockpitModel {
 		newStatusPanel(cfgPath, dbPath),
 		placeholderPanel{title: "Aqueducts"},
 		newDoctorPanel(),
-		placeholderPanel{title: "Inspect"},
 		newLogPanel(defaultLogReader, nil),
+		placeholderPanel{title: "Audit"},
 		newReposSkillsPanel(cfgPath, dbPath),
 	}
 	// Only panel[0] is initialized in Init(). All others are lazily initialized
@@ -386,9 +386,9 @@ func (m cockpitModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case logTickMsg, logContentMsg:
-		if len(m.panels) > 6 {
-			updated, cmd := m.panels[6].Update(msg)
-			m.panels[6] = updated.(TUIPanel)
+		if len(m.panels) > 5 {
+			updated, cmd := m.panels[5].Update(msg)
+			m.panels[5] = updated.(TUIPanel)
 			return m, cmd
 		}
 		return m, nil
