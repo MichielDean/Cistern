@@ -17,6 +17,7 @@ var rootCmd = &cobra.Command{
 
 func init() {
 	rootCmd.PersistentFlags().StringVar(&dbPath, "db", "", "path to queue database (default: ~/.cistern/cistern.db)")
+	rootCmd.CompletionOptions.HiddenDefaultCmd = true
 }
 
 func resolveDBPath() string {
