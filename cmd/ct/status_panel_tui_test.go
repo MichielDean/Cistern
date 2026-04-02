@@ -203,6 +203,26 @@ func TestStatusPanel_View_HumanGated_ShowsApprovalNotice(t *testing.T) {
 	}
 }
 
+// TestStatusPanel_View_NonHumanGated_HidesApprovalNotice verifies that pooled droplets
+// waiting on a non-human cataractae do not trigger the human approval notice.
+//
+// Given: a statusPanel with one pooled droplet at CurrentCataractae="qa" (not "human")
+// When:  View() is called
+// Then:  output does NOT contain "human approval"
+func TestStatusPanel_View_NonHumanGated_HidesApprovalNotice(t *testing.T) {
+	p := newStatusPanel("", "")
+	p.data = &DashboardData{
+		PooledItems: []*cistern.Droplet{
+			{ID: "ci-qa01", CurrentCataractae: "qa"},
+		},
+		FetchedAt: time.Now(),
+	}
+	v := p.View()
+	if strings.Contains(v, "human approval") {
+		t.Errorf("View() contains %q for a non-human-gated droplet; output:\n%s", "human approval", v)
+	}
+}
+
 // TestStatusPanel_View_ProgressFraction_Shown verifies that cataractae progress
 // indices are shown when available.
 //
@@ -430,6 +450,47 @@ func TestStatusPanel_Update_HomeKey_ResetsScroll(t *testing.T) {
 
 	if up.scrollY != 0 {
 		t.Errorf("scrollY = %d, want 0 after 'g'", up.scrollY)
+	}
+}
+
+// TestStatusPanel_Update_EndKey_SetsScrollYToBottom verifies 'G' jumps to the bottom
+// by setting scrollY to a large sentinel value.
+//
+// Given: scrollY=0
+// When:  'G' is pressed
+// Then:  scrollY > 0 (set to a large sentinel so View() clamps to last line)
+func TestStatusPanel_Update_EndKey_SetsScrollYToBottom(t *testing.T) {
+	p := newStatusPanel("", "")
+	p.scrollY = 0
+
+	updated, _ := p.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'G'}})
+	up := updated.(statusPanel)
+
+	if up.scrollY <= 0 {
+		t.Errorf("scrollY = %d, want large value after 'G'", up.scrollY)
+	}
+}
+
+// TestStatusPanel_View_ScrollClamped_WhenScrollYExceedsContent verifies that View()
+// clamps scrollY to the actual content length without panicking.
+//
+// Given: a statusPanel with data and scrollY set far beyond content length
+// When:  View() is called
+// Then:  output is non-empty and no index-out-of-range panic occurs
+func TestStatusPanel_View_ScrollClamped_WhenScrollYExceedsContent(t *testing.T) {
+	p := newStatusPanel("", "")
+	p.data = &DashboardData{
+		FlowingCount: 1,
+		FarmRunning:  true,
+		FetchedAt:    time.Now(),
+	}
+	p.height = 5       // short viewport to stress clamping
+	p.scrollY = 999999 // far beyond any real content
+
+	// Should not panic; should return non-empty output clamped to the bottom.
+	v := p.View()
+	if v == "" {
+		t.Error("View() = empty string, want non-empty output after scroll clamping")
 	}
 }
 
