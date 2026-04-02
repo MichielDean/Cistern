@@ -275,6 +275,22 @@ func TestDoctorPanel_Update_RKey_WhileRunning_ReturnsNoCmd(t *testing.T) {
 	}
 }
 
+// TestDoctorPanel_Update_UpperRKey_WhileRunning_ReturnsNoCmd verifies that pressing 'R'
+// while a run is already in progress does NOT spawn a second concurrent subprocess.
+//
+// Given: a doctorPanel with running=true
+// When:  'R' is pressed
+// Then:  cmd = nil (guard prevents a second concurrent run)
+func TestDoctorPanel_Update_UpperRKey_WhileRunning_ReturnsNoCmd(t *testing.T) {
+	p := newDoctorPanel()
+	p.running = true
+
+	_, cmd := p.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'R'}})
+	if cmd != nil {
+		t.Error("cmd non-nil after 'R' pressed while already running, want nil (guard active)")
+	}
+}
+
 // TestDoctorPanel_Update_RKey_ReturnsCmd verifies that pressing 'r' triggers
 // a re-run command when the panel is idle.
 //
