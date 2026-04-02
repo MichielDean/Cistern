@@ -392,7 +392,6 @@ func (m cockpitModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, cmd
 			}
 			return m, nil
-		return m, nil
 	}
 
 	// Forward all other non-key messages and panel-focused key messages to the active panel.
