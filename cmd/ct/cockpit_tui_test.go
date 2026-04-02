@@ -45,11 +45,11 @@ func TestCockpit_NewModel_DropletsPreSelected(t *testing.T) {
 //
 // Given: a new cockpitModel
 // When:  panels are inspected
-// Then:  seven panels are registered
+// Then:  eight panels are registered
 func TestCockpit_NewModel_HasSevenPanels(t *testing.T) {
 	m := newCockpitModel("", "")
-	if len(m.panels) != 7 {
-		t.Errorf("len(panels) = %d, want 7", len(m.panels))
+	if len(m.panels) != 8 {
+		t.Errorf("len(panels) = %d, want 8", len(m.panels))
 	}
 }
 
@@ -2057,19 +2057,22 @@ func TestCockpit_View_Palette_EmptyFiltered_ShowsNoMatchMessage(t *testing.T) {
 
 	if !strings.Contains(m.View(), "(no matching actions)") {
 		t.Error("View() with empty paletteFiltered does not contain '(no matching actions)'")
+	}
+}
+
 // ── reposSkillsDataMsg routing ────────────────────────────────────────────────
 
-// TestCockpit_ReposSkillsDataMsg_RoutesToPanel6_WhenCursorIsNot6 verifies that a
-// reposSkillsDataMsg is always delivered to panels[6] (the reposSkillsPanel)
+// TestCockpit_ReposSkillsDataMsg_RoutesToPanel7_WhenCursorIsNot7 verifies that a
+// reposSkillsDataMsg is always delivered to panels[7] (the reposSkillsPanel)
 // regardless of which panel is currently focused. This guards against a wrong
 // index silently dropping the message while the user is on a different module.
 //
 // Given: cockpitModel with cursor=0 (Droplets panel active)
 // When:  a reposSkillsDataMsg carrying one repo is delivered
-// Then:  panels[6].data is populated with the message content
+// Then:  panels[7].data is populated with the message content
 func TestCockpit_ReposSkillsDataMsg_RoutesToPanel6_WhenCursorIsNot6(t *testing.T) {
 	m := newCockpitModel("", "")
-	m.cursor = 0 // active panel is NOT panels[6]
+	m.cursor = 0 // active panel is NOT panels[7]
 
 	data := &reposSkillsData{
 		Repos: []aqueduct.RepoConfig{{Name: "RoutingTestRepo", Prefix: "rt"}},
@@ -2078,14 +2081,14 @@ func TestCockpit_ReposSkillsDataMsg_RoutesToPanel6_WhenCursorIsNot6(t *testing.T
 	updated, _ := m.Update(reposSkillsDataMsg(data))
 	um := updated.(cockpitModel)
 
-	panel, ok := um.panels[6].(reposSkillsPanel)
+	panel, ok := um.panels[7].(reposSkillsPanel)
 	if !ok {
-		t.Fatalf("panels[6] type = %T, want reposSkillsPanel", um.panels[6])
+		t.Fatalf("panels[7] type = %T, want reposSkillsPanel", um.panels[7])
 	}
 	if panel.data == nil {
-		t.Fatal("panels[6].data = nil after reposSkillsDataMsg, want non-nil")
+		t.Fatal("panels[7].data = nil after reposSkillsDataMsg, want non-nil")
 	}
 	if len(panel.data.Repos) != 1 || panel.data.Repos[0].Name != "RoutingTestRepo" {
-		t.Errorf("panels[6].data.Repos = %v, want [{Name:RoutingTestRepo Prefix:rt}]", panel.data.Repos)
+		t.Errorf("panels[7].data.Repos = %v, want [{Name:RoutingTestRepo Prefix:rt}]", panel.data.Repos)
 	}
 }

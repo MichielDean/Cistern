@@ -184,4 +184,6 @@ func (p reposSkillsPanel) KeyHelp() string { return "r refresh  ↑↓/jk scroll
 
 func (p reposSkillsPanel) OverlayActive() bool { return false }
 
+func (p reposSkillsPanel) SelectedDroplet() *cistern.Droplet { return nil }
+
 func (p reposSkillsPanel) PaletteActions(_ *cistern.Droplet) []PaletteAction { return nil }

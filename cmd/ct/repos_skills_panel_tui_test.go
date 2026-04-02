@@ -448,15 +448,15 @@ func TestReposSkillsPanel_View_ReposError_ShowsErrorMessage(t *testing.T) {
 // is a reposSkillsPanel with title "Repos & Skills".
 //
 // Given: a new cockpitModel
-// When:  panels[6] title is inspected
+// When:  panels[7] title is inspected
 // Then:  title = "Repos & Skills"
 func TestCockpit_Panel7_IsReposSkillsPanel(t *testing.T) {
 	m := newCockpitModel("", "")
-	if len(m.panels) < 7 {
-		t.Fatalf("len(panels) = %d, want at least 7", len(m.panels))
+	if len(m.panels) < 8 {
+		t.Fatalf("len(panels) = %d, want at least 8", len(m.panels))
 	}
-	if m.panels[6].Title() != "Repos & Skills" {
-		t.Errorf("panels[6].Title() = %q, want %q", m.panels[6].Title(), "Repos & Skills")
+	if m.panels[7].Title() != "Repos & Skills" {
+		t.Errorf("panels[7].Title() = %q, want %q", m.panels[7].Title(), "Repos & Skills")
 	}
 }
 

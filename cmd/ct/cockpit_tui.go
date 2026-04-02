@@ -386,9 +386,9 @@ func (m cockpitModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		case reposSkillsDataMsg:
-			if len(m.panels) > 6 {
-				updated, cmd := m.panels[6].Update(msg)
-				m.panels[6] = updated.(TUIPanel)
+			if len(m.panels) > 7 {
+				updated, cmd := m.panels[7].Update(msg)
+				m.panels[7] = updated.(TUIPanel)
 				return m, cmd
 			}
 			return m, nil
