@@ -10,11 +10,22 @@
 
 Panel registered as module 7 (key: 7). Two-section panel showing registered repos (ct repo list) and installed skills (ct skills list). Read-only MVP with r to refresh. Acceptance: pressing 7 shows repos and skills; r refreshes.
 
-## Current Step: implement
+## Current Step: docs
 
 - **Type:** agent
-- **Role:** implementer
+- **Role:** docs_writer
 - **Context:** full_codebase
+
+## ⚠️ REVISION REQUIRED — Fix these issues before anything else
+
+This droplet was recirculated. The following issues were found and **must** be fixed.
+Do not proceed to implementation until you have read and understood each issue.
+
+### Issue 1 (from: security)
+
+No security issues found. Diff: (1) repos_skills_panel_tui.go — reads local user-owned config/manifest files, renders to terminal TUI only; no injection vectors (no SQL, shell, HTML), no auth surface, no hardcoded secrets, scroll bounds correctly clamped; (2) cockpit_tui.go — pure UI framework, no input handling beyond key events; (3) dashboard_web.go — internal WebSocket frame buffer fixes, no new attack surface; (4) deletions of audit.go, fakeauditagent, audit_test.go — surface reduction only.
+
+---
 
 <available_skills>
   <skill>
@@ -26,11 +37,6 @@ Panel registered as module 7 (key: 7). Two-section panel showing registered repo
     <name>cistern-git</name>
     <description>Each droplet has an isolated worktree at `~/.cistern/sandboxes/&lt;repo&gt;/&lt;droplet-id&gt;/`.</description>
     <location>/home/lobsterdog/.cistern/skills/cistern-git/SKILL.md</location>
-  </skill>
-  <skill>
-    <name>cistern-github</name>
-    <description>Use `gh` CLI for all GitHub operations. Prefer CLI over GitHub MCP servers for lower context usage.</description>
-    <location>/home/lobsterdog/.cistern/skills/cistern-github/SKILL.md</location>
   </skill>
 </available_skills>
 
