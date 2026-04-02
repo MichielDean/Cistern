@@ -533,6 +533,9 @@ func (m cockpitModel) updatePalette(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			action := m.paletteFiltered[m.paletteCursor]
 			m.paletteActive = false
 			m.panelFocused = true
+			if action.Run == nil {
+				return m, nil
+			}
 			return m, action.Run()
 		}
 	case "up", "k":

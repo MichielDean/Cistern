@@ -1887,3 +1887,29 @@ func TestDropletsPanel_PaletteActions_HasNameAndDescription(t *testing.T) {
 		}
 	}
 }
+
+// TestCockpit_Palette_Enter_NilRun_DoesNotPanic verifies that pressing Enter on
+// a PaletteAction whose Run field is nil does not panic and closes the palette.
+//
+// Given: palette open with 1 action that has Run=nil
+// When:  Enter is pressed
+// Then:  no panic, paletteActive=false, cmd=nil
+func TestCockpit_Palette_Enter_NilRun_DoesNotPanic(t *testing.T) {
+	actions := []PaletteAction{
+		{Name: "noop", Description: "no run func"},
+	}
+	m := newPaletteTestCockpit(actions, &cistern.Droplet{ID: "ci-aaa"})
+	m.paletteActive = true
+	m.paletteAll = actions
+	m.paletteFiltered = actions
+	m.paletteCursor = 0
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	um := updated.(cockpitModel)
+	if um.paletteActive {
+		t.Error("paletteActive = true, want false after Enter on nil-Run action")
+	}
+	if cmd != nil {
+		t.Error("cmd is non-nil, want nil for nil-Run action")
+	}
+}
