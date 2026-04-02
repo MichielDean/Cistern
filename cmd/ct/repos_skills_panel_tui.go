@@ -15,6 +15,7 @@ import (
 // reposSkillsData holds the fetched repos and skills for the panel.
 type reposSkillsData struct {
 	Repos     []aqueduct.RepoConfig
+	ReposErr  error
 	Skills    []skills.ManifestEntry
 	SkillsErr error
 	FetchedAt time.Time
@@ -50,12 +51,16 @@ func (p reposSkillsPanel) fetchDataCmd() tea.Cmd {
 	cfgPath := p.cfgPath
 	return func() tea.Msg {
 		var repos []aqueduct.RepoConfig
-		if cfg, err := aqueduct.ParseAqueductConfig(cfgPath); err == nil {
+		var reposErr error
+		if cfg, err := aqueduct.ParseAqueductConfig(cfgPath); err != nil {
+			reposErr = err
+		} else {
 			repos = cfg.Repos
 		}
 		installed, skillsErr := skills.ListInstalled()
 		return reposSkillsDataMsg(&reposSkillsData{
 			Repos:     repos,
+			ReposErr:  reposErr,
 			Skills:    installed,
 			SkillsErr: skillsErr,
 			FetchedAt: time.Now(),
@@ -103,7 +108,9 @@ func (p reposSkillsPanel) View() string {
 	lines = append(lines, tuiStyleHeader.Render("  REPOSITORIES"))
 	lines = append(lines, "")
 
-	if len(p.data.Repos) == 0 {
+	if p.data.ReposErr != nil {
+		lines = append(lines, tuiStyleDim.Render(fmt.Sprintf("  Error loading repositories: %v", p.data.ReposErr)))
+	} else if len(p.data.Repos) == 0 {
 		lines = append(lines, tuiStyleDim.Render("  No repositories configured. Run: ct repo add --url <url>"))
 	} else {
 		// Compute column widths for alignment.

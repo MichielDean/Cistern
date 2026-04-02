@@ -416,6 +416,32 @@ func TestReposSkillsPanel_View_SkillsError_ShowsErrorMessage(t *testing.T) {
 	}
 }
 
+// ── View: repos fetch error ───────────────────────────────────────────────────
+
+// TestReposSkillsPanel_View_ReposError_ShowsErrorMessage verifies that when
+// the repos fetch fails the error message is displayed instead of the
+// "No repositories" empty-state text, so an I/O failure or malformed config
+// is not indistinguishable from a legitimate empty state.
+//
+// Given: a reposSkillsPanel whose data has ReposErr set to a non-nil error
+// When:  View() is called
+// Then:  output contains "Error" and does NOT contain "No repositories"
+func TestReposSkillsPanel_View_ReposError_ShowsErrorMessage(t *testing.T) {
+	p := newReposSkillsPanel("", "")
+	p.data = &reposSkillsData{
+		Repos:     nil,
+		ReposErr:  fmt.Errorf("reading cistern config: open /bad/path: no such file or directory"),
+		FetchedAt: time.Now(),
+	}
+	v := p.View()
+	if !strings.Contains(v, "Error") {
+		t.Errorf("View() does not contain %q for repos error; output:\n%s", "Error", v)
+	}
+	if strings.Contains(v, "No repositories") {
+		t.Errorf("View() contains %q but should show error instead; output:\n%s", "No repositories", v)
+	}
+}
+
 // ── cockpit integration ───────────────────────────────────────────────────────
 
 // TestCockpit_Panel7_IsReposSkillsPanel verifies the cockpit panel at index 6 (key: 7)
