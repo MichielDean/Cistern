@@ -333,7 +333,7 @@ func (m tabAppModel) execMultiActionCmd(action string, values []string) tea.Cmd 
 			if hasEditFields {
 				execErr = c.EditDroplet(selectedID, fields)
 			}
-		case actionResolveIssue:
+		case actionResolveIssue, actionRejectIssue:
 			// values: [issue_id, evidence] (from palette multi-step path)
 			issueID := strings.TrimSpace(valAt(values, 0))
 			evidence := strings.TrimSpace(valAt(values, 1))
@@ -341,16 +341,11 @@ func (m tabAppModel) execMultiActionCmd(action string, values []string) tea.Cmd 
 				execErr = fmt.Errorf("issue ID is required")
 				break
 			}
-			execErr = c.ResolveIssue(issueID, evidence)
-		case actionRejectIssue:
-			// values: [issue_id, evidence] (from palette multi-step path)
-			issueID := strings.TrimSpace(valAt(values, 0))
-			evidence := strings.TrimSpace(valAt(values, 1))
-			if issueID == "" {
-				execErr = fmt.Errorf("issue ID is required")
-				break
+			if action == actionResolveIssue {
+				execErr = c.ResolveIssue(issueID, evidence)
+			} else {
+				execErr = c.RejectIssue(issueID, evidence)
 			}
-			execErr = c.RejectIssue(issueID, evidence)
 		}
 		return tuiActionResultMsg{dropletID: selectedID, err: execErr}
 	}
@@ -398,6 +393,16 @@ func openCreateDropletOverlay(m tabAppModel) tabAppModel {
 	m.overlayMultiValues = make([]string, len(fields))
 	m.overlayInput = ""
 	return m
+}
+
+// overlayMultiFooter renders the progress footer shown during a multi-field form.
+func (m tabAppModel) overlayMultiFooter() string {
+	step := ""
+	if m.overlayMultiIdx < len(m.overlayMultiFields) {
+		step = m.overlayMultiFields[m.overlayMultiIdx]
+	}
+	return tuiStyleYellow.Render(fmt.Sprintf("  [%d/%d] %s: %s_  (esc cancel)",
+		m.overlayMultiIdx+1, len(m.overlayMultiFields), step, m.overlayInput))
 }
 
 // closeOverlay resets all overlay state to inactive.
@@ -1042,12 +1047,7 @@ func (m tabAppModel) viewDroplets() string {
 
 	var footer string
 	if m.overlayMode == overlayMulti {
-		step := ""
-		if m.overlayMultiIdx < len(m.overlayMultiFields) {
-			step = m.overlayMultiFields[m.overlayMultiIdx]
-		}
-		footer = tuiStyleYellow.Render(fmt.Sprintf("  [%d/%d] %s: %s_  (esc cancel)",
-			m.overlayMultiIdx+1, len(m.overlayMultiFields), step, m.overlayInput))
+		footer = m.overlayMultiFooter()
 	} else if m.overlayErr != "" {
 		footer = tuiStyleRed.Render("  error: " + m.overlayErr)
 	} else {
@@ -1132,12 +1132,7 @@ func (m tabAppModel) viewDetail() string {
 		}
 		footer = tuiStyleYellow.Render(fmt.Sprintf("  %s: %s_  (esc cancel)", prompt, m.overlayInput))
 	case overlayMulti:
-		step := ""
-		if m.overlayMultiIdx < len(m.overlayMultiFields) {
-			step = m.overlayMultiFields[m.overlayMultiIdx]
-		}
-		footer = tuiStyleYellow.Render(fmt.Sprintf("  [%d/%d] %s: %s_  (esc cancel)",
-			m.overlayMultiIdx+1, len(m.overlayMultiFields), step, m.overlayInput))
+		footer = m.overlayMultiFooter()
 	default:
 		if m.overlayErr != "" {
 			footer = tuiStyleRed.Render("  error: " + m.overlayErr)
