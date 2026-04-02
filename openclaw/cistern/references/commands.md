@@ -348,6 +348,13 @@ The Droplets module provides three views within the active pane:
 - `n` — **Add Note** — Append a manual note to the droplet; enter text and press Enter
 - `s` — **Set Step** — Jump to a different pipeline step; enter step name and press Enter
 
+**Command Palette** (while in a panel, `:` opens a searchable overlay)
+- Press `:` to open the command palette — a searchable list of all actions available for the currently selected droplet
+- Type to filter actions by name (substring match, case-insensitive)
+- Navigate with `↑↓` or `jk`, execute the highlighted action with `enter`, dismiss with `esc`
+- Actions available vary by panel and context: the Droplets module palette includes cancel, pool, restart, and add note
+- Particularly useful when you want to find a specific action without memorizing single-key bindings
+
 All actions execute immediately through the cistern database. After any action completes, the detail view re-fetches and displays updated state.
 
 **Status Module** (key: 3)

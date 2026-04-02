@@ -13,6 +13,23 @@ Deleted the `ct audit run` command. The audit agent provided little practical va
 
 **Impact**: Teams requiring security reviews should use the dedicated security-review cataractae in the standard aqueduct pipeline, which provides context-aware, human-auditable security analysis with full codebase access.
 
+### TUI cockpit: command palette overlay with per-panel action registry (ci-gg7gp)
+
+Added a searchable command palette overlay to the Cistern cockpit (`ct tui`). Press `:` at any time while in a cockpit panel to open a searchable list of all actions available for the currently selected droplet.
+
+**Key features:**
+- **Fast action discovery**: Press `:` to open the palette, type to filter actions by name (substring match, case-insensitive)
+- **Keyboard navigation**: Use `↑↓` or `jk` to navigate, `enter` to execute, `esc` to dismiss
+- **Context-aware actions**: The palette displays only actions relevant to the selected droplet and current panel; actions vary by panel type
+- **Per-panel registry**: Each cockpit panel (Droplets, Dashboard, etc.) defines its own set of available actions via the `PaletteActions()` interface
+- **Initial implementation**: Droplets module palette includes cancel, pool, restart, and add note actions
+
+The command palette provides an alternative to memorizing single-key action bindings and makes discoverability easier for new users while maintaining keyboard efficiency for power users.
+
+**Impact**: Users can now discover and execute panel actions without leaving the cockpit or memorizing key bindings. Panels can extend the palette with custom actions by implementing the per-panel action registry.
+
+**Documentation**: See `openclaw/cistern/references/commands.md#command-palette` for usage details.
+
 ### Integration tests: session name isolation and production opt-out (ci-47i5f)
 
 Cistern integration tests now run safely on production machines alongside the live Castellarius. Test sessions are prefixed with a unique identifier derived from the test's temporary directory, preventing tmux session name collisions with production aqueducts. Production operators can skip integration tests by setting `CISTERN_SKIP_INTEGRATION=1`, allowing machines to run only unit tests if desired.
