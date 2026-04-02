@@ -11,23 +11,25 @@ import (
 	"github.com/MichielDean/cistern/internal/cistern"
 )
 
-func TestDashboard_PeekKey_InTmux_SpawnsNewWindow(t *testing.T) {
-	// Inject insideTmux to simulate running inside a tmux session.
-	origInsideTmux := insideTmux
-	insideTmux = func() bool { return true }
-	defer func() { insideTmux = origInsideTmux }()
-
-	// Capture the new-window call.
-	var gotDropletID, gotSession string
-	origNewWindow := tmuxNewWindowFunc
-	tmuxNewWindowFunc = func(dropletID, session string) error {
-		gotDropletID = dropletID
+// TestDashboard_PeekKey_AlwaysCallsTmuxAttach verifies that pressing 'p'
+// always attempts tmux attach-session via tea.ExecProcess, regardless of $TMUX
+// environment, and that the dashboard does NOT enter inline peek mode when
+// attach succeeds.
+//
+// Given: a dashboard model with one active aqueduct
+// When:  the 'p' key is pressed and the attach succeeds
+// Then:  openPeekAttachCmdFunc is called with the correct session name,
+//
+//	and peekActive remains false (no inline overlay opened)
+func TestDashboard_PeekKey_AlwaysCallsTmuxAttach(t *testing.T) {
+	var gotSession string
+	origAttach := openPeekAttachCmdFunc
+	openPeekAttachCmdFunc = func(session string, fn func(error) tea.Msg) tea.Cmd {
 		gotSession = session
-		return nil
+		return func() tea.Msg { return fn(nil) }
 	}
-	defer func() { tmuxNewWindowFunc = origNewWindow }()
+	defer func() { openPeekAttachCmdFunc = origAttach }()
 
-	// Build a dashboard model with one active aqueduct.
 	m := newDashboardTUIModel("", "")
 	m.data = &DashboardData{
 		Cataractae: []CataractaeInfo{
@@ -44,7 +46,7 @@ func TestDashboard_PeekKey_InTmux_SpawnsNewWindow(t *testing.T) {
 	// Press 'p' to trigger peek.
 	updatedModel, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'p'}})
 
-	// Execute the returned cmd to trigger tmuxNewWindowFunc.
+	// Execute the returned cmd (simulates bubbletea running the attach).
 	if cmd != nil {
 		cmd()
 	}
@@ -52,38 +54,33 @@ func TestDashboard_PeekKey_InTmux_SpawnsNewWindow(t *testing.T) {
 	// The dashboard should NOT have entered inline peek mode.
 	um := updatedModel.(dashboardTUIModel)
 	if um.peekActive {
-		t.Error("peekActive should be false when spawning a new tmux window")
+		t.Error("peekActive should be false when tmux attach succeeds")
 	}
 
-	// Verify the new-window was called with the correct identifiers.
-	if gotDropletID != "ci-test01" {
-		t.Errorf("tmuxNewWindowFunc dropletID = %q, want %q", gotDropletID, "ci-test01")
-	}
+	// Verify attach was called with the correct session name.
 	wantSession := "myrepo-virgo"
 	if gotSession != wantSession {
-		t.Errorf("tmuxNewWindowFunc session = %q, want %q", gotSession, wantSession)
+		t.Errorf("openPeekAttachCmdFunc session = %q, want %q", gotSession, wantSession)
 	}
 }
 
-// TestDashboard_PeekKey_InTmux_NewWindowError_FallsBackToInline verifies that
-// when tmuxNewWindowFunc returns an error, the dashboard falls back to the
-// inline capture-pane overlay and sets peekActive.
+// TestDashboard_PeekKey_AttachFails_FallsBackToInline verifies that when the
+// tmux attach-session subprocess fails, the dashboard falls back to the inline
+// capture-pane overlay and sets peekActive.
 //
-// Given: a dashboard model with one active aqueduct and insideTmux() = true
-// When:  the 'p' key is pressed and tmuxNewWindowFunc returns an error
-// Then:  the returned tea.Cmd yields a tuiPeekNewWindowErrMsg which, when
+// Given: a dashboard model with one active aqueduct and the attach returning an error
+// When:  the 'p' key is pressed and the attach fails
+// Then:  the returned tea.Cmd yields a tuiPeekAttachErrMsg which, when
 //
-//	processed, causes peekActive to be true (inline overlay opened)
-
-func TestDashboard_PeekKey_InTmux_NewWindowError_FallsBackToInline(t *testing.T) {
-	origInsideTmux := insideTmux
-	insideTmux = func() bool { return true }
-	defer func() { insideTmux = origInsideTmux }()
-
+//	processed, causes peekActive to be true (inline overlay opened),
+//	and the header mentions "tmux attach-session failed" (not "not inside tmux")
+func TestDashboard_PeekKey_AttachFails_FallsBackToInline(t *testing.T) {
 	simulatedErr := errors.New("tmux: no server running")
-	origNewWindow := tmuxNewWindowFunc
-	tmuxNewWindowFunc = func(_, _ string) error { return simulatedErr }
-	defer func() { tmuxNewWindowFunc = origNewWindow }()
+	origAttach := openPeekAttachCmdFunc
+	openPeekAttachCmdFunc = func(_ string, fn func(error) tea.Msg) tea.Cmd {
+		return func() tea.Msg { return fn(simulatedErr) }
+	}
+	defer func() { openPeekAttachCmdFunc = origAttach }()
 
 	m := newDashboardTUIModel("", "")
 	m.data = &DashboardData{
@@ -98,17 +95,17 @@ func TestDashboard_PeekKey_InTmux_NewWindowError_FallsBackToInline(t *testing.T)
 		},
 	}
 
-	// Press 'p': returns a cmd that will call tmuxNewWindowFunc.
+	// Press 'p': returns a cmd that (via our injected func) returns the error msg.
 	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'p'}})
 	if cmd == nil {
 		t.Fatal("expected a tea.Cmd, got nil")
 	}
 
-	// Execute the cmd; it should return a tuiPeekNewWindowErrMsg.
+	// Execute the cmd; it should return a tuiPeekAttachErrMsg.
 	msg := cmd()
-	errMsg, ok := msg.(tuiPeekNewWindowErrMsg)
+	errMsg, ok := msg.(tuiPeekAttachErrMsg)
 	if !ok {
-		t.Fatalf("cmd returned %T, want tuiPeekNewWindowErrMsg", msg)
+		t.Fatalf("cmd returned %T, want tuiPeekAttachErrMsg", msg)
 	}
 	if errMsg.err != simulatedErr {
 		t.Errorf("errMsg.err = %v, want %v", errMsg.err, simulatedErr)
@@ -118,35 +115,34 @@ func TestDashboard_PeekKey_InTmux_NewWindowError_FallsBackToInline(t *testing.T)
 	updatedModel, _ := m.Update(errMsg)
 	um := updatedModel.(dashboardTUIModel)
 	if !um.peekActive {
-		t.Error("peekActive should be true after new-window error fallback to inline overlay")
+		t.Error("peekActive should be true after attach error fallback to inline overlay")
 	}
 
-	// The peek header should mention the failure.
-	if !strings.Contains(um.peek.header, "tmux new-window failed") {
-		t.Errorf("peek header should mention failure, got: %q", um.peek.header)
+	// The header should mention the attach failure, not "not inside tmux".
+	if !strings.Contains(um.peek.header, "tmux attach-session failed") {
+		t.Errorf("peek header should mention attach failure, got: %q", um.peek.header)
+	}
+	if strings.Contains(um.peek.header, "not inside tmux") {
+		t.Errorf("peek header should not contain 'not inside tmux', got: %q", um.peek.header)
 	}
 }
 
-// TestDashboard_PeekSelect_InTmux_Success_ClearsPeekSelectMode verifies that
-// when openPeekOn is called from the peekSelectMode picker (peekSelectMode=true)
-// and insideTmux() is true and the new-window call succeeds, the returned model
-// has peekSelectMode=false so the picker overlay does not persist.
+// TestDashboard_PeekSelect_AttachSucceeds_ClearsPeekSelectMode verifies that
+// when openPeekOn is called from the peekSelectMode picker and the attach
+// succeeds, the returned model has peekSelectMode=false.
 //
 // Given: a dashboard model with peekSelectMode=true, two active aqueducts,
 //
-//	insideTmux() returning true, and tmuxNewWindowFunc succeeding
+//	and the attach succeeding
 //
 // When:  'enter' is pressed to confirm the picker selection
 // Then:  the returned model has peekSelectMode=false
-
-func TestDashboard_PeekSelect_InTmux_Success_ClearsPeekSelectMode(t *testing.T) {
-	origInsideTmux := insideTmux
-	insideTmux = func() bool { return true }
-	defer func() { insideTmux = origInsideTmux }()
-
-	origNewWindow := tmuxNewWindowFunc
-	tmuxNewWindowFunc = func(_, _ string) error { return nil }
-	defer func() { tmuxNewWindowFunc = origNewWindow }()
+func TestDashboard_PeekSelect_AttachSucceeds_ClearsPeekSelectMode(t *testing.T) {
+	origAttach := openPeekAttachCmdFunc
+	openPeekAttachCmdFunc = func(_ string, fn func(error) tea.Msg) tea.Cmd {
+		return func() tea.Msg { return fn(nil) }
+	}
+	defer func() { openPeekAttachCmdFunc = origAttach }()
 
 	m := newDashboardTUIModel("", "")
 	m.data = &DashboardData{
@@ -176,7 +172,7 @@ func TestDashboard_PeekSelect_InTmux_Success_ClearsPeekSelectMode(t *testing.T) 
 
 	um := updatedModel.(dashboardTUIModel)
 	if um.peekSelectMode {
-		t.Error("peekSelectMode should be false after successful new-window spawn from picker")
+		t.Error("peekSelectMode should be false after successful attach from picker")
 	}
 }
 
