@@ -1290,6 +1290,17 @@ func TestSpawn_LogsFreshSession_WhenStageChanges(t *testing.T) {
 	if !strings.Contains(out, "context_type=fresh") {
 		t.Errorf("log missing context_type=fresh on stage change; got: %s", out)
 	}
+
+	// Verify spawn() wrote .current-stage with the new identity so a
+	// same-stage respawn will resume rather than start fresh.
+	markerPath := filepath.Join(workDir, ".current-stage")
+	got, err := os.ReadFile(markerPath)
+	if err != nil {
+		t.Fatalf(".current-stage not written after spawn: %v", err)
+	}
+	if strings.TrimSpace(string(got)) != s.Identity {
+		t.Errorf(".current-stage = %q, want %q", strings.TrimSpace(string(got)), s.Identity)
+	}
 }
 
 // TestSpawn_LogsQuickExit_WhenSessionDiesImmediately verifies that the quick-exit
