@@ -76,7 +76,7 @@ func (p dropletsPanel) KeyHelp() string {
 }
 
 func (p dropletsPanel) OverlayActive() bool {
-	return p.inner.overlayMode != overlayNone
+	return p.inner.tab != tabDroplets || p.inner.overlayMode != overlayNone
 }
 
 func (p dropletsPanel) PaletteActions(droplet *cistern.Droplet) []PaletteAction {

@@ -767,6 +767,38 @@ func TestDropletsPanel_OverlayActive_ReturnsTrue_WhenOverlayText(t *testing.T) {
 	}
 }
 
+// TestDropletsPanel_OverlayActive_ReturnsTrue_WhenTabDetail verifies that
+// dropletsPanel reports an active overlay when the inner model is in tabDetail.
+// This ensures Esc is forwarded to the panel so the user can navigate back to
+// the droplets list from the detail view.
+//
+// Given: a dropletsPanel whose inner tab is tabDetail
+// When:  OverlayActive() is called
+// Then:  true is returned
+func TestDropletsPanel_OverlayActive_ReturnsTrue_WhenTabDetail(t *testing.T) {
+	p := newDropletsPanel("", "")
+	p.inner.tab = tabDetail
+	if !p.OverlayActive() {
+		t.Error("OverlayActive() = false, want true when tab is tabDetail")
+	}
+}
+
+// TestDropletsPanel_OverlayActive_ReturnsTrue_WhenTabPeek verifies that
+// dropletsPanel reports an active overlay when the inner model is in tabPeek.
+// This ensures Esc is forwarded to the panel so the user can close the peek
+// session rather than being returned to the sidebar.
+//
+// Given: a dropletsPanel whose inner tab is tabPeek
+// When:  OverlayActive() is called
+// Then:  true is returned
+func TestDropletsPanel_OverlayActive_ReturnsTrue_WhenTabPeek(t *testing.T) {
+	p := newDropletsPanel("", "")
+	p.inner.tab = tabPeek
+	if !p.OverlayActive() {
+		t.Error("OverlayActive() = false, want true when tab is tabPeek")
+	}
+}
+
 // ── esc return-to-sidebar ─────────────────────────────────────────────────────
 
 // TestCockpit_Esc_ReturnsToCockpit_WhenNoOverlayActive verifies that pressing Esc
