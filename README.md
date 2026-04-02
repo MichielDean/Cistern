@@ -344,8 +344,8 @@ curl -sSL https://raw.githubusercontent.com/MichielDean/cistern/main/install.sh 
 Requirements:
 - Go 1.22+
 - `claude` CLI with OAuth login (`claude login`)
-- `gh` CLI authenticated (`gh auth login`)
 - `git`, `tmux`
+- `gh` CLI installed and authenticated (`gh auth login`) — required for delivery, optional for initial setup
 
 The Castellarius automatically refreshes the Claude OAuth access token before each agent spawn when it is expired or within 5 minutes of expiry. If the refresh fails (e.g. the refresh token itself has expired), the spawn fails with a clear error directing you to run `claude` interactively to re-authenticate. `ct doctor` verifies that the `claude` CLI is authenticated; `ct doctor --fix` can create the `~/.cistern/env` credential file if missing.
 
