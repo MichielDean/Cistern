@@ -49,7 +49,6 @@ var (
 	_ TUIPanel = logPanel{}
 	_ TUIPanel = reposSkillsPanel{}
 	_ TUIPanel = filterPanel{}
-))
 )
 
 // ── dropletsPanel ────────────────────────────────────────────────────────────

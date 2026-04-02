@@ -346,3 +346,5 @@ func (p filterPanel) KeyHelp() string {
 func (p filterPanel) OverlayActive() bool { return false }
 
 func (p filterPanel) PaletteActions(_ *cistern.Droplet) []PaletteAction { return nil }
+
+func (p filterPanel) SelectedDroplet() *cistern.Droplet { return nil }
