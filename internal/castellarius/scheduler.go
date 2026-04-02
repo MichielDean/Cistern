@@ -1603,8 +1603,8 @@ func (s *Castellarius) heartbeatRepo(ctx context.Context, repo aqueduct.RepoConf
 
 // respawnStalledDroplet calls runner.Spawn for a stalled in-progress droplet
 // whose session has gone quiet. It reuses the existing worktree and assignee;
-// session.Spawn() selects --continue or a fresh spawn based on prior session
-// files under ~/.claude/projects/<worktree>/.
+// session.Spawn() selects --continue or a fresh spawn based on the
+// .current-stage marker in the worktree directory.
 func (s *Castellarius) respawnStalledDroplet(ctx context.Context, client CisternClient, repo aqueduct.RepoConfig, item *cistern.Droplet) error {
 	wf, ok := s.workflows[repo.Name]
 	if !ok {

@@ -2867,13 +2867,13 @@ func TestHeartbeatRepo_StaleDebounce_PrunedWhenDropletNoLongerInProgress(t *test
 
 // TestHeartbeatRepo_StallWithAssignee_SpawnsSession verifies that when a stall
 // is detected and the droplet has an assignee, runner.Spawn is called so the
-// session can resume. session.Spawn() internally detects prior Claude session
-// files and uses --continue when they exist (or spawns fresh when they don't),
-// so the heartbeat just needs to call Spawn unconditionally.
+// session can resume. session.Spawn() internally checks the .current-stage
+// marker and uses --continue when the stage matches (or spawns fresh when it
+// doesn't), so the heartbeat just needs to call Spawn unconditionally.
 //
 // This covers both acceptance paths:
-//   - prior session → session.Spawn selects --continue
-//   - no prior session → session.Spawn spawns fresh
+//   - same stage → session.Spawn selects --continue
+//   - stage changed or no marker → session.Spawn spawns fresh
 func TestHeartbeatRepo_StallWithAssignee_SpawnsSession(t *testing.T) {
 	// Mock tmux as alive so liveness check passes through to stall detector.
 	orig := isTmuxAliveFn
