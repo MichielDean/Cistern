@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+### Integration tests: session name isolation and production opt-out (ci-47i5f)
+
+Cistern integration tests now run safely on production machines alongside the live Castellarius. Test sessions are prefixed with a unique identifier derived from the test's temporary directory, preventing tmux session name collisions with production aqueducts. Production operators can skip integration tests by setting `CISTERN_SKIP_INTEGRATION=1`, allowing machines to run only unit tests if desired.
+
+**Key features:**
+- **Session isolation**: Test tmux session names include a per-test prefix (e.g., `abc123-myrepo-worker-alpha`) preventing collisions with production (e.g., `myrepo-worker-alpha`)
+- **Production opt-out**: Set `CISTERN_SKIP_INTEGRATION=1` in the environment to skip all integration tests cleanly while running unit tests normally
+- **Database override**: New `CT_DB` environment variable allows specifying a custom SQLite database path (alternative to `--db` flag)
+
+**Impact**: Integration tests can now safely run on the same machine as production without risk of terminating live sessions. Production machines can opt out with a single environment variable.
+
 ### Scheduler: auto-route to reviewer when implementer loops on unresolved reviewer issue (ci-1zeaa)
 
 Cistern now detects and automatically breaks deadlock cycles where an implementer recirculates on an unresolved reviewer-opened issue. Previously, droplets could become stuck indefinitely: the reviewer cataractae never runs to verify the fix and close the issue, while the implementer cannot advance without closing it.

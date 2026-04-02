@@ -68,6 +68,30 @@ cd <worktree-path>
 PATH="/usr/local/go/bin:$PATH" go build -o ~/go/bin/ct ./cmd/ct/
 ```
 
+## Environment Variables
+
+### Optional Flags
+
+| Variable | Purpose | Values | Default |
+|----------|---------|--------|---------|
+| `CISTERN_SKIP_INTEGRATION` | Skip integration tests on production machines | any non-empty string to skip | unset (tests run) |
+| `CT_DB` | Override SQLite database path | filesystem path | `~/.cistern/cistern.db` |
+
+**CISTERN_SKIP_INTEGRATION** is useful on production machines where tmux and the full test suite should not run. When set to any non-empty value, all integration tests skip cleanly:
+
+```bash
+# Set in shell, systemd service, or CI environment:
+export CISTERN_SKIP_INTEGRATION=1
+go test ./...  # Integration tests skip; unit tests run normally
+```
+
+**CT_DB** provides an alternative to the `--db` flag for specifying a custom database location. Useful in environments where flags cannot be easily passed:
+
+```bash
+export CT_DB=/var/lib/cistern/custom.db
+ct status  # Uses the custom database
+```
+
 ## Systemd Service (optional)
 
 Enable auto-start on login:

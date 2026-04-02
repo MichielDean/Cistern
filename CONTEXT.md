@@ -1,36 +1,34 @@
 # Context
 
-## Item: ci-bz0t3
+## Item: ci-47i5f
 
-**Title:** Wire cataractae-protocol skill into ct cataractae generate: inject skill + pipeline position
+**Title:** Integration tests: session name isolation and production opt-out
 **Status:** in_progress
 **Priority:** 2
 
 ### Description
 
-Update ct cataractae generate to automatically wire the cataractae-protocol skill (created in companion droplet ci-dtg02) into every generated cataractae directory.
+The Castellarius integration tests run on the same machine as the live production Castellarius (lobsterdog self-hosted runner). This creates two risks:
 
-Two changes:
+1. Tmux session name collision: tests create sessions named myrepo-worker-alpha. If a production aqueduct ever used a repo named myrepo with a worker named alpha, the heartbeat zombie check could kill a live production session. Fix: prefix integration test session names with a short hash derived from t.TempDir() or t.Name() so they cannot collide with production (e.g. it3a7f-myrepo-worker-alpha).
 
-1. Skill injection: when generating a cataractae directory, copy or symlink the cataractae-protocol skill into the cataractae's skills/ directory (same mechanism used for other injected skills). Every cataractae agent then has access to the discourse protocol, pass criteria, and cycle cap rules without any per-cataractae manual config.
+2. No opt-out for production machines: there is no way to skip integration tests on a production machine without modifying test code. Fix: add a CISTERN_SKIP_INTEGRATION=1 env var check in checkIntegrationPrereqs (alongside the existing tmux and ct binary checks). The lobsterdog machine can set this in its runner environment if desired; CI leaves it unset.
 
-2. Pipeline position context injection: during generation, compute each cataractae's position in the workflow (index, predecessor name+role, successor name+role). Inject this into the cataractae's CONTEXT.md or a dedicated PIPELINE_POSITION.md file with the structure:
-   - Your role: <name> — <one-line description>
-   - Predecessor: <name> — <one-line description> (or 'none — you are first')
-   - Successor: <name> — <one-line description> (or 'none — you are last')
+Changes required:
+1. In integrationRunner.Spawn, derive a short prefix from t.TempDir() (first 6 hex chars of the basename hash) and prepend it to the sessionID
+2. Update isTmuxAlive checks and cleanup to match the prefixed session name
+3. In checkIntegrationPrereqs, add: if os.Getenv("CISTERN_SKIP_INTEGRATION") != "" { t.Skip(...) }
 
-This gives every agent the minimal context needed to understand handoff expectations without reading the full workflow definition.
+Acceptance criteria:
+- Integration test tmux sessions are named with a unique prefix that cannot match any production session
+- CISTERN_SKIP_INTEGRATION=1 causes all four integration tests to skip cleanly
+- Tests still pass on CI (no CISTERN_SKIP_INTEGRATION set)
 
-Also update regeneration (ct cataractae generate when cataractae already exist) to refresh PIPELINE_POSITION.md if the workflow changes.
-
-Depends on: ci-dtg02 (skill must exist before it can be injected)
-
-Acceptance criteria: ct cataractae generate produces cataractae directories that include the protocol skill and a correct PIPELINE_POSITION.md; regeneration updates position context correctly; all existing cataractae repos (cistern, ScaledTest, PortfolioWebsite) work correctly after regeneration.
-
-## Current Step: delivery
+## Current Step: docs
 
 - **Type:** agent
-- **Role:** delivery
+- **Role:** docs_writer
+- **Context:** full_codebase
 
 ## ⚠️ REVISION REQUIRED — Fix these issues before anything else
 
@@ -39,64 +37,27 @@ Do not proceed to implementation until you have read and understood each issue.
 
 ### Issue 1 (from: reviewer)
 
-♻ 1 finding. (1) readSkillDescription (context.go:390-403) does not skip YAML frontmatter — returns '---' as description for any SKILL.md that has frontmatter (all 5 in the repo do). The injected cataractae-protocol SKILL.md is the primary victim: agents see <description>---</description> instead of the actual description. Test uses frontmatter-free SKILL.md content, masking the bug. Fix: skip lines between opening and closing --- delimiters before scanning for description.
+♻ 1 finding. The session prefix added to integrationRunner.Spawn (line 124) is invisible to the Castellarius heartbeat (scheduler.go:1424), which constructs session names as repo+'-'+assignee without the prefix. This causes isTmuxAlive to always return false for test sessions, meaning TestIntegration_HeartbeatRecovery passes coincidentally (name mismatch) rather than because the heartbeat actually detected a dead session. Fix: move the prefix into the repo name in intConfig() so both the runner and heartbeat derive matching session names.
 
 ### Issue 2 (from: reviewer)
 
-Phase 1: resolved ci-bz0t3-oqhlg — readSkillDescription correctly skips YAML frontmatter; 6 tests cover the fix. Phase 2: fresh adversarial review of full diff (17 files, +2422/-367 lines) — no findings. Verified: security (XML escaping, no injection), logic (pipeline position, frame accumulation, recirculate-no-route restart), error handling (graceful degradation), concurrency (mutex serialization, generation-guarded timers, buffer cloning), and orphaned code checks. All 4 packages pass.
+♻ 1 finding. sessionPrefix (line 64) always returns the same value across all tests because filepath.Base strips the unique parent path from t.TempDir(), leaving only the sequential counter ('003'). All four tests get prefix '88c041'. Fix: hash the full t.TempDir() path or use t.Name(). Prior issue ci-47i5f-s7oq5 (session name mismatch) is resolved — prefix is correctly embedded in repo name via intConfig(prefix).
 
-### Issue 3 (from: qa)
+### Issue 3 (from: reviewer)
 
-♻ Phase 1 RESOLVED: readSkillDescription correctly skips YAML frontmatter (context.go:401-409); 6 tests confirm the fix.
+No findings. Prior issue ci-47i5f-smkm8 resolved: sessionPrefix now hashes full t.TempDir() path (no filepath.Base). Fresh review: session name contract verified against scheduler.go:988 and :1424 — both sides compute repo.Name+"-"+assignee, prefix correctly embedded in repo name via intConfig. CISTERN_SKIP_INTEGRATION check correct. CT_BIN forwarding clean. All four tests use consistent prefix+"-myrepo" repo name. No new issues.
 
-Phase 2 — 2 findings:
+### Issue 4 (from: qa)
 
-(1) ci-bz0t3-nyf2f: injectProtocolSkill (parse.go:197) comment says 'Returns the destination path and true when copied' but the signature is (string, error) — no boolean return. 'and true' is a stale remnant; the comment misrepresents the return type.
+All four integration tests pass. CISTERN_SKIP_INTEGRATION=1 skips all four cleanly. Session names are prefixed (e.g. ece918-myrepo-worker-alpha) via repo name embedding — heartbeat correctly matches. Full test suite green.
 
-(2) ci-bz0t3-oi5em: writePipelinePositionFile (parse.go:184) writes '- Your role: <identity>' but the spec requires '- Your role: <name> — <one-line description>' (same format as predecessor/successor lines). neighborLine is used for pred/succ but not for self. Tests only assert the name is present, not that a description follows. Fix: read own PERSONA.md and append ' — ' + personaDescription, or use an equivalent of neighborLine for the own step. Update tests to assert the description is included.
+### Issue 5 (from: security)
 
-### Issue 4 (from: reviewer)
-
-Phase 1: resolved both QA issues — (1) ci-bz0t3-nyf2f: injectProtocolSkill comment now correctly describes (string, error) return, no stale bool reference. (2) ci-bz0t3-oi5em: writePipelinePositionFile uses neighborLine for own role, tests assert description present. Phase 2: fresh adversarial review of full diff (17 files, +2457/-367) — no findings. Verified: security (XML escaping, no injection, step names from config), logic (frameAccumulate marker detection, flushPendingFrame aliasing safety, pipeline position edge cases, recirculate-restart guard), error handling (graceful degradation in skill injection, readSkillDescription, stall note DB fallback), concurrency (mutex serialization, timer generation counter), resource management (no goroutine/timer leaks), and orphaned code (ring buffer properly removed). All 4 packages pass.
-
-### Issue 5 (from: reviewer)
-
-Phase 1: resolved both QA issues (ci-bz0t3-nyf2f, ci-bz0t3-oi5em). Phase 2: fresh adversarial review — no findings. All 4 packages pass.
-
-### Issue 6 (from: qa)
-
-Phase 1: both prior QA issues confirmed resolved — (1) ci-bz0t3-nyf2f: injectProtocolSkill comment at parse.go:203 correctly describes (string, error) return, no stale bool. (2) ci-bz0t3-oi5em: writePipelinePositionFile uses neighborLine(roleStep, ...) for own role, producing name — description format; tests assert description present. Phase 2: fresh adversarial review — no findings. Logic correct across all new functions. Test coverage solid: 6 pipeline-position tests (three-step, single-step, own-role, description-from-persona, automated steps, regeneration), 2 skill-injection tests, 6 readSkillDescription tests (frontmatter skip regression included), 1 integration test for injected-skills ordering. All file operations use real temp dirs — no mock-masking concern. skillDescription fallback via readSkillDescription equivalent to old behavior. All 9 packages pass.
-
-### Issue 7 (from: security)
-
-Phase 1: no open security issues from prior cycles (all 6 prior issues previously resolved or no-findings). Phase 2: fresh adversarial review of full diff (17 files, +2457/-367) — no security issues found. Verified: injection safety (xmlEscape on all dynamic XML output, step names from config not user input, parameterized addNote), data exposure (UnassignedItems same Droplet struct already exposed, json.NewEncoder no XSS), path safety (all paths from config-derived identities + fixed dir names, injectedSkillsForIdentity uses os.ReadDir entries), resource safety (frameAccumulate pending bounded by TUI repaint cycles, colW n>=1 guaranteed, timer lifecycle correct with generation counter), concurrency (mutex serialization, bytes.Clone prevents aliasing), scheduler (guard correct, fail-closed on empty cataractae, DB fallback for rate-limiting across restarts). All 4 packages pass.
+No security issues found. Diff touches: (1) test infrastructure — session prefix via SHA-256 of TempDir, CT_BIN env for source-built ct in fakeagent (test-only binary), CISTERN_SKIP_INTEGRATION opt-out; (2) production — CT_DB env var in resolveDBPath (mirrors existing --db flag), gh auth check made informational in ct doctor (delivery step still enforces auth). All input flows traced: fakeagent droplet ID uses exec.Command discrete args (no shell injection), intShellQuote uses proper escaping with test-controlled inputs, CT_BIN only writable by test harness. No injection, auth bypass, secrets exposure, or resource safety issues.
 
 ---
 
-## Recent Step Notes
-
-### From: docs_writer
-
-Updated docs: CHANGELOG.md (added ci-bz0t3 entry describing skill injection and pipeline position), README.md (documented new PIPELINE_POSITION.md and skills/ directory structure), commands.md (expanded ct cataractae generate description).
-
-### From: security
-
-Phase 1: no open security issues from prior cycles (all 6 prior issues previously resolved or no-findings). Phase 2: fresh adversarial review of full diff (17 files, +2457/-367) — no security issues found. Verified: injection safety (xmlEscape on all dynamic XML output, step names from config not user input, parameterized addNote), data exposure (UnassignedItems same Droplet struct already exposed, json.NewEncoder no XSS), path safety (all paths from config-derived identities + fixed dir names, injectedSkillsForIdentity uses os.ReadDir entries), resource safety (frameAccumulate pending bounded by TUI repaint cycles, colW n>=1 guaranteed, timer lifecycle correct with generation counter), concurrency (mutex serialization, bytes.Clone prevents aliasing), scheduler (guard correct, fail-closed on empty cataractae, DB fallback for rate-limiting across restarts). All 4 packages pass.
-
-### From: qa
-
-Phase 1: both prior QA issues confirmed resolved — (1) ci-bz0t3-nyf2f: injectProtocolSkill comment at parse.go:203 correctly describes (string, error) return, no stale bool. (2) ci-bz0t3-oi5em: writePipelinePositionFile uses neighborLine(roleStep, ...) for own role, producing name — description format; tests assert description present. Phase 2: fresh adversarial review — no findings. Logic correct across all new functions. Test coverage solid: 6 pipeline-position tests (three-step, single-step, own-role, description-from-persona, automated steps, regeneration), 2 skill-injection tests, 6 readSkillDescription tests (frontmatter skip regression included), 1 integration test for injected-skills ordering. All file operations use real temp dirs — no mock-masking concern. skillDescription fallback via readSkillDescription equivalent to old behavior. All 9 packages pass.
-
-### From: reviewer
-
-Phase 1: resolved both QA issues (ci-bz0t3-nyf2f, ci-bz0t3-oi5em). Phase 2: fresh adversarial review — no findings. All 4 packages pass.
-
 <available_skills>
-  <skill>
-    <name>cistern-github</name>
-    <description>---</description>
-    <location>/home/lobsterdog/.cistern/skills/cistern-github/SKILL.md</location>
-  </skill>
   <skill>
     <name>cistern-droplet-state</name>
     <description>Manage droplet state in the Cistern agentic pipeline using the `ct` CLI.</description>
@@ -104,7 +65,7 @@ Phase 1: resolved both QA issues (ci-bz0t3-nyf2f, ci-bz0t3-oi5em). Phase 2: fres
   </skill>
   <skill>
     <name>cistern-git</name>
-    <description>---</description>
+    <description>Each droplet has an isolated worktree at `~/.cistern/sandboxes/&lt;repo&gt;/&lt;droplet-id&gt;/`.</description>
     <location>/home/lobsterdog/.cistern/skills/cistern-git/SKILL.md</location>
   </skill>
 </available_skills>
@@ -114,16 +75,16 @@ Phase 1: resolved both QA issues (ci-bz0t3-nyf2f, ci-bz0t3-oi5em). Phase 2: fres
 When your work is done, signal your outcome using the `ct` CLI:
 
 **Pass (work complete, move to next step):**
-    ct droplet pass ci-bz0t3
+    ct droplet pass ci-47i5f
 
 **Recirculate (needs rework — send back upstream):**
-    ct droplet recirculate ci-bz0t3
-    ct droplet recirculate ci-bz0t3 --to implement
+    ct droplet recirculate ci-47i5f
+    ct droplet recirculate ci-47i5f --to implement
 
 **Pool (cannot currently proceed):**
-    ct droplet pool ci-bz0t3
+    ct droplet pool ci-47i5f
 
 Add notes before signaling:
-    ct droplet note ci-bz0t3 "What you did / found"
+    ct droplet note ci-47i5f "What you did / found"
 
 The `ct` binary is on your PATH.
