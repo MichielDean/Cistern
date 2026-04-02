@@ -178,11 +178,11 @@ func (m tabAppModel) execActionCmd(dropletID, action, input string) tea.Cmd {
 				execErr = err
 				break
 			}
-			target := input
-			if target == "" {
-				target = item.CurrentCataractae
-			}
 			if item.Status != "in_progress" {
+				target := input
+				if target == "" {
+					target = item.CurrentCataractae
+				}
 				execErr = c.Assign(dropletID, "", target)
 				break
 			}
