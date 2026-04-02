@@ -123,7 +123,6 @@ type cockpitModel struct {
 // placeholders ready for future implementation.
 func newCockpitModel(cfgPath, dbPath string) cockpitModel {
 	m := cockpitModel{
-		cursor: 0,
 		width:  100,
 		height: 24,
 	}
@@ -151,9 +150,7 @@ func (m cockpitModel) panelWidth() int {
 func (m cockpitModel) Init() tea.Cmd {
 	var cmds []tea.Cmd
 	for _, p := range m.panels {
-		if cmd := p.Init(); cmd != nil {
-			cmds = append(cmds, cmd)
-		}
+		cmds = append(cmds, p.Init())
 	}
 	return tea.Batch(cmds...)
 }
@@ -260,11 +257,11 @@ func (m cockpitModel) viewSidebar() string {
 		}
 	}
 	sb.WriteString(strings.Repeat("─", cockpitSidebarWidth) + "\n")
+	hint := "  tab→panel"
 	if m.panelFocused {
-		sb.WriteString(tuiStyleDim.Render("  tab→sidebar") + "\n")
-	} else {
-		sb.WriteString(tuiStyleDim.Render("  tab→panel") + "\n")
+		hint = "  tab→sidebar"
 	}
+	sb.WriteString(tuiStyleDim.Render(hint) + "\n")
 	return sb.String()
 }
 
@@ -283,10 +280,7 @@ func joinSideBySide(sidebar, panel string, sidebarW int) string {
 	sideLines := strings.Split(sidebar, "\n")
 	panelLines := strings.Split(panel, "\n")
 
-	n := len(sideLines)
-	if len(panelLines) > n {
-		n = len(panelLines)
-	}
+	n := max(len(sideLines), len(panelLines))
 
 	var sb strings.Builder
 	for i := 0; i < n; i++ {
