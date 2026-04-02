@@ -51,7 +51,10 @@ jobs:
         run: go vet ./...
 
       - name: Build
-        run: go build ./...
+        run: |
+          TAG=$(git describe --tags --abbrev=0 2>/dev/null || git rev-parse --short HEAD)
+          COMMIT=$(git rev-parse --short HEAD)
+          go build -ldflags "-X main.version=${TAG} -X main.commit=${COMMIT}" -o ct ./cmd/ct/
 
       - name: Test
         run: go test ./... -v
@@ -89,6 +92,15 @@ jobs:
           fi
 
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+
+      - name: Compute version info
+        id: version
+        run: |
+          COMMIT=$(git rev-parse --short HEAD)
+          echo "tag=$(git describe --tags --abbrev=0 2>/dev/null || echo "$COMMIT")" >> "$GITHUB_OUTPUT"
+          echo "commit=${COMMIT}" >> "$GITHUB_OUTPUT"
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@ce360397dd3f832beb865e1373c09c0e9f86d70a # v4.0.0
@@ -121,6 +133,9 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            VERSION=${{ steps.version.outputs.tag }}
+            COMMIT=${{ steps.version.outputs.commit }}
 
       - name: Clean up runner _update and _diag
         if: always()

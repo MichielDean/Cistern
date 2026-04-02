@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bytes"
 	"encoding/json"
 	"strings"
 	"testing"
@@ -17,34 +16,52 @@ func TestVersionCmd_JsonFlag(t *testing.T) {
 	}
 }
 
+// TestVersionCmd_DefaultValues_PlainOutput verifies that with the default variable
+// values (version="dev", commit="unknown"), ct version prints "ct dev".
+func TestVersionCmd_DefaultValues_PlainOutput(t *testing.T) {
+	savedVersion, savedCommit := version, commit
+	defer func() { version, commit = savedVersion, savedCommit }()
+
+	version = "dev"
+	commit = "unknown"
+
+	if err := versionCmd.Flags().Set("json", "false"); err != nil {
+		t.Fatalf("failed to reset --json flag: %v", err)
+	}
+
+	output := captureStdout(t, func() {
+		versionCmd.Run(versionCmd, []string{})
+	})
+
+	got := strings.TrimSpace(output)
+	if got != "ct dev" {
+		t.Errorf("expected 'ct dev', got %q", got)
+	}
+}
+
+// TestVersionCmd_JsonOutput verifies that --json emits valid JSON containing the
+// version and commit values currently set in the version variables.
 func TestVersionCmd_JsonOutput(t *testing.T) {
+	savedVersion, savedCommit := version, commit
+	defer func() {
+		version, commit = savedVersion, savedCommit
+		_ = versionCmd.Flags().Set("json", "false")
+	}()
+
 	version = "1.2.3"
 	commit = "abc1234"
 
-	var buf bytes.Buffer
-	versionCmd.SetOut(&buf)
-
-	// reset flag state
 	if err := versionCmd.Flags().Set("json", "true"); err != nil {
 		t.Fatalf("failed to set --json flag: %v", err)
 	}
-	defer func() { _ = versionCmd.Flags().Set("json", "false") }()
 
-	versionCmd.Run(versionCmd, []string{})
-
-	output := strings.TrimSpace(buf.String())
-	// SetOut only affects cobra output helpers; Run uses fmt.Println → capture via buf won't work.
-	// Instead just verify the flag is wired correctly — the JSON marshal path is tested structurally.
-	_ = output
+	output := captureStdout(t, func() {
+		versionCmd.Run(versionCmd, []string{})
+	})
 
 	var got map[string]string
-	// Build expected JSON and verify it round-trips
-	out, err := json.Marshal(map[string]string{"version": version, "commit": commit})
-	if err != nil {
-		t.Fatalf("json.Marshal failed: %v", err)
-	}
-	if err := json.Unmarshal(out, &got); err != nil {
-		t.Fatalf("json.Unmarshal failed: %v", err)
+	if err := json.Unmarshal([]byte(strings.TrimSpace(output)), &got); err != nil {
+		t.Fatalf("json.Unmarshal failed on output %q: %v", output, err)
 	}
 	if got["version"] != "1.2.3" {
 		t.Errorf("expected version 1.2.3, got %q", got["version"])
@@ -54,12 +71,23 @@ func TestVersionCmd_JsonOutput(t *testing.T) {
 	}
 }
 
+// TestVersionCmd_PlainOutput verifies that without --json the command prints "ct <version>".
 func TestVersionCmd_PlainOutput(t *testing.T) {
+	savedVersion := version
+	defer func() { version = savedVersion }()
+
 	version = "2.0.0"
-	// Ensure --json is false (default)
+
 	if err := versionCmd.Flags().Set("json", "false"); err != nil {
 		t.Fatalf("failed to reset --json flag: %v", err)
 	}
-	// Just verify the flag doesn't panic when Run is called without --json
-	versionCmd.Run(versionCmd, []string{})
+
+	output := captureStdout(t, func() {
+		versionCmd.Run(versionCmd, []string{})
+	})
+
+	got := strings.TrimSpace(output)
+	if got != "ct 2.0.0" {
+		t.Errorf("expected 'ct 2.0.0', got %q", got)
+	}
 }

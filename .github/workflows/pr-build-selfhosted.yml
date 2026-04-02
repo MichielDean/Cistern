@@ -40,7 +40,9 @@ jobs:
         run: go vet ./...
 
       - name: Build
-        run: go build ./...
+        run: |
+          COMMIT=$(git rev-parse --short HEAD)
+          go build -ldflags "-X main.version=${COMMIT} -X main.commit=${COMMIT}" ./...
 
       - name: Test
         run: go test ./... -v

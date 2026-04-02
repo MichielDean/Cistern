@@ -1,6 +1,9 @@
 # ─── Stage 1: build ──────────────────────────────────────────────────────────
 FROM golang:1.26 AS builder
 
+ARG VERSION=dev
+ARG COMMIT=unknown
+
 WORKDIR /src
 
 # Download dependencies first for better layer caching.
@@ -12,7 +15,7 @@ RUN go mod download
 # is the correct runtime pairing.
 COPY . .
 RUN CGO_ENABLED=1 GOOS=linux \
-    go build -o /out/ct ./cmd/ct \
+    go build -ldflags "-X main.version=${VERSION} -X main.commit=${COMMIT}" -o /out/ct ./cmd/ct \
     && go build -o /out/aqueduct ./cmd/aqueduct
 
 # ─── Stage 2: runtime ────────────────────────────────────────────────────────
