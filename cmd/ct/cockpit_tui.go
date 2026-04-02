@@ -188,7 +188,7 @@ func newCockpitModel(cfgPath, dbPath string) cockpitModel {
 		newStatusPanel(cfgPath, dbPath),
 		placeholderPanel{title: "Aqueducts"},
 		placeholderPanel{title: "Inspect"},
-		placeholderPanel{title: "Audit"},
+		newDoctorPanel(),
 	}
 	// Only panel[0] is initialized in Init(). All others are lazily initialized
 	// on first activation to prevent their tick chains from firing into the wrong
@@ -321,6 +321,18 @@ func (m cockpitModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if len(m.panels) > 2 {
 			updated, cmd := m.panels[2].Update(msg)
 			m.panels[2] = updated.(TUIPanel)
+			return m, cmd
+		}
+		return m, nil
+	}
+
+	// doctorOutputMsg always routes to panels[4] (doctorPanel) regardless of
+	// which panel is currently focused, so the one-shot Init run result is
+	// delivered even when the user is on a different panel.
+	if _, ok := msg.(doctorOutputMsg); ok {
+		if len(m.panels) > 4 {
+			updated, cmd := m.panels[4].Update(msg)
+			m.panels[4] = updated.(TUIPanel)
 			return m, cmd
 		}
 		return m, nil
