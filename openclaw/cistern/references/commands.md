@@ -305,12 +305,9 @@ ct tui                           # Launch interactive cockpit (requires active t
 The cockpit provides a two-pane interface: persistent left sidebar for module navigation, and a right pane showing the active module's content.
 
 **Cockpit Layout**
-- **Left sidebar**: Lists all available modules (Droplets, Dashboard, Status, Inspect, Filter, Doctor) with keyboard shortcuts (1–9)
+- **Left sidebar**: Lists all available modules (Droplets, Dashboard, Status, Castellarius, Inspect, Filter, Doctor) with keyboard shortcuts (1–9)
   - Cursor highlight indicates focus: `▶` = panel focused (green), `▷` = sidebar focused (yellow)
-  - Currently, Droplets, Status, Filter, and Doctor modules are fully implemented; others ship as placeholders others ship as placeholders
-=======
-  - Currently, Droplets, Status, Filter, and Doctor modules are fully implemented; others ship as placeholders
->>>>>>> 28a2b06 (ci-o3yxk: docs: add Filter module documentation to cockpit)
+  - Currently, Droplets, Status, Castellarius, Filter, and Doctor modules are fully implemented; others ship as placeholders
 - **Right pane**: Displays the active module's content
 
 **Navigation**
@@ -369,6 +366,18 @@ The Status module displays real-time system health and pipeline status:
 - **Castellarius Health**: Daemon status, last poll time, and scheduler liveness
 
 The status view auto-refreshes every 5 seconds. When the display hasn't changed for 2+ cycles, it backs off to a 30-second refresh interval to reduce database load. Press `r` at any time to force an immediate refresh.
+
+**Castellarius Module** (key: 4)
+
+The Castellarius module provides direct control of the Castellarius daemon (the aqueduct scheduler) from the cockpit:
+
+- **Status View**: Displays live output from `ct castellarius status`, showing aqueduct flow, queue depth, and scheduler health
+- **Auto-refresh**: Status updates automatically every 5 seconds
+- **Scroll controls**: Use `↑↓` or `j/k` to navigate the status output
+- **Manual refresh**: Press `r` to force an immediate refresh
+- **Daemon control**: Start, stop, and restart the Castellarius daemon via command palette actions with confirmation overlays
+  - Confirmation prompt: Press `y` to confirm action, `n` or `esc` to cancel
+  - Actions automatically refresh status after completion
 
 **Doctor Module** (key: 5)
 
