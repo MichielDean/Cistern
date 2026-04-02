@@ -3,6 +3,7 @@ package main
 import (
 	"strings"
 	"testing"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 
@@ -1241,5 +1242,36 @@ func TestCockpit_PanelWidth_Floor_ClampedToMinimum(t *testing.T) {
 	got := um.panelWidth()
 	if got != 20 {
 		t.Errorf("panelWidth() = %d, want 20 (floor) for terminal width 5", got)
+	}
+}
+
+// ── animation tick routing (navigation-away race) ────────────────────────────
+
+// TestCockpit_AnimMsg_RoutedToInitializedFlowPanel_WhenFlowPanelNotActive
+// verifies that a tuiAnimMsg is broadcast to all initialized panels, not only
+// the currently active one. This prevents the navigation-away race where:
+//  1. User activates panel 2 (dashboardPanel) — lazy init fires, starts tuiAnimTick chain.
+//  2. User navigates back to panel 1 within animInterval (150ms).
+//  3. The in-flight tuiAnimMsg arrives while cursor=0.
+//  4. Without the fix it lands on dropletsPanel which drops it, permanently
+//     freezing the Flow panel animation at frame=0.
+//
+// Given: cursor=0, panels[1] (dashboardPanel) initializedPanels[1]=true
+// When:  tuiAnimMsg is received
+// Then:  panels[1] (dashboardPanel) inner.frame advances (tick was routed to it)
+func TestCockpit_AnimMsg_RoutedToInitializedFlowPanel_WhenFlowPanelNotActive(t *testing.T) {
+	m := newCockpitModel("", "")
+	// Simulate: user activated panel 2 (dashboardPanel initialized), then navigated back.
+	m.initializedPanels[1] = true
+	m.cursor = 0 // dropletsPanel is active
+
+	frameBefore := m.panels[1].(dashboardPanel).inner.frame
+
+	updated, _ := m.Update(tuiAnimMsg(time.Time{}))
+	um := updated.(cockpitModel)
+
+	frameAfter := um.panels[1].(dashboardPanel).inner.frame
+	if frameAfter == frameBefore {
+		t.Error("dashboardPanel.inner.frame did not advance — animation tick was not routed to initialized inactive panel")
 	}
 }

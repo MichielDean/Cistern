@@ -238,6 +238,23 @@ func (m cockpitModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, tea.Batch(cmds...)
 
+	case tuiAnimMsg:
+		// Animation ticks must be routed to all initialized panels, not just the
+		// active one. dashboardPanel's tuiAnimTick() chain starts on first
+		// activation; if the user navigates away within animInterval the tick
+		// would land on the active panel, be silently dropped, and permanently
+		// freeze the Flow panel at frame=0. Broadcasting to all initialized panels
+		// ensures the chain survives any navigation-away race.
+		var cmds []tea.Cmd
+		for i, p := range m.panels {
+			if m.initializedPanels[i] {
+				updated, cmd := p.Update(msg)
+				m.panels[i] = updated.(TUIPanel)
+				cmds = append(cmds, cmd)
+			}
+		}
+		return m, tea.Batch(cmds...)
+
 	case tea.KeyMsg:
 		s := msg.String()
 		// ctrl+c always quits, regardless of focus mode.
