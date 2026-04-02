@@ -142,7 +142,7 @@ func newCockpitModel(cfgPath, dbPath string) cockpitModel {
 	m.panels = []TUIPanel{
 		dropletsPanel{inner: inner},
 		placeholderPanel{title: "Dashboard"},
-		placeholderPanel{title: "Aqueducts"},
+		newStatusPanel(cfgPath, dbPath),
 		placeholderPanel{title: "Inspect"},
 		placeholderPanel{title: "Audit"},
 	}
