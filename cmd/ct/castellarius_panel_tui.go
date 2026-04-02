@@ -254,18 +254,18 @@ func (p castellariusPanel) SelectedDroplet() *cistern.Droplet { return nil }
 // The droplet argument is ignored — these actions operate on the Castellarius
 // service, not on any individual droplet.
 func (p castellariusPanel) PaletteActions(_ *cistern.Droplet) []PaletteAction {
-	castAction := func(name, desc, subcmd string) PaletteAction {
+	castAction := func(action string) PaletteAction {
 		return PaletteAction{
-			Name:        name,
-			Description: desc,
+			Name:        action,
+			Description: action + " the Castellarius",
 			Run: func() tea.Cmd {
-				return func() tea.Msg { return castellariusCmdMsg{action: subcmd} }
+				return func() tea.Msg { return castellariusCmdMsg{action: action} }
 			},
 		}
 	}
 	return []PaletteAction{
-		castAction("start", "start the Castellarius", "start"),
-		castAction("stop", "stop the Castellarius", "stop"),
-		castAction("restart", "restart the Castellarius", "restart"),
+		castAction("start"),
+		castAction("stop"),
+		castAction("restart"),
 	}
 }
