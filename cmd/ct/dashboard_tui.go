@@ -3,8 +3,6 @@ package main
 import (
 	_ "embed"
 	"fmt"
-	"os"
-	"os/exec"
 	"strings"
 	"time"
 
@@ -34,18 +32,6 @@ func selectArchMipmap(_ int) string {
 	return archMipmapStripper.Replace(archMipmap20x7)
 }
 
-// insideTmux reports whether the process is running inside a tmux session.
-// Replaced in tests to control environment without requiring a real tmux session.
-var insideTmux = func() bool {
-	return os.Getenv("TMUX") != ""
-}
-
-// tmuxNewWindowFunc opens a new tmux window attaching read-only to the named session.
-// Replaced in tests to capture the call without running tmux.
-var tmuxNewWindowFunc = func(dropletID, session string) error {
-	return exec.Command("tmux", "new-window", "-n", "peek:"+dropletID, "--", "tmux", "attach-session", "-t", session, "-r").Run()
-}
-
 // --- Lip Gloss styles ---
 
 var (
@@ -63,7 +49,7 @@ type tuiTickMsg time.Time
 type tuiAnimMsg time.Time
 type tuiDataMsg *DashboardData
 
-// tuiPeekNewWindowErrMsg is sent when tmuxNewWindowFunc fails, triggering a
+// tuiPeekNewWindowErrMsg is sent when tmuxAttachFunc fails, triggering a
 // fallback to the inline capture-pane overlay.
 type tuiPeekNewWindowErrMsg struct {
 	ch  CataractaeInfo
@@ -154,39 +140,31 @@ func activeAqueducts(cataractae []CataractaeInfo) []CataractaeInfo {
 }
 
 // openPeekOn transitions to peek mode for the given aqueduct, returning the
-// updated model and a tea.Cmd to execute. When running inside a tmux session,
-// a new tmux window is opened for live attach and the dashboard continues
-// running undisturbed. When not inside tmux, the inline capture-pane overlay
-// is used as a fallback.
+// updated model and a tea.Cmd to execute. Always attempts tmux attach-session
+// directly; falls back to the inline capture-pane overlay if that fails.
 func (m dashboardTUIModel) openPeekOn(ch CataractaeInfo) (dashboardTUIModel, tea.Cmd) {
 	session := ch.RepoName + "-" + ch.Name
-
-	if insideTmux() {
-		m.peekSelectMode = false
-		// Spawn a new tmux window for live read-only attach; dashboard stays open.
-		return m, func() tea.Msg {
-			if err := tmuxNewWindowFunc(ch.DropletID, session); err != nil {
-				return tuiPeekNewWindowErrMsg{ch: ch, err: err}
-			}
-			return nil
+	m.peekSelectMode = false
+	// Always attempt direct tmux attach; falls back to inline overlay on failure.
+	return m, func() tea.Msg {
+		if err := tmuxAttachFunc(session); err != nil {
+			return tuiPeekNewWindowErrMsg{ch: ch, err: err}
 		}
+		return nil
 	}
-
-	// Not inside tmux: fall back to inline capture-pane peek overlay.
-	return m.openInlinePeek(ch, nil)
 }
 
 // openInlinePeek sets up the inline capture-pane overlay for the given aqueduct.
-// If err is non-nil, the header notes the tmux failure instead of the "not inside tmux" hint.
+// Called as a fallback when tmuxAttachFunc fails; err carries the attach error.
 func (m dashboardTUIModel) openInlinePeek(ch CataractaeInfo, err error) (dashboardTUIModel, tea.Cmd) {
 	session := ch.RepoName + "-" + ch.Name
 	var header string
 	if err != nil {
-		header = fmt.Sprintf("[%s] %s — flowing %s\ntmux new-window failed (%v) — showing capture-pane snapshot",
+		header = fmt.Sprintf("[%s] %s — flowing %s\ntmux attach-session failed (%v) — showing capture-pane snapshot",
 			ch.DropletID, ch.Step, formatElapsed(ch.Elapsed), err)
 	} else {
-		header = fmt.Sprintf("[%s] %s — flowing %s\nnot inside tmux — for live view: tmux attach-session -t %s -r",
-			ch.DropletID, ch.Step, formatElapsed(ch.Elapsed), session)
+		header = fmt.Sprintf("[%s] %s — flowing %s",
+			ch.DropletID, ch.Step, formatElapsed(ch.Elapsed))
 	}
 	pk := newPeekModel(defaultCapturer, session, header, 0)
 	pk.width = m.width
