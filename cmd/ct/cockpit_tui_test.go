@@ -197,6 +197,7 @@ func TestCockpit_Sidebar_Enter_CursorUnchanged(t *testing.T) {
 func TestCockpit_NumberKey_JumpsToPanel(t *testing.T) {
 	m := newCockpitModel("", "")
 	m.cursor = 0
+	m.panelFocused = false
 
 	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
 	um := updated.(cockpitModel)
