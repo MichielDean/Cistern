@@ -1560,8 +1560,8 @@ func (s *Castellarius) heartbeatRepo(ctx context.Context, repo aqueduct.RepoConf
 
 		// Re-spawn the stalled session if an assignee is present. Decoupled from
 		// note writing so retries occur on every tick regardless of rate-limiting.
-		// session.Spawn() detects prior Claude session files and uses --continue
-		// when they exist, or spawns fresh when priorSessionCount == 0.
+		// session.Spawn() checks .current-stage to resume within the same stage
+		// or start fresh on a stage transition.
 		if item.Assignee != "" {
 			if err := s.respawnStalledDroplet(ctx, client, repo, item); err != nil {
 				// Spawn failure: reset rate-limit entry so the next tick can write
@@ -1603,8 +1603,8 @@ func (s *Castellarius) heartbeatRepo(ctx context.Context, repo aqueduct.RepoConf
 
 // respawnStalledDroplet calls runner.Spawn for a stalled in-progress droplet
 // whose session has gone quiet. It reuses the existing worktree and assignee;
-// session.Spawn() selects --continue or a fresh spawn based on prior session
-// files under ~/.claude/projects/<worktree>/.
+// session.Spawn() selects --continue or a fresh spawn based on the
+// .current-stage marker in the worktree directory.
 func (s *Castellarius) respawnStalledDroplet(ctx context.Context, client CisternClient, repo aqueduct.RepoConfig, item *cistern.Droplet) error {
 	wf, ok := s.workflows[repo.Name]
 	if !ok {
@@ -2183,7 +2183,7 @@ func dirtyNonContextFiles(dir string) ([]string, error) {
 			continue
 		}
 		name := strings.TrimSpace(line[3:])
-		if name != "CONTEXT.md" {
+		if name != "CONTEXT.md" && name != ".current-stage" {
 			dirty = append(dirty, name)
 		}
 	}

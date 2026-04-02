@@ -1080,36 +1080,94 @@ func TestBuildContinueCmd_ArgsWithSpaces_AreShellQuoted(t *testing.T) {
 	}
 }
 
-// --- priorSessionCount tests ---
+// --- stageMarker tests ---
 
-// TestPriorSessionCount_ReturnsZero_WhenNoDirExists verifies that priorSessionCount
-// returns 0 when the Claude projects directory does not exist.
-func TestPriorSessionCount_ReturnsZero_WhenNoDirExists(t *testing.T) {
+// TestStageMarker_ReturnsFalse_WhenFileAbsent verifies that stageMarker returns false
+// when .current-stage does not exist in the working directory.
+func TestStageMarker_ReturnsFalse_WhenFileAbsent(t *testing.T) {
 	dir := t.TempDir()
-	// No .claude/projects directory created.
-	if got := priorSessionCount(dir, "/some/workdir"); got != 0 {
-		t.Errorf("priorSessionCount = %d, want 0 when dir absent", got)
+	if got := stageMarker(dir, "reviewer"); got {
+		t.Error("stageMarker = true, want false when .current-stage absent")
 	}
 }
 
-// TestPriorSessionCount_ReturnsCount_WhenFilesExist verifies that priorSessionCount
-// returns the number of entries in the Claude projects directory.
-func TestPriorSessionCount_ReturnsCount_WhenFilesExist(t *testing.T) {
-	home := t.TempDir()
-	workDir := "/my/project/dir"
-	escaped := strings.ReplaceAll(workDir, "/", "-")
-	projectDir := filepath.Join(home, ".claude", "projects", escaped)
-	if err := os.MkdirAll(projectDir, 0o755); err != nil {
+// TestStageMarker_ReturnsTrue_WhenSameIdentity verifies that stageMarker returns true
+// when .current-stage contains the same identity — indicating a same-stage respawn.
+func TestStageMarker_ReturnsTrue_WhenSameIdentity(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, ".current-stage"), []byte("reviewer"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	// Create 3 session files.
-	for i := range 3 {
-		if err := os.WriteFile(filepath.Join(projectDir, fmt.Sprintf("session-%d.json", i)), []byte("{}"), 0o644); err != nil {
-			t.Fatal(err)
-		}
+	if !stageMarker(dir, "reviewer") {
+		t.Error("stageMarker = false, want true when .current-stage matches identity")
 	}
-	if got := priorSessionCount(home, workDir); got != 3 {
-		t.Errorf("priorSessionCount = %d, want 3", got)
+}
+
+// TestStageMarker_ReturnsFalse_WhenDifferentIdentity verifies that stageMarker returns
+// false when .current-stage contains a different identity — indicating a stage transition.
+func TestStageMarker_ReturnsFalse_WhenDifferentIdentity(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, ".current-stage"), []byte("implementer"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if stageMarker(dir, "reviewer") {
+		t.Error("stageMarker = true, want false when .current-stage contains different identity")
+	}
+}
+
+// TestStageMarker_ReturnsFalse_WhenIdentityEmpty verifies that stageMarker returns false
+// when Identity is empty — an unidentified session should never resume.
+func TestStageMarker_ReturnsFalse_WhenIdentityEmpty(t *testing.T) {
+	dir := t.TempDir()
+	// Even if the file contains an empty string, empty identity should not match.
+	if err := os.WriteFile(filepath.Join(dir, ".current-stage"), []byte(""), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if stageMarker(dir, "") {
+		t.Error("stageMarker = true, want false when identity is empty")
+	}
+}
+
+// TestStageMarker_IgnoresTrailingNewline verifies that stageMarker trims whitespace
+// when comparing the file content to the identity.
+func TestStageMarker_IgnoresTrailingNewline(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, ".current-stage"), []byte("reviewer\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if !stageMarker(dir, "reviewer") {
+		t.Error("stageMarker = false, want true when file has trailing newline but content matches")
+	}
+}
+
+// --- writeStageMarker tests ---
+
+// TestWriteStageMarker_WritesIdentityToFile verifies that writeStageMarker creates
+// .current-stage in the working directory with the identity as its content.
+func TestWriteStageMarker_WritesIdentityToFile(t *testing.T) {
+	dir := t.TempDir()
+	writeStageMarker(dir, "simplifier")
+	got, err := os.ReadFile(filepath.Join(dir, ".current-stage"))
+	if err != nil {
+		t.Fatalf("expected .current-stage to exist: %v", err)
+	}
+	if string(got) != "simplifier" {
+		t.Errorf("writeStageMarker wrote %q, want %q", string(got), "simplifier")
+	}
+}
+
+// TestWriteStageMarker_OverwritesPreviousStage verifies that writeStageMarker replaces
+// the previous content — last-writer-wins ensures the marker reflects the current stage.
+func TestWriteStageMarker_OverwritesPreviousStage(t *testing.T) {
+	dir := t.TempDir()
+	writeStageMarker(dir, "implementer")
+	writeStageMarker(dir, "reviewer")
+	got, err := os.ReadFile(filepath.Join(dir, ".current-stage"))
+	if err != nil {
+		t.Fatalf("expected .current-stage to exist: %v", err)
+	}
+	if string(got) != "reviewer" {
+		t.Errorf("writeStageMarker wrote %q after overwrite, want %q", string(got), "reviewer")
 	}
 }
 
@@ -1151,10 +1209,10 @@ func TestSpawn_LogsFreshSession_WhenNoTmux(t *testing.T) {
 	}
 }
 
-// TestSpawn_LogsResumeContext_WhenPriorSessionExists verifies that spawn emits a
-// slog entry with context_type=resume and prior_session_count when a prior session
-// exists for the working directory.
-func TestSpawn_LogsResumeContext_WhenPriorSessionExists(t *testing.T) {
+// TestSpawn_LogsResumeContext_WhenSameStageMarker verifies that spawn emits a
+// slog entry with context_type=resume when .current-stage contains the same identity —
+// indicating a mid-stage respawn of a stalled session.
+func TestSpawn_LogsResumeContext_WhenSameStageMarker(t *testing.T) {
 	if _, err := exec.LookPath("tmux"); err != nil {
 		t.Skip("tmux not available")
 	}
@@ -1167,19 +1225,15 @@ func TestSpawn_LogsResumeContext_WhenPriorSessionExists(t *testing.T) {
 
 	workDir := t.TempDir()
 
-	// Create a prior session so priorSessionCount > 0.
-	escaped := strings.ReplaceAll(workDir, "/", "-")
-	projectDir := filepath.Join(home, ".claude", "projects", escaped)
-	if err := os.MkdirAll(projectDir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(projectDir, "session.json"), []byte("{}"), 0o644); err != nil {
+	// Write .current-stage with the same identity to trigger resume.
+	if err := os.WriteFile(filepath.Join(workDir, ".current-stage"), []byte("reviewer"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
 	s := &Session{
-		ID:      "test-resume-session",
-		WorkDir: workDir,
+		ID:       "test-resume-session",
+		WorkDir:  workDir,
+		Identity: "reviewer",
 		Preset: provider.ProviderPreset{
 			Name:         "claude",
 			Command:      "echo",
@@ -1193,11 +1247,59 @@ func TestSpawn_LogsResumeContext_WhenPriorSessionExists(t *testing.T) {
 	if !strings.Contains(out, "context_type=resume") {
 		t.Errorf("log missing context_type=resume; got: %s", out)
 	}
-	if !strings.Contains(out, "prior_session_count=1") {
-		t.Errorf("log missing prior_session_count=1; got: %s", out)
+	if !strings.Contains(out, "stage=reviewer") {
+		t.Errorf("log missing stage field; got: %s", out)
 	}
-	if !strings.Contains(out, "project_dir=") {
-		t.Errorf("log missing project_dir field; got: %s", out)
+}
+
+// TestSpawn_LogsFreshSession_WhenStageChanges verifies that spawn logs context_type=fresh
+// when .current-stage contains a different identity — a stage transition must not carry
+// context from the previous stage.
+func TestSpawn_LogsFreshSession_WhenStageChanges(t *testing.T) {
+	if _, err := exec.LookPath("tmux"); err != nil {
+		t.Skip("tmux not available")
+	}
+
+	buf := captureDefaultSlog(t)
+
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("CLAUDE_PATH", "echo") // fake agent
+
+	workDir := t.TempDir()
+
+	// Write .current-stage with a different identity (previous stage).
+	if err := os.WriteFile(filepath.Join(workDir, ".current-stage"), []byte("implementer"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	s := &Session{
+		ID:       "test-stage-change-session",
+		WorkDir:  workDir,
+		Identity: "reviewer",
+		Preset: provider.ProviderPreset{
+			Name:         "claude",
+			Command:      "echo",
+			ContinueFlag: "--continue",
+		},
+	}
+	_ = s.spawn()
+	defer s.kill()
+
+	out := buf.String()
+	if !strings.Contains(out, "context_type=fresh") {
+		t.Errorf("log missing context_type=fresh on stage change; got: %s", out)
+	}
+
+	// Verify spawn() wrote .current-stage with the new identity so a
+	// same-stage respawn will resume rather than start fresh.
+	markerPath := filepath.Join(workDir, ".current-stage")
+	got, err := os.ReadFile(markerPath)
+	if err != nil {
+		t.Fatalf(".current-stage not written after spawn: %v", err)
+	}
+	if strings.TrimSpace(string(got)) != s.Identity {
+		t.Errorf(".current-stage = %q, want %q", strings.TrimSpace(string(got)), s.Identity)
 	}
 }
 

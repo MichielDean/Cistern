@@ -60,9 +60,9 @@ func (s *Session) Spawn() error {
 }
 
 // spawn creates a new tmux session running the agent.
-// If the preset defines a ContinueFlag and a prior session exists in WorkDir,
-// the agent is resumed rather than started fresh — preserving conversation
-// context accumulated across prior cataractae cycles.
+// If the preset defines a ContinueFlag and the .current-stage marker in WorkDir
+// matches the current identity, the agent is resumed (same-stage respawn) rather
+// than started fresh. A stage change clears context so each stage begins fresh.
 func (s *Session) spawn() error {
 	// Guard: if a session with this ID already exists, inspect it before acting.
 	//
@@ -101,16 +101,15 @@ func (s *Session) spawn() error {
 	args := []string{"new-session", "-d", "-s", s.ID, "-c", s.WorkDir}
 
 	// Decide whether to continue a prior session or start fresh.
-	sessionCount := priorSessionCount(home, s.WorkDir)
-	resume := s.Preset.ContinueFlag != "" && sessionCount > 0
+	// stageMarker reads .current-stage from the worktree: if it contains the
+	// current identity the previous spawn was the same stage, so we resume.
+	// A different identity (or absent file) means a stage transition — start fresh.
+	resume := s.Preset.ContinueFlag != "" && stageMarker(s.WorkDir, s.Identity)
 
 	if resume {
-		escaped := strings.ReplaceAll(s.WorkDir, "/", "-")
-		projectDir := filepath.Join(home, ".claude", "projects", escaped)
 		slog.Default().Info("session: resuming prior context",
 			"session", s.ID,
-			"project_dir", projectDir,
-			"prior_session_count", sessionCount,
+			"stage", s.Identity,
 		)
 	}
 
@@ -191,21 +190,34 @@ func (s *Session) spawn() error {
 	if logDirReady {
 		execTmuxPipePaneCmd(s.ID, sessionLogPath)
 	}
+	// Record the current stage so a respawn of this same stage resumes context
+	// rather than starting fresh. Last-writer-wins: only one stage runs at a time.
+	writeStageMarker(s.WorkDir, s.Identity)
 	return nil
 }
 
-// priorSessionCount returns the number of prior session files Claude has stored
-// for workDir. Claude stores sessions under ~/.claude/projects/<escaped-path>/.
-// Returns 0 when the directory does not exist or cannot be read.
-func priorSessionCount(home, workDir string) int {
-	// Claude encodes the absolute path by replacing '/' with '-'.
-	escaped := strings.ReplaceAll(workDir, "/", "-")
-	projectDir := filepath.Join(home, ".claude", "projects", escaped)
-	entries, err := os.ReadDir(projectDir)
-	if err != nil {
-		return 0
+// stageMarker reads .current-stage from workDir and reports whether it contains
+// identity, indicating that the previous spawn in this worktree was the same
+// stage — i.e., we are respawning a stalled session rather than crossing a
+// stage boundary. Returns false when the file is absent, unreadable, or contains
+// a different identity. An empty identity always returns false.
+func stageMarker(workDir, identity string) bool {
+	if identity == "" {
+		return false
 	}
-	return len(entries)
+	data, err := os.ReadFile(filepath.Join(workDir, ".current-stage"))
+	if err != nil {
+		return false
+	}
+	return strings.TrimSpace(string(data)) == identity
+}
+
+// writeStageMarker writes identity to .current-stage in workDir. Errors are
+// silently ignored — a missing marker simply causes the next spawn to start
+// fresh, which is the safe fallback. Last-writer-wins is correct because only
+// one stage runs at a time.
+func writeStageMarker(workDir, identity string) {
+	_ = os.WriteFile(filepath.Join(workDir, ".current-stage"), []byte(identity), 0o644)
 }
 
 // isSessionAlive returns true if a tmux session with the given ID is running.

@@ -2257,6 +2257,42 @@ func TestDirtyNonContextFiles_FiltersUntracked(t *testing.T) {
 	}
 }
 
+// TestDirtyNonContextFiles_FiltersCurrentStage verifies that a tracked, modified
+// .current-stage file is excluded from the dirty list so the stage marker never
+// blocks dispatch.
+func TestDirtyNonContextFiles_FiltersCurrentStage(t *testing.T) {
+	dir := t.TempDir()
+	makeGitSandbox(t, dir)
+
+	// Commit .current-stage as a tracked file, then modify it.
+	if err := os.WriteFile(filepath.Join(dir, ".current-stage"), []byte("implementer\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	for _, args := range [][]string{
+		{"git", "add", ".current-stage"},
+		{"git", "commit", "-m", "add stage marker"},
+	} {
+		cmd := exec.Command(args[0], args[1:]...)
+		cmd.Dir = dir
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("%v: %v\n%s", args, err, out)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(dir, ".current-stage"), []byte("reviewer\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	files, err := dirtyNonContextFiles(dir)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	for _, f := range files {
+		if f == ".current-stage" {
+			t.Error(".current-stage should be filtered from dirty files")
+		}
+	}
+}
+
 // TestRecoverDispatchLoop_DirtyWorktree verifies that recoverDispatchLoop detects
 // dirty tracked files, resets them, and records a recovery note.
 func TestRecoverDispatchLoop_DirtyWorktree(t *testing.T) {
@@ -2831,13 +2867,13 @@ func TestHeartbeatRepo_StaleDebounce_PrunedWhenDropletNoLongerInProgress(t *test
 
 // TestHeartbeatRepo_StallWithAssignee_SpawnsSession verifies that when a stall
 // is detected and the droplet has an assignee, runner.Spawn is called so the
-// session can resume. session.Spawn() internally detects prior Claude session
-// files and uses --continue when they exist (or spawns fresh when they don't),
-// so the heartbeat just needs to call Spawn unconditionally.
+// session can resume. session.Spawn() internally checks the .current-stage
+// marker and uses --continue when the stage matches (or spawns fresh when it
+// doesn't), so the heartbeat just needs to call Spawn unconditionally.
 //
 // This covers both acceptance paths:
-//   - prior session → session.Spawn selects --continue
-//   - no prior session → session.Spawn spawns fresh
+//   - same stage → session.Spawn selects --continue
+//   - stage changed or no marker → session.Spawn spawns fresh
 func TestHeartbeatRepo_StallWithAssignee_SpawnsSession(t *testing.T) {
 	// Mock tmux as alive so liveness check passes through to stall detector.
 	orig := isTmuxAliveFn
