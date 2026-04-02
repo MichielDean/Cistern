@@ -1917,6 +1917,26 @@ func TestDropletsPanel_PaletteActions_DoesNotContainApprove_WhenNotHumanGated(t 
 	}
 }
 
+// TestDropletsPanel_PaletteActions_DoesNotContainApprove_ForTerminalHumanGated verifies
+// that the "approve" action is absent for a terminal droplet even when
+// CurrentCataractae is "human". Cancel does not clear current_cataractae, so
+// without this guard a cancelled human-gated droplet would expose approve.
+//
+// Given: a dropletsPanel and a cancelled droplet with CurrentCataractae="human"
+// When:  PaletteActions is called
+// Then:  the "approve" action is absent
+func TestDropletsPanel_PaletteActions_DoesNotContainApprove_ForTerminalHumanGated(t *testing.T) {
+	p := newDropletsPanel("", "")
+	actions := p.PaletteActions(&cistern.Droplet{
+		ID:                "ci-aaa",
+		Status:            "cancelled",
+		CurrentCataractae: "human",
+	})
+	if containsAction(actions, "approve") {
+		t.Errorf("PaletteActions for terminal droplet should not contain 'approve' even with CurrentCataractae=human; got %v", paletteActionNames(actions))
+	}
+}
+
 // TestDropletsPanel_PaletteActions_DoesNotContainPass_ForDeliveredDroplet verifies
 // that "pass" is absent for a terminal (delivered) droplet.
 //

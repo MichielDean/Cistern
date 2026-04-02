@@ -122,14 +122,14 @@ func (p dropletsPanel) PaletteActions(droplet *cistern.Droplet) []PaletteAction 
 			dropletPaletteAction("restart", "restart this droplet", id, actionRestart),
 			dropletPaletteAction("add note", "add a note to this droplet", id, actionAddNote),
 		)
+		if droplet.CurrentCataractae == "human" {
+			actions = append(actions,
+				dropletPaletteAction("approve", "approve for delivery", id, actionApprove),
+			)
+		}
 	} else {
 		actions = append(actions,
 			dropletPaletteAction("reopen", "return to cistern", id, actionReopen),
-		)
-	}
-	if droplet.CurrentCataractae == "human" {
-		actions = append(actions,
-			dropletPaletteAction("approve", "approve for delivery", id, actionApprove),
 		)
 	}
 	return actions

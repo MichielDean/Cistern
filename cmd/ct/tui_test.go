@@ -2321,6 +2321,156 @@ func TestExecActionCmd_Reopen_SetsOpen(t *testing.T) {
 	}
 }
 
+// TestExecActionCmd_Pass_OnInProgressDroplet_SetsOutcomeOnly verifies that
+// execActionCmd with actionPass on an in_progress droplet sets outcome="pass"
+// but does NOT call CloseItem — status remains in_progress.
+//
+// Given: a real cistern DB with an in_progress droplet
+// When:  execActionCmd with actionPass is executed
+// Then:  tuiActionResultMsg.err is nil, outcome is "pass", status is still "in_progress"
+func TestExecActionCmd_Pass_OnInProgressDroplet_SetsOutcomeOnly(t *testing.T) {
+	dbPath, id := newTestDBWithDroplet(t)
+
+	// Advance to in_progress.
+	c, err := cistern.New(dbPath, "ci")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := c.UpdateStatus(id, "in_progress"); err != nil {
+		c.Close()
+		t.Fatal(err)
+	}
+	c.Close()
+
+	m := newTabAppModel("", dbPath)
+	cmd := m.execActionCmd(id, actionPass, "")
+	msg := cmd()
+
+	am, ok := msg.(tuiActionResultMsg)
+	if !ok {
+		t.Fatalf("expected tuiActionResultMsg, got %T", msg)
+	}
+	if am.err != nil {
+		t.Errorf("err = %v, want nil", am.err)
+	}
+
+	c2, err := cistern.New(dbPath, "ci")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c2.Close()
+	d, err := c2.Get(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d.Outcome != "pass" {
+		t.Errorf("outcome = %q, want %q", d.Outcome, "pass")
+	}
+	if d.Status != "in_progress" {
+		t.Errorf("status = %q, want %q (in_progress pass must not close item)", d.Status, "in_progress")
+	}
+}
+
+// TestExecActionCmd_Recirculate_OnInProgressDroplet_SetsOutcome verifies that
+// execActionCmd with actionRecirculate on an in_progress droplet sets
+// outcome="recirculate" (via SetOutcome) without calling Assign.
+//
+// Given: a real cistern DB with an in_progress droplet
+// When:  execActionCmd with actionRecirculate and empty input is executed
+// Then:  tuiActionResultMsg.err is nil, outcome is "recirculate", status is still "in_progress"
+func TestExecActionCmd_Recirculate_OnInProgressDroplet_SetsOutcome(t *testing.T) {
+	dbPath, id := newTestDBWithDroplet(t)
+
+	// Advance to in_progress.
+	c, err := cistern.New(dbPath, "ci")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := c.UpdateStatus(id, "in_progress"); err != nil {
+		c.Close()
+		t.Fatal(err)
+	}
+	c.Close()
+
+	m := newTabAppModel("", dbPath)
+	cmd := m.execActionCmd(id, actionRecirculate, "")
+	msg := cmd()
+
+	am, ok := msg.(tuiActionResultMsg)
+	if !ok {
+		t.Fatalf("expected tuiActionResultMsg, got %T", msg)
+	}
+	if am.err != nil {
+		t.Errorf("err = %v, want nil", am.err)
+	}
+
+	c2, err := cistern.New(dbPath, "ci")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c2.Close()
+	d, err := c2.Get(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d.Outcome != "recirculate" {
+		t.Errorf("outcome = %q, want %q", d.Outcome, "recirculate")
+	}
+	if d.Status != "in_progress" {
+		t.Errorf("status = %q, want %q (in_progress recirculate must not call Assign)", d.Status, "in_progress")
+	}
+}
+
+// TestExecActionCmd_Recirculate_WithStep_OnInProgressDroplet_SetsOutcomeWithStep
+// verifies that actionRecirculate with a non-empty step on an in_progress droplet
+// sets outcome="recirculate:<step>" via SetOutcome.
+//
+// Given: a real cistern DB with an in_progress droplet
+// When:  execActionCmd with actionRecirculate and input "review" is executed
+// Then:  tuiActionResultMsg.err is nil, outcome is "recirculate:review", status is still "in_progress"
+func TestExecActionCmd_Recirculate_WithStep_OnInProgressDroplet_SetsOutcomeWithStep(t *testing.T) {
+	dbPath, id := newTestDBWithDroplet(t)
+
+	// Advance to in_progress.
+	c, err := cistern.New(dbPath, "ci")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := c.UpdateStatus(id, "in_progress"); err != nil {
+		c.Close()
+		t.Fatal(err)
+	}
+	c.Close()
+
+	m := newTabAppModel("", dbPath)
+	cmd := m.execActionCmd(id, actionRecirculate, "review")
+	msg := cmd()
+
+	am, ok := msg.(tuiActionResultMsg)
+	if !ok {
+		t.Fatalf("expected tuiActionResultMsg, got %T", msg)
+	}
+	if am.err != nil {
+		t.Errorf("err = %v, want nil", am.err)
+	}
+
+	c2, err := cistern.New(dbPath, "ci")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c2.Close()
+	d, err := c2.Get(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d.Outcome != "recirculate:review" {
+		t.Errorf("outcome = %q, want %q", d.Outcome, "recirculate:review")
+	}
+	if d.Status != "in_progress" {
+		t.Errorf("status = %q, want %q (in_progress recirculate must not call Assign)", d.Status, "in_progress")
+	}
+}
+
 // TestExecActionCmd_Approve_SetsDeliveryStep verifies that execActionCmd with
 // actionApprove sets the droplet's current_cataractae to "delivery" and
 // status to "open" (via Assign).
