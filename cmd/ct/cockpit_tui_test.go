@@ -2054,6 +2054,40 @@ func TestCockpit_Palette_UpArrow_MovesSelectionUp(t *testing.T) {
 	}
 }
 
+// ── Backspace filter re-expansion (ci-gg7gp-6jo0w) ───────────────────────────
+
+// TestCockpit_Palette_Backspace_ReExpandsFilter verifies that pressing Backspace
+// after typing a filter character re-runs filterPaletteActions and restores all
+// matching actions to paletteFiltered.
+//
+// Given: palette open with actions=[cancel, pool], paletteQuery="c" (typed via KeyRunes)
+// When:  Backspace is pressed
+// Then:  paletteQuery="" and len(paletteFiltered)=2
+func TestCockpit_Palette_Backspace_ReExpandsFilter(t *testing.T) {
+	actions := []PaletteAction{
+		{Name: "cancel"},
+		{Name: "pool"},
+	}
+	m := newPaletteTestCockpit(actions, &cistern.Droplet{ID: "ci-aaa"}).openPalette()
+
+	// Type 'c' — only "cancel" matches, paletteFiltered shrinks to 1.
+	typed, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'c'}})
+	m = typed.(cockpitModel)
+	if len(m.paletteFiltered) != 1 {
+		t.Fatalf("precondition: len(paletteFiltered) = %d after typing 'c', want 1", len(m.paletteFiltered))
+	}
+
+	// Backspace clears the query and must re-expand to all actions.
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyBackspace})
+	um := updated.(cockpitModel)
+	if um.paletteQuery != "" {
+		t.Errorf("paletteQuery = %q, want %q", um.paletteQuery, "")
+	}
+	if len(um.paletteFiltered) != 2 {
+		t.Errorf("len(paletteFiltered) = %d, want 2 (backspace must re-expand filter)", len(um.paletteFiltered))
+	}
+}
+
 // ── viewPalette empty-filtered branch (ci-gg7gp-ltsxt) ───────────────────────
 
 // TestCockpit_View_Palette_EmptyFiltered_ShowsNoMatchMessage verifies that when
