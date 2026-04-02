@@ -3,6 +3,7 @@ package main
 import (
 	_ "embed"
 	"fmt"
+	"os/exec"
 	"strings"
 	"time"
 
@@ -49,11 +50,20 @@ type tuiTickMsg time.Time
 type tuiAnimMsg time.Time
 type tuiDataMsg *DashboardData
 
-// tuiPeekAttachErrMsg is sent when tmuxAttachFunc fails, triggering a
-// fallback to the inline capture-pane overlay.
+// tuiPeekAttachErrMsg is sent when the tmux attach-session subprocess exits with
+// an error, triggering a fallback to the inline capture-pane overlay.
 type tuiPeekAttachErrMsg struct {
 	ch  CataractaeInfo
 	err error
+}
+
+// openPeekAttachCmdFunc creates the tea.Cmd that attaches to a tmux session.
+// It uses tea.ExecProcess, which pauses the bubbletea renderer while the
+// subprocess holds the terminal, preventing PTY contention with the render loop.
+// Replaced in tests to avoid the bubbletea runtime and a live tmux installation.
+var openPeekAttachCmdFunc = func(session string, fn func(error) tea.Msg) tea.Cmd {
+	cmd := exec.Command("tmux", "attach-session", "-t", session, "-r")
+	return tea.ExecProcess(cmd, fn)
 }
 
 const animInterval = 150 * time.Millisecond // water animation speed
@@ -141,16 +151,17 @@ func activeAqueducts(cataractae []CataractaeInfo) []CataractaeInfo {
 
 // openPeekOn transitions to peek mode for the given aqueduct, returning the
 // updated model and a tea.Cmd to execute. Always attempts tmux attach-session
-// directly; falls back to the inline capture-pane overlay if that fails.
+// via tea.ExecProcess (pausing the renderer); falls back to the inline
+// capture-pane overlay if the subprocess exits with an error.
 func (m dashboardTUIModel) openPeekOn(ch CataractaeInfo) (dashboardTUIModel, tea.Cmd) {
 	session := ch.RepoName + "-" + ch.Name
 	m.peekSelectMode = false
-	return m, func() tea.Msg {
-		if err := tmuxAttachFunc(session); err != nil {
+	return m, openPeekAttachCmdFunc(session, func(err error) tea.Msg {
+		if err != nil {
 			return tuiPeekAttachErrMsg{ch: ch, err: err}
 		}
 		return nil
-	}
+	})
 }
 
 // openInlinePeek sets up the inline capture-pane overlay for the given aqueduct.
