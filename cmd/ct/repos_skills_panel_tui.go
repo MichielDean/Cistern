@@ -16,6 +16,7 @@ import (
 type reposSkillsData struct {
 	Repos     []aqueduct.RepoConfig
 	Skills    []skills.ManifestEntry
+	SkillsErr error
 	FetchedAt time.Time
 }
 
@@ -52,10 +53,11 @@ func (p reposSkillsPanel) fetchDataCmd() tea.Cmd {
 		if cfg, err := aqueduct.ParseAqueductConfig(cfgPath); err == nil {
 			repos = cfg.Repos
 		}
-		installed, _ := skills.ListInstalled()
+		installed, skillsErr := skills.ListInstalled()
 		return reposSkillsDataMsg(&reposSkillsData{
 			Repos:     repos,
 			Skills:    installed,
+			SkillsErr: skillsErr,
 			FetchedAt: time.Now(),
 		})
 	}
@@ -129,7 +131,9 @@ func (p reposSkillsPanel) View() string {
 	lines = append(lines, tuiStyleHeader.Render("  SKILLS"))
 	lines = append(lines, "")
 
-	if len(p.data.Skills) == 0 {
+	if p.data.SkillsErr != nil {
+		lines = append(lines, tuiStyleDim.Render(fmt.Sprintf("  Error loading skills: %v", p.data.SkillsErr)))
+	} else if len(p.data.Skills) == 0 {
 		lines = append(lines, tuiStyleDim.Render("  No skills installed. Run: ct skills install <name> <url>"))
 	} else {
 		maxNameW := 4 // "NAME"

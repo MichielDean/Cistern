@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -386,6 +387,32 @@ func TestReposSkillsPanel_View_ScrollClamped_WhenScrollYExceedsContent(t *testin
 	v := p.View()
 	if v == "" {
 		t.Error("View() = empty string, want non-empty output after scroll clamping")
+	}
+}
+
+// ── View: skills fetch error ──────────────────────────────────────────────────
+
+// TestReposSkillsPanel_View_SkillsError_ShowsErrorMessage verifies that when
+// the skills fetch fails the error message is displayed instead of the
+// "No skills" empty-state text, so an I/O failure is not indistinguishable
+// from an empty skills list.
+//
+// Given: a reposSkillsPanel whose data has SkillsErr set to a non-nil error
+// When:  View() is called
+// Then:  output contains "Error" and does NOT contain "No skills"
+func TestReposSkillsPanel_View_SkillsError_ShowsErrorMessage(t *testing.T) {
+	p := newReposSkillsPanel("", "")
+	p.data = &reposSkillsData{
+		Skills:    nil,
+		SkillsErr: fmt.Errorf("manifest corrupted"),
+		FetchedAt: time.Now(),
+	}
+	v := p.View()
+	if !strings.Contains(v, "Error") {
+		t.Errorf("View() does not contain %q for skills error; output:\n%s", "Error", v)
+	}
+	if strings.Contains(v, "No skills") {
+		t.Errorf("View() contains %q but should show error instead; output:\n%s", "No skills", v)
 	}
 }
 

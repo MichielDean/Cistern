@@ -7,6 +7,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
+	"github.com/MichielDean/cistern/internal/aqueduct"
 	"github.com/MichielDean/cistern/internal/cistern"
 )
 
@@ -2056,5 +2057,35 @@ func TestCockpit_View_Palette_EmptyFiltered_ShowsNoMatchMessage(t *testing.T) {
 
 	if !strings.Contains(m.View(), "(no matching actions)") {
 		t.Error("View() with empty paletteFiltered does not contain '(no matching actions)'")
+// ── reposSkillsDataMsg routing ────────────────────────────────────────────────
+
+// TestCockpit_ReposSkillsDataMsg_RoutesToPanel6_WhenCursorIsNot6 verifies that a
+// reposSkillsDataMsg is always delivered to panels[6] (the reposSkillsPanel)
+// regardless of which panel is currently focused. This guards against a wrong
+// index silently dropping the message while the user is on a different module.
+//
+// Given: cockpitModel with cursor=0 (Droplets panel active)
+// When:  a reposSkillsDataMsg carrying one repo is delivered
+// Then:  panels[6].data is populated with the message content
+func TestCockpit_ReposSkillsDataMsg_RoutesToPanel6_WhenCursorIsNot6(t *testing.T) {
+	m := newCockpitModel("", "")
+	m.cursor = 0 // active panel is NOT panels[6]
+
+	data := &reposSkillsData{
+		Repos: []aqueduct.RepoConfig{{Name: "RoutingTestRepo", Prefix: "rt"}},
+	}
+
+	updated, _ := m.Update(reposSkillsDataMsg(data))
+	um := updated.(cockpitModel)
+
+	panel, ok := um.panels[6].(reposSkillsPanel)
+	if !ok {
+		t.Fatalf("panels[6] type = %T, want reposSkillsPanel", um.panels[6])
+	}
+	if panel.data == nil {
+		t.Fatal("panels[6].data = nil after reposSkillsDataMsg, want non-nil")
+	}
+	if len(panel.data.Repos) != 1 || panel.data.Repos[0].Name != "RoutingTestRepo" {
+		t.Errorf("panels[6].data.Repos = %v, want [{Name:RoutingTestRepo Prefix:rt}]", panel.data.Repos)
 	}
 }
