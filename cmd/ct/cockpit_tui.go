@@ -313,9 +313,9 @@ func (m cockpitModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// All other panel-focused keys fall through to forwarding below.
 	}
 
-	// statusDataMsg and statusTickMsg always route to panels[2] (statusPanel)
-	// regardless of which panel is currently focused, so the background refresh
-	// loop continues running when the user is on a different panel.
+	// Certain message types always route to a specific panel regardless of which
+	// panel is currently focused, so background runs continue when the user is
+	// on a different panel.
 	switch msg.(type) {
 	case statusDataMsg, statusTickMsg:
 		if len(m.panels) > 2 {
@@ -324,12 +324,6 @@ func (m cockpitModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, cmd
 		}
 		return m, nil
-	}
-
-	// doctorOutputMsg always routes to panels[4] (doctorPanel) regardless of
-	// which panel is currently focused, so the one-shot Init run result is
-	// delivered even when the user is on a different panel.
-	switch msg.(type) {
 	case doctorOutputMsg:
 		if len(m.panels) > 4 {
 			updated, cmd := m.panels[4].Update(msg)
