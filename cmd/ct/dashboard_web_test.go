@@ -1623,6 +1623,53 @@ func TestDashboardTUI_Resize_NoCallbackWhenNoChildRunning(t *testing.T) {
 	}
 }
 
+// TestDashboardTUI_Resize_DoesNotDeliverSyntheticMarkerToClients verifies that
+// the repaintMarker injected by resize() goes through frameAccumulate only and
+// is NOT broadcast to connected clients. A regression to broadcast() would send
+// the synthetic clear-screen to every active WebSocket connection on each resize.
+//
+// Given: a DashboardTUI with a frame in progress and an attached client,
+//
+//	resizeFn set to a non-nil callback
+//
+// When:  resize(80, 24) is called
+// Then:  the client's channel remains empty (no bytes delivered)
+func TestDashboardTUI_Resize_DoesNotDeliverSyntheticMarkerToClients(t *testing.T) {
+	tui := newDashboardTUI("", "", "")
+	marker := string(repaintMarker)
+
+	// Establish inFrame=true with some pending content.
+	// broadcast() sends the chunk to all registered clients — none are attached yet,
+	// so this only sets up the internal frame state.
+	tui.broadcast([]byte(marker + "frame-one-content"))
+
+	// Stop the flush timer to prevent background commits during the test.
+	tui.mu.Lock()
+	if tui.flushTimer != nil {
+		tui.flushTimer.Stop()
+		tui.flushTimer = nil
+	}
+	tui.mu.Unlock()
+
+	// Attach a client. attach() acquires d.mu internally; do not hold it here.
+	// lastFrame is nil at this point (pending not yet committed), so attach()
+	// returns a nil snapshot — nothing is queued on client.ch.
+	client, _ := tui.attach()
+
+	// Set a non-nil resizeFn so resize() actually injects the marker.
+	tui.mu.Lock()
+	tui.resizeFn = func(cols, rows uint16) {}
+	tui.mu.Unlock()
+
+	tui.resize(80, 24)
+
+	// The client channel must be empty — the synthetic repaintMarker injected
+	// into frameAccumulate must not have been broadcast to connected clients.
+	if len(client.ch) != 0 {
+		t.Errorf("client received %d unexpected chunk(s) from resize(); synthetic repaintMarker must not be broadcast", len(client.ch))
+	}
+}
+
 // TestDashboardTUI_Attach_SnapshotAlwaysPrependsRepaintMarker verifies that
 // attach() prepends repaintMarker to the snapshot unconditionally — even when
 // lastFrame already starts with one — so xterm.js always begins from a clean
