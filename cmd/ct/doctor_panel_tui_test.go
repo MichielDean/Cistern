@@ -259,14 +259,31 @@ func TestDoctorPanel_Update_RKey_ClearsOutput(t *testing.T) {
 	}
 }
 
-// TestDoctorPanel_Update_RKey_ReturnsCmd verifies that pressing 'r' triggers
-// a re-run command.
+// TestDoctorPanel_Update_RKey_WhileRunning_ReturnsNoCmd verifies that pressing 'r' while
+// a run is already in progress does NOT spawn a second concurrent subprocess.
 //
-// Given: a doctorPanel in any state
+// Given: a doctorPanel with running=true
+// When:  'r' is pressed
+// Then:  cmd = nil (guard prevents a second concurrent run)
+func TestDoctorPanel_Update_RKey_WhileRunning_ReturnsNoCmd(t *testing.T) {
+	p := newDoctorPanel()
+	p.running = true
+
+	_, cmd := p.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	if cmd != nil {
+		t.Error("cmd non-nil after 'r' pressed while already running, want nil (guard active)")
+	}
+}
+
+// TestDoctorPanel_Update_RKey_ReturnsCmd verifies that pressing 'r' triggers
+// a re-run command when the panel is idle.
+//
+// Given: a doctorPanel with running=false
 // When:  'r' is pressed
 // Then:  a non-nil command is returned
 func TestDoctorPanel_Update_RKey_ReturnsCmd(t *testing.T) {
 	p := newDoctorPanel()
+	p.running = false
 
 	_, cmd := p.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
 	if cmd == nil {
@@ -274,13 +291,15 @@ func TestDoctorPanel_Update_RKey_ReturnsCmd(t *testing.T) {
 	}
 }
 
-// TestDoctorPanel_Update_UpperRKey_ReturnsCmd verifies that 'R' also triggers a re-run.
+// TestDoctorPanel_Update_UpperRKey_ReturnsCmd verifies that 'R' also triggers a re-run
+// when the panel is idle.
 //
-// Given: a doctorPanel in any state
+// Given: a doctorPanel with running=false
 // When:  'R' is pressed
 // Then:  a non-nil command is returned
 func TestDoctorPanel_Update_UpperRKey_ReturnsCmd(t *testing.T) {
 	p := newDoctorPanel()
+	p.running = false
 
 	_, cmd := p.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'R'}})
 	if cmd == nil {

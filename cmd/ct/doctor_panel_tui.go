@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -54,7 +55,15 @@ func (p doctorPanel) execDoctorCmd() tea.Cmd {
 			exe = "ct"
 		}
 		cmd := exec.Command(exe, "doctor")
-		out, _ := cmd.CombinedOutput() // non-zero exit is expected when checks fail
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			var exitErr *exec.ExitError
+			if !errors.As(err, &exitErr) {
+				// Non-ExitError: exec not found, permission denied, etc.
+				return doctorOutputMsg{output: fmt.Sprintf("error: %s", err), runAt: time.Now()}
+			}
+			// ExitError: non-zero exit is expected when checks fail; output carries the details.
+		}
 		return doctorOutputMsg{output: string(out), runAt: time.Now()}
 	}
 }
@@ -74,6 +83,9 @@ func (p doctorPanel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyMsg:
 		switch msg.String() {
 		case "r", "R":
+			if p.running {
+				return p, nil
+			}
 			p.running = true
 			p.output = ""
 			p.scrollY = 0
