@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+### Constitutional layer: embed system safety invariants in baseCataractaePrompt (ci-1wh4x)
+
+Added five non-negotiable system safety invariants to the constitutional layer (baseCataractaePrompt) that every cataractae reads before executing. These invariants encode lessons learned from production incidents and critical system boundaries that agents must never cross.
+
+**Invariants added:**
+1. **Signaling protocol**: Droplet state advance only via `ct droplet pass/recirculate/pool`. Never exit without signaling.
+2. **Session spawning**: Expose agent process directly to tmux; avoid shell wrappers that hide process identity.
+3. **Pipeline state**: Never commit CONTEXT.md — it's injected at dispatch and listed in .gitignore.
+4. **Circuit breaker**: Zombie detection pools droplets after 5 spawns with no outcome to prevent infinite loops.
+5. **Gitignore enforcement**: Never use `git add -f` on ignored files; it corrupts pipeline state.
+
+**Impact**: Agents now have explicit guidance on system boundaries, reducing the likelihood of state machine corruption, zombie respawn loops, and resource burnout. Each invariant references the production incident or failure mode it protects against.
+
+**Files modified:**
+- `internal/cataractae/session.go` — added "System safety invariants" section to baseCataractaePrompt
+
 ### Aqueduct: restore Opus for reviewer and security-review stages (ci-gi4mq)
 
 Restored the Opus model for reviewer and security-review cataractae, which require adversarial multi-hop reasoning across the full codebase to catch complex violations. Additionally upgraded the delivery stage from Haiku to Sonnet to handle edge cases like merge conflicts and rebase failures.
