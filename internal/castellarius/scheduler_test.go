@@ -3317,11 +3317,6 @@ func TestHeartbeatRepo_TmuxAliveAgentDead_RecentDispatch_SkipsZombieHandling(t *
 		return nil
 	}
 
-	// Provide a recent note so stall detection does not fire.
-	client.notes[item.ID] = []cistern.CataractaeNote{
-		{CreatedAt: time.Now()},
-	}
-
 	sched.heartbeatRepo(context.Background(), config.Repos[0])
 
 	// Age guard must have suppressed zombie handling — session must not be killed.
