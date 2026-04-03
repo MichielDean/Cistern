@@ -664,26 +664,7 @@ func TestBuildPrompt_AddDirProvider_SkillsNotInjectedInPrompt(t *testing.T) {
 	}
 }
 
-// --- isAgentAlive / claudeAliveUnderPIDIn unit tests ---
-
-// writeFakeProcEntry creates a minimal /proc/<pid> directory under procRoot
-// with a status file containing the given ppid and a cmdline file with
-// null-separated args.
-func writeFakeProcEntry(t *testing.T, procRoot, pid, ppid string, argv ...string) {
-	t.Helper()
-	dir := filepath.Join(procRoot, pid)
-	if err := os.MkdirAll(dir, 0755); err != nil {
-		t.Fatal(err)
-	}
-	status := fmt.Sprintf("Name:\tsh\nPPid:\t%s\nUid:\t1000\n", ppid)
-	if err := os.WriteFile(filepath.Join(dir, "status"), []byte(status), 0644); err != nil {
-		t.Fatal(err)
-	}
-	cmdline := strings.Join(argv, "\x00") + "\x00"
-	if err := os.WriteFile(filepath.Join(dir, "cmdline"), []byte(cmdline), 0644); err != nil {
-		t.Fatal(err)
-	}
-}
+// --- isAgentAlive unit tests ---
 
 // TestIsAgentAlive_ClaudeAlive_ReturnsTrue verifies that isAgentAlive returns
 // true when sessionIsAgentAliveFn reports a live claude process.
@@ -727,63 +708,6 @@ func TestIsAgentAlive_PassesSessionIDToFn(t *testing.T) {
 	s.isAgentAlive()
 	if capturedID != "myrepo-alice" {
 		t.Errorf("sessionIsAgentAliveFn called with id = %q, want %q", capturedID, "myrepo-alice")
-	}
-}
-
-// TestClaudeAliveUnderPIDIn_EmptyPID_ReturnsFalse ensures the empty PID guard fires.
-func TestClaudeAliveUnderPIDIn_EmptyPID_ReturnsFalse(t *testing.T) {
-	if claudeAliveUnderPIDIn("", t.TempDir()) {
-		t.Error("expected false for empty panePIDStr")
-	}
-}
-
-// TestClaudeAliveUnderPIDIn_NoClaudeProcess_ReturnsFalse verifies that a
-// process tree with no claude process returns false.
-func TestClaudeAliveUnderPIDIn_NoClaudeProcess_ReturnsFalse(t *testing.T) {
-	proc := t.TempDir()
-	writeFakeProcEntry(t, proc, "100", "1", "/bin/bash", "-c", "sleep 60")
-	writeFakeProcEntry(t, proc, "101", "100", "sleep", "60")
-	if claudeAliveUnderPIDIn("100", proc) {
-		t.Error("expected false when no claude process in tree")
-	}
-}
-
-// TestClaudeAliveUnderPIDIn_DirectClaudeChild_ReturnsTrue verifies that a
-// direct claude child of the pane PID is detected.
-func TestClaudeAliveUnderPIDIn_DirectClaudeChild_ReturnsTrue(t *testing.T) {
-	proc := t.TempDir()
-	writeFakeProcEntry(t, proc, "100", "1", "/bin/bash")
-	writeFakeProcEntry(t, proc, "101", "100", "/usr/local/bin/claude", "--dangerously-skip-permissions")
-	if !claudeAliveUnderPIDIn("100", proc) {
-		t.Error("expected true when claude is a direct child of pane PID")
-	}
-}
-
-// TestClaudeAliveUnderPIDIn_DeepDescendant_ReturnsTrue verifies that a claude
-// process nested several layers deep is still detected (bash → sh → tee → claude).
-func TestClaudeAliveUnderPIDIn_DeepDescendant_ReturnsTrue(t *testing.T) {
-	proc := t.TempDir()
-	writeFakeProcEntry(t, proc, "100", "1", "/bin/bash")
-	writeFakeProcEntry(t, proc, "101", "100", "/bin/sh", "-c", "claude")
-	writeFakeProcEntry(t, proc, "102", "101", "tee", "/tmp/out.log")
-	writeFakeProcEntry(t, proc, "103", "102", "claude", "--dangerously-skip-permissions")
-	if !claudeAliveUnderPIDIn("100", proc) {
-		t.Error("expected true when claude is a deep descendant of pane PID")
-	}
-}
-
-// TestClaudeAliveUnderPIDIn_UnrelatedClaudeProcess_ReturnsFalse verifies that
-// a claude process that is NOT a descendant of the pane PID is not reported.
-func TestClaudeAliveUnderPIDIn_UnrelatedClaudeProcess_ReturnsFalse(t *testing.T) {
-	proc := t.TempDir()
-	// pane tree: 100 → 101 (sleep)
-	writeFakeProcEntry(t, proc, "100", "1", "/bin/bash")
-	writeFakeProcEntry(t, proc, "101", "100", "sleep", "60")
-	// unrelated claude under a different root
-	writeFakeProcEntry(t, proc, "200", "1", "/bin/bash")
-	writeFakeProcEntry(t, proc, "201", "200", "claude", "--dangerously-skip-permissions")
-	if claudeAliveUnderPIDIn("100", proc) {
-		t.Error("expected false when claude belongs to a different process tree")
 	}
 }
 
