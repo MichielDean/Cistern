@@ -2241,11 +2241,21 @@ func TestSpawn_NoBashTeeWrapper_AgentCommandDirectlySpawned(t *testing.T) {
 	}
 	// The agent command is the last element passed to tmux new-session.
 	cmd := capturedArgs[len(capturedArgs)-1]
-	if strings.Contains(cmd, "tee") {
-		t.Errorf("agent command must not contain 'tee' (bash wrapper was not removed): %s", cmd)
-	}
-	if strings.Contains(cmd, "bash -c") {
+	// A bash wrapper always prefixes the command with "bash -c"; a direct agent
+	// spawn never does. HasPrefix is the correct check — the prompt text embedded
+	// later in the command may legitimately reference "bash -c" or "tee" as
+	// documentation of the very wrappers being prohibited.
+	if strings.HasPrefix(cmd, "bash -c") {
 		t.Errorf("agent command must not be wrapped in 'bash -c' (tee wrapper was not removed): %s", cmd)
+	}
+	// Verify that the structural portion of the command (before the prompt flag)
+	// does not pipe through tee. The prompt itself may document this prohibition.
+	cmdStructure := cmd
+	if idx := strings.Index(cmd, " -p '"); idx >= 0 {
+		cmdStructure = cmd[:idx]
+	}
+	if strings.Contains(cmdStructure, "tee") {
+		t.Errorf("agent command structure must not contain 'tee' (bash wrapper was not removed): %s", cmdStructure)
 	}
 	if strings.Contains(cmd, "PIPESTATUS") {
 		t.Errorf("agent command must not contain PIPESTATUS (tee wrapper was not removed): %s", cmd)
@@ -2316,5 +2326,38 @@ func TestSpawn_PipePaneNotCalled_WhenSpawnFails(t *testing.T) {
 
 	if pipePaneCalled {
 		t.Error("execTmuxPipePaneCmd must not be called when spawn fails")
+	}
+}
+
+func TestBaseCataractaePrompt_ContainsNonNegotiableContract(t *testing.T) {
+	// Verify the constitutional base contains core contract elements.
+	mustContain := []string{
+		"## Your contract — non-negotiable",
+		"ct droplet pass",
+		"ct droplet recirculate",
+		"ct droplet pool",
+		"A cataractae that exits without signaling leaves the droplet stranded.",
+	}
+	for _, want := range mustContain {
+		if !strings.Contains(baseCataractaePrompt, want) {
+			t.Errorf("baseCataractaePrompt missing required contract text: %q", want)
+		}
+	}
+}
+
+func TestBaseCataractaePrompt_ContainsSafetyInvariants(t *testing.T) {
+	// Verify all five system safety invariants are present in the prompt.
+	mustContain := []string{
+		"## System safety invariants — never break these",
+		"Signaling is the only valid way to advance state.",
+		"Session spawning must expose the agent process directly to tmux.",
+		"CONTEXT.md is pipeline state — never commit it.",
+		"The zombie circuit breaker will pool after 5 spawns with no outcome.",
+		"Do not call git add -f or git add --force on any ignored file.",
+	}
+	for _, want := range mustContain {
+		if !strings.Contains(baseCataractaePrompt, want) {
+			t.Errorf("baseCataractaePrompt missing safety invariant text: %q", want)
+		}
 	}
 }

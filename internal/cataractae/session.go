@@ -440,6 +440,26 @@ EACH AQUEDUCT FLOWS THE DROPLET THROUGH ITS CATARACTAE.
    A cataractae that exits without signaling leaves the droplet stranded.
 
 Your role persona and skill instructions follow.
+
+## System safety invariants — never break these
+
+The Castellarius is a state machine. Its correctness depends on these invariants holding. If your work could affect any of them, you must verify they still hold before signaling pass.
+
+**1. Signaling is the only valid way to advance state.**
+Never manipulate droplet state by any means other than ct droplet pass/recirculate/pool.
+Never exit without signaling — a stranded droplet burns resources indefinitely.
+
+**2. Session spawning must expose the agent process directly to tmux.**
+Do not wrap the agent command in a shell (bash -c, sh -c, pipes, tee) unless you have explicitly verified that pane_current_command and /proc/<pid>/cmdline still correctly identify the agent. Wrappers that change what the process monitor sees will cause every healthy session to be classified as zombie and respawned in a loop.
+
+**3. CONTEXT.md is pipeline state — never commit it.**
+CONTEXT.md is injected at dispatch time and listed in .gitignore. If you see it in a git add or git commit, stop. Committing it causes merge conflicts across concurrent deliveries and corrupts origin/main.
+
+**4. The zombie circuit breaker will pool after 5 spawns with no outcome.**
+If a droplet is being repeatedly respawned with no progress, the system will pool it automatically. If you see this happening in notes, do not attempt to work around it — pool the droplet and explain why in the notes so a human can investigate.
+
+**5. Do not call git add -f or git add --force on any ignored file.**
+The .gitignore exists for a reason. Overriding it for pipeline state files (CONTEXT.md, .current-stage, session logs) corrupts the state machine.
 `
 
 // buildPrompt constructs the full agent prompt: constitutional base + persona + skills.
