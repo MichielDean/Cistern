@@ -66,6 +66,9 @@ type CisternClient interface {
 	// FileDroplet creates a new droplet in the given repo. Used by the Architecti
 	// to file structural/code fix work items.
 	FileDroplet(repo, title, description string, priority, complexity int) (*cistern.Droplet, error)
+	// Heartbeat records the current time as the agent's most recent activity
+	// timestamp. Called by agents via `ct droplet heartbeat <id>` every 60 seconds.
+	Heartbeat(id string) error
 }
 
 // CataractaeRunner executes a single workflow step.
@@ -134,10 +137,6 @@ type Castellarius struct {
 	// gets a fresh note immediately).
 	lastStallNoted map[string]time.Time
 
-	// sessionLogRoot is the directory containing per-session output logs.
-	// Defaults to ~/.cistern/session-logs when empty.
-	sessionLogRoot string
-
 	// droughtRunning and droughtStartedAt are written by the drought goroutine
 	// (via OnDroughtStart/OnDroughtEnd callbacks) and read by writeHealthFile on
 	// the main tick goroutine. atomic fields ensure safe concurrent access.
@@ -192,12 +191,6 @@ func WithPollInterval(d time.Duration) Option {
 // WithSandboxRoot sets the root directory for worker sandboxes.
 func WithSandboxRoot(root string) Option {
 	return func(s *Castellarius) { s.sandboxRoot = root }
-}
-
-// WithSessionLogRoot overrides the directory used to locate per-session output
-// logs. Primarily for testing; production code uses ~/.cistern/session-logs.
-func WithSessionLogRoot(dir string) Option {
-	return func(s *Castellarius) { s.sessionLogRoot = dir }
 }
 
 // WithConfigPath records the path to cistern.yaml so the scheduler can detect
@@ -1426,7 +1419,6 @@ func (s *Castellarius) heartbeatRepo(ctx context.Context, repo aqueduct.RepoConf
 	}
 
 	threshold := stallThresholdDuration(s.config)
-	logDir := s.resolveSessionLogRoot()
 
 	// Prune lastStallNoted entries for droplets that are no longer in_progress.
 	activeIDs := make(map[string]struct{}, len(items))
@@ -1555,38 +1547,42 @@ func (s *Castellarius) heartbeatRepo(ctx context.Context, repo aqueduct.RepoConf
 			}
 		}
 
-		// Evaluate three activity signals.
-		noteSig, noteLabel := latestNoteSignal(client, item.ID)
-		worktreeSig, worktreeLabel := latestWorktreeSignal(s.sandboxRoot, repo.Name, item.ID)
-		logSig, _ := sessionLogSignal(logDir, repo.Name, item.Assignee)
+		// Stall detection: use the agent heartbeat timestamp as the primary signal.
+		// Agents call `ct droplet heartbeat <id>` every 60 seconds while working.
+		// If the heartbeat is recent (< threshold), the agent is alive — skip.
+		// If no heartbeat has been emitted yet, fall back to UpdatedAt so pre-feature
+		// agents and agents that die before their first heartbeat remain detectable.
+		stallSig := item.LastHeartbeatAt
+		if stallSig.IsZero() {
+			stallSig = item.UpdatedAt
+		}
 
-		maxSig := latestTime(noteSig, worktreeSig, logSig)
-
-		// Clear rate-limit entry if any progress signal has advanced past the last
-		// stall note write time. This resets the window so a new stall immediately
-		// gets a fresh note (agent resumed → stall resolved → re-detect cleanly).
-		if prev, ok := s.lastStallNoted[item.ID]; ok && maxSig.After(prev) {
+		// Clear rate-limit entry if the heartbeat has advanced past the last stall
+		// note write time. This resets the window so a new stall immediately gets a
+		// fresh note (agent resumed → heartbeat advanced → re-detect cleanly).
+		if prev, ok := s.lastStallNoted[item.ID]; ok && stallSig.After(prev) {
 			delete(s.lastStallNoted, item.ID)
 		}
 
-		// Not stalled — nothing to do.
-		if time.Since(maxSig) <= threshold {
+		// Not stalled: heartbeat (or UpdatedAt fallback) is within the threshold.
+		if time.Since(stallSig) <= threshold {
 			continue
 		}
 
-		// Stalled. Write a note if the rate limit allows (at most one per stallNoteInterval).
+		// Stalled. Write an escalation note if the rate limit allows
+		// (at most one per stallNoteInterval). Do NOT auto-respawn: agents that are
+		// emitting heartbeats are alive and working; agents that are not emitting
+		// heartbeats are handled by zombie detection (isTmuxAlive / isAgentAlive).
 		if s.shouldWriteStallNote(client, item.ID) {
-			sessionSignal := "absent"
-			if !logSig.IsZero() {
-				sessionSignal = "present"
+			heartbeatStatus := "none"
+			if !item.LastHeartbeatAt.IsZero() {
+				heartbeatStatus = item.LastHeartbeatAt.UTC().Format(time.RFC3339)
 			}
 			note := fmt.Sprintf(
-				"%s elapsed=%s note_signal=%s worktree_signal=%s session_signal=%s",
+				"%s elapsed=%s heartbeat=%s",
 				stallNotePrefix,
-				formatStallDuration(time.Since(maxSig)),
-				noteLabel,
-				worktreeLabel,
-				sessionSignal,
+				formatStallDuration(time.Since(stallSig)),
+				heartbeatStatus,
 			)
 			if err := client.AddNote(item.ID, "scheduler", note); err != nil {
 				s.logger.Warn("heartbeat: AddNote failed", "droplet", item.ID, "error", err)
@@ -1596,29 +1592,18 @@ func (s *Castellarius) heartbeatRepo(ctx context.Context, repo aqueduct.RepoConf
 					"repo", repo.Name,
 					"droplet", item.ID,
 					"cataractae", item.CurrentCataractae,
-					"stall_duration", time.Since(maxSig).Round(time.Second).String(),
+					"stall_duration", time.Since(stallSig).Round(time.Second).String(),
 					"threshold", threshold.String(),
 				)
 				s.lastStallNoted[item.ID] = time.Now()
 			}
 		}
 
-		// Re-spawn the stalled session if an assignee is present. Decoupled from
-		// note writing so retries occur on every tick regardless of rate-limiting.
-		// session.Spawn() checks .current-stage to resume within the same stage
-		// or start fresh on a stage transition.
-		if item.Assignee != "" {
-			if err := s.respawnStalledDroplet(ctx, client, repo, item); err != nil {
-				// Spawn failure: reset rate-limit entry so the next tick can write
-				// a fresh note and retry — spawn failures are often transient.
-				// Set to past time so shouldWriteStallNote passes on next check.
-				s.lastStallNoted[item.ID] = time.Now().Add(-stallNoteInterval)
-			}
-		} else {
-			// Recovery for orphaned in_progress droplets: no assignee means no named
-			// session exists for this droplet. Force-reset to open so the next
-			// dispatch cycle reclaims it. This handles Castellarius crash/restart and
-			// failed dispatch where the droplet was never assigned a worker.
+		// Orphan recovery: no assignee means no named session exists for this
+		// droplet. Force-reset to open so the next dispatch cycle reclaims it.
+		// This handles Castellarius crash/restart and failed dispatch where the
+		// droplet was never assigned a worker.
+		if item.Assignee == "" {
 			stepName := item.CurrentCataractae
 			if stepName == "" {
 				if step := currentCataracta(item, wf); step != nil {
@@ -1639,66 +1624,10 @@ func (s *Castellarius) heartbeatRepo(ctx context.Context, repo aqueduct.RepoConf
 				s.logger.Error("heartbeat: orphan recovery reset failed",
 					"repo", repo.Name, "droplet", item.ID, "error", err)
 				// Reset debounce so next tick retries the recovery.
-				// Set to past time so shouldWriteStallNote passes on next check.
 				s.lastStallNoted[item.ID] = time.Now().Add(-stallNoteInterval)
 			}
 		}
 	}
-}
-
-// respawnStalledDroplet calls runner.Spawn for a stalled in-progress droplet
-// whose session has gone quiet. It reuses the existing worktree and assignee;
-// session.Spawn() selects --continue or a fresh spawn based on the
-// .current-stage marker in the worktree directory.
-func (s *Castellarius) respawnStalledDroplet(ctx context.Context, client CisternClient, repo aqueduct.RepoConfig, item *cistern.Droplet) error {
-	wf, ok := s.workflows[repo.Name]
-	if !ok {
-		s.logger.Warn("heartbeat: no workflow for repo — cannot respawn stalled session",
-			"repo", repo.Name, "droplet", item.ID)
-		return nil
-	}
-
-	step := currentCataracta(item, wf)
-	if step == nil {
-		s.logger.Warn("heartbeat: no step found — cannot respawn stalled session",
-			"repo", repo.Name, "droplet", item.ID, "cataractae", item.CurrentCataractae)
-		return nil
-	}
-
-	notes, err := client.GetNotes(item.ID)
-	if err != nil {
-		s.logger.Warn("heartbeat: GetNotes failed (continuing without notes)", "droplet", item.ID, "error", err)
-	}
-
-	req := CataractaeRequest{
-		Item:         item,
-		Step:         *step,
-		Workflow:     wf,
-		RepoConfig:   repo,
-		AqueductName: item.Assignee,
-		Notes:        notes,
-	}
-
-	// Use the existing worktree — it was created by the original dispatch.
-	if s.sandboxRoot != "" &&
-		step.Type == aqueduct.CataractaeTypeAgent &&
-		step.Context != aqueduct.ContextSpecOnly {
-		req.SandboxDir = filepath.Join(s.sandboxRoot, repo.Name, item.ID)
-	}
-
-	s.logger.Info("heartbeat: respawning stalled session",
-		"repo", repo.Name,
-		"droplet", item.ID,
-		"assignee", item.Assignee,
-		"cataractae", item.CurrentCataractae,
-	)
-
-	if err := s.runner.Spawn(ctx, req); err != nil {
-		s.logger.Error("heartbeat: respawn failed",
-			"repo", repo.Name, "droplet", item.ID, "error", err)
-		return err
-	}
-	return nil
 }
 
 // stallThresholdDuration returns the configured stall threshold, defaulting to 45 minutes.
@@ -1760,97 +1689,6 @@ func formatStallDuration(d time.Duration) string {
 		return fmt.Sprintf("%dh", hours)
 	}
 	return fmt.Sprintf("%dh%dm", hours, minutes)
-}
-
-// latestNoteSignal returns the most recent note timestamp for a droplet, along
-// with a human-readable label. Returns a zero time if the droplet has no notes
-// or the lookup fails.
-func latestNoteSignal(client CisternClient, dropletID string) (time.Time, string) {
-	notes, err := client.GetNotes(dropletID)
-	if err != nil || len(notes) == 0 {
-		return time.Time{}, "none"
-	}
-	var latest time.Time
-	for _, n := range notes {
-		if n.CataractaeName == "scheduler" {
-			continue // exclude scheduler-generated notes to prevent self-clearing rate-limit loop
-		}
-		if n.CreatedAt.After(latest) {
-			latest = n.CreatedAt
-		}
-	}
-	if latest.IsZero() {
-		return time.Time{}, "none"
-	}
-	return latest, latest.Format(time.RFC3339)
-}
-
-// latestWorktreeSignal returns the most recent file mtime under the droplet's
-// worktree directory, along with a human-readable label. Returns a zero time if
-// the directory does not exist, cannot be read, or sandboxRoot is empty.
-func latestWorktreeSignal(sandboxRoot, repoName, dropletID string) (time.Time, string) {
-	if sandboxRoot == "" {
-		return time.Time{}, "none_no_sandbox_root"
-	}
-	dir := filepath.Join(sandboxRoot, repoName, dropletID)
-	var latest time.Time
-	_ = filepath.Walk(dir, func(_ string, info os.FileInfo, err error) error {
-		if err != nil {
-			return nil
-		}
-		if info.IsDir() {
-			return nil // directories change on every commit — only count files
-		}
-		if info.ModTime().After(latest) {
-			latest = info.ModTime()
-		}
-		return nil
-	})
-	if latest.IsZero() {
-		return time.Time{}, "none_no_files"
-	}
-	return latest, latest.Format(time.RFC3339)
-}
-
-// sessionLogSignal returns the mtime of the session output log for the given
-// assignee, along with a human-readable label. Returns a zero time if the
-// assignee is empty, logDir is empty, or the log file does not exist.
-func sessionLogSignal(logDir, repoName, assignee string) (time.Time, string) {
-	if logDir == "" || assignee == "" {
-		return time.Time{}, "none (no assignee)"
-	}
-	logPath := filepath.Join(logDir, repoName+"-"+assignee+".log")
-	info, err := os.Stat(logPath)
-	if err != nil {
-		return time.Time{}, "none (log not found)"
-	}
-	t := info.ModTime()
-	return t, t.Format(time.RFC3339)
-}
-
-// latestTime returns the most recent non-zero time among the provided values.
-// Returns a zero time if all inputs are zero.
-func latestTime(times ...time.Time) time.Time {
-	var latest time.Time
-	for _, t := range times {
-		if t.After(latest) {
-			latest = t
-		}
-	}
-	return latest
-}
-
-// resolveSessionLogRoot returns the effective session log directory.
-// Uses s.sessionLogRoot if set; otherwise derives ~/.cistern/session-logs.
-func (s *Castellarius) resolveSessionLogRoot() string {
-	if s.sessionLogRoot != "" {
-		return s.sessionLogRoot
-	}
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return ""
-	}
-	return filepath.Join(home, ".cistern", "session-logs")
 }
 
 // isTmuxAliveFn is a variable so tests can substitute a fake implementation

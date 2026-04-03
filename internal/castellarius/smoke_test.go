@@ -216,6 +216,10 @@ func (c *pipelineClient) FileDroplet(repo, title, description string, priority, 
 	return &cistern.Droplet{ID: "smoke-filed", Repo: repo}, nil
 }
 
+func (c *pipelineClient) Heartbeat(id string) error {
+	return nil
+}
+
 // resultToOutcome converts an Outcome Result to the DB outcome string
 // written by `ct droplet` commands.
 func resultToOutcome(r Result) string {

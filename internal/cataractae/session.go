@@ -433,7 +433,10 @@ EACH AQUEDUCT FLOWS THE DROPLET THROUGH ITS CATARACTAE.
    requirements, and all revision notes from prior cycles.
 2. Adopt the persona described in your role instructions below.
 3. Complete your work according to that persona.
-4. Signal your outcome before exiting. You MUST call one of:
+4. Every 60 seconds while working, call: ct droplet heartbeat <id>
+   This signals the scheduler that you are alive and making progress. Without
+   heartbeats, the stall detector may flag your session as stuck.
+5. Signal your outcome before exiting. You MUST call one of:
      ct droplet pass <id> --notes "..."
      ct droplet recirculate <id> --notes "..."
      ct droplet pool <id> --notes "..."

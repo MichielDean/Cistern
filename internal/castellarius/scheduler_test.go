@@ -209,6 +209,17 @@ func (m *mockClient) FileDroplet(repo, title, description string, priority, comp
 	return d, nil
 }
 
+func (m *mockClient) Heartbeat(id string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	item, ok := m.items[id]
+	if !ok {
+		return fmt.Errorf("droplet not found: %s", id)
+	}
+	item.LastHeartbeatAt = time.Now()
+	return nil
+}
+
 func (m *mockClient) List(repo, status string) ([]*cistern.Droplet, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -2521,17 +2532,25 @@ func TestHeartbeatRepo_OrphanRecovery_SecondTick_ItemResetToOpenNotReprocessed(t
 	}
 }
 
-// TestHeartbeatRepo_Debounce_NoteSignalAdvances_ClearsDebounce verifies that
-// when the newest-note signal advances past the debounce time, the debounce
+// TestHeartbeatRepo_Debounce_HeartbeatSignalAdvances_ClearsDebounce verifies
+// that when the heartbeat timestamp advances past the debounce time, the debounce
 // entry is cleared and the next stall event re-triggers a note.
-func TestHeartbeatRepo_Debounce_NoteSignalAdvances_ClearsDebounce(t *testing.T) {
+func TestHeartbeatRepo_Debounce_HeartbeatSignalAdvances_ClearsDebounce(t *testing.T) {
 	client := newMockClient()
 
+	// Pre-set debounce entry (simulates a previous stall note).
+	debounceTime := time.Now().Add(-10 * time.Minute)
+
+	// Heartbeat newer than debounce but still older than the 1-minute threshold
+	// (so the droplet is still stalled).
+	advancedTime := debounceTime.Add(3 * time.Minute) // now - 7 min: stalled, but > debounce
+
 	item := &cistern.Droplet{
-		ID:                "stall-note-adv",
+		ID:                "stall-hb-adv",
 		CurrentCataractae: "implement",
 		Status:            "in_progress",
 		Assignee:          "",
+		LastHeartbeatAt:   advancedTime,
 	}
 	client.items[item.ID] = item
 
@@ -2542,19 +2561,9 @@ func TestHeartbeatRepo_Debounce_NoteSignalAdvances_ClearsDebounce(t *testing.T) 
 	clients := map[string]CisternClient{"test-repo": client}
 	runner := newMockRunner(client)
 	sched := NewFromParts(config, workflows, clients, runner)
-
-	// Pre-set debounce entry (simulates a previous stall note).
-	debounceTime := time.Now().Add(-10 * time.Minute)
 	sched.lastStallNoted[item.ID] = debounceTime
 
-	// Add a note whose timestamp is newer than the debounce entry but still
-	// older than the 1-minute threshold (so the droplet is still stalled).
-	advancedTime := debounceTime.Add(3 * time.Minute) // now - 7 min: stalled, but > debounce
-	client.notes[item.ID] = []cistern.CataractaeNote{
-		{CreatedAt: advancedTime},
-	}
-
-	// heartbeatRepo should clear the debounce (note signal > debounceTime) and
+	// heartbeatRepo should clear the debounce (heartbeat > debounceTime) and
 	// then detect stall again → write stall note + recovery note, reset item to open.
 	sched.heartbeatRepo(context.Background(), config.Repos[0])
 	if len(client.attached) != 2 {
@@ -2562,76 +2571,30 @@ func TestHeartbeatRepo_Debounce_NoteSignalAdvances_ClearsDebounce(t *testing.T) 
 	}
 }
 
-// TestHeartbeatRepo_Debounce_WorktreeSignalAdvances_ClearsDebounce verifies
-// that a newer worktree mtime clears the debounce and allows a new stall note.
-func TestHeartbeatRepo_Debounce_WorktreeSignalAdvances_ClearsDebounce(t *testing.T) {
-	sandboxRoot := t.TempDir()
-	client := newMockClient()
-
-	item := &cistern.Droplet{
-		ID:                "stall-wt-adv",
-		CurrentCataractae: "implement",
-		Status:            "in_progress",
-		Assignee:          "",
-	}
-	client.items[item.ID] = item
-
-	config := testConfig()
-	config.StallThresholdMinutes = 1
-
-	workflows := map[string]*aqueduct.Workflow{"test-repo": testWorkflow()}
-	clients := map[string]CisternClient{"test-repo": client}
-	runner := newMockRunner(client)
-	sched := NewFromParts(config, workflows, clients, runner,
-		WithSandboxRoot(sandboxRoot))
-
-	// Pre-set debounce entry.
-	debounceTime := time.Now().Add(-10 * time.Minute)
-	sched.lastStallNoted[item.ID] = debounceTime
-
-	// Create worktree dir with a file whose mtime is newer than debounceTime
-	// but still old enough to be stalled (3 min → 7 min ago > 1 min threshold).
-	worktreeDir := filepath.Join(sandboxRoot, "test-repo", item.ID)
-	if err := os.MkdirAll(worktreeDir, 0755); err != nil {
-		t.Fatal(err)
-	}
-	testFile := filepath.Join(worktreeDir, "main.go")
-	if err := os.WriteFile(testFile, []byte("package main"), 0644); err != nil {
-		t.Fatal(err)
-	}
-	fileMtime := debounceTime.Add(3 * time.Minute) // still stalled, but > debounce
-	if err := os.Chtimes(testFile, fileMtime, fileMtime); err != nil {
-		t.Fatal(err)
-	}
-
-	// Debounce should be cleared (worktree signal > debounceTime), droplet is
-	// still stalled → stall note + recovery note written, item reset to open.
-	sched.heartbeatRepo(context.Background(), config.Repos[0])
-	if len(client.attached) != 2 {
-		t.Errorf("expected 2 notes (stall + recovery) after worktree signal reset debounce, got %d", len(client.attached))
-	}
-}
-
-// TestHeartbeatRepo_Debounce_SessionLogSignalAdvances_ClearsDebounce verifies
-// that a newer session log mtime clears the debounce and allows a new stall note.
-func TestHeartbeatRepo_Debounce_SessionLogSignalAdvances_ClearsDebounce(t *testing.T) {
+// TestHeartbeatRepo_Debounce_HeartbeatSignalAdvances_ClearsDebounce_WithAssignee
+// verifies that when the heartbeat advances past the debounce time for a droplet
+// with an assignee, the debounce is cleared and a fresh stall note is written
+// (no respawn occurs — that is zombie detection's responsibility).
+func TestHeartbeatRepo_Debounce_HeartbeatSignalAdvances_ClearsDebounce_WithAssignee(t *testing.T) {
 	// Mock tmux as alive so liveness check passes through to stall detector.
 	orig := isTmuxAliveFn
 	isTmuxAliveFn = func(_ string) bool { return true }
 	t.Cleanup(func() { isTmuxAliveFn = orig })
-	// Mock agent as alive so the agent-dead zombie path is not triggered.
 	origAgent := isAgentAliveFn
 	isAgentAliveFn = func(_ string) bool { return true }
 	t.Cleanup(func() { isAgentAliveFn = origAgent })
 
-	logDir := t.TempDir()
 	client := newMockClient()
 
+	debounceTime := time.Now().Add(-10 * time.Minute)
+	advancedTime := debounceTime.Add(3 * time.Minute) // still stalled, but > debounce
+
 	item := &cistern.Droplet{
-		ID:                "stall-log-adv",
+		ID:                "stall-hb-adv-assignee",
 		CurrentCataractae: "implement",
 		Status:            "in_progress",
 		Assignee:          "alpha",
+		LastHeartbeatAt:   advancedTime,
 	}
 	client.items[item.ID] = item
 
@@ -2641,28 +2604,20 @@ func TestHeartbeatRepo_Debounce_SessionLogSignalAdvances_ClearsDebounce(t *testi
 	workflows := map[string]*aqueduct.Workflow{"test-repo": testWorkflow()}
 	clients := map[string]CisternClient{"test-repo": client}
 	runner := newMockRunner(client)
-	sched := NewFromParts(config, workflows, clients, runner,
-		WithSessionLogRoot(logDir))
-
-	// Pre-set debounce entry.
-	debounceTime := time.Now().Add(-10 * time.Minute)
+	sched := NewFromParts(config, workflows, clients, runner)
 	sched.lastStallNoted[item.ID] = debounceTime
 
-	// Create session log with mtime newer than debounce but still stalled.
-	logPath := filepath.Join(logDir, "test-repo-alpha.log")
-	if err := os.WriteFile(logPath, []byte("agent output"), 0644); err != nil {
-		t.Fatal(err)
-	}
-	logMtime := debounceTime.Add(3 * time.Minute) // still stalled, but > debounce
-	if err := os.Chtimes(logPath, logMtime, logMtime); err != nil {
-		t.Fatal(err)
-	}
-
-	// Debounce should be cleared (log signal > debounceTime), droplet is still
-	// stalled → new note written.
+	// Debounce should be cleared (heartbeat > debounceTime), droplet is still
+	// stalled → stall note written. No spawn (that is zombie detection's job).
 	sched.heartbeatRepo(context.Background(), config.Repos[0])
 	if len(client.attached) != 1 {
-		t.Errorf("expected 1 new stall note after session log signal reset debounce, got %d", len(client.attached))
+		t.Errorf("expected 1 stall note after heartbeat signal reset debounce, got %d", len(client.attached))
+	}
+	runner.mu.Lock()
+	calls := runner.calls
+	runner.mu.Unlock()
+	if len(calls) != 0 {
+		t.Errorf("expected no Spawn calls (stall detection does not respawn), got %d", len(calls))
 	}
 }
 
@@ -2671,16 +2626,16 @@ func TestHeartbeatRepo_Debounce_SessionLogSignalAdvances_ClearsDebounce(t *testi
 func TestHeartbeatRepo_StallThreshold_ExplicitMinutesRespected(t *testing.T) {
 	client := newMockClient()
 
-	// Droplet with note signal 2 minutes old.
+	// Droplet with heartbeat 2 minutes old.
 	twoMinAgo := time.Now().Add(-2 * time.Minute)
 	item := &cistern.Droplet{
 		ID:                "stall-thresh-explicit",
 		CurrentCataractae: "implement",
 		Status:            "in_progress",
 		Assignee:          "",
+		LastHeartbeatAt:   twoMinAgo,
 	}
 	client.items[item.ID] = item
-	client.notes[item.ID] = []cistern.CataractaeNote{{CreatedAt: twoMinAgo}}
 
 	config := testConfig()
 	config.StallThresholdMinutes = 1 // 2 min > 1 min → stalled
@@ -2693,26 +2648,26 @@ func TestHeartbeatRepo_StallThreshold_ExplicitMinutesRespected(t *testing.T) {
 	sched.heartbeatRepo(context.Background(), config.Repos[0])
 
 	if len(client.attached) != 2 {
-		t.Errorf("expected 2 notes (stall + recovery) with 1-min threshold and 2-min-old signals, got %d", len(client.attached))
+		t.Errorf("expected 2 notes (stall + recovery) with 1-min threshold and 2-min-old heartbeat, got %d", len(client.attached))
 	}
 }
 
 // TestHeartbeatRepo_StallThreshold_DefaultsTo45Minutes verifies that when
 // stall_threshold_minutes is absent or zero, the default threshold of 45
-// minutes is used and a droplet with signals only 2 minutes old is not stalled.
+// minutes is used and a droplet with a heartbeat only 2 minutes old is not stalled.
 func TestHeartbeatRepo_StallThreshold_DefaultsTo45Minutes(t *testing.T) {
 	client := newMockClient()
 
-	// Droplet with note signal 2 minutes old — well within the 45-min default.
+	// Droplet with heartbeat 2 minutes old — well within the 45-min default.
 	twoMinAgo := time.Now().Add(-2 * time.Minute)
 	item := &cistern.Droplet{
 		ID:                "stall-thresh-default",
 		CurrentCataractae: "implement",
 		Status:            "in_progress",
 		Assignee:          "",
+		LastHeartbeatAt:   twoMinAgo,
 	}
 	client.items[item.ID] = item
-	client.notes[item.ID] = []cistern.CataractaeNote{{CreatedAt: twoMinAgo}}
 
 	config := testConfig()
 	// StallThresholdMinutes deliberately left at zero → should default to 45 min.
@@ -2726,7 +2681,7 @@ func TestHeartbeatRepo_StallThreshold_DefaultsTo45Minutes(t *testing.T) {
 
 	// 2 min < 45 min → not stalled → no note written.
 	if len(client.attached) != 0 {
-		t.Errorf("expected 0 stall notes with default 45-min threshold and 2-min-old signals, got %d", len(client.attached))
+		t.Errorf("expected 0 stall notes with default 45-min threshold and 2-min-old heartbeat, got %d", len(client.attached))
 	}
 }
 
@@ -2791,10 +2746,10 @@ func TestHeartbeatRepo_Debounce_AddNoteFailure_DoesNotArmDebounce(t *testing.T) 
 	}
 }
 
-// TestHeartbeatRepo_Debounce_SchedulerNote_DoesNotResetDebounce verifies that
-// a scheduler-generated note returned by GetNotes does not clear the debounce
-// entry, preventing the periodic re-triggering feedback loop.
-func TestHeartbeatRepo_Debounce_SchedulerNote_DoesNotResetDebounce(t *testing.T) {
+// TestHeartbeatRepo_Debounce_StaleHeartbeat_DoesNotClearDebounce verifies that
+// a heartbeat timestamp older than (or equal to) the debounce time does not
+// clear the debounce entry, preventing the periodic re-triggering feedback loop.
+func TestHeartbeatRepo_Debounce_StaleHeartbeat_DoesNotClearDebounce(t *testing.T) {
 	// Mock tmux/agent as alive to avoid zombie detection path.
 	orig := isTmuxAliveFn
 	isTmuxAliveFn = func(_ string) bool { return true }
@@ -2805,11 +2760,18 @@ func TestHeartbeatRepo_Debounce_SchedulerNote_DoesNotResetDebounce(t *testing.T)
 
 	client := newMockClient()
 
+	// Pre-arm debounce 10 minutes ago.
+	debounceTime := time.Now().Add(-10 * time.Minute)
+
+	// Heartbeat is OLDER than the debounce entry — must not clear it.
+	staleHeartbeat := debounceTime.Add(-2 * time.Minute) // 12 min ago
+
 	item := &cistern.Droplet{
-		ID:                "stall-scheduler-feedback",
+		ID:                "stall-stale-hb",
 		CurrentCataractae: "implement",
 		Status:            "in_progress",
-		Assignee:          "alpha", // Set assignee so orphan recovery doesn't fire
+		Assignee:          "alpha", // assignee so orphan recovery doesn't fire
+		LastHeartbeatAt:   staleHeartbeat,
 	}
 	client.items[item.ID] = item
 
@@ -2820,24 +2782,13 @@ func TestHeartbeatRepo_Debounce_SchedulerNote_DoesNotResetDebounce(t *testing.T)
 	clients := map[string]CisternClient{"test-repo": client}
 	runner := newMockRunner(client)
 	sched := NewFromParts(config, workflows, clients, runner)
-
-	// Pre-arm debounce 10 minutes ago.
-	debounceTime := time.Now().Add(-10 * time.Minute)
 	sched.lastStallNoted[item.ID] = debounceTime
 
-	// Inject a scheduler-generated note whose timestamp is newer than the
-	// debounce entry but still older than the threshold (simulates the stall
-	// note written on the previous tick being fed back through GetNotes).
-	schedulerNoteTime := debounceTime.Add(3 * time.Minute) // 7 min ago — stalled, > debounce
-	client.notes[item.ID] = []cistern.CataractaeNote{
-		{CataractaeName: "scheduler", CreatedAt: schedulerNoteTime},
-	}
-
-	// heartbeatRepo must filter out the scheduler note, leave debounce intact,
-	// and write no new stall note.
+	// Stale heartbeat must NOT clear debounce → no new stall note written
+	// (debounce rate-limits to one note per stallNoteInterval).
 	sched.heartbeatRepo(context.Background(), config.Repos[0])
 	if len(client.attached) != 0 {
-		t.Errorf("expected no new stall note (scheduler note must be filtered from signal), got %d", len(client.attached))
+		t.Errorf("expected no new stall note (stale heartbeat must not clear debounce), got %d", len(client.attached))
 	}
 }
 
@@ -2870,16 +2821,11 @@ func TestHeartbeatRepo_StaleDebounce_PrunedWhenDropletNoLongerInProgress(t *test
 	}
 }
 
-// TestHeartbeatRepo_StallWithAssignee_SpawnsSession verifies that when a stall
-// is detected and the droplet has an assignee, runner.Spawn is called so the
-// session can resume. session.Spawn() internally checks the .current-stage
-// marker and uses --continue when the stage matches (or spawns fresh when it
-// doesn't), so the heartbeat just needs to call Spawn unconditionally.
-//
-// This covers both acceptance paths:
-//   - same stage → session.Spawn selects --continue
-//   - stage changed or no marker → session.Spawn spawns fresh
-func TestHeartbeatRepo_StallWithAssignee_SpawnsSession(t *testing.T) {
+// TestHeartbeatRepo_StallWithAssignee_WritesNoteNoRespawn verifies that when a
+// stall is detected and the droplet has an assignee, a stall note is written but
+// runner.Spawn is NOT called. Stall detection no longer auto-respawns: agents
+// emitting heartbeats are alive, and dead agents are handled by zombie detection.
+func TestHeartbeatRepo_StallWithAssignee_WritesNoteNoRespawn(t *testing.T) {
 	// Mock tmux as alive so liveness check passes through to stall detector.
 	orig := isTmuxAliveFn
 	isTmuxAliveFn = func(_ string) bool { return true }
@@ -2893,7 +2839,7 @@ func TestHeartbeatRepo_StallWithAssignee_SpawnsSession(t *testing.T) {
 	runner := newMockRunner(client)
 
 	item := &cistern.Droplet{
-		ID:                "stall-respawn",
+		ID:                "stall-no-respawn",
 		CurrentCataractae: "implement",
 		Status:            "in_progress",
 		Assignee:          "alpha",
@@ -2909,32 +2855,23 @@ func TestHeartbeatRepo_StallWithAssignee_SpawnsSession(t *testing.T) {
 
 	sched.heartbeatRepo(context.Background(), config.Repos[0])
 
-	// Stall note must still be written.
+	// Stall note must be written.
 	if len(client.attached) != 1 {
 		t.Fatalf("expected 1 stall note, got %d", len(client.attached))
 	}
+	if !strings.HasPrefix(client.attached[0].notes, stallNotePrefix) {
+		t.Errorf("stall note missing prefix %q; got: %s", stallNotePrefix, client.attached[0].notes)
+	}
 
-	// Spawn must have been called exactly once.
+	// Spawn must NOT have been called — stall detection does not respawn.
 	runner.mu.Lock()
 	calls := runner.calls
 	runner.mu.Unlock()
-	if len(calls) != 1 {
-		t.Fatalf("expected runner.Spawn called once, got %d calls", len(calls))
+	if len(calls) != 0 {
+		t.Fatalf("expected runner.Spawn NOT called, got %d calls", len(calls))
 	}
 
-	// Spawn request must reference the correct item and step.
-	req := calls[0]
-	if req.Item.ID != item.ID {
-		t.Errorf("spawn req item ID = %q, want %q", req.Item.ID, item.ID)
-	}
-	if req.Step.Name != "implement" {
-		t.Errorf("spawn req step = %q, want %q", req.Step.Name, "implement")
-	}
-	if req.AqueductName != "alpha" {
-		t.Errorf("spawn req aqueduct = %q, want %q", req.AqueductName, "alpha")
-	}
-
-	// Status and assignee must be unchanged — no client.Assign was called.
+	// Status and assignee must be unchanged.
 	if item.Status != "in_progress" {
 		t.Errorf("item status = %q, want in_progress", item.Status)
 	}
@@ -3060,25 +2997,24 @@ func TestHeartbeatRepo_OrphanRecovery_AssignFailure_ClearsDebounce(t *testing.T)
 	}
 }
 
-// TestHeartbeatRepo_SpawnFailure_ClearsDebounce verifies that when respawnStalledDroplet
-// returns an error (Spawn fails), the debounce entry is deleted so the next heartbeat
-// re-detects the stall and retries the spawn.
-func TestHeartbeatRepo_SpawnFailure_ClearsDebounce(t *testing.T) {
+// TestHeartbeatRepo_StallNote_RateLimited_ThenHeartbeatResetsDebounce verifies
+// that after a stall note is written (debounce armed), a fresh heartbeat that
+// advances past the debounce time clears the debounce and allows a new note on
+// the next stall detection cycle.
+func TestHeartbeatRepo_StallNote_RateLimited_ThenHeartbeatResetsDebounce(t *testing.T) {
 	// Mock tmux as alive so liveness check passes through to stall detector.
 	orig := isTmuxAliveFn
 	isTmuxAliveFn = func(_ string) bool { return true }
 	t.Cleanup(func() { isTmuxAliveFn = orig })
-	// Mock agent as alive so the agent-dead zombie path is not triggered.
 	origAgent := isAgentAliveFn
 	isAgentAliveFn = func(_ string) bool { return true }
 	t.Cleanup(func() { isAgentAliveFn = origAgent })
 
 	client := newMockClient()
-	runner := newMockRunner(client)
-	runner.err = fmt.Errorf("tmux spawn failed")
+	runner := newMockRunner(nil) // nil client: Spawn doesn't write outcomes
 
 	item := &cistern.Droplet{
-		ID:                "stall-spawn-fail",
+		ID:                "stall-debounce-reset",
 		CurrentCataractae: "implement",
 		Status:            "in_progress",
 		Assignee:          "alpha",
@@ -3092,18 +3028,139 @@ func TestHeartbeatRepo_SpawnFailure_ClearsDebounce(t *testing.T) {
 	clients := map[string]CisternClient{"test-repo": client}
 	sched := NewFromParts(config, workflows, clients, runner)
 
-	// First tick: stalled → note written → Spawn fails → debounce must be cleared.
+	// First tick: stalled (no heartbeat) → stall note written, debounce armed.
 	sched.heartbeatRepo(context.Background(), config.Repos[0])
-
 	if len(client.attached) != 1 {
-		t.Fatalf("expected 1 stall note, got %d", len(client.attached))
+		t.Fatalf("expected 1 stall note on first tick, got %d", len(client.attached))
+	}
+	debounced, ok := sched.lastStallNoted[item.ID]
+	if !ok {
+		t.Fatal("expected debounce to be armed after successful stall note")
 	}
 
-	// Second tick: stall re-detected → second note written → Spawn called again.
+	// Second tick: debounce still armed → no second note written.
+	sched.heartbeatRepo(context.Background(), config.Repos[0])
+	if len(client.attached) != 1 {
+		t.Errorf("expected debounce to suppress second note, got %d total notes", len(client.attached))
+	}
+
+	// Agent resumes: heartbeat advances past debounce time.
+	// Set heartbeat to a recent time that is also AFTER the debounce timestamp.
+	item.LastHeartbeatAt = debounced.Add(time.Second) // after debounce → clears it on next tick
+	// Also make the heartbeat recent enough to not be stalled (< threshold = 1min).
+	// Since debounced was set just now, debounced + 1s is also "just now" → not stalled.
+
+	// Third tick: heartbeat > debounce time → debounce cleared. Heartbeat is
+	// recent (< 1min threshold) so agent is NOT stalled → no new note written.
+	sched.heartbeatRepo(context.Background(), config.Repos[0])
+	if len(client.attached) != 1 {
+		t.Errorf("expected no new note when agent heartbeating, got %d total notes", len(client.attached))
+	}
+	// Debounce must be cleared since heartbeat > debounceTime.
+	if _, ok := sched.lastStallNoted[item.ID]; ok {
+		t.Error("expected debounce cleared after heartbeat advanced past it")
+	}
+}
+
+// --- heartbeat stall detection integration tests ---
+
+// TestHeartbeatRepo_AgentEmittingHeartbeat_NotStalled verifies that an agent
+// actively emitting heartbeats (heartbeat < threshold) is not considered stalled,
+// even if it has been running for a long time without commits or an outcome.
+func TestHeartbeatRepo_AgentEmittingHeartbeat_NotStalled(t *testing.T) {
+	// Mock tmux/agent as alive to avoid zombie detection path.
+	orig := isTmuxAliveFn
+	isTmuxAliveFn = func(_ string) bool { return true }
+	t.Cleanup(func() { isTmuxAliveFn = orig })
+	origAgent := isAgentAliveFn
+	isAgentAliveFn = func(_ string) bool { return true }
+	t.Cleanup(func() { isAgentAliveFn = origAgent })
+
+	client := newMockClient()
+	runner := newMockRunner(client)
+
+	// Heartbeat 30s ago — well within the 1-minute threshold.
+	item := &cistern.Droplet{
+		ID:                "hb-alive",
+		CurrentCataractae: "implement",
+		Status:            "in_progress",
+		Assignee:          "alpha",
+		LastHeartbeatAt:   time.Now().Add(-30 * time.Second),
+	}
+	client.items[item.ID] = item
+
+	config := testConfig()
+	config.StallThresholdMinutes = 1
+
+	workflows := map[string]*aqueduct.Workflow{"test-repo": testWorkflow()}
+	clients := map[string]CisternClient{"test-repo": client}
+	sched := NewFromParts(config, workflows, clients, runner)
+
 	sched.heartbeatRepo(context.Background(), config.Repos[0])
 
-	if len(client.attached) != 2 {
-		t.Errorf("expected 2 stall notes after retry tick, got %d", len(client.attached))
+	// Agent is heartbeating → not stalled → no note written, no spawn.
+	if len(client.attached) != 0 {
+		t.Errorf("expected no stall notes for heartbeating agent, got %d", len(client.attached))
+	}
+	runner.mu.Lock()
+	calls := runner.calls
+	runner.mu.Unlock()
+	if len(calls) != 0 {
+		t.Errorf("expected no Spawn calls for heartbeating agent, got %d", len(calls))
+	}
+}
+
+// TestHeartbeatRepo_AgentNotEmittingHeartbeat_Stalled verifies that an agent
+// that has not emitted a heartbeat for longer than the stall threshold is
+// detected as stalled and an escalation note is written. No auto-respawn occurs.
+func TestHeartbeatRepo_AgentNotEmittingHeartbeat_Stalled(t *testing.T) {
+	// Mock tmux/agent as alive to avoid zombie detection path.
+	orig := isTmuxAliveFn
+	isTmuxAliveFn = func(_ string) bool { return true }
+	t.Cleanup(func() { isTmuxAliveFn = orig })
+	origAgent := isAgentAliveFn
+	isAgentAliveFn = func(_ string) bool { return true }
+	t.Cleanup(func() { isAgentAliveFn = origAgent })
+
+	client := newMockClient()
+	runner := newMockRunner(nil) // nil client: Spawn must not be called
+
+	// Heartbeat 90s ago — older than the 1-minute threshold.
+	item := &cistern.Droplet{
+		ID:                "hb-stalled",
+		CurrentCataractae: "implement",
+		Status:            "in_progress",
+		Assignee:          "alpha",
+		LastHeartbeatAt:   time.Now().Add(-90 * time.Second),
+	}
+	client.items[item.ID] = item
+
+	config := testConfig()
+	config.StallThresholdMinutes = 1
+
+	workflows := map[string]*aqueduct.Workflow{"test-repo": testWorkflow()}
+	clients := map[string]CisternClient{"test-repo": client}
+	sched := NewFromParts(config, workflows, clients, runner)
+
+	sched.heartbeatRepo(context.Background(), config.Repos[0])
+
+	// Stall detected → escalation note written.
+	if len(client.attached) != 1 {
+		t.Fatalf("expected 1 stall note for non-heartbeating agent, got %d", len(client.attached))
+	}
+	if !strings.HasPrefix(client.attached[0].notes, stallNotePrefix) {
+		t.Errorf("stall note missing prefix %q; got: %s", stallNotePrefix, client.attached[0].notes)
+	}
+	if !strings.Contains(client.attached[0].notes, "heartbeat=") {
+		t.Errorf("stall note missing heartbeat field; got: %s", client.attached[0].notes)
+	}
+
+	// No auto-respawn — stall detection does not respawn; that is zombie detection's job.
+	runner.mu.Lock()
+	calls := runner.calls
+	runner.mu.Unlock()
+	if len(calls) != 0 {
+		t.Errorf("expected no Spawn calls (stall detection must not auto-respawn), got %d", len(calls))
 	}
 }
 
@@ -3260,11 +3317,6 @@ func TestHeartbeatRepo_TmuxAliveAgentDead_RecentDispatch_SkipsZombieHandling(t *
 		return nil
 	}
 
-	// Provide a recent note so stall detection does not fire.
-	client.notes[item.ID] = []cistern.CataractaeNote{
-		{CreatedAt: time.Now()},
-	}
-
 	sched.heartbeatRepo(context.Background(), config.Repos[0])
 
 	// Age guard must have suppressed zombie handling — session must not be killed.
@@ -3316,10 +3368,8 @@ func TestHeartbeatRepo_TmuxAliveAgentAlive_SkipsZombieHandling(t *testing.T) {
 		return nil
 	}
 
-	// Provide a recent note so stall detection does not fire.
-	client.notes[item.ID] = []cistern.CataractaeNote{
-		{CreatedAt: time.Now()},
-	}
+	// Provide a recent heartbeat so stall detection does not fire.
+	item.LastHeartbeatAt = time.Now().Add(-30 * time.Second)
 
 	sched.heartbeatRepo(context.Background(), config.Repos[0])
 
@@ -3362,10 +3412,8 @@ func TestHeartbeatRepo_TmuxAliveAgentDead_NoAssignee_SkipsZombieCheck(t *testing
 	runner := newMockRunner(client)
 	sched := NewFromParts(config, workflows, clients, runner)
 
-	// Add a recent note so stall detection does not fire either.
-	client.notes[item.ID] = []cistern.CataractaeNote{
-		{CreatedAt: time.Now()},
-	}
+	// Provide a recent heartbeat so stall detection does not fire.
+	item.LastHeartbeatAt = time.Now().Add(-30 * time.Second)
 
 	sched.heartbeatRepo(context.Background(), config.Repos[0])
 

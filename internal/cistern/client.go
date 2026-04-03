@@ -54,6 +54,10 @@ type Droplet struct {
 	// Format: 'provider:key' (e.g. 'jira:DPF-456', 'linear:LIN-789').
 	// Empty string means no external reference (NULL in DB).
 	ExternalRef string `json:"external_ref,omitempty"`
+	// LastHeartbeatAt is the most recent time the agent called `ct droplet heartbeat`.
+	// Zero value means no heartbeat has been emitted yet. Used by the stall detector
+	// to distinguish alive-but-slow agents from genuinely stuck or dead ones.
+	LastHeartbeatAt time.Time `json:"last_heartbeat_at,omitempty"`
 
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
@@ -284,7 +288,7 @@ func (c *Client) GetReady(repo string) (*Droplet, error) {
 	defer tx.Rollback()
 
 	row := tx.QueryRow(
-		`SELECT id, repo, title, description, priority, complexity, status, assignee, current_cataractae, outcome, assigned_aqueduct, last_reviewed_commit, external_ref, created_at, updated_at, stage_dispatched_at
+		`SELECT id, repo, title, description, priority, complexity, status, assignee, current_cataractae, outcome, assigned_aqueduct, last_reviewed_commit, external_ref, last_heartbeat_at, created_at, updated_at, stage_dispatched_at
 		 FROM droplets d
 		 WHERE d.repo = ? COLLATE NOCASE AND d.status = 'open'
 		   AND NOT EXISTS (
@@ -299,11 +303,11 @@ func (c *Client) GetReady(repo string) (*Droplet, error) {
 
 	var droplet Droplet
 	var assignee, currentCataracta, outcome, assignedAqueduct, lastReviewedCommit, externalRef sql.NullString
-	var stageDispatchedAt sql.NullTime
+	var lastHeartbeatAt, stageDispatchedAt sql.NullTime
 	err = row.Scan(
 		&droplet.ID, &droplet.Repo, &droplet.Title, &droplet.Description,
 		&droplet.Priority, &droplet.Complexity, &droplet.Status, &assignee, &currentCataracta, &outcome, &assignedAqueduct, &lastReviewedCommit, &externalRef,
-		&droplet.CreatedAt, &droplet.UpdatedAt, &stageDispatchedAt,
+		&lastHeartbeatAt, &droplet.CreatedAt, &droplet.UpdatedAt, &stageDispatchedAt,
 	)
 	if err == sql.ErrNoRows {
 		return nil, nil
@@ -317,6 +321,9 @@ func (c *Client) GetReady(repo string) (*Droplet, error) {
 	droplet.AssignedAqueduct = assignedAqueduct.String
 	droplet.LastReviewedCommit = lastReviewedCommit.String
 	droplet.ExternalRef = externalRef.String
+	if lastHeartbeatAt.Valid {
+		droplet.LastHeartbeatAt = lastHeartbeatAt.Time
+	}
 	if stageDispatchedAt.Valid {
 		droplet.StageDispatchedAt = stageDispatchedAt.Time
 	}
@@ -350,7 +357,7 @@ func (c *Client) GetReadyForAqueduct(repo, aqueductName string) (*Droplet, error
 	defer tx.Rollback()
 
 	row := tx.QueryRow(
-		`SELECT id, repo, title, description, priority, complexity, status, assignee, current_cataractae, outcome, assigned_aqueduct, last_reviewed_commit, external_ref, created_at, updated_at, stage_dispatched_at
+		`SELECT id, repo, title, description, priority, complexity, status, assignee, current_cataractae, outcome, assigned_aqueduct, last_reviewed_commit, external_ref, last_heartbeat_at, created_at, updated_at, stage_dispatched_at
 		 FROM droplets d
 		 WHERE d.repo = ? COLLATE NOCASE AND d.status = 'open'
 		   AND (d.assigned_aqueduct = '' OR d.assigned_aqueduct IS NULL OR d.assigned_aqueduct = ?)
@@ -366,12 +373,12 @@ func (c *Client) GetReadyForAqueduct(repo, aqueductName string) (*Droplet, error
 
 	var droplet Droplet
 	var assignee, currentCataracta, outcome, assignedAqueduct, lastReviewedCommit, externalRef sql.NullString
-	var stageDispatchedAt sql.NullTime
+	var lastHeartbeatAt, stageDispatchedAt sql.NullTime
 	now := time.Now().UTC()
 	err = row.Scan(
 		&droplet.ID, &droplet.Repo, &droplet.Title, &droplet.Description,
 		&droplet.Priority, &droplet.Complexity, &droplet.Status, &assignee, &currentCataracta, &outcome, &assignedAqueduct, &lastReviewedCommit, &externalRef,
-		&droplet.CreatedAt, &droplet.UpdatedAt, &stageDispatchedAt,
+		&lastHeartbeatAt, &droplet.CreatedAt, &droplet.UpdatedAt, &stageDispatchedAt,
 	)
 	if err == sql.ErrNoRows {
 		return nil, nil
@@ -385,6 +392,9 @@ func (c *Client) GetReadyForAqueduct(repo, aqueductName string) (*Droplet, error
 	droplet.AssignedAqueduct = assignedAqueduct.String
 	droplet.LastReviewedCommit = lastReviewedCommit.String
 	droplet.ExternalRef = externalRef.String
+	if lastHeartbeatAt.Valid {
+		droplet.LastHeartbeatAt = lastHeartbeatAt.Time
+	}
 	if stageDispatchedAt.Valid {
 		droplet.StageDispatchedAt = stageDispatchedAt.Time
 	}
@@ -494,6 +504,22 @@ func (c *Client) SetExternalRef(id, ref string) error {
 	)
 	if err != nil {
 		return fmt.Errorf("cistern: set external_ref %s: %w", id, err)
+	}
+	return checkRowsAffected(res, id)
+}
+
+// Heartbeat records the current time as the agent's most recent activity
+// timestamp. Called by agents via `ct droplet heartbeat <id>` every 60 seconds
+// while working. The stall detector uses this timestamp to distinguish alive
+// (heartbeating) agents from genuinely stuck or dead ones.
+func (c *Client) Heartbeat(id string) error {
+	now := time.Now().UTC()
+	res, err := c.db.Exec(
+		`UPDATE droplets SET last_heartbeat_at = ? WHERE id = ?`,
+		now, id,
+	)
+	if err != nil {
+		return fmt.Errorf("cistern: heartbeat %s: %w", id, err)
 	}
 	return checkRowsAffected(res, id)
 }
@@ -721,7 +747,7 @@ func (c *Client) SetCataractae(id, cataractaeName string) error {
 // Get retrieves a single droplet by ID. Returns an error if not found.
 func (c *Client) Get(id string) (*Droplet, error) {
 	row := c.db.QueryRow(
-		`SELECT id, repo, title, description, priority, complexity, status, assignee, current_cataractae, outcome, assigned_aqueduct, last_reviewed_commit, external_ref, created_at, updated_at, stage_dispatched_at
+		`SELECT id, repo, title, description, priority, complexity, status, assignee, current_cataractae, outcome, assigned_aqueduct, last_reviewed_commit, external_ref, last_heartbeat_at, created_at, updated_at, stage_dispatched_at
 		 FROM droplets WHERE id = ?`,
 		id,
 	)
@@ -738,7 +764,7 @@ func (c *Client) Get(id string) (*Droplet, error) {
 // List returns droplets filtered by repo and/or status. Empty strings mean no filter.
 // Cancelled droplets are always excluded unless status is explicitly "cancelled".
 func (c *Client) List(repo, status string) ([]*Droplet, error) {
-	query := `SELECT id, repo, title, description, priority, complexity, status, assignee, current_cataractae, outcome, assigned_aqueduct, last_reviewed_commit, external_ref, created_at, updated_at, stage_dispatched_at
+	query := `SELECT id, repo, title, description, priority, complexity, status, assignee, current_cataractae, outcome, assigned_aqueduct, last_reviewed_commit, external_ref, last_heartbeat_at, created_at, updated_at, stage_dispatched_at
 		 FROM droplets WHERE 1=1`
 	var args []any
 	if repo != "" {
@@ -765,11 +791,11 @@ func (c *Client) List(repo, status string) ([]*Droplet, error) {
 	for rows.Next() {
 		var droplet Droplet
 		var assignee, currentCataracta, outcome, assignedAqueduct, lastReviewedCommit, externalRef sql.NullString
-		var stageDispatchedAt sql.NullTime
+		var lastHeartbeatAt, stageDispatchedAt sql.NullTime
 		if err := rows.Scan(
 			&droplet.ID, &droplet.Repo, &droplet.Title, &droplet.Description,
 			&droplet.Priority, &droplet.Complexity, &droplet.Status, &assignee, &currentCataracta, &outcome, &assignedAqueduct, &lastReviewedCommit, &externalRef,
-			&droplet.CreatedAt, &droplet.UpdatedAt, &stageDispatchedAt,
+			&lastHeartbeatAt, &droplet.CreatedAt, &droplet.UpdatedAt, &stageDispatchedAt,
 		); err != nil {
 			return nil, fmt.Errorf("cistern: scan droplet: %w", err)
 		}
@@ -779,6 +805,9 @@ func (c *Client) List(repo, status string) ([]*Droplet, error) {
 		droplet.AssignedAqueduct = assignedAqueduct.String
 		droplet.LastReviewedCommit = lastReviewedCommit.String
 		droplet.ExternalRef = externalRef.String
+		if lastHeartbeatAt.Valid {
+			droplet.LastHeartbeatAt = lastHeartbeatAt.Time
+		}
 		if stageDispatchedAt.Valid {
 			droplet.StageDispatchedAt = stageDispatchedAt.Time
 		}
@@ -792,7 +821,7 @@ func (c *Client) List(repo, status string) ([]*Droplet, error) {
 // (empty means all). priority is an exact match on priority (0 means all).
 // Results are ordered by priority ASC, created_at ASC.
 func (c *Client) Search(query, status string, priority int) ([]*Droplet, error) {
-	qry := `SELECT id, repo, title, description, priority, complexity, status, assignee, current_cataractae, outcome, assigned_aqueduct, last_reviewed_commit, external_ref, created_at, updated_at, stage_dispatched_at
+	qry := `SELECT id, repo, title, description, priority, complexity, status, assignee, current_cataractae, outcome, assigned_aqueduct, last_reviewed_commit, external_ref, last_heartbeat_at, created_at, updated_at, stage_dispatched_at
 		 FROM droplets WHERE 1=1`
 	var args []any
 	if query != "" {
@@ -823,11 +852,11 @@ func (c *Client) Search(query, status string, priority int) ([]*Droplet, error) 
 	for rows.Next() {
 		var droplet Droplet
 		var assignee, currentCataracta, outcome, assignedAqueduct, lastReviewedCommit, externalRef sql.NullString
-		var stageDispatchedAt sql.NullTime
+		var lastHeartbeatAt, stageDispatchedAt sql.NullTime
 		if err := rows.Scan(
 			&droplet.ID, &droplet.Repo, &droplet.Title, &droplet.Description,
 			&droplet.Priority, &droplet.Complexity, &droplet.Status, &assignee, &currentCataracta, &outcome, &assignedAqueduct, &lastReviewedCommit, &externalRef,
-			&droplet.CreatedAt, &droplet.UpdatedAt, &stageDispatchedAt,
+			&lastHeartbeatAt, &droplet.CreatedAt, &droplet.UpdatedAt, &stageDispatchedAt,
 		); err != nil {
 			return nil, fmt.Errorf("cistern: scan droplet: %w", err)
 		}
@@ -837,6 +866,9 @@ func (c *Client) Search(query, status string, priority int) ([]*Droplet, error) 
 		droplet.AssignedAqueduct = assignedAqueduct.String
 		droplet.LastReviewedCommit = lastReviewedCommit.String
 		droplet.ExternalRef = externalRef.String
+		if lastHeartbeatAt.Valid {
+			droplet.LastHeartbeatAt = lastHeartbeatAt.Time
+		}
 		if stageDispatchedAt.Valid {
 			droplet.StageDispatchedAt = stageDispatchedAt.Time
 		}
@@ -849,11 +881,11 @@ func (c *Client) Search(query, status string, priority int) ([]*Droplet, error) 
 func scanDroplet(row *sql.Row) (*Droplet, error) {
 	var droplet Droplet
 	var assignee, currentCataracta, outcome, assignedAqueduct, lastReviewedCommit, externalRef sql.NullString
-	var stageDispatchedAt sql.NullTime
+	var lastHeartbeatAt, stageDispatchedAt sql.NullTime
 	err := row.Scan(
 		&droplet.ID, &droplet.Repo, &droplet.Title, &droplet.Description,
 		&droplet.Priority, &droplet.Complexity, &droplet.Status, &assignee, &currentCataracta, &outcome, &assignedAqueduct, &lastReviewedCommit, &externalRef,
-		&droplet.CreatedAt, &droplet.UpdatedAt, &stageDispatchedAt,
+		&lastHeartbeatAt, &droplet.CreatedAt, &droplet.UpdatedAt, &stageDispatchedAt,
 	)
 	if err == sql.ErrNoRows {
 		return nil, nil
@@ -867,6 +899,9 @@ func scanDroplet(row *sql.Row) (*Droplet, error) {
 	droplet.AssignedAqueduct = assignedAqueduct.String
 	droplet.LastReviewedCommit = lastReviewedCommit.String
 	droplet.ExternalRef = externalRef.String
+	if lastHeartbeatAt.Valid {
+		droplet.LastHeartbeatAt = lastHeartbeatAt.Time
+	}
 	if stageDispatchedAt.Valid {
 		droplet.StageDispatchedAt = stageDispatchedAt.Time
 	}

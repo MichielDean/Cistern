@@ -361,12 +361,10 @@ func TestHeartbeatRepo_ActiveDroplet_NotStalled(t *testing.T) {
 		Status:            "in_progress",
 		Assignee:          "alpha",
 		Outcome:           "",
+		// Recent heartbeat: 1 minute ago, well within the 45-minute default threshold.
+		LastHeartbeatAt: time.Now().Add(-1 * time.Minute),
 	}
 	client.items[item.ID] = item
-	// Recent note signal: 1 minute ago, well within the 45-minute default threshold.
-	client.notes[item.ID] = []cistern.CataractaeNote{
-		{CreatedAt: time.Now().Add(-1 * time.Minute)},
-	}
 
 	sched := testScheduler(client, newMockRunner(client))
 	sched.heartbeatRepo(context.Background(), sched.config.Repos[0])
