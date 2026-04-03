@@ -1497,6 +1497,17 @@ func TestDropletHeartbeat(t *testing.T) {
 	}
 }
 
+func TestDropletHeartbeat_NotFound(t *testing.T) {
+	dir := t.TempDir()
+	db := filepath.Join(dir, "test.db")
+	t.Setenv("CT_DB", db)
+
+	err := dropletHeartbeatCmd.RunE(dropletHeartbeatCmd, []string{"nonexistent"})
+	if err == nil {
+		t.Fatal("expected error for nonexistent droplet")
+	}
+}
+
 func TestRootCmd_CompletionCommand_IsHiddenFromHelp(t *testing.T) {
 	if !rootCmd.CompletionOptions.HiddenDefaultCmd {
 		t.Error("rootCmd.CompletionOptions.HiddenDefaultCmd must be true to hide 'completion' from help output")
