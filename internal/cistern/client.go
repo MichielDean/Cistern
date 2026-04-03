@@ -288,7 +288,7 @@ func (c *Client) GetReady(repo string) (*Droplet, error) {
 	defer tx.Rollback()
 
 	row := tx.QueryRow(
-		`SELECT id, repo, title, description, priority, complexity, status, assignee, current_cataractae, outcome, assigned_aqueduct, last_reviewed_commit, external_ref, created_at, updated_at, stage_dispatched_at
+		`SELECT id, repo, title, description, priority, complexity, status, assignee, current_cataractae, outcome, assigned_aqueduct, last_reviewed_commit, external_ref, last_heartbeat_at, created_at, updated_at, stage_dispatched_at
 		 FROM droplets d
 		 WHERE d.repo = ? COLLATE NOCASE AND d.status = 'open'
 		   AND NOT EXISTS (
@@ -354,7 +354,7 @@ func (c *Client) GetReadyForAqueduct(repo, aqueductName string) (*Droplet, error
 	defer tx.Rollback()
 
 	row := tx.QueryRow(
-		`SELECT id, repo, title, description, priority, complexity, status, assignee, current_cataractae, outcome, assigned_aqueduct, last_reviewed_commit, external_ref, created_at, updated_at, stage_dispatched_at
+		`SELECT id, repo, title, description, priority, complexity, status, assignee, current_cataractae, outcome, assigned_aqueduct, last_reviewed_commit, external_ref, last_heartbeat_at, created_at, updated_at, stage_dispatched_at
 		 FROM droplets d
 		 WHERE d.repo = ? COLLATE NOCASE AND d.status = 'open'
 		   AND (d.assigned_aqueduct = '' OR d.assigned_aqueduct IS NULL OR d.assigned_aqueduct = ?)
@@ -741,7 +741,7 @@ func (c *Client) SetCataractae(id, cataractaeName string) error {
 // Get retrieves a single droplet by ID. Returns an error if not found.
 func (c *Client) Get(id string) (*Droplet, error) {
 	row := c.db.QueryRow(
-		`SELECT id, repo, title, description, priority, complexity, status, assignee, current_cataractae, outcome, assigned_aqueduct, last_reviewed_commit, external_ref, created_at, updated_at, stage_dispatched_at
+		`SELECT id, repo, title, description, priority, complexity, status, assignee, current_cataractae, outcome, assigned_aqueduct, last_reviewed_commit, external_ref, last_heartbeat_at, created_at, updated_at, stage_dispatched_at
 		 FROM droplets WHERE id = ?`,
 		id,
 	)
@@ -758,7 +758,7 @@ func (c *Client) Get(id string) (*Droplet, error) {
 // List returns droplets filtered by repo and/or status. Empty strings mean no filter.
 // Cancelled droplets are always excluded unless status is explicitly "cancelled".
 func (c *Client) List(repo, status string) ([]*Droplet, error) {
-	query := `SELECT id, repo, title, description, priority, complexity, status, assignee, current_cataractae, outcome, assigned_aqueduct, last_reviewed_commit, external_ref, created_at, updated_at, stage_dispatched_at
+	query := `SELECT id, repo, title, description, priority, complexity, status, assignee, current_cataractae, outcome, assigned_aqueduct, last_reviewed_commit, external_ref, last_heartbeat_at, created_at, updated_at, stage_dispatched_at
 		 FROM droplets WHERE 1=1`
 	var args []any
 	if repo != "" {
@@ -785,11 +785,11 @@ func (c *Client) List(repo, status string) ([]*Droplet, error) {
 	for rows.Next() {
 		var droplet Droplet
 		var assignee, currentCataracta, outcome, assignedAqueduct, lastReviewedCommit, externalRef sql.NullString
-		var stageDispatchedAt sql.NullTime
+		var lastHeartbeatAt, stageDispatchedAt sql.NullTime
 		if err := rows.Scan(
 			&droplet.ID, &droplet.Repo, &droplet.Title, &droplet.Description,
 			&droplet.Priority, &droplet.Complexity, &droplet.Status, &assignee, &currentCataracta, &outcome, &assignedAqueduct, &lastReviewedCommit, &externalRef,
-			&droplet.CreatedAt, &droplet.UpdatedAt, &stageDispatchedAt,
+			&lastHeartbeatAt, &droplet.CreatedAt, &droplet.UpdatedAt, &stageDispatchedAt,
 		); err != nil {
 			return nil, fmt.Errorf("cistern: scan droplet: %w", err)
 		}
@@ -799,6 +799,9 @@ func (c *Client) List(repo, status string) ([]*Droplet, error) {
 		droplet.AssignedAqueduct = assignedAqueduct.String
 		droplet.LastReviewedCommit = lastReviewedCommit.String
 		droplet.ExternalRef = externalRef.String
+		if lastHeartbeatAt.Valid {
+			droplet.LastHeartbeatAt = lastHeartbeatAt.Time
+		}
 		if stageDispatchedAt.Valid {
 			droplet.StageDispatchedAt = stageDispatchedAt.Time
 		}
@@ -812,7 +815,7 @@ func (c *Client) List(repo, status string) ([]*Droplet, error) {
 // (empty means all). priority is an exact match on priority (0 means all).
 // Results are ordered by priority ASC, created_at ASC.
 func (c *Client) Search(query, status string, priority int) ([]*Droplet, error) {
-	qry := `SELECT id, repo, title, description, priority, complexity, status, assignee, current_cataractae, outcome, assigned_aqueduct, last_reviewed_commit, external_ref, created_at, updated_at, stage_dispatched_at
+	qry := `SELECT id, repo, title, description, priority, complexity, status, assignee, current_cataractae, outcome, assigned_aqueduct, last_reviewed_commit, external_ref, last_heartbeat_at, created_at, updated_at, stage_dispatched_at
 		 FROM droplets WHERE 1=1`
 	var args []any
 	if query != "" {
@@ -843,11 +846,11 @@ func (c *Client) Search(query, status string, priority int) ([]*Droplet, error) 
 	for rows.Next() {
 		var droplet Droplet
 		var assignee, currentCataracta, outcome, assignedAqueduct, lastReviewedCommit, externalRef sql.NullString
-		var stageDispatchedAt sql.NullTime
+		var lastHeartbeatAt, stageDispatchedAt sql.NullTime
 		if err := rows.Scan(
 			&droplet.ID, &droplet.Repo, &droplet.Title, &droplet.Description,
 			&droplet.Priority, &droplet.Complexity, &droplet.Status, &assignee, &currentCataracta, &outcome, &assignedAqueduct, &lastReviewedCommit, &externalRef,
-			&droplet.CreatedAt, &droplet.UpdatedAt, &stageDispatchedAt,
+			&lastHeartbeatAt, &droplet.CreatedAt, &droplet.UpdatedAt, &stageDispatchedAt,
 		); err != nil {
 			return nil, fmt.Errorf("cistern: scan droplet: %w", err)
 		}
@@ -857,6 +860,9 @@ func (c *Client) Search(query, status string, priority int) ([]*Droplet, error) 
 		droplet.AssignedAqueduct = assignedAqueduct.String
 		droplet.LastReviewedCommit = lastReviewedCommit.String
 		droplet.ExternalRef = externalRef.String
+		if lastHeartbeatAt.Valid {
+			droplet.LastHeartbeatAt = lastHeartbeatAt.Time
+		}
 		if stageDispatchedAt.Valid {
 			droplet.StageDispatchedAt = stageDispatchedAt.Time
 		}
