@@ -2995,9 +2995,6 @@ func TestHeartbeatRepo_OrphanRecovery_AssignFailure_ClearsDebounce(t *testing.T)
 	}
 }
 
-// TestHeartbeatRepo_SpawnFailure_ClearsDebounce verifies that when respawnStalledDroplet
-// returns an error (Spawn fails), the debounce entry is deleted so the next heartbeat
-// re-detects the stall and retries the spawn.
 // TestHeartbeatRepo_StallNote_RateLimited_ThenHeartbeatResetsDebounce verifies
 // that after a stall note is written (debounce armed), a fresh heartbeat that
 // advances past the debounce time clears the debounce and allows a new note on

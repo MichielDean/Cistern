@@ -55,10 +55,19 @@ func TestHeartbeat_StallDetected_WhenNoSignals(t *testing.T) {
 	}
 }
 
-// TestHeartbeat_NoStallNote_WhenRecentNoteSignal verifies that the heartbeat
-// does not write a stall note when the newest-note signal is within the
+// TestHeartbeat_NoStallNote_WhenRecentHeartbeat verifies that the heartbeat
+// does not write a stall note when the agent's LastHeartbeatAt is within the
 // 45-minute default threshold.
-func TestHeartbeat_NoStallNote_WhenRecentNoteSignal(t *testing.T) {
+func TestHeartbeat_NoStallNote_WhenRecentHeartbeat(t *testing.T) {
+	// Mock tmux/agent as alive so zombie detection is bypassed and stall
+	// detection runs on the heartbeat timestamp.
+	orig := isTmuxAliveFn
+	isTmuxAliveFn = func(_ string) bool { return true }
+	t.Cleanup(func() { isTmuxAliveFn = orig })
+	origAgent := isAgentAliveFn
+	isAgentAliveFn = func(_ string) bool { return true }
+	t.Cleanup(func() { isAgentAliveFn = origAgent })
+
 	buf := &bytes.Buffer{}
 	client := newMockClient()
 	sched := newTestScheduler(buf, client)
@@ -69,18 +78,16 @@ func TestHeartbeat_NoStallNote_WhenRecentNoteSignal(t *testing.T) {
 		Status:            "in_progress",
 		Assignee:          "alpha",
 		CurrentCataractae: "implement",
+		// Recent heartbeat: 5 seconds ago — well within the 45-minute default threshold.
+		LastHeartbeatAt: time.Now().Add(-5 * time.Second),
 	}
 	client.items["fresh-dispatch"] = item
-	// Recent note signal: 5 seconds ago — well within the 45-minute default threshold.
-	client.notes["fresh-dispatch"] = []cistern.CataractaeNote{
-		{CreatedAt: time.Now().Add(-5 * time.Second)},
-	}
 
 	sched.heartbeatRepo(context.Background(), aqueduct.RepoConfig{Name: "repo"})
 
 	log := buf.String()
 	if strings.Contains(log, "stall detected") {
-		t.Errorf("heartbeat flagged a recently-active droplet as stalled; log:\n%s", log)
+		t.Errorf("heartbeat flagged a recently-heartbeating droplet as stalled; log:\n%s", log)
 	}
 }
 
