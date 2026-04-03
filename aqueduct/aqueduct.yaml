@@ -41,7 +41,7 @@ cataractae:
   - name: review
     type: agent
     identity: reviewer
-    model: sonnet
+    model: opus          # adversarial multi-hop reasoning across full codebase — Opus required; Sonnet misses 6-hop inference chains
     context: full_codebase
     skills:
       - name: cistern-droplet-state
@@ -71,7 +71,7 @@ cataractae:
   - name: security-review
     type: agent
     identity: security
-    model: sonnet
+    model: opus          # attack chain tracing requires strong working memory — Opus required
     context: full_codebase
     skills:
       - name: cistern-droplet-state
