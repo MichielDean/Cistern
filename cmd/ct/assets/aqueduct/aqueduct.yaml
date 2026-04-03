@@ -115,6 +115,7 @@ cataractae:
   - name: delivery
     type: agent
     identity: delivery
+    model: sonnet       # delivery failure modes (merge conflicts, CI failures, rebase issues) require real reasoning — Sonnet required for edge cases
     skills:
       - name: cistern-github
         path: skills/cistern-github/SKILL.md

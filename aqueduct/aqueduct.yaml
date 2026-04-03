@@ -98,7 +98,7 @@ cataractae:
   - name: delivery
     type: agent
     identity: delivery
-    model: haiku        # scripted PR creation checklist — mechanical, no reasoning required
+    model: sonnet       # delivery failure modes (merge conflicts, CI failures, rebase issues) require real reasoning — Sonnet required for edge cases
     skills:
       - name: cistern-github
       - name: cistern-droplet-state
