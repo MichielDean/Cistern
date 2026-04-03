@@ -1564,13 +1564,7 @@ func (s *Castellarius) heartbeatRepo(ctx context.Context, repo aqueduct.RepoConf
 			delete(s.lastStallNoted, item.ID)
 		}
 
-		// Agent is actively heartbeating — alive and working, not stalled.
-		// Do not trigger stall detection regardless of how long it has been running.
-		if !item.LastHeartbeatAt.IsZero() && time.Since(item.LastHeartbeatAt) <= threshold {
-			continue
-		}
-
-		// Not stalled (fallback path: UpdatedAt is recent enough).
+		// Not stalled: heartbeat (or UpdatedAt fallback) is within the threshold.
 		if time.Since(stallSig) <= threshold {
 			continue
 		}
