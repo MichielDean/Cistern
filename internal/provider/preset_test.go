@@ -7,9 +7,9 @@ import (
 	"testing"
 )
 
-// TestBuiltins_ReturnsExpectedPresetNames verifies the five built-in presets are present.
+// TestBuiltins_ReturnsExpectedPresetNames verifies the built-in presets are present.
 func TestBuiltins_ReturnsExpectedPresetNames(t *testing.T) {
-	want := []string{"claude", "codex", "gemini", "copilot", "opencode"}
+	want := []string{"claude", "ollama-claude", "codex", "gemini", "copilot", "opencode"}
 	got := Builtins()
 
 	if len(got) != len(want) {
