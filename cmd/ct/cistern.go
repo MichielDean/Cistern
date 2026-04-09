@@ -1028,13 +1028,6 @@ var dropletPassCmd = &cobra.Command{
 		if err := c.SetOutcome(args[0], "pass"); err != nil {
 			return err
 		}
-		// When not in_progress, Castellarius will never observe this droplet.
-		// Directly mark it delivered so it appears correctly in all list views.
-		if item.Status != "in_progress" {
-			if err := c.CloseItem(args[0]); err != nil {
-				return err
-			}
-		}
 		fmt.Printf("droplet %s: outcome=pass\n", args[0])
 		return nil
 	},
