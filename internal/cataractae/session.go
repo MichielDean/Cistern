@@ -268,6 +268,9 @@ func (s *Session) collectEnvArgs() []string {
 	if s.Identity != "" {
 		args = append(args, "-e", "CT_CATARACTA_NAME="+s.Identity)
 	}
+	if s.ID != "" {
+		args = append(args, "-e", "CT_TMUX_SESSION="+s.ID)
+	}
 	if db := os.Getenv("CT_DB"); db != "" {
 		args = append(args, "-e", "CT_DB="+db)
 	}
