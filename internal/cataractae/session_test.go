@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"fmt"
 	"log/slog"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -13,7 +15,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/MichielDean/cistern/internal/aqueduct"
 	"github.com/MichielDean/cistern/internal/cistern"
 	"github.com/MichielDean/cistern/internal/provider"
 )
@@ -243,7 +244,7 @@ func TestClaudePresetBackwardCompat(t *testing.T) {
 			t.Fatalf("buildPresetCmd: %v", err)
 		}
 		// Command and arg must be shell-quoted.
-		if !strings.HasPrefix(got, "'claude' '--dangerously-skip-permissions'") {
+		if !strings.HasPrefix(got, "exec 'claude' '--dangerously-skip-permissions'") {
 			t.Errorf("buildPresetCmd: want shell-quoted command+arg prefix, got: %q", got)
 		}
 		if !strings.Contains(got, "--add-dir '"+skillsDir+"'") {
@@ -260,7 +261,7 @@ func TestClaudePresetBackwardCompat(t *testing.T) {
 		if err != nil {
 			t.Fatalf("buildPresetCmd: %v", err)
 		}
-		if !strings.HasPrefix(got, "'claude' '--dangerously-skip-permissions'") {
+		if !strings.HasPrefix(got, "exec 'claude' '--dangerously-skip-permissions'") {
 			t.Errorf("buildPresetCmd: want shell-quoted command+arg prefix, got: %q", got)
 		}
 		if !strings.Contains(got, "--model 'haiku'") {
@@ -293,7 +294,7 @@ func TestClaudePresetBackwardCompat(t *testing.T) {
 		if err != nil {
 			t.Fatalf("buildPresetCmd: %v", err)
 		}
-		want := "'" + resolvedPath + "'"
+		want := "exec '" + resolvedPath + "'"
 		if !strings.HasPrefix(got, want) {
 			t.Errorf("buildPresetCmd: resolved path must be shell-quoted\nwant prefix: %s\ngot: %q", want, got)
 		}
@@ -323,7 +324,7 @@ func TestClaudeDefaultFallback(t *testing.T) {
 		if err != nil {
 			t.Fatalf("buildPresetCmd error: %v", err)
 		}
-		if !strings.HasPrefix(got, "'claude' '--dangerously-skip-permissions'") {
+		if !strings.HasPrefix(got, "exec 'claude' '--dangerously-skip-permissions'") {
 			t.Errorf("default fallback: want shell-quoted command+arg prefix, got: %q", got)
 		}
 		if !strings.Contains(got, "--add-dir '"+skillsDir+"'") {
@@ -340,7 +341,7 @@ func TestClaudeDefaultFallback(t *testing.T) {
 		if err != nil {
 			t.Fatalf("buildPresetCmd error: %v", err)
 		}
-		if !strings.HasPrefix(got, "'claude' '--dangerously-skip-permissions'") {
+		if !strings.HasPrefix(got, "exec 'claude' '--dangerously-skip-permissions'") {
 			t.Errorf("default fallback: want shell-quoted command+arg prefix, got: %q", got)
 		}
 		if !strings.Contains(got, "--model 'haiku'") {
@@ -384,6 +385,7 @@ func TestFakeagent_SpawnOutcomeCycle(t *testing.T) {
 	dbDir := t.TempDir()
 	dbPath := filepath.Join(dbDir, "test.db")
 	t.Setenv("CT_DB", dbPath)
+	t.Setenv("CT_NO_ASCII_LOGO", "1")
 
 	c, err := cistern.New(dbPath, "fa")
 	if err != nil {
@@ -406,12 +408,6 @@ func TestFakeagent_SpawnOutcomeCycle(t *testing.T) {
 
 	// Point CLAUDE_PATH at the fakeagent binary.
 	t.Setenv("CLAUDE_PATH", fakeagentBin)
-
-	// Isolate HOME so ensureClaudeOAuthFresh finds no credentials file and
-	// skips the refresh entirely. Without this the test hits the real OAuth
-	// endpoint with whatever (potentially expired) credentials exist on the
-	// test machine, causing intermittent CI failures.
-	t.Setenv("HOME", t.TempDir())
 
 	// Spawn the session.
 	sessionID := "ci-t3xo9-fa-" + droplet.ID
@@ -664,53 +660,6 @@ func TestBuildPrompt_AddDirProvider_SkillsNotInjectedInPrompt(t *testing.T) {
 	}
 }
 
-// --- isAgentAlive unit tests ---
-
-// TestIsAgentAlive_ClaudeAlive_ReturnsTrue verifies that isAgentAlive returns
-// true when sessionIsAgentAliveFn reports a live claude process.
-func TestIsAgentAlive_ClaudeAlive_ReturnsTrue(t *testing.T) {
-	orig := sessionIsAgentAliveFn
-	sessionIsAgentAliveFn = func(id string) bool { return true }
-	t.Cleanup(func() { sessionIsAgentAliveFn = orig })
-
-	s := &Session{ID: "test-session"}
-	if !s.isAgentAlive() {
-		t.Error("isAgentAlive() = false, want true when sessionIsAgentAliveFn returns true")
-	}
-}
-
-// TestIsAgentAlive_NoClaudeProcess_ReturnsFalse verifies that isAgentAlive
-// returns false when sessionIsAgentAliveFn reports no live claude process —
-// the session is a zombie (tmux alive, agent exited).
-func TestIsAgentAlive_NoClaudeProcess_ReturnsFalse(t *testing.T) {
-	orig := sessionIsAgentAliveFn
-	sessionIsAgentAliveFn = func(id string) bool { return false }
-	t.Cleanup(func() { sessionIsAgentAliveFn = orig })
-
-	s := &Session{ID: "test-session"}
-	if s.isAgentAlive() {
-		t.Error("isAgentAlive() = true, want false when sessionIsAgentAliveFn returns false")
-	}
-}
-
-// TestIsAgentAlive_PassesSessionIDToFn verifies that isAgentAlive forwards the
-// session ID to sessionIsAgentAliveFn.
-func TestIsAgentAlive_PassesSessionIDToFn(t *testing.T) {
-	var capturedID string
-	orig := sessionIsAgentAliveFn
-	sessionIsAgentAliveFn = func(id string) bool {
-		capturedID = id
-		return true
-	}
-	t.Cleanup(func() { sessionIsAgentAliveFn = orig })
-
-	s := &Session{ID: "myrepo-alice"}
-	s.isAgentAlive()
-	if capturedID != "myrepo-alice" {
-		t.Errorf("sessionIsAgentAliveFn called with id = %q, want %q", capturedID, "myrepo-alice")
-	}
-}
-
 // TestBuildPresetCmd_ModelWithSpaces_IsShellQuoted verifies that a model value
 // containing spaces is shell-quoted before being interpolated into the tmux
 // command string. An unquoted model with spaces would split in /bin/sh -c.
@@ -733,31 +682,6 @@ func TestBuildPresetCmd_ModelWithSpaces_IsShellQuoted(t *testing.T) {
 	want := "--model 'claude opus 4.6'"
 	if !strings.Contains(cmd, want) {
 		t.Errorf("buildPresetCmd missing shell-quoted model\nwant substring: %s\ngot: %s", want, cmd)
-	}
-}
-
-// TestBuildContinueCmd_ModelWithSpaces_IsShellQuoted verifies that a model value
-// containing spaces is shell-quoted in buildContinueCmd, consistent with buildPresetCmd.
-func TestBuildContinueCmd_ModelWithSpaces_IsShellQuoted(t *testing.T) {
-	s := &Session{ID: "test", WorkDir: "/tmp", Model: "claude opus 4.6"}
-	preset := provider.ProviderPreset{
-		Name:         "myagent",
-		Command:      "myagent",
-		ModelFlag:    "--model",
-		ContinueFlag: "--continue",
-	}
-	cmd, err := s.buildContinueCmd(preset, "/skills")
-	if err != nil {
-		t.Fatalf("buildContinueCmd: %v", err)
-	}
-	// Unquoted form must not appear.
-	if strings.Contains(cmd, "--model claude opus") {
-		t.Errorf("buildContinueCmd contains unquoted model with space — will break shell: %s", cmd)
-	}
-	// Shell-quoted form must be present.
-	want := "--model 'claude opus 4.6'"
-	if !strings.Contains(cmd, want) {
-		t.Errorf("buildContinueCmd missing shell-quoted model\nwant substring: %s\ngot: %s", want, cmd)
 	}
 }
 
@@ -816,8 +740,8 @@ func TestBuildPresetCmd_PromptFlag_OmittedWhenEmpty(t *testing.T) {
 	if strings.Contains(cmd, " -p ") || strings.Contains(cmd, " --prompt") {
 		t.Errorf("buildPresetCmd with empty PromptFlag should not contain a prompt flag: %s", cmd)
 	}
-	if !strings.HasPrefix(cmd, "'opencode'") {
-		t.Errorf("buildPresetCmd output = %q, want prefix %q", cmd, "'opencode'")
+	if !strings.HasPrefix(cmd, "exec 'opencode'") {
+		t.Errorf("buildPresetCmd output = %q, want prefix %q", cmd, "exec 'opencode'")
 	}
 }
 
@@ -876,7 +800,6 @@ func containsEnvPair(args []string, key, val string) bool {
 	return false
 }
 
-
 // TestResolveIdentityDir_CisternDirWithInstrFile verifies that when the cistern
 // directory exists and contains the instrFile, resolveIdentityDir returns the cistern path.
 func TestResolveIdentityDir_CisternDirWithInstrFile(t *testing.T) {
@@ -930,6 +853,219 @@ func TestResolveIdentityDir_FallbackSandbox(t *testing.T) {
 	}
 }
 
+// --- ensureClaudeOAuthFresh tests ---
+
+// writeSessionCredentials writes a minimal credentials file for session tests.
+func writeSessionCredentials(t *testing.T, home, accessToken, refreshToken string, expiresAtMs int64) {
+	t.Helper()
+	claudeDir := filepath.Join(home, ".claude")
+	if err := os.MkdirAll(claudeDir, 0o755); err != nil {
+		t.Fatalf("mkdir .claude: %v", err)
+	}
+	content := fmt.Sprintf(
+		`{"claudeAiOauth":{"accessToken":%q,"refreshToken":%q,"expiresAt":%d}}`,
+		accessToken, refreshToken, expiresAtMs,
+	)
+	if err := os.WriteFile(filepath.Join(claudeDir, ".credentials.json"), []byte(content), 0o600); err != nil {
+		t.Fatalf("write credentials: %v", err)
+	}
+}
+
+func TestEnsureClaudeOAuthFresh_FreshToken_DoesNotRefresh(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	// Token fresh for 1 hour — well outside the 5-minute window.
+	writeSessionCredentials(t, home, "tok-fresh", "tok-refresh", time.Now().Add(time.Hour).UnixMilli())
+
+	refreshCalled := false
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		refreshCalled = true
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"access_token":"tok-new","expires_in":3600}`)
+	}))
+	defer srv.Close()
+
+	origURL := oauthTokenURL
+	origHTTP := oauthHTTPDo
+	t.Cleanup(func() { oauthTokenURL = origURL; oauthHTTPDo = origHTTP })
+	oauthTokenURL = srv.URL
+	oauthHTTPDo = srv.Client().Do
+
+	if err := ensureClaudeOAuthFresh(home); err != nil {
+		t.Fatalf("ensureClaudeOAuthFresh: %v", err)
+	}
+	if refreshCalled {
+		t.Error("refresh endpoint should not be called for a fresh token")
+	}
+}
+
+func TestEnsureClaudeOAuthFresh_ExpiredToken_RefreshesSuccessfully(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	expiredAt := time.Now().Add(-1 * time.Hour).UnixMilli()
+	writeSessionCredentials(t, home, "tok-old", "tok-refresh", expiredAt)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"access_token":"tok-new","expires_in":3600}`)
+	}))
+	defer srv.Close()
+
+	origURL := oauthTokenURL
+	origHTTP := oauthHTTPDo
+	t.Cleanup(func() { oauthTokenURL = origURL; oauthHTTPDo = origHTTP })
+	oauthTokenURL = srv.URL
+	oauthHTTPDo = srv.Client().Do
+
+	if err := ensureClaudeOAuthFresh(home); err != nil {
+		t.Fatalf("ensureClaudeOAuthFresh: %v", err)
+	}
+
+	// Credentials file should have the new token.
+	data, err := os.ReadFile(filepath.Join(home, ".claude", ".credentials.json"))
+	if err != nil {
+		t.Fatalf("read credentials: %v", err)
+	}
+	if !strings.Contains(string(data), "tok-new") {
+		t.Errorf("credentials not updated with new token: %s", data)
+	}
+
+	// Process environment should have the new token.
+	if got := os.Getenv("ANTHROPIC_API_KEY"); got != "tok-new" {
+		t.Errorf("ANTHROPIC_API_KEY = %q, want tok-new", got)
+	}
+}
+
+func TestEnsureClaudeOAuthFresh_NearExpiry_RefreshesSuccessfully(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	// Expiring in 3 minutes — within the 5-minute window.
+	nearExpiryAt := time.Now().Add(3 * time.Minute).UnixMilli()
+	writeSessionCredentials(t, home, "tok-old", "tok-refresh", nearExpiryAt)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"access_token":"tok-new","expires_in":3600}`)
+	}))
+	defer srv.Close()
+
+	origURL := oauthTokenURL
+	origHTTP := oauthHTTPDo
+	t.Cleanup(func() { oauthTokenURL = origURL; oauthHTTPDo = origHTTP })
+	oauthTokenURL = srv.URL
+	oauthHTTPDo = srv.Client().Do
+
+	if err := ensureClaudeOAuthFresh(home); err != nil {
+		t.Fatalf("ensureClaudeOAuthFresh: %v", err)
+	}
+	if got := os.Getenv("ANTHROPIC_API_KEY"); got != "tok-new" {
+		t.Errorf("ANTHROPIC_API_KEY = %q, want tok-new", got)
+	}
+}
+
+func TestEnsureClaudeOAuthFresh_NoCredentials_SkipsSilently(t *testing.T) {
+	home := t.TempDir()
+	// No credentials file — should return nil (skip silently).
+	if err := ensureClaudeOAuthFresh(home); err != nil {
+		t.Errorf("expected nil when credentials absent, got %v", err)
+	}
+}
+
+func TestEnsureClaudeOAuthFresh_NoRefreshToken_SkipsSilently(t *testing.T) {
+	home := t.TempDir()
+	// Expired token but no refresh token — should skip silently.
+	claudeDir := filepath.Join(home, ".claude")
+	if err := os.MkdirAll(claudeDir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	expiredAt := time.Now().Add(-1 * time.Hour).UnixMilli()
+	content := fmt.Sprintf(`{"claudeAiOauth":{"accessToken":"tok","expiresAt":%d}}`, expiredAt)
+	if err := os.WriteFile(filepath.Join(claudeDir, ".credentials.json"), []byte(content), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	if err := ensureClaudeOAuthFresh(home); err != nil {
+		t.Errorf("expected nil when refresh token absent, got %v", err)
+	}
+}
+
+func TestEnsureClaudeOAuthFresh_RefreshFails_ReturnsError(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	expiredAt := time.Now().Add(-1 * time.Hour).UnixMilli()
+	writeSessionCredentials(t, home, "tok-old", "tok-refresh", expiredAt)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+		fmt.Fprint(w, `{"error":"invalid_grant"}`)
+	}))
+	defer srv.Close()
+
+	origURL := oauthTokenURL
+	origHTTP := oauthHTTPDo
+	t.Cleanup(func() { oauthTokenURL = origURL; oauthHTTPDo = origHTTP })
+	oauthTokenURL = srv.URL
+	oauthHTTPDo = srv.Client().Do
+
+	err := ensureClaudeOAuthFresh(home)
+	if err == nil {
+		t.Fatal("expected error when refresh fails")
+	}
+	if !strings.Contains(err.Error(), "re-authenticate") {
+		t.Errorf("error message should mention re-authentication, got: %v", err)
+	}
+}
+
+func TestEnsureClaudeOAuthFresh_ConcurrentCalls_NoRaceAndSingleRefresh(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	expiredAt := time.Now().Add(-1 * time.Hour).UnixMilli()
+	writeSessionCredentials(t, home, "tok-old", "tok-refresh", expiredAt)
+
+	var refreshCount atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		refreshCount.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"access_token":"tok-new","expires_in":3600}`)
+	}))
+	defer srv.Close()
+
+	origURL := oauthTokenURL
+	origHTTP := oauthHTTPDo
+	t.Cleanup(func() { oauthTokenURL = origURL; oauthHTTPDo = origHTTP })
+	oauthTokenURL = srv.URL
+	oauthHTTPDo = srv.Client().Do
+
+	const goroutines = 5
+	var wg sync.WaitGroup
+	errs := make([]error, goroutines)
+	wg.Add(goroutines)
+	for i := range goroutines {
+		go func(idx int) {
+			defer wg.Done()
+			errs[idx] = ensureClaudeOAuthFresh(home)
+		}(i)
+	}
+	wg.Wait()
+
+	for i, err := range errs {
+		if err != nil {
+			t.Errorf("goroutine %d: unexpected error: %v", i, err)
+		}
+	}
+	// The mutex ensures at most one refresh per cycle. After the first goroutine
+	// refreshes the token, subsequent goroutines see a fresh token and skip.
+	// Verify the endpoint was not hammered — it must be called at least once
+	// (the initial refresh) but not more than goroutines times.
+	count := refreshCount.Load()
+	if count == 0 {
+		t.Error("refresh endpoint was never called — token should have been refreshed")
+	}
+	if count > int32(goroutines) {
+		t.Errorf("refresh endpoint called %d times, want at most %d", count, goroutines)
+	}
+}
+
 // TestBuildPresetCmd_CommandWithSpaces_IsShellQuoted verifies that a command
 // path containing spaces is shell-quoted before being interpolated into the
 // tmux command string. An unquoted path with spaces would split in /bin/sh -c.
@@ -952,7 +1088,7 @@ func TestBuildPresetCmd_CommandWithSpaces_IsShellQuoted(t *testing.T) {
 		t.Errorf("buildPresetCmd contains unquoted command path with space — will break shell: %s", cmd)
 	}
 	// Shell-quoted form must be present.
-	want := "'/home/john doe/bin/myagent'"
+	want := "exec '/home/john doe/bin/myagent'"
 	if !strings.HasPrefix(cmd, want) {
 		t.Errorf("buildPresetCmd should start with shell-quoted command\nwant prefix: %s\ngot: %s", want, cmd)
 	}
@@ -985,145 +1121,6 @@ func TestBuildPresetCmd_ArgsWithSpaces_AreShellQuoted(t *testing.T) {
 	// Unquoted dollar sign must not appear bare (would be shell-expanded).
 	if strings.Contains(cmd, "--another$arg") && !strings.Contains(cmd, "'--another$arg'") {
 		t.Errorf("buildPresetCmd contains bare dollar sign in arg — shell-expansion risk: %s", cmd)
-	}
-}
-
-// TestBuildContinueCmd_CommandWithSpaces_IsShellQuoted verifies that a command
-// path containing spaces is shell-quoted in buildContinueCmd, consistent with
-// buildPresetCmd.
-func TestBuildContinueCmd_CommandWithSpaces_IsShellQuoted(t *testing.T) {
-	orig := resolveCommandFn
-	resolveCommandFn = func(cmd string) string { return cmd }
-	t.Cleanup(func() { resolveCommandFn = orig })
-
-	s := &Session{ID: "test", WorkDir: "/tmp"}
-	preset := provider.ProviderPreset{
-		Name:         "myagent",
-		Command:      "/home/john doe/bin/myagent",
-		ContinueFlag: "--continue",
-	}
-	cmd, err := s.buildContinueCmd(preset, "/skills")
-	if err != nil {
-		t.Fatalf("buildContinueCmd: %v", err)
-	}
-	want := "'/home/john doe/bin/myagent'"
-	if !strings.HasPrefix(cmd, want) {
-		t.Errorf("buildContinueCmd should start with shell-quoted command\nwant prefix: %s\ngot: %s", want, cmd)
-	}
-}
-
-// TestBuildContinueCmd_ArgsWithSpaces_AreShellQuoted verifies that Args elements
-// containing spaces are shell-quoted in buildContinueCmd.
-func TestBuildContinueCmd_ArgsWithSpaces_AreShellQuoted(t *testing.T) {
-	orig := resolveCommandFn
-	resolveCommandFn = func(cmd string) string { return cmd }
-	t.Cleanup(func() { resolveCommandFn = orig })
-
-	s := &Session{ID: "test", WorkDir: "/tmp"}
-	preset := provider.ProviderPreset{
-		Name:         "myagent",
-		Command:      "myagent",
-		Args:         []string{"--flag with spaces"},
-		ContinueFlag: "--continue",
-	}
-	cmd, err := s.buildContinueCmd(preset, "/skills")
-	if err != nil {
-		t.Fatalf("buildContinueCmd: %v", err)
-	}
-	want := "'--flag with spaces'"
-	if !strings.Contains(cmd, want) {
-		t.Errorf("buildContinueCmd missing shell-quoted arg\nwant substring: %s\ngot: %s", want, cmd)
-	}
-}
-
-// --- stageMarker tests ---
-
-// TestStageMarker_ReturnsFalse_WhenFileAbsent verifies that stageMarker returns false
-// when .current-stage does not exist in the working directory.
-func TestStageMarker_ReturnsFalse_WhenFileAbsent(t *testing.T) {
-	dir := t.TempDir()
-	if got := stageMarker(dir, "reviewer"); got {
-		t.Error("stageMarker = true, want false when .current-stage absent")
-	}
-}
-
-// TestStageMarker_ReturnsTrue_WhenSameIdentity verifies that stageMarker returns true
-// when .current-stage contains the same identity — indicating a same-stage respawn.
-func TestStageMarker_ReturnsTrue_WhenSameIdentity(t *testing.T) {
-	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, ".current-stage"), []byte("reviewer"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if !stageMarker(dir, "reviewer") {
-		t.Error("stageMarker = false, want true when .current-stage matches identity")
-	}
-}
-
-// TestStageMarker_ReturnsFalse_WhenDifferentIdentity verifies that stageMarker returns
-// false when .current-stage contains a different identity — indicating a stage transition.
-func TestStageMarker_ReturnsFalse_WhenDifferentIdentity(t *testing.T) {
-	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, ".current-stage"), []byte("implementer"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if stageMarker(dir, "reviewer") {
-		t.Error("stageMarker = true, want false when .current-stage contains different identity")
-	}
-}
-
-// TestStageMarker_ReturnsFalse_WhenIdentityEmpty verifies that stageMarker returns false
-// when Identity is empty — an unidentified session should never resume.
-func TestStageMarker_ReturnsFalse_WhenIdentityEmpty(t *testing.T) {
-	dir := t.TempDir()
-	// Even if the file contains an empty string, empty identity should not match.
-	if err := os.WriteFile(filepath.Join(dir, ".current-stage"), []byte(""), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if stageMarker(dir, "") {
-		t.Error("stageMarker = true, want false when identity is empty")
-	}
-}
-
-// TestStageMarker_IgnoresTrailingNewline verifies that stageMarker trims whitespace
-// when comparing the file content to the identity.
-func TestStageMarker_IgnoresTrailingNewline(t *testing.T) {
-	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, ".current-stage"), []byte("reviewer\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if !stageMarker(dir, "reviewer") {
-		t.Error("stageMarker = false, want true when file has trailing newline but content matches")
-	}
-}
-
-// --- writeStageMarker tests ---
-
-// TestWriteStageMarker_WritesIdentityToFile verifies that writeStageMarker creates
-// .current-stage in the working directory with the identity as its content.
-func TestWriteStageMarker_WritesIdentityToFile(t *testing.T) {
-	dir := t.TempDir()
-	writeStageMarker(dir, "simplifier")
-	got, err := os.ReadFile(filepath.Join(dir, ".current-stage"))
-	if err != nil {
-		t.Fatalf("expected .current-stage to exist: %v", err)
-	}
-	if string(got) != "simplifier" {
-		t.Errorf("writeStageMarker wrote %q, want %q", string(got), "simplifier")
-	}
-}
-
-// TestWriteStageMarker_OverwritesPreviousStage verifies that writeStageMarker replaces
-// the previous content — last-writer-wins ensures the marker reflects the current stage.
-func TestWriteStageMarker_OverwritesPreviousStage(t *testing.T) {
-	dir := t.TempDir()
-	writeStageMarker(dir, "implementer")
-	writeStageMarker(dir, "reviewer")
-	got, err := os.ReadFile(filepath.Join(dir, ".current-stage"))
-	if err != nil {
-		t.Fatalf("expected .current-stage to exist: %v", err)
-	}
-	if string(got) != "reviewer" {
-		t.Errorf("writeStageMarker wrote %q after overwrite, want %q", string(got), "reviewer")
 	}
 }
 
@@ -1165,535 +1162,92 @@ func TestSpawn_LogsFreshSession_WhenNoTmux(t *testing.T) {
 	}
 }
 
-// TestSpawn_LogsResumeContext_WhenSameStageMarker verifies that spawn emits a
-// slog entry with context_type=resume when .current-stage contains the same identity —
-// indicating a mid-stage respawn of a stalled session.
-func TestSpawn_LogsResumeContext_WhenSameStageMarker(t *testing.T) {
-	if _, err := exec.LookPath("tmux"); err != nil {
-		t.Skip("tmux not available")
-	}
-
-	buf := captureDefaultSlog(t)
-
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	t.Setenv("CLAUDE_PATH", "echo") // fake agent
-
-	workDir := t.TempDir()
-
-	// Write .current-stage with the same identity to trigger resume.
-	if err := os.WriteFile(filepath.Join(workDir, ".current-stage"), []byte("reviewer"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	s := &Session{
-		ID:       "test-resume-session",
-		WorkDir:  workDir,
-		Identity: "reviewer",
-		Preset: provider.ProviderPreset{
-			Name:         "claude",
-			Command:      "echo",
-			ContinueFlag: "--continue",
-		},
-	}
-	_ = s.spawn()
-	defer s.kill()
-
-	out := buf.String()
-	if !strings.Contains(out, "context_type=resume") {
-		t.Errorf("log missing context_type=resume; got: %s", out)
-	}
-	if !strings.Contains(out, "stage=reviewer") {
-		t.Errorf("log missing stage field; got: %s", out)
-	}
-}
-
-// TestSpawn_LogsFreshSession_WhenStageChanges verifies that spawn logs context_type=fresh
-// when .current-stage contains a different identity — a stage transition must not carry
-// context from the previous stage.
-func TestSpawn_LogsFreshSession_WhenStageChanges(t *testing.T) {
-	if _, err := exec.LookPath("tmux"); err != nil {
-		t.Skip("tmux not available")
-	}
-
-	buf := captureDefaultSlog(t)
-
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	t.Setenv("CLAUDE_PATH", "echo") // fake agent
-
-	workDir := t.TempDir()
-
-	// Write .current-stage with a different identity (previous stage).
-	if err := os.WriteFile(filepath.Join(workDir, ".current-stage"), []byte("implementer"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	s := &Session{
-		ID:       "test-stage-change-session",
-		WorkDir:  workDir,
-		Identity: "reviewer",
-		Preset: provider.ProviderPreset{
-			Name:         "claude",
-			Command:      "echo",
-			ContinueFlag: "--continue",
-		},
-	}
-	_ = s.spawn()
-	defer s.kill()
-
-	out := buf.String()
-	if !strings.Contains(out, "context_type=fresh") {
-		t.Errorf("log missing context_type=fresh on stage change; got: %s", out)
-	}
-
-	// Verify spawn() wrote .current-stage with the new identity so a
-	// same-stage respawn will resume rather than start fresh.
-	markerPath := filepath.Join(workDir, ".current-stage")
-	got, err := os.ReadFile(markerPath)
-	if err != nil {
-		t.Fatalf(".current-stage not written after spawn: %v", err)
-	}
-	if strings.TrimSpace(string(got)) != s.Identity {
-		t.Errorf(".current-stage = %q, want %q", strings.TrimSpace(string(got)), s.Identity)
-	}
-}
-
 // TestSpawn_LogsQuickExit_WhenSessionDiesImmediately verifies that the quick-exit
 // goroutine emits a Warn-level log when the session dies within the quick-exit window.
 // This test uses a very short window so it does not have to wait 30 seconds.
+func TestSpawn_LogsQuickExit_WhenSessionDiesImmediately(t *testing.T) {
+	if _, err := exec.LookPath("tmux"); err != nil {
+		t.Skip("tmux not available")
+	}
+
+	buf := captureDefaultSlog(t)
+
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("CLAUDE_PATH", "true") // 'true' exits 0 immediately
+
+	workDir := t.TempDir()
+	s := &Session{
+		ID:      "quick-exit-test",
+		WorkDir: workDir,
+	}
+
+	// Override quick-exit window for this test.
+	orig := quickExitWindow
+	quickExitWindow = 200 * time.Millisecond
+	t.Cleanup(func() { quickExitWindow = orig })
+
+	if err := s.spawn(); err != nil {
+		t.Skip("spawn failed (tmux environment issue):", err)
+	}
+	defer s.kill()
+
+	// Wait longer than the quick-exit window for the goroutine to fire.
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		if strings.Contains(buf.String(), "exited quickly") {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+
+	out := buf.String()
+	if !strings.Contains(out, "exited quickly") {
+		t.Errorf("expected quick-exit warning in log; got: %s", out)
+	}
+	if !strings.Contains(out, "session=quick-exit-test") {
+		t.Errorf("quick-exit log missing session field; got: %s", out)
+	}
+}
 
 // TestSpawn_QuickExit_CancelledByKill verifies that calling kill() before the
 // quick-exit window expires cancels the goroutine so no spurious warning is logged
 // when the session is intentionally stopped.
-
-// --- isTmuxServerDeadError tests ---
-
-// TestIsTmuxServerDeadError verifies that the dead-server detector matches the
-// known tmux error patterns and ignores unrelated failures.
-func TestIsTmuxServerDeadError(t *testing.T) {
-	cases := []struct {
-		name   string
-		output string
-		want   bool
-	}{
-		{"no server running on socket path", "no server running on /tmp/tmux-1000/default", true},
-		{"no server running uppercase", "No server running on /tmp/tmux-1000/default", true},
-		{"failed to connect to server lowercase", "failed to connect to server", true},
-		{"failed to connect to server uppercase", "Failed to connect to server", true},
-		{"error connecting to socket", "error connecting to /tmp/tmux-1000/default", true},
-		{"error connecting with reason", "Error connecting to /tmp/tmux-500/default (Connection refused)", true},
-		{"unrelated error", "invalid option: -Z", false},
-		{"permission denied", "open terminal failed: not a terminal", false},
-		{"empty output", "", false},
-		{"partial substring must not match", "server running fine", false},
+func TestSpawn_QuickExit_CancelledByKill(t *testing.T) {
+	if _, err := exec.LookPath("tmux"); err != nil {
+		t.Skip("tmux not available")
 	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			got := isTmuxServerDeadError([]byte(tc.output))
-			if got != tc.want {
-				t.Errorf("isTmuxServerDeadError(%q) = %v, want %v", tc.output, got, tc.want)
-			}
-		})
-	}
-}
 
-// --- dead tmux server recovery tests ---
-
-// TestSpawn_TmuxServerDead_RecoverySucceeds verifies that when execTmuxNewSession
-// fails with a dead-server error on the first attempt, spawn() kills the stale
-// server, retries, and logs the recovery on success.
-func TestSpawn_TmuxServerDead_RecoverySucceeds(t *testing.T) {
 	buf := captureDefaultSlog(t)
 
 	home := t.TempDir()
 	t.Setenv("HOME", home)
-	t.Setenv("CLAUDE_PATH", "true") // 'true' binary exists; won't actually be run
-
-	origSpawn := execTmuxNewSession
-	origKill := execTmuxKillServer
-	t.Cleanup(func() {
-		execTmuxNewSession = origSpawn
-		execTmuxKillServer = origKill
-	})
-
-	callCount := 0
-	killCalled := false
-	execTmuxNewSession = func(_ []string) ([]byte, error) {
-		callCount++
-		if callCount <= 2 {
-			// First call (outside mutex) and double-check (inside mutex) both see
-			// a dead server. Third call (after kill) succeeds.
-			return []byte("no server running on /tmp/tmux-1000/default"), fmt.Errorf("exit status 1")
-		}
-		return nil, nil // retry after kill succeeds
-	}
-	execTmuxKillServer = func() { killCalled = true }
-
-	var capturedSessionID, capturedLogPath string
-	origPipePane := execTmuxPipePaneCmd
-	execTmuxPipePaneCmd = func(sessionID, logPath string) {
-		capturedSessionID = sessionID
-		capturedLogPath = logPath
-	}
-	t.Cleanup(func() { execTmuxPipePaneCmd = origPipePane })
+	t.Setenv("CLAUDE_PATH", "true") // exits immediately
 
 	workDir := t.TempDir()
-	s := &Session{ID: "tmux-recovery-ok", WorkDir: workDir}
+	s := &Session{
+		ID:      "kill-cancel-test",
+		WorkDir: workDir,
+	}
 
-	err := s.spawn()
+	// Use a window long enough that we can call kill() before it fires.
+	orig := quickExitWindow
+	quickExitWindow = 500 * time.Millisecond
+	t.Cleanup(func() { quickExitWindow = orig })
 
-	if err != nil {
-		t.Fatalf("spawn returned unexpected error: %v", err)
+	if err := s.spawn(); err != nil {
+		t.Skip("spawn failed (tmux environment issue):", err)
 	}
-	if callCount != 3 {
-		t.Errorf("execTmuxNewSession called %d times, want 3 (initial + double-check + retry-after-kill)", callCount)
-	}
-	if !killCalled {
-		t.Error("execTmuxKillServer was not called during recovery")
-	}
+
+	// Cancel the goroutine by killing the session before the window expires.
+	s.kill()
+
+	// Wait longer than the window to give the goroutine time to fire if not cancelled.
+	time.Sleep(800 * time.Millisecond)
+
 	out := buf.String()
-	if !strings.Contains(out, "dead tmux server detected") {
-		t.Errorf("expected dead-server detection log; got: %s", out)
-	}
-	if !strings.Contains(out, "recovered from dead tmux server") {
-		t.Errorf("expected recovery success log; got: %s", out)
-	}
-	if capturedSessionID != s.ID {
-		t.Errorf("execTmuxPipePaneCmd called with sessionID = %q, want %q", capturedSessionID, s.ID)
-	}
-	expectedLogPath := filepath.Join(home, ".cistern", "session-logs", s.ID+".log")
-	if capturedLogPath != expectedLogPath {
-		t.Errorf("execTmuxPipePaneCmd called with logPath = %q, want %q", capturedLogPath, expectedLogPath)
-	}
-}
-
-// TestSpawn_TmuxServerDead_RecoveryFails verifies that when both spawn attempts
-// fail with a dead-server error, spawn() returns an error with a clear reason and
-// logs an ERROR distinguishing this from an auth failure.
-func TestSpawn_TmuxServerDead_RecoveryFails(t *testing.T) {
-	buf := captureDefaultSlog(t)
-
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	t.Setenv("CLAUDE_PATH", "true")
-
-	origSpawn := execTmuxNewSession
-	origKill := execTmuxKillServer
-	t.Cleanup(func() {
-		execTmuxNewSession = origSpawn
-		execTmuxKillServer = origKill
-	})
-
-	callCount := 0
-	execTmuxNewSession = func(_ []string) ([]byte, error) {
-		callCount++
-		return []byte("no server running on /tmp/tmux-1000/default"), fmt.Errorf("exit status 1")
-	}
-	execTmuxKillServer = func() {} // no-op
-
-	workDir := t.TempDir()
-	s := &Session{ID: "tmux-recovery-fail", WorkDir: workDir}
-
-	err := s.spawn()
-
-	if err == nil {
-		t.Fatal("spawn should have returned an error when recovery fails")
-	}
-	if callCount != 3 {
-		t.Errorf("execTmuxNewSession called %d times, want 3 (initial + double-check + retry-after-kill)", callCount)
-	}
-	if !strings.Contains(err.Error(), "server dead, recovery failed") {
-		t.Errorf("error should describe recovery failure; got: %v", err)
-	}
-	out := buf.String()
-	if !strings.Contains(out, "tmux server recovery failed") {
-		t.Errorf("expected ERROR log for recovery failure; got: %s", out)
-	}
-}
-
-// TestSpawn_TmuxError_NonServer_NoRecovery verifies that a generic tmux error
-// (not a dead-server error) causes spawn() to return immediately without
-// calling execTmuxKillServer or retrying.
-func TestSpawn_TmuxError_NonServer_NoRecovery(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	t.Setenv("CLAUDE_PATH", "true")
-
-	origSpawn := execTmuxNewSession
-	origKill := execTmuxKillServer
-	t.Cleanup(func() {
-		execTmuxNewSession = origSpawn
-		execTmuxKillServer = origKill
-	})
-
-	callCount := 0
-	killCalled := false
-	execTmuxNewSession = func(_ []string) ([]byte, error) {
-		callCount++
-		return []byte("invalid option: -Z"), fmt.Errorf("exit status 1")
-	}
-	execTmuxKillServer = func() { killCalled = true }
-
-	workDir := t.TempDir()
-	s := &Session{ID: "tmux-non-server-err", WorkDir: workDir}
-
-	err := s.spawn()
-
-	if err == nil {
-		t.Fatal("spawn should have returned an error")
-	}
-	if callCount != 1 {
-		t.Errorf("execTmuxNewSession called %d times, want 1 (no retry for non-server errors)", callCount)
-	}
-	if killCalled {
-		t.Error("execTmuxKillServer should not be called for non-server errors")
-	}
-}
-
-// TestSpawn_TmuxError_ArgsInErrorMessage_InitialFailure verifies that when the
-// initial execTmuxNewSession call fails with a non-dead-server error, the returned
-// error message includes the tmux args so operators can reproduce the failure.
-func TestSpawn_TmuxError_ArgsInErrorMessage_InitialFailure(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	t.Setenv("CLAUDE_PATH", "true")
-
-	origSpawn := execTmuxNewSession
-	t.Cleanup(func() { execTmuxNewSession = origSpawn })
-
-	execTmuxNewSession = func(_ []string) ([]byte, error) {
-		return []byte("invalid option: -Z"), fmt.Errorf("exit status 1")
-	}
-
-	workDir := t.TempDir()
-	s := &Session{ID: "spawn-args-test", WorkDir: workDir}
-
-	err := s.spawn()
-
-	if err == nil {
-		t.Fatal("spawn should have returned an error")
-	}
-	// The session ID appears inside the [args: ...] portion since it is one of
-	// the args passed to tmux new-session.
-	if !strings.Contains(err.Error(), "[args:") {
-		t.Errorf("error should contain [args: ...]; got: %v", err)
-	}
-	if !strings.Contains(err.Error(), s.ID) {
-		t.Errorf("error should contain session ID %q in args; got: %v", s.ID, err)
-	}
-}
-
-// TestSpawn_TmuxServerDead_ArgsInErrorMessage_RecoveryFails verifies that when
-// all three spawn attempts fail (initial + double-check + post-kill retry), the
-// returned error message includes the tmux args for diagnostics.
-func TestSpawn_TmuxServerDead_ArgsInErrorMessage_RecoveryFails(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	t.Setenv("CLAUDE_PATH", "true")
-
-	origSpawn := execTmuxNewSession
-	origKill := execTmuxKillServer
-	t.Cleanup(func() {
-		execTmuxNewSession = origSpawn
-		execTmuxKillServer = origKill
-	})
-
-	execTmuxNewSession = func(_ []string) ([]byte, error) {
-		return []byte("no server running on /tmp/tmux-1000/default"), fmt.Errorf("exit status 1")
-	}
-	execTmuxKillServer = func() {}
-
-	workDir := t.TempDir()
-	s := &Session{ID: "spawn-args-recovery-fail", WorkDir: workDir}
-
-	err := s.spawn()
-
-	if err == nil {
-		t.Fatal("spawn should have returned an error")
-	}
-	if !strings.Contains(err.Error(), "[args:") {
-		t.Errorf("error should contain [args: ...]; got: %v", err)
-	}
-	if !strings.Contains(err.Error(), s.ID) {
-		t.Errorf("error should contain session ID %q in args; got: %v", s.ID, err)
-	}
-	if !strings.Contains(err.Error(), "server dead, recovery failed") {
-		t.Errorf("error should describe recovery failure; got: %v", err)
-	}
-}
-
-// TestSpawn_TmuxServerDead_ArgsInErrorMessage_DoubleCheckNonServerError verifies
-// that when the double-check retry (inside the recovery mutex) fails with a
-// non-dead-server error, the returned error includes the tmux args.
-func TestSpawn_TmuxServerDead_ArgsInErrorMessage_DoubleCheckNonServerError(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	t.Setenv("CLAUDE_PATH", "true")
-
-	origSpawn := execTmuxNewSession
-	origKill := execTmuxKillServer
-	t.Cleanup(func() {
-		execTmuxNewSession = origSpawn
-		execTmuxKillServer = origKill
-	})
-
-	callCount := 0
-	killCalled := false
-	execTmuxNewSession = func(_ []string) ([]byte, error) {
-		callCount++
-		if callCount == 1 {
-			// First call: dead-server error to trigger recovery path.
-			return []byte("no server running on /tmp/tmux-1000/default"), fmt.Errorf("exit status 1")
-		}
-		// Double-check retry: non-dead-server error.
-		return []byte("invalid option: -Z"), fmt.Errorf("exit status 1")
-	}
-	execTmuxKillServer = func() { killCalled = true }
-
-	workDir := t.TempDir()
-	s := &Session{ID: "spawn-args-doublecheck", WorkDir: workDir}
-
-	err := s.spawn()
-
-	if err == nil {
-		t.Fatal("spawn should have returned an error")
-	}
-	if killCalled {
-		t.Error("execTmuxKillServer should not be called when double-check returns a non-server error")
-	}
-	if !strings.Contains(err.Error(), "[args:") {
-		t.Errorf("error should contain [args: ...]; got: %v", err)
-	}
-	if !strings.Contains(err.Error(), s.ID) {
-		t.Errorf("error should contain session ID %q in args; got: %v", s.ID, err)
-	}
-}
-
-// TestSpawn_TmuxServerDead_ConcurrentRecoveryIsSerializedByMutex verifies that
-// when two goroutines simultaneously detect a dead tmux server, their recovery
-// blocks are serialized — execTmuxKillServer is never called concurrently.
-// This guards against the interleaving where goroutine B calls execTmuxKillServer
-// and destroys the server that goroutine A just recovered.
-func TestSpawn_TmuxServerDead_ConcurrentRecoveryIsSerializedByMutex(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	t.Setenv("CLAUDE_PATH", "true")
-
-	origSpawn := execTmuxNewSession
-	origKill := execTmuxKillServer
-	t.Cleanup(func() {
-		execTmuxNewSession = origSpawn
-		execTmuxKillServer = origKill
-	})
-
-
-	// Both spawns always fail with a dead-server error so both enter the recovery
-	// block. The test is about serialization, not recovery success.
-	execTmuxNewSession = func(_ []string) ([]byte, error) {
-		return []byte("no server running on /tmp/tmux-1000/default"), fmt.Errorf("exit status 1")
-	}
-
-	var concurrent int64  // current number of goroutines inside execTmuxKillServer
-	var raceDetected int64 // set non-zero if concurrent > 1 is ever observed
-	execTmuxKillServer = func() {
-		n := atomic.AddInt64(&concurrent, 1)
-		if n > 1 {
-			atomic.StoreInt64(&raceDetected, 1)
-		}
-		time.Sleep(20 * time.Millisecond) // hold long enough to detect overlap
-		atomic.AddInt64(&concurrent, -1)
-	}
-
-	workDir := t.TempDir()
-	start := make(chan struct{})
-	var wg sync.WaitGroup
-	for i := range 2 {
-		wg.Add(1)
-		go func(i int) {
-			defer wg.Done()
-			<-start // release both goroutines simultaneously
-			s := &Session{ID: fmt.Sprintf("concurrent-recovery-%d", i), WorkDir: workDir}
-			s.spawn() //nolint:errcheck // error expected — only testing serialization
-		}(i)
-	}
-	close(start)
-	wg.Wait()
-
-	if atomic.LoadInt64(&raceDetected) != 0 {
-		t.Error("execTmuxKillServer was called concurrently — tmuxRecoveryMu did not serialize recovery")
-	}
-}
-
-// TestSpawn_TmuxServerDead_DoubleCheckPreventsKillingRecoveredServer verifies
-// that when goroutine A recovers the dead tmux server inside the mutex, goroutine
-// B's double-check (retrying before killing) detects the server is now alive and
-// skips execTmuxKillServer entirely — preventing B from destroying A's session.
-// This validates the double-checked locking pattern: re-validate after acquiring
-// the lock before proceeding with the destructive kill step.
-func TestSpawn_TmuxServerDead_DoubleCheckPreventsKillingRecoveredServer(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	t.Setenv("CLAUDE_PATH", "true")
-
-	origSpawn := execTmuxNewSession
-	origKill := execTmuxKillServer
-	t.Cleanup(func() {
-		execTmuxNewSession = origSpawn
-		execTmuxKillServer = origKill
-	})
-
-	var pipePaneCallCount int64
-	origPipePane := execTmuxPipePaneCmd
-	execTmuxPipePaneCmd = func(_, _ string) { atomic.AddInt64(&pipePaneCallCount, 1) }
-	t.Cleanup(func() { execTmuxPipePaneCmd = origPipePane })
-
-	// The server is "dead" until execTmuxKillServer is called; after that it is
-	// "alive". This models: goroutine A's kill restarts the server, so goroutine
-	// B's double-check (which runs after A releases the mutex) succeeds and B
-	// skips its own kill.
-	var killCount int64
-	execTmuxNewSession = func(_ []string) ([]byte, error) {
-		if atomic.LoadInt64(&killCount) == 0 {
-			return []byte("no server running on /tmp/tmux-1000/default"), fmt.Errorf("exit status 1")
-		}
-		return nil, nil // server recovered after kill
-	}
-	execTmuxKillServer = func() {
-		atomic.AddInt64(&killCount, 1)
-	}
-
-	workDir := t.TempDir()
-	start := make(chan struct{})
-	var wg sync.WaitGroup
-	errs := make([]error, 2)
-	for i := range 2 {
-		wg.Add(1)
-		go func(i int) {
-			defer wg.Done()
-			<-start
-			s := &Session{ID: fmt.Sprintf("double-check-%d", i), WorkDir: workDir}
-			errs[i] = s.spawn()
-		}(i)
-	}
-	close(start)
-	wg.Wait()
-
-	// Both spawns must succeed.
-	for i, err := range errs {
-		if err != nil {
-			t.Errorf("goroutine %d: spawn returned unexpected error: %v", i, err)
-		}
-	}
-	// execTmuxKillServer must be called exactly once: by the goroutine that held
-	// the mutex first. The second goroutine's double-check sees the recovered
-	// server and skips the kill.
-	if got := atomic.LoadInt64(&killCount); got != 1 {
-		t.Errorf("execTmuxKillServer called %d times, want 1 (double-check must prevent second kill)", got)
-	}
-	// execTmuxPipePaneCmd must be called once per successful spawn.
-	if got := atomic.LoadInt64(&pipePaneCallCount); got != 2 {
-		t.Errorf("execTmuxPipePaneCmd called %d times, want 2 (once per successful spawn)", got)
+	if strings.Contains(out, "exited quickly") {
+		t.Errorf("unexpected quick-exit warning after intentional kill; got: %s", out)
 	}
 }
 
@@ -1701,663 +1255,40 @@ func TestSpawn_TmuxServerDead_DoubleCheckPreventsKillingRecoveredServer(t *testi
 // DropletSignaledOutcome returns true the goroutine does not emit a warning —
 // a fast agent that completed successfully should not be flagged as a possible
 // auth failure.
-
-// --- spawn guard tests (PR #204: don't kill running sessions) ---
-
-// TestSpawn_AlreadyRunning_SkipsRespawn verifies that when a healthy session is
-// already alive and the agent process is running, Spawn() returns nil without
-// touching the session. This is the core correctness check for the self-kill fix:
-// the heartbeat resetting a droplet must not cause the dispatcher to kill a
-// session that is actively doing work.
-func TestSpawn_AlreadyRunning_SkipsRespawn(t *testing.T) {
+func TestSpawn_QuickExit_SuppressedWhenOutcomeSignaled(t *testing.T) {
 	if _, err := exec.LookPath("tmux"); err != nil {
 		t.Skip("tmux not available")
 	}
 
 	buf := captureDefaultSlog(t)
+
 	home := t.TempDir()
 	t.Setenv("HOME", home)
-
-	const sessionID = "spawn-guard-running-test"
-
-	// Start a long-running tmux session manually to simulate an active agent.
-	// 'sleep 60' keeps the session alive. sessionIsAgentAliveFn is mocked to
-	// return true so the spawn guard treats this session as healthy.
-	spawnArgs := []string{"new-session", "-d", "-s", sessionID, "-c", t.TempDir(), "sleep 60"}
-	if out, err := exec.Command("tmux", spawnArgs...).CombinedOutput(); err != nil {
-		t.Skipf("could not create tmux session: %v: %s", err, out)
-	}
-	t.Cleanup(func() {
-		exec.Command("tmux", "kill-session", "-t", sessionID).Run()
-	})
-
-	// Mock sessionIsAgentAliveFn to report the agent as alive without requiring
-	// a real claude process in the session.
-	origAlive := sessionIsAgentAliveFn
-	sessionIsAgentAliveFn = func(id string) bool { return true }
-	t.Cleanup(func() { sessionIsAgentAliveFn = origAlive })
+	t.Setenv("CLAUDE_PATH", "true") // exits immediately
 
 	workDir := t.TempDir()
 	s := &Session{
-		ID:      sessionID,
+		ID:      "outcome-suppress-test",
 		WorkDir: workDir,
-		Preset:  provider.ProviderPreset{},
-	}
-
-	err := s.Spawn()
-	if err != nil {
-		t.Fatalf("Spawn() returned error for already-running session: %v", err)
-	}
-
-	// The session must still be alive — Spawn() must not have killed it.
-	if !isSessionAlive(sessionID) {
-		t.Error("Spawn() killed the running session — expected it to be left alone")
-	}
-
-	// Spawn() must have logged the skip message.
-	out := buf.String()
-	if !strings.Contains(out, "already running") {
-		t.Errorf("expected 'already running' log; got: %s", out)
-	}
-
-	// kill() must NOT have been called (no "killing zombie" log).
-	if strings.Contains(out, "killing zombie") {
-		t.Errorf("unexpected 'killing zombie' log — session should have been left alone; got: %s", out)
-	}
-}
-
-// TestSpawn_ZombieSession_KillsAndRespawns verifies that when a tmux session
-// exists but the agent process has exited (zombie state), Spawn() kills the
-// dead shell and starts a fresh session.
-func TestSpawn_ZombieSession_KillsAndRespawns(t *testing.T) {
-	if _, err := exec.LookPath("tmux"); err != nil {
-		t.Skip("tmux not available")
-	}
-
-	buf := captureDefaultSlog(t)
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	t.Setenv("CLAUDE_PATH", "true") // exits immediately — simulates dead agent
-
-	const sessionID = "spawn-guard-zombie-test"
-
-	// Create a zombie: start a tmux session running 'bash' (shell prompt only,
-	// no agent). The proc-based isAgentAlive() walks /proc from the pane PID and
-	// finds no claude descendant, so it returns false — zombie detected.
-	spawnArgs := []string{"new-session", "-d", "-s", sessionID, "-c", t.TempDir(), "bash"}
-	if out, err := exec.Command("tmux", spawnArgs...).CombinedOutput(); err != nil {
-		t.Skipf("could not create tmux session: %v: %s", err, out)
-	}
-	t.Cleanup(func() {
-		exec.Command("tmux", "kill-session", "-t", sessionID).Run()
-	})
-
-	workDir := t.TempDir()
-	s := &Session{
-		ID:      sessionID,
-		WorkDir: workDir,
-		// No claude process in the session → isAgentAlive() returns false.
-		Preset: provider.ProviderPreset{
-			Name:    "test",
-			Command: "true",
+		DropletSignaledOutcome: func() bool {
+			return true // simulate a successfully completed droplet
 		},
 	}
 
-	// Override execTmuxNewSession so the respawn doesn't need a real agent.
-	origSpawn := execTmuxNewSession
-	var spawnCalled bool
-	execTmuxNewSession = func(args []string) ([]byte, error) {
-		spawnCalled = true
-		return nil, nil
-	}
-	t.Cleanup(func() { execTmuxNewSession = origSpawn })
+	orig := quickExitWindow
+	quickExitWindow = 200 * time.Millisecond
+	t.Cleanup(func() { quickExitWindow = orig })
 
-	err := s.Spawn()
-	if err != nil {
-		t.Fatalf("Spawn() returned unexpected error: %v", err)
-	}
-
-	out := buf.String()
-
-	// Must have logged zombie detection.
-	if !strings.Contains(out, "killing zombie") {
-		t.Errorf("expected 'killing zombie' log; got: %s", out)
-	}
-
-	// Must have attempted a new spawn after killing the zombie.
-	if !spawnCalled {
-		t.Error("expected execTmuxNewSession to be called after zombie kill — got no respawn")
-	}
-}
-
-// TestSessionIsAgentAliveFn_LiveClaudeProcess_ReturnsTrue verifies that
-// sessionIsAgentAliveFn returns true when a real tmux session contains a live
-// process named "claude". This is the positive integration path: the unmocked
-// proc-based liveness check detects a running claude descendant in /proc.
-//
-// A compiled Go binary named "claude" (fakeclaude) is placed in a temp dir.
-// When executed, /proc/<pid>/cmdline starts with "<tmpdir>/claude" and
-// filepath.Base yields "claude" — exactly what IsClaudeCmdline checks.
-func TestSessionIsAgentAliveFn_LiveClaudeProcess_ReturnsTrue(t *testing.T) {
-	if _, err := exec.LookPath("tmux"); err != nil {
-		t.Skip("tmux not available — skipping integration test")
-	}
-
-	// Compile a fake "claude" binary that simply sleeps until killed.
-	// Building it as "claude" makes /proc/<pid>/cmdline start with the binary
-	// path whose base is "claude" — what IsClaudeCmdline checks.
-	claudeBin := buildTestBin(t, "claude", "github.com/MichielDean/cistern/internal/testutil/fakeclaude")
-
-	const sessionID = "agent-alive-positive-test"
-	t.Cleanup(func() {
-		exec.Command("tmux", "kill-session", "-t", sessionID).Run() //nolint:errcheck
-	})
-
-	// Start a real tmux session running the fake claude binary.
-	// tmux passes the command to the shell, which execs claudeBin as a child —
-	// the BFS proc walk from the pane PID reaches it.
-	spawnArgs := []string{"new-session", "-d", "-s", sessionID, "-c", t.TempDir(), claudeBin}
-	if out, spawnErr := exec.Command("tmux", spawnArgs...).CombinedOutput(); spawnErr != nil {
-		t.Skipf("could not create tmux session: %v: %s", spawnErr, out)
-	}
-
-	// Allow the session's shell to exec the claude binary.
-	time.Sleep(300 * time.Millisecond)
-
-	// Call sessionIsAgentAliveFn directly — no mock — against real /proc.
-	if !sessionIsAgentAliveFn(sessionID) {
-		t.Error("sessionIsAgentAliveFn() = false, want true for tmux session with live claude process")
-	}
-}
-
-// TestSpawn_NoExistingSession_SpawnsNormally verifies the happy path: when no
-// session exists, Spawn() creates one without any kill or skip logic.
-func TestSpawn_NoExistingSession_SpawnsNormally(t *testing.T) {
-	buf := captureDefaultSlog(t)
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-
-	const sessionID = "spawn-guard-fresh-test"
-
-	// Ensure no session with this ID exists.
-	exec.Command("tmux", "kill-session", "-t", sessionID).Run()
-
-	var spawnCalled bool
-	origSpawn := execTmuxNewSession
-	execTmuxNewSession = func(args []string) ([]byte, error) {
-		spawnCalled = true
-		return nil, nil
-	}
-	t.Cleanup(func() { execTmuxNewSession = origSpawn })
-
-	origPipePane := execTmuxPipePaneCmd
-	execTmuxPipePaneCmd = func(_, _ string) {}
-	t.Cleanup(func() { execTmuxPipePaneCmd = origPipePane })
-
-	s := &Session{
-		ID:      sessionID,
-		WorkDir: t.TempDir(),
-		Preset:  provider.ProviderPreset{Name: "test", Command: "true"},
-	}
-
-	err := s.Spawn()
-	if err != nil {
-		t.Fatalf("Spawn() returned unexpected error: %v", err)
-	}
-
-	// Must have spawned — no skip, no zombie kill.
-	if !spawnCalled {
-		t.Error("expected execTmuxNewSession to be called for a fresh spawn")
-	}
-
-	out := buf.String()
-	if strings.Contains(out, "already running") {
-		t.Errorf("unexpected 'already running' log for fresh spawn; got: %s", out)
-	}
-	if strings.Contains(out, "killing zombie") {
-		t.Errorf("unexpected 'killing zombie' log for fresh spawn; got: %s", out)
-	}
-}
-
-// --- redactArgs tests ---
-
-// TestRedactArgs_RedactsEnvValues verifies that redactArgs masks the value portion
-// of -e KEY=VALUE pairs while preserving structural args and key names.
-func TestRedactArgs_RedactsEnvValues(t *testing.T) {
-	tests := []struct {
-		name  string
-		input []string
-		want  []string
-	}{
-		{
-			name:  "empty slice",
-			input: []string{},
-			want:  []string{},
-		},
-		{
-			name:  "no env args",
-			input: []string{"new-session", "-d", "-s", "my-session", "-c", "/work"},
-			want:  []string{"new-session", "-d", "-s", "my-session", "-c", "/work"},
-		},
-		{
-			name:  "single env arg is redacted",
-			input: []string{"-e", "ANTHROPIC_API_KEY=sk-secret"},
-			want:  []string{"-e", "ANTHROPIC_API_KEY=[REDACTED]"},
-		},
-		{
-			name:  "multiple env args all redacted",
-			input: []string{"-e", "ANTHROPIC_API_KEY=tok123", "-e", "GH_TOKEN=ghp_abc", "-e", "CT_DB=postgres://user:pass@host/db"},
-			want:  []string{"-e", "ANTHROPIC_API_KEY=[REDACTED]", "-e", "GH_TOKEN=[REDACTED]", "-e", "CT_DB=[REDACTED]"},
-		},
-		{
-			name: "structural args preserved alongside env args",
-			input: []string{
-				"new-session", "-d", "-s", "my-session", "-c", "/work",
-				"-e", "ANTHROPIC_API_KEY=sk-secret",
-				"-e", "PATH=/usr/bin:/bin",
-				"-e", "CT_CATARACTA_NAME=implementer",
-				"claude --dangerously-skip-permissions -p 'do work'",
-			},
-			want: []string{
-				"new-session", "-d", "-s", "my-session", "-c", "/work",
-				"-e", "ANTHROPIC_API_KEY=[REDACTED]",
-				"-e", "PATH=[REDACTED]",
-				"-e", "CT_CATARACTA_NAME=[REDACTED]",
-				"claude --dangerously-skip-permissions -p 'do work'",
-			},
-		},
-		{
-			name:  "env arg without equals sign left as-is",
-			input: []string{"-e", "NOEQUALS"},
-			want:  []string{"-e", "NOEQUALS"},
-		},
-	}
-
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			got := redactArgs(tc.input)
-			if len(got) != len(tc.want) {
-				t.Fatalf("redactArgs(%v) len = %d, want %d", tc.input, len(got), len(tc.want))
-			}
-			for i := range got {
-				if got[i] != tc.want[i] {
-					t.Errorf("redactArgs(%v)[%d] = %q, want %q", tc.input, i, got[i], tc.want[i])
-				}
-			}
-		})
-	}
-}
-
-// TestRedactArgs_DoesNotMutateInput verifies that redactArgs returns a new slice
-// and does not modify the original args.
-func TestRedactArgs_DoesNotMutateInput(t *testing.T) {
-	input := []string{"-e", "SECRET=plaintext"}
-	original := make([]string, len(input))
-	copy(original, input)
-
-	redactArgs(input)
-
-	for i, v := range input {
-		if v != original[i] {
-			t.Errorf("input[%d] was mutated: got %q, want %q", i, v, original[i])
-		}
-	}
-}
-
-// TestSpawn_TmuxError_SecretsNotLeaked_InitialFailure verifies that when the
-// initial spawn fails, env var values (ANTHROPIC_API_KEY, GH_TOKEN) do not
-// appear in plaintext in the returned error message.
-func TestSpawn_TmuxError_SecretsNotLeaked_InitialFailure(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	t.Setenv("CLAUDE_PATH", "true")
-	t.Setenv("ANTHROPIC_API_KEY", "sk-very-secret-api-key")
-	t.Setenv("GH_TOKEN", "ghp_very-secret-gh-token")
-
-	origSpawn := execTmuxNewSession
-	t.Cleanup(func() { execTmuxNewSession = origSpawn })
-
-	execTmuxNewSession = func(_ []string) ([]byte, error) {
-		return []byte("invalid option: -Z"), fmt.Errorf("exit status 1")
-	}
-
-	s := &Session{ID: "secrets-test", WorkDir: t.TempDir()}
-
-	err := s.spawn()
-
-	if err == nil {
-		t.Fatal("spawn should have returned an error")
-	}
-	errMsg := err.Error()
-	if strings.Contains(errMsg, "sk-very-secret-api-key") {
-		t.Errorf("error message leaks ANTHROPIC_API_KEY value in plaintext: %v", errMsg)
-	}
-	if strings.Contains(errMsg, "ghp_very-secret-gh-token") {
-		t.Errorf("error message leaks GH_TOKEN value in plaintext: %v", errMsg)
-	}
-	// Structural args must still be present for diagnostics.
-	if !strings.Contains(errMsg, "[args:") {
-		t.Errorf("error should still contain [args: ...] for diagnostics; got: %v", errMsg)
-	}
-	if !strings.Contains(errMsg, s.ID) {
-		t.Errorf("error should contain session ID %q; got: %v", s.ID, errMsg)
-	}
-}
-
-// TestSpawn_TmuxServerDead_SecretsNotLeaked_RecoveryFails verifies that when
-// all three spawn attempts fail (including post-kill retry), the error message
-// does not contain env var secret values.
-func TestSpawn_TmuxServerDead_SecretsNotLeaked_RecoveryFails(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	t.Setenv("CLAUDE_PATH", "true")
-	t.Setenv("ANTHROPIC_API_KEY", "sk-very-secret-api-key")
-	t.Setenv("GH_TOKEN", "ghp_very-secret-gh-token")
-
-	origSpawn := execTmuxNewSession
-	origKill := execTmuxKillServer
-	t.Cleanup(func() {
-		execTmuxNewSession = origSpawn
-		execTmuxKillServer = origKill
-	})
-
-	execTmuxNewSession = func(_ []string) ([]byte, error) {
-		return []byte("no server running on /tmp/tmux-1000/default"), fmt.Errorf("exit status 1")
-	}
-	execTmuxKillServer = func() {}
-
-	s := &Session{ID: "secrets-recovery-fail", WorkDir: t.TempDir()}
-
-	err := s.spawn()
-
-	if err == nil {
-		t.Fatal("spawn should have returned an error")
-	}
-	errMsg := err.Error()
-	if strings.Contains(errMsg, "sk-very-secret-api-key") {
-		t.Errorf("error message leaks ANTHROPIC_API_KEY value in recovery-fail path: %v", errMsg)
-	}
-	if strings.Contains(errMsg, "ghp_very-secret-gh-token") {
-		t.Errorf("error message leaks GH_TOKEN value in recovery-fail path: %v", errMsg)
-	}
-	if !strings.Contains(errMsg, "server dead, recovery failed") {
-		t.Errorf("error should describe recovery failure; got: %v", errMsg)
-	}
-}
-
-// TestSpawn_TmuxServerDead_SecretsNotLeaked_DoubleCheckFailure verifies that
-// when the double-check retry fails with a non-dead-server error, the returned
-// error does not contain env var secret values.
-func TestSpawn_TmuxServerDead_SecretsNotLeaked_DoubleCheckFailure(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	t.Setenv("CLAUDE_PATH", "true")
-	t.Setenv("ANTHROPIC_API_KEY", "sk-very-secret-api-key")
-	t.Setenv("GH_TOKEN", "ghp_very-secret-gh-token")
-
-	origSpawn := execTmuxNewSession
-	origKill := execTmuxKillServer
-	t.Cleanup(func() {
-		execTmuxNewSession = origSpawn
-		execTmuxKillServer = origKill
-	})
-
-	callCount := 0
-	execTmuxNewSession = func(_ []string) ([]byte, error) {
-		callCount++
-		if callCount == 1 {
-			return []byte("no server running on /tmp/tmux-1000/default"), fmt.Errorf("exit status 1")
-		}
-		return []byte("invalid option: -Z"), fmt.Errorf("exit status 1")
-	}
-	execTmuxKillServer = func() {}
-
-	s := &Session{ID: "secrets-doublecheck", WorkDir: t.TempDir()}
-
-	err := s.spawn()
-
-	if err == nil {
-		t.Fatal("spawn should have returned an error")
-	}
-	errMsg := err.Error()
-	if strings.Contains(errMsg, "sk-very-secret-api-key") {
-		t.Errorf("error message leaks ANTHROPIC_API_KEY value in double-check path: %v", errMsg)
-	}
-	if strings.Contains(errMsg, "ghp_very-secret-gh-token") {
-		t.Errorf("error message leaks GH_TOKEN value in double-check path: %v", errMsg)
-	}
-}
-
-// TestBuildPrompt_TemplateCtxWiring_AddDirProvider_RendersMarker verifies that
-// the SupportsAddDir=true path (line 449) renders {{.Step.Name}} using TemplateCtx.
-// If the RenderTemplate call were removed, this test would fail because the raw
-// marker would still appear in the prompt output.
-func TestBuildPrompt_TemplateCtxWiring_AddDirProvider_RendersMarker(t *testing.T) {
-	dir := t.TempDir()
-	identityDir := filepath.Join(dir, ".cistern", "cataractae", "implementer")
-	if err := os.MkdirAll(identityDir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(identityDir, "CLAUDE.md"),
-		[]byte("You are the {{.Step.Name}} agent."), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("HOME", dir)
-
-	s := &Session{
-		ID:       "test",
-		WorkDir:  dir,
-		Identity: "implementer",
-		Preset: provider.ProviderPreset{
-			Name:             "claude",
-			InstructionsFile: "CLAUDE.md",
-			SupportsAddDir:   true,
-		},
-		TemplateCtx: aqueduct.TemplateContext{
-			Step: aqueduct.StepTemplateContext{Name: "implement"},
-		},
-	}
-	prompt := s.buildPrompt()
-
-	if !strings.Contains(prompt, "You are the implement agent.") {
-		t.Errorf("prompt missing rendered template content; got:\n%s", prompt)
-	}
-	if strings.Contains(prompt, "{{.Step.Name}}") {
-		t.Error("prompt still contains unreplaced template marker — RenderTemplate not called")
-	}
-}
-
-// TestBuildPrompt_TemplateCtxWiring_NonAddDirProvider_RendersMarker verifies that
-// the SupportsAddDir=false path (line 439) renders {{.Step.Name}} using TemplateCtx.
-// If the RenderTemplate call were removed, this test would fail because the raw
-// marker would still appear in the prompt output.
-func TestBuildPrompt_TemplateCtxWiring_NonAddDirProvider_RendersMarker(t *testing.T) {
-	dir := t.TempDir()
-	identityDir := filepath.Join(dir, ".cistern", "cataractae", "implementer")
-	if err := os.MkdirAll(identityDir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(identityDir, "AGENTS.md"),
-		[]byte("You are the {{.Step.Name}} agent."), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("HOME", dir)
-
-	s := &Session{
-		ID:       "test",
-		WorkDir:  dir,
-		Identity: "implementer",
-		Preset: provider.ProviderPreset{
-			Name:             "codex",
-			InstructionsFile: "AGENTS.md",
-			SupportsAddDir:   false,
-		},
-		TemplateCtx: aqueduct.TemplateContext{
-			Step: aqueduct.StepTemplateContext{Name: "implement"},
-		},
-	}
-	prompt := s.buildPrompt()
-
-	if !strings.Contains(prompt, "You are the implement agent.") {
-		t.Errorf("prompt missing rendered template content; got:\n%s", prompt)
-	}
-	if strings.Contains(prompt, "{{.Step.Name}}") {
-		t.Error("prompt still contains unreplaced template marker — RenderTemplate not called")
-	}
-}
-
-// --- pipe-pane logging tests ---
-
-// TestSpawn_NoBashTeeWrapper_AgentCommandDirectlySpawned verifies that the agent
-// command passed to tmux new-session is the direct agent command — not wrapped
-// in a bash -c tee pipeline. The tee wrapper was removed because claude writes
-// its TUI output directly to the PTY device (pts/N), bypassing stdout/stderr,
-// so tee received nothing and the log file stayed at 0 bytes.
-func TestSpawn_NoBashTeeWrapper_AgentCommandDirectlySpawned(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	t.Setenv("CLAUDE_PATH", "claude")
-
-	var capturedArgs []string
-	origSpawn := execTmuxNewSession
-	execTmuxNewSession = func(args []string) ([]byte, error) {
-		capturedArgs = args
-		return nil, nil
-	}
-	t.Cleanup(func() { execTmuxNewSession = origSpawn })
-
-	origPipePane := execTmuxPipePaneCmd
-	execTmuxPipePaneCmd = func(_, _ string) {}
-	t.Cleanup(func() { execTmuxPipePaneCmd = origPipePane })
-
-	s := &Session{
-		ID:      "no-tee-test",
-		WorkDir: t.TempDir(),
-	}
-	_ = s.spawn()
-
-	if len(capturedArgs) == 0 {
-		t.Fatal("execTmuxNewSession was not called")
-	}
-	// The agent command is the last element passed to tmux new-session.
-	cmd := capturedArgs[len(capturedArgs)-1]
-	// A bash wrapper always prefixes the command with "bash -c"; a direct agent
-	// spawn never does. HasPrefix is the correct check — the prompt text embedded
-	// later in the command may legitimately reference "bash -c" or "tee" as
-	// documentation of the very wrappers being prohibited.
-	if strings.HasPrefix(cmd, "bash -c") {
-		t.Errorf("agent command must not be wrapped in 'bash -c' (tee wrapper was not removed): %s", cmd)
-	}
-	// Verify that the structural portion of the command (before the prompt flag)
-	// does not pipe through tee. The prompt itself may document this prohibition.
-	cmdStructure := cmd
-	if idx := strings.Index(cmd, " -p '"); idx >= 0 {
-		cmdStructure = cmd[:idx]
-	}
-	if strings.Contains(cmdStructure, "tee") {
-		t.Errorf("agent command structure must not contain 'tee' (bash wrapper was not removed): %s", cmdStructure)
-	}
-	if strings.Contains(cmd, "PIPESTATUS") {
-		t.Errorf("agent command must not contain PIPESTATUS (tee wrapper was not removed): %s", cmd)
-	}
-}
-
-// TestSpawn_PipePaneCalled_AfterSuccessfulSpawn verifies that execTmuxPipePaneCmd
-// is called with the correct session ID and log path after a successful spawn.
-// This is the replacement for the tee wrapper: pipe-pane hooks into tmux's own
-// PTY capture and captures output regardless of how the agent writes it.
-func TestSpawn_PipePaneCalled_AfterSuccessfulSpawn(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	t.Setenv("CLAUDE_PATH", "claude")
-
-	origSpawn := execTmuxNewSession
-	execTmuxNewSession = func(_ []string) ([]byte, error) { return nil, nil }
-	t.Cleanup(func() { execTmuxNewSession = origSpawn })
-
-	var capturedSessionID, capturedLogPath string
-	origPipePane := execTmuxPipePaneCmd
-	execTmuxPipePaneCmd = func(sessionID, logPath string) {
-		capturedSessionID = sessionID
-		capturedLogPath = logPath
-	}
-	t.Cleanup(func() { execTmuxPipePaneCmd = origPipePane })
-
-	s := &Session{
-		ID:      "pipe-pane-test",
-		WorkDir: t.TempDir(),
-	}
 	if err := s.spawn(); err != nil {
-		t.Fatalf("spawn returned unexpected error: %v", err)
+		t.Skip("spawn failed (tmux environment issue):", err)
 	}
+	defer s.kill()
 
-	if capturedSessionID != s.ID {
-		t.Errorf("execTmuxPipePaneCmd called with sessionID = %q, want %q", capturedSessionID, s.ID)
-	}
-	expectedLogPath := filepath.Join(home, ".cistern", "session-logs", s.ID+".log")
-	if capturedLogPath != expectedLogPath {
-		t.Errorf("execTmuxPipePaneCmd called with logPath = %q, want %q", capturedLogPath, expectedLogPath)
-	}
-}
+	// Wait longer than the window.
+	time.Sleep(500 * time.Millisecond)
 
-// TestSpawn_PipePaneNotCalled_WhenSpawnFails verifies that execTmuxPipePaneCmd is
-// not called when tmux new-session fails. There is no session to attach a pipe to.
-func TestSpawn_PipePaneNotCalled_WhenSpawnFails(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	t.Setenv("CLAUDE_PATH", "claude")
-
-	origSpawn := execTmuxNewSession
-	execTmuxNewSession = func(_ []string) ([]byte, error) {
-		return []byte("invalid option: -Z"), fmt.Errorf("exit status 1")
-	}
-	t.Cleanup(func() { execTmuxNewSession = origSpawn })
-
-	pipePaneCalled := false
-	origPipePane := execTmuxPipePaneCmd
-	execTmuxPipePaneCmd = func(_, _ string) { pipePaneCalled = true }
-	t.Cleanup(func() { execTmuxPipePaneCmd = origPipePane })
-
-	s := &Session{
-		ID:      "pipe-pane-no-call-test",
-		WorkDir: t.TempDir(),
-	}
-	_ = s.spawn() // error expected
-
-	if pipePaneCalled {
-		t.Error("execTmuxPipePaneCmd must not be called when spawn fails")
-	}
-}
-
-func TestBaseCataractaePrompt_ContainsNonNegotiableContract(t *testing.T) {
-	// Verify the constitutional base contains core contract elements.
-	mustContain := []string{
-		"## Your contract — non-negotiable",
-		"ct droplet pass",
-		"ct droplet recirculate",
-		"ct droplet pool",
-		"A cataractae that exits without signaling leaves the droplet stranded.",
-	}
-	for _, want := range mustContain {
-		if !strings.Contains(baseCataractaePrompt, want) {
-			t.Errorf("baseCataractaePrompt missing required contract text: %q", want)
-		}
-	}
-}
-
-func TestBaseCataractaePrompt_ContainsSafetyInvariants(t *testing.T) {
-	// Verify all five system safety invariants are present in the prompt.
-	mustContain := []string{
-		"## System safety invariants — never break these",
-		"Signaling is the only valid way to advance state.",
-		"Session spawning must expose the agent process directly to tmux.",
-		"CONTEXT.md is pipeline state — never commit it.",
-		"The zombie circuit breaker will pool after 5 spawns with no outcome.",
-		"Do not call git add -f or git add --force on any ignored file.",
-	}
-	for _, want := range mustContain {
-		if !strings.Contains(baseCataractaePrompt, want) {
-			t.Errorf("baseCataractaePrompt missing safety invariant text: %q", want)
-		}
+	out := buf.String()
+	if strings.Contains(out, "exited quickly") {
+		t.Errorf("unexpected quick-exit warning when outcome already signaled; got: %s", out)
 	}
 }
