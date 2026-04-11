@@ -252,12 +252,12 @@ func TestDropletPass_NoIssues(t *testing.T) {
 
 // --- pass: pooled / terminal status tests ---
 
-// TestDropletPass_WhenPooled_SetsStatusDelivered verifies that passing a pooled
-// droplet immediately sets status=delivered without Castellarius involvement.
+// TestDropletPass_WhenPooled_SetsOutcome verifies that passing a pooled droplet
+// only sets outcome=pass, leaving status unchanged for Castellarius routing.
 // Given a pooled droplet with no open issues,
 // When ct droplet pass is called,
-// Then status=delivered and outcome=pass.
-func TestDropletPass_WhenPooled_SetsStatusDelivered(t *testing.T) {
+// Then outcome=pass and status remains pooled.
+func TestDropletPass_WhenPooled_SetsOutcome(t *testing.T) {
 	db := filepath.Join(t.TempDir(), "test.db")
 	t.Setenv("CT_DB", db)
 
@@ -273,8 +273,8 @@ func TestDropletPass_WhenPooled_SetsStatusDelivered(t *testing.T) {
 	c2, _ := cistern.New(db, "ct")
 	defer c2.Close()
 	d, _ := c2.Get(item.ID)
-	if d.Status != "delivered" {
-		t.Errorf("status = %q, want delivered", d.Status)
+	if d.Status != "pooled" {
+		t.Errorf("status = %q, want pooled", d.Status)
 	}
 	if d.Outcome != "pass" {
 		t.Errorf("outcome = %q, want pass", d.Outcome)
