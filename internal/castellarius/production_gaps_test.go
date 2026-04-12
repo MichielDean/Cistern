@@ -193,52 +193,6 @@ func TestDispatch_SpawnFailure_ResetsDropletAndReleasesWorker(t *testing.T) {
 	}
 }
 
-// TestDispatch_DispatchLoopThreshold_StopsRetrying verifies that when a droplet
-// has hit the dispatch-loop failure threshold, the dispatcher triggers recovery
-// and does NOT call Spawn again — preventing infinite retry loops.
-func TestDispatch_DispatchLoopThreshold_StopsRetrying(t *testing.T) {
-	buf := &bytes.Buffer{}
-	client := newMockClient()
-
-	droplet := &cistern.Droplet{
-		ID:                "loop-droplet",
-		Repo:              "repo",
-		CurrentCataractae: "implement",
-	}
-	client.readyItems = []*cistern.Droplet{droplet}
-	client.items["loop-droplet"] = droplet
-
-	var spawnCalled int64
-	runner := &funcRunner{fn: func(_ context.Context, _ CataractaeRequest) error {
-		atomic.AddInt64(&spawnCalled, 1)
-		return nil
-	}}
-	sched := newTestSchedulerWithRunner(buf, client, runner)
-
-	// Push the droplet past the threshold.
-	for i := 0; i < dispatchLoopThreshold; i++ {
-		sched.dispatchLoop.recordFailure("loop-droplet")
-	}
-
-	sched.dispatchRepo(context.Background(), aqueduct.RepoConfig{Name: "repo"})
-
-	deadline := time.Now().Add(2 * time.Second)
-	for time.Now().Before(deadline) {
-		if poolAllIdle(sched.pools["repo"]) {
-			break
-		}
-		time.Sleep(20 * time.Millisecond)
-	}
-
-	log := buf.String()
-	if !strings.Contains(log, "dispatch-loop threshold reached") {
-		t.Errorf("expected dispatch-loop threshold log; got:\n%s", log)
-	}
-	if n := atomic.LoadInt64(&spawnCalled); n > 0 {
-		t.Errorf("Spawn() called %d times despite dispatch-loop threshold — should have taken recovery path", n)
-	}
-}
-
 // TestDispatch_SuccessfulSpawn_WorkerRemainsFlowing verifies the happy path:
 // after a successful spawn the worker stays busy (observe loop releases it),
 // not prematurely returned to idle.

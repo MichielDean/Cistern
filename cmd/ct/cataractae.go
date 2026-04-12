@@ -111,16 +111,16 @@ func runCataractaeRender(cmd *cobra.Command, args []string) error {
 }
 
 // resolveInstructionsFile returns the InstructionsFile from the resolved provider
-// preset for the first configured repo, or "CLAUDE.md" as the default fallback.
+// preset for the first configured repo, or "AGENTS.md" as the default fallback.
 func resolveInstructionsFile() string {
 	cfgPath := resolveConfigPath()
 	cfg, err := aqueduct.ParseAqueductConfig(cfgPath)
 	if err != nil || len(cfg.Repos) == 0 {
-		return "CLAUDE.md"
+		return "AGENTS.md"
 	}
 	preset, err := cfg.ResolveProvider(cfg.Repos[0].Name)
 	if err != nil {
-		return "CLAUDE.md"
+		return "AGENTS.md"
 	}
 	return preset.InstrFile()
 }

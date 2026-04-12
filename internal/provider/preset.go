@@ -47,6 +47,9 @@ type ProviderPreset struct {
 	Command string `json:"command"`
 	// Args are fixed arguments always appended to the command.
 	Args []string `json:"args,omitempty"`
+	// Subcommand is the positional subcommand inserted after Command
+	// and before flags (e.g. "run" for opencode). Empty means no subcommand.
+	Subcommand string `json:"subcommand,omitempty"`
 	// EnvPassthrough lists environment variable names to forward into the agent process.
 	EnvPassthrough []string `json:"env_passthrough,omitempty"`
 	// ModelFlag is the CLI flag used to select the model (e.g. "--model").
@@ -81,6 +84,13 @@ type ProviderPreset struct {
 	// NonInteractive describes how to invoke this agent in single-shot
 	// (non-interactive) mode for filtration.
 	NonInteractive NonInteractiveConfig `json:"non_interactive,omitempty"`
+	// PromptFileTemplate is the filename within the worktree where the full prompt
+	// is written before spawn. When set, the full prompt content is written to this
+	// file and a short --prompt referencing it is used instead. This avoids tmux
+	// command-line length limits for providers with very long prompts.
+	// The template may contain "{identity}" as a placeholder for the resolved
+	// identity file path.
+	PromptFileTemplate string `json:"prompt_file_template,omitempty"`
 	// SupportsAddDir indicates whether this provider supports the AddDirFlag for
 	// filesystem-based context injection (e.g. SKILL.md, instructions files).
 	// When false, context must be injected as text in the prompt preamble.
@@ -152,10 +162,16 @@ var builtins = []ProviderPreset{
 		NonInteractive:   NonInteractiveConfig{PromptFlag: "-p"},
 	},
 	{
-		Name:             "opencode",
-		Command:          "opencode",
-		InstructionsFile: "AGENTS.md",
-		NonInteractive:   NonInteractiveConfig{Subcommand: "run", PromptFlag: "-p"},
+		Name:                "opencode",
+		Command:            "opencode",
+		Subcommand:          "run",
+		ModelFlag:          "--model",
+		DefaultModel:       "ollama/glm-5.1:cloud",
+		PromptFlag:         "",
+		ContinueFlag:       "--continue",
+		InstructionsFile:   "AGENTS.md",
+		PromptFileTemplate: "AGENTS.md",
+		NonInteractive:     NonInteractiveConfig{Subcommand: "run", PromptFlag: "-p"},
 	},
 }
 

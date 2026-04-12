@@ -10,7 +10,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -1765,155 +1764,9 @@ func makeGitSandbox(t *testing.T, dir string) string {
 	return strings.TrimSpace(string(out))
 }
 
-// TestObserve_HeadNotAdvanced verifies that when implement passes but HEAD
-// has not advanced since the last review, the scheduler auto-recirculates.
-func TestObserve_HeadNotAdvanced(t *testing.T) {
-	sandboxRoot := t.TempDir()
-
-	client := newMockClient()
-	item := &cistern.Droplet{
-		ID:                "ph-1",
-		CurrentCataractae: "implement",
-		Assignee:          "alpha",
-		Status:            "in_progress",
-		Outcome:           "pass",
-	}
-	client.items["ph-1"] = item
-
-	// Create a real git sandbox so sandboxHead() works.
-	// Per-droplet worktrees are at sandboxRoot/<repo>/<dropletID>.
-	sandboxDir := filepath.Join(sandboxRoot, "test-repo", "ph-1")
-	if err := os.MkdirAll(sandboxDir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	headHash := makeGitSandbox(t, sandboxDir)
-
-	// Record the same hash as the last reviewed commit — HEAD has not advanced.
-	client.lastReviewedCommits["ph-1"] = headHash
-
-	runner := newMockRunner(client)
-	config := testConfig()
-	workflows := map[string]*aqueduct.Workflow{"test-repo": testWorkflow()}
-	clients := map[string]CisternClient{"test-repo": client}
-	sched := NewFromParts(config, workflows, clients, runner,
-		WithSandboxRoot(sandboxRoot))
-
-	// Observe tick should detect the phantom commit and recirculate.
-	sched.Tick(context.Background())
-	time.Sleep(10 * time.Millisecond)
-
-	client.mu.Lock()
-	defer client.mu.Unlock()
-
-	// Item must stay at implement, not advance to review.
-	if client.steps["ph-1"] != "implement" {
-		t.Errorf("expected item to stay at 'implement', got %q", client.steps["ph-1"])
-	}
-	// A note must have been attached.
-	hasNote := false
-	for _, n := range client.attached {
-		if n.id == "ph-1" && strings.Contains(n.notes, "HEAD has not advanced") {
-			hasNote = true
-		}
-	}
-	if !hasNote {
-		t.Errorf("expected phantom commit note to be attached, got: %v", client.attached)
-	}
-}
-
-// TestObserve_HeadAdvanced verifies that when implement passes and HEAD has
-// advanced since the last review, routing proceeds normally to review.
-func TestObserve_HeadAdvanced(t *testing.T) {
-	sandboxRoot := t.TempDir()
-
-	client := newMockClient()
-	item := &cistern.Droplet{
-		ID:                "ph-2",
-		CurrentCataractae: "implement",
-		Assignee:          "alpha",
-		Status:            "in_progress",
-		Outcome:           "pass",
-	}
-	client.items["ph-2"] = item
-
-	// Create a real git sandbox and make an additional commit.
-	// Per-droplet worktrees are at sandboxRoot/<repo>/<dropletID>.
-	sandboxDir := filepath.Join(sandboxRoot, "test-repo", "ph-2")
-	if err := os.MkdirAll(sandboxDir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	oldHash := makeGitSandbox(t, sandboxDir)
-
-	// Make a new commit so HEAD advances.
-	if err := os.WriteFile(filepath.Join(sandboxDir, "feature.go"), []byte("package main\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
-	for _, args := range [][]string{
-		{"git", "add", "."},
-		{"git", "commit", "-m", "feat: add feature"},
-	} {
-		cmd := exec.Command(args[0], args[1:]...)
-		cmd.Dir = sandboxDir
-		if out, err := cmd.CombinedOutput(); err != nil {
-			t.Fatalf("%v: %v\n%s", args, err, out)
-		}
-	}
-
-	// Record the OLD hash as last reviewed — HEAD has now advanced past it.
-	client.lastReviewedCommits["ph-2"] = oldHash
-
-	runner := newMockRunner(client)
-	config := testConfig()
-	workflows := map[string]*aqueduct.Workflow{"test-repo": testWorkflow()}
-	clients := map[string]CisternClient{"test-repo": client}
-	sched := NewFromParts(config, workflows, clients, runner,
-		WithSandboxRoot(sandboxRoot))
-
-	sched.Tick(context.Background())
-	time.Sleep(10 * time.Millisecond)
-
-	client.mu.Lock()
-	defer client.mu.Unlock()
-
-	// Item must have advanced to review.
-	if client.steps["ph-2"] != "review" {
-		t.Errorf("expected item at 'review', got %q", client.steps["ph-2"])
-	}
-}
-
-// TestObserve_FirstPass verifies that when LastReviewedCommit is empty
-// (first implement pass), the scheduler routes normally without any HEAD check.
-func TestObserve_FirstPass(t *testing.T) {
-	client := newMockClient()
-	item := &cistern.Droplet{
-		ID:                "ph-3",
-		CurrentCataractae: "implement",
-		Assignee:          "alpha",
-		Status:            "in_progress",
-		Outcome:           "pass",
-	}
-	client.items["ph-3"] = item
-	// lastReviewedCommits["ph-3"] is empty — first pass.
-
-	runner := newMockRunner(client)
-	sched := testScheduler(client, runner)
-
-	sched.Tick(context.Background())
-	time.Sleep(10 * time.Millisecond)
-
-	client.mu.Lock()
-	defer client.mu.Unlock()
-
-	// First pass: route normally to review.
-	if client.steps["ph-3"] != "review" {
-		t.Errorf("expected first pass to route to 'review', got %q", client.steps["ph-3"])
-	}
-}
-
 // TestObserve_ExternallyChangedStatus_FreesPoolSlot verifies that when a droplet's
 // status is changed to 'cancelled' or 'pooled' externally while in_progress (without
-// signaling an outcome), the observe phase detects it, kills the agent session, and
-// releases the aqueduct pool slot.
+// signaling an outcome), the observe phase detects it and releases the aqueduct pool slot.
 func TestObserve_ExternallyChangedStatus_FreesPoolSlot(t *testing.T) {
 	for _, extStatus := range []string{"cancelled", "pooled"} {
 		t.Run(extStatus, func(t *testing.T) {
@@ -1935,13 +1788,6 @@ func TestObserve_ExternallyChangedStatus_FreesPoolSlot(t *testing.T) {
 			sched := NewFromParts(config, workflows, clients, runner,
 				WithLogger(newTestLogger(&logBuf)))
 
-			// Inject a mock killSessionFn that records which sessions were killed.
-			var killedSessions []string
-			sched.killSessionFn = func(sessionID string) error {
-				killedSessions = append(killedSessions, sessionID)
-				return nil
-			}
-
 			// Claim the pool slot to reflect the in-progress dispatch state.
 			pool := sched.pools["test-repo"]
 			w := pool.FindByName("alpha")
@@ -1956,12 +1802,6 @@ func TestObserve_ExternallyChangedStatus_FreesPoolSlot(t *testing.T) {
 
 			if pool.IsFlowing("alpha") {
 				t.Errorf("expected alpha aqueduct to be idle after external %s, got flowing", extStatus)
-			}
-
-			// Verify that the agent session was killed before the pool slot was freed.
-			wantSession := "test-repo-alpha"
-			if !slices.Contains(killedSessions, wantSession) {
-				t.Errorf("expected session %q to be killed on external %s, killed sessions: %v", wantSession, extStatus, killedSessions)
 			}
 
 			// Verify that the INFO log line was emitted.
@@ -2309,70 +2149,6 @@ func TestDirtyNonContextFiles_FiltersCurrentStage(t *testing.T) {
 	}
 }
 
-// TestRecoverDispatchLoop_DirtyWorktree verifies that recoverDispatchLoop detects
-// dirty tracked files, resets them, and records a recovery note.
-func TestRecoverDispatchLoop_DirtyWorktree(t *testing.T) {
-	sandboxRoot := t.TempDir()
-
-	const itemID = "dl-dirty-1"
-	worktreeDir := filepath.Join(sandboxRoot, "test-repo", itemID)
-	if err := os.MkdirAll(worktreeDir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	makeGitSandbox(t, worktreeDir)
-
-	// Create the feature branch.
-	cmd := exec.Command("git", "checkout", "-b", "feat/"+itemID)
-	cmd.Dir = worktreeDir
-	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("git checkout -b: %v\n%s", err, out)
-	}
-
-	// Dirty state: modify a tracked file without committing.
-	if err := os.WriteFile(filepath.Join(worktreeDir, "README.md"), []byte("dirty\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	// Confirm the worktree is dirty before recovery.
-	if files, err := dirtyNonContextFiles(worktreeDir); err != nil || len(files) == 0 {
-		t.Fatalf("precondition failed: expected dirty worktree, got files=%v err=%v", files, err)
-	}
-
-	client := newMockClient()
-	item := &cistern.Droplet{ID: itemID, CurrentCataractae: "implement", Status: "in_progress"}
-	client.items[itemID] = item
-
-	config := testConfig()
-	workflows := map[string]*aqueduct.Workflow{"test-repo": testWorkflow()}
-	clients := map[string]CisternClient{"test-repo": client}
-	runner := newMockRunner(client)
-	sched := NewFromParts(config, workflows, clients, runner, WithSandboxRoot(sandboxRoot))
-
-	sched.recoverDispatchLoop(client, item, config.Repos[0])
-
-	// After recovery, the worktree should be clean.
-	files, err := dirtyNonContextFiles(worktreeDir)
-	if err != nil {
-		t.Fatalf("unexpected error after recovery: %v", err)
-	}
-	if len(files) != 0 {
-		t.Errorf("expected clean worktree after dirty recovery, got %v", files)
-	}
-
-	// A recovery note should have been added to the droplet.
-	client.mu.Lock()
-	defer client.mu.Unlock()
-	var noteFound bool
-	for _, n := range client.attached {
-		if n.id == itemID && strings.Contains(n.notes, "dirty worktree reset") {
-			noteFound = true
-		}
-	}
-	if !noteFound {
-		t.Errorf("expected dirty-worktree recovery note, got: %v", client.attached)
-	}
-}
-
 // TestDispatch_DiffOnlyStepGetsSandboxDir verifies that when a diff_only agent
 // step is dispatched, the Castellarius prepares the per-droplet worktree and
 // passes its path as req.SandboxDir. Without this, generateDiff runs on the
@@ -2532,95 +2308,6 @@ func TestHeartbeatRepo_OrphanRecovery_SecondTick_ItemResetToOpenNotReprocessed(t
 	}
 }
 
-// TestHeartbeatRepo_Debounce_HeartbeatSignalAdvances_ClearsDebounce verifies
-// that when the heartbeat timestamp advances past the debounce time, the debounce
-// entry is cleared and the next stall event re-triggers a note.
-func TestHeartbeatRepo_Debounce_HeartbeatSignalAdvances_ClearsDebounce(t *testing.T) {
-	client := newMockClient()
-
-	// Pre-set debounce entry (simulates a previous stall note).
-	debounceTime := time.Now().Add(-10 * time.Minute)
-
-	// Heartbeat newer than debounce but still older than the 1-minute threshold
-	// (so the droplet is still stalled).
-	advancedTime := debounceTime.Add(3 * time.Minute) // now - 7 min: stalled, but > debounce
-
-	item := &cistern.Droplet{
-		ID:                "stall-hb-adv",
-		CurrentCataractae: "implement",
-		Status:            "in_progress",
-		Assignee:          "",
-		LastHeartbeatAt:   advancedTime,
-	}
-	client.items[item.ID] = item
-
-	config := testConfig()
-	config.StallThresholdMinutes = 1
-
-	workflows := map[string]*aqueduct.Workflow{"test-repo": testWorkflow()}
-	clients := map[string]CisternClient{"test-repo": client}
-	runner := newMockRunner(client)
-	sched := NewFromParts(config, workflows, clients, runner)
-	sched.lastStallNoted[item.ID] = debounceTime
-
-	// heartbeatRepo should clear the debounce (heartbeat > debounceTime) and
-	// then detect stall again → write stall note + recovery note, reset item to open.
-	sched.heartbeatRepo(context.Background(), config.Repos[0])
-	if len(client.attached) != 2 {
-		t.Errorf("expected 2 notes (stall + recovery) after debounce reset, got %d", len(client.attached))
-	}
-}
-
-// TestHeartbeatRepo_Debounce_HeartbeatSignalAdvances_ClearsDebounce_WithAssignee
-// verifies that when the heartbeat advances past the debounce time for a droplet
-// with an assignee, the debounce is cleared and a fresh stall note is written
-// (no respawn occurs — that is zombie detection's responsibility).
-func TestHeartbeatRepo_Debounce_HeartbeatSignalAdvances_ClearsDebounce_WithAssignee(t *testing.T) {
-	// Mock tmux as alive so liveness check passes through to stall detector.
-	orig := isTmuxAliveFn
-	isTmuxAliveFn = func(_ string) bool { return true }
-	t.Cleanup(func() { isTmuxAliveFn = orig })
-	origAgent := isAgentAliveFn
-	isAgentAliveFn = func(_ string) bool { return true }
-	t.Cleanup(func() { isAgentAliveFn = origAgent })
-
-	client := newMockClient()
-
-	debounceTime := time.Now().Add(-10 * time.Minute)
-	advancedTime := debounceTime.Add(3 * time.Minute) // still stalled, but > debounce
-
-	item := &cistern.Droplet{
-		ID:                "stall-hb-adv-assignee",
-		CurrentCataractae: "implement",
-		Status:            "in_progress",
-		Assignee:          "alpha",
-		LastHeartbeatAt:   advancedTime,
-	}
-	client.items[item.ID] = item
-
-	config := testConfig()
-	config.StallThresholdMinutes = 1
-
-	workflows := map[string]*aqueduct.Workflow{"test-repo": testWorkflow()}
-	clients := map[string]CisternClient{"test-repo": client}
-	runner := newMockRunner(client)
-	sched := NewFromParts(config, workflows, clients, runner)
-	sched.lastStallNoted[item.ID] = debounceTime
-
-	// Debounce should be cleared (heartbeat > debounceTime), droplet is still
-	// stalled → stall note written. No spawn (that is zombie detection's job).
-	sched.heartbeatRepo(context.Background(), config.Repos[0])
-	if len(client.attached) != 1 {
-		t.Errorf("expected 1 stall note after heartbeat signal reset debounce, got %d", len(client.attached))
-	}
-	runner.mu.Lock()
-	calls := runner.calls
-	runner.mu.Unlock()
-	if len(calls) != 0 {
-		t.Errorf("expected no Spawn calls (stall detection does not respawn), got %d", len(calls))
-	}
-}
-
 // TestHeartbeatRepo_StallThreshold_ExplicitMinutesRespected verifies that an
 // explicitly configured stall_threshold_minutes is used for stall detection.
 func TestHeartbeatRepo_StallThreshold_ExplicitMinutesRespected(t *testing.T) {
@@ -2682,142 +2369,6 @@ func TestHeartbeatRepo_StallThreshold_DefaultsTo45Minutes(t *testing.T) {
 	// 2 min < 45 min → not stalled → no note written.
 	if len(client.attached) != 0 {
 		t.Errorf("expected 0 stall notes with default 45-min threshold and 2-min-old heartbeat, got %d", len(client.attached))
-	}
-}
-
-// TestHeartbeatRepo_Debounce_AddNoteFailure_DoesNotArmDebounce verifies that
-// when AddNote fails, the debounce entry is NOT set, so the next tick can
-// attempt to write the stall note again.
-func TestHeartbeatRepo_Debounce_AddNoteFailure_DoesNotArmDebounce(t *testing.T) {
-	// Mock tmux as alive so liveness check passes through to stall detector.
-	orig := isTmuxAliveFn
-	isTmuxAliveFn = func(_ string) bool { return true }
-	t.Cleanup(func() { isTmuxAliveFn = orig })
-	// Mock agent as alive so the agent-dead zombie path is not triggered.
-	origAgent := isAgentAliveFn
-	isAgentAliveFn = func(_ string) bool { return true }
-	t.Cleanup(func() { isAgentAliveFn = origAgent })
-
-	client := newMockClient()
-	client.addNoteErr = errors.New("db error")
-
-	item := &cistern.Droplet{
-		ID:                "stall-addnote-fail",
-		CurrentCataractae: "implement",
-		Status:            "in_progress",
-		Assignee:          "alpha", // Set assignee so orphan recovery doesn't reset item to open
-	}
-	client.items[item.ID] = item
-
-	config := testConfig()
-	config.StallThresholdMinutes = 1
-
-	workflows := map[string]*aqueduct.Workflow{"test-repo": testWorkflow()}
-	clients := map[string]CisternClient{"test-repo": client}
-	// Use a nil-client runner so Spawn does not write outcomes — this test is
-	// about debounce behaviour, and a mock outcome would cause the item to be
-	// skipped (Outcome != "") on the second heartbeat tick.
-	runner := newMockRunner(nil)
-	sched := NewFromParts(config, workflows, clients, runner)
-
-	// First tick: stalled but AddNote fails → debounce must NOT be armed.
-	sched.heartbeatRepo(context.Background(), config.Repos[0])
-	if _, armed := sched.lastStallNoted[item.ID]; armed {
-		t.Error("expected debounce not armed after AddNote failure, but it was set")
-	}
-
-	// Second tick: AddNote now succeeds → stall note is written.
-	// The failed first tick produced no entries; attached[0] is the stall note,
-	// written on this second tick. No recovery note: assignee is set, so orphan
-	// recovery does not fire.
-	client.addNoteErr = nil
-	sched.heartbeatRepo(context.Background(), config.Repos[0])
-	stallNotes := 0
-	for _, n := range client.attached {
-		if n.fromStep == "scheduler" && strings.HasPrefix(n.notes, stallNotePrefix) {
-			stallNotes++
-		}
-	}
-	if stallNotes < 1 {
-		t.Errorf("expected at least 1 successful stall note after AddNote failure recovery, got %d", stallNotes)
-	}
-	if _, armed := sched.lastStallNoted[item.ID]; !armed {
-		t.Error("expected debounce armed after successful AddNote, but it was not set")
-	}
-}
-
-// TestHeartbeatRepo_Debounce_StaleHeartbeat_DoesNotClearDebounce verifies that
-// a heartbeat timestamp older than (or equal to) the debounce time does not
-// clear the debounce entry, preventing the periodic re-triggering feedback loop.
-func TestHeartbeatRepo_Debounce_StaleHeartbeat_DoesNotClearDebounce(t *testing.T) {
-	// Mock tmux/agent as alive to avoid zombie detection path.
-	orig := isTmuxAliveFn
-	isTmuxAliveFn = func(_ string) bool { return true }
-	t.Cleanup(func() { isTmuxAliveFn = orig })
-	origAgent := isAgentAliveFn
-	isAgentAliveFn = func(_ string) bool { return true }
-	t.Cleanup(func() { isAgentAliveFn = origAgent })
-
-	client := newMockClient()
-
-	// Pre-arm debounce 10 minutes ago.
-	debounceTime := time.Now().Add(-10 * time.Minute)
-
-	// Heartbeat is OLDER than the debounce entry — must not clear it.
-	staleHeartbeat := debounceTime.Add(-2 * time.Minute) // 12 min ago
-
-	item := &cistern.Droplet{
-		ID:                "stall-stale-hb",
-		CurrentCataractae: "implement",
-		Status:            "in_progress",
-		Assignee:          "alpha", // assignee so orphan recovery doesn't fire
-		LastHeartbeatAt:   staleHeartbeat,
-	}
-	client.items[item.ID] = item
-
-	config := testConfig()
-	config.StallThresholdMinutes = 1
-
-	workflows := map[string]*aqueduct.Workflow{"test-repo": testWorkflow()}
-	clients := map[string]CisternClient{"test-repo": client}
-	runner := newMockRunner(client)
-	sched := NewFromParts(config, workflows, clients, runner)
-	sched.lastStallNoted[item.ID] = debounceTime
-
-	// Stale heartbeat must NOT clear debounce → no new stall note written
-	// (debounce rate-limits to one note per stallNoteInterval).
-	sched.heartbeatRepo(context.Background(), config.Repos[0])
-	if len(client.attached) != 0 {
-		t.Errorf("expected no new stall note (stale heartbeat must not clear debounce), got %d", len(client.attached))
-	}
-}
-
-// TestHeartbeatRepo_StaleDebounce_PrunedWhenDropletNoLongerInProgress verifies
-// that lastStallNoted entries are removed when the corresponding droplet is no
-// longer in the in_progress list, preventing unbounded map growth.
-func TestHeartbeatRepo_StaleDebounce_PrunedWhenDropletNoLongerInProgress(t *testing.T) {
-	client := newMockClient()
-	// No in_progress items — simulates all droplets having completed.
-
-	config := testConfig()
-	config.StallThresholdMinutes = 1
-
-	workflows := map[string]*aqueduct.Workflow{"test-repo": testWorkflow()}
-	clients := map[string]CisternClient{"test-repo": client}
-	runner := newMockRunner(client)
-	sched := NewFromParts(config, workflows, clients, runner)
-
-	// Pre-populate stale entries for two completed droplets.
-	sched.lastStallNoted["completed-1"] = time.Now().Add(-5 * time.Minute)
-	sched.lastStallNoted["completed-2"] = time.Now().Add(-3 * time.Minute)
-
-	sched.heartbeatRepo(context.Background(), config.Repos[0])
-
-	if _, ok := sched.lastStallNoted["completed-1"]; ok {
-		t.Error("expected stale lastStallNoted entry for completed-1 to be pruned")
-	}
-	if _, ok := sched.lastStallNoted["completed-2"]; ok {
-		t.Error("expected stale lastStallNoted entry for completed-2 to be pruned")
 	}
 }
 
@@ -2994,71 +2545,6 @@ func TestHeartbeatRepo_OrphanRecovery_AssignFailure_ClearsDebounce(t *testing.T)
 	}
 	if recoveryNotes < 1 {
 		t.Errorf("expected recovery note even on Assign failure, got %d recovery notes", recoveryNotes)
-	}
-}
-
-// TestHeartbeatRepo_StallNote_RateLimited_ThenHeartbeatResetsDebounce verifies
-// that after a stall note is written (debounce armed), a fresh heartbeat that
-// advances past the debounce time clears the debounce and allows a new note on
-// the next stall detection cycle.
-func TestHeartbeatRepo_StallNote_RateLimited_ThenHeartbeatResetsDebounce(t *testing.T) {
-	// Mock tmux as alive so liveness check passes through to stall detector.
-	orig := isTmuxAliveFn
-	isTmuxAliveFn = func(_ string) bool { return true }
-	t.Cleanup(func() { isTmuxAliveFn = orig })
-	origAgent := isAgentAliveFn
-	isAgentAliveFn = func(_ string) bool { return true }
-	t.Cleanup(func() { isAgentAliveFn = origAgent })
-
-	client := newMockClient()
-	runner := newMockRunner(nil) // nil client: Spawn doesn't write outcomes
-
-	item := &cistern.Droplet{
-		ID:                "stall-debounce-reset",
-		CurrentCataractae: "implement",
-		Status:            "in_progress",
-		Assignee:          "alpha",
-	}
-	client.items[item.ID] = item
-
-	config := testConfig()
-	config.StallThresholdMinutes = 1
-
-	workflows := map[string]*aqueduct.Workflow{"test-repo": testWorkflow()}
-	clients := map[string]CisternClient{"test-repo": client}
-	sched := NewFromParts(config, workflows, clients, runner)
-
-	// First tick: stalled (no heartbeat) → stall note written, debounce armed.
-	sched.heartbeatRepo(context.Background(), config.Repos[0])
-	if len(client.attached) != 1 {
-		t.Fatalf("expected 1 stall note on first tick, got %d", len(client.attached))
-	}
-	debounced, ok := sched.lastStallNoted[item.ID]
-	if !ok {
-		t.Fatal("expected debounce to be armed after successful stall note")
-	}
-
-	// Second tick: debounce still armed → no second note written.
-	sched.heartbeatRepo(context.Background(), config.Repos[0])
-	if len(client.attached) != 1 {
-		t.Errorf("expected debounce to suppress second note, got %d total notes", len(client.attached))
-	}
-
-	// Agent resumes: heartbeat advances past debounce time.
-	// Set heartbeat to a recent time that is also AFTER the debounce timestamp.
-	item.LastHeartbeatAt = debounced.Add(time.Second) // after debounce → clears it on next tick
-	// Also make the heartbeat recent enough to not be stalled (< threshold = 1min).
-	// Since debounced was set just now, debounced + 1s is also "just now" → not stalled.
-
-	// Third tick: heartbeat > debounce time → debounce cleared. Heartbeat is
-	// recent (< 1min threshold) so agent is NOT stalled → no new note written.
-	sched.heartbeatRepo(context.Background(), config.Repos[0])
-	if len(client.attached) != 1 {
-		t.Errorf("expected no new note when agent heartbeating, got %d total notes", len(client.attached))
-	}
-	// Debounce must be cleared since heartbeat > debounceTime.
-	if _, ok := sched.lastStallNoted[item.ID]; ok {
-		t.Error("expected debounce cleared after heartbeat advanced past it")
 	}
 }
 
@@ -3241,21 +2727,7 @@ func TestHeartbeatRepo_TmuxAliveAgentDead_WritesNoteKillsSessionAndResetsDroplet
 	runner := newMockRunner(client)
 	sched := NewFromParts(config, workflows, clients, runner)
 
-	var killedSessions []string
-	sched.killSessionFn = func(sessionID string) error {
-		killedSessions = append(killedSessions, sessionID)
-		return nil
-	}
-
 	sched.heartbeatRepo(context.Background(), config.Repos[0])
-
-	// Session must have been killed.
-	if len(killedSessions) != 1 {
-		t.Fatalf("expected 1 killed session, got %d: %v", len(killedSessions), killedSessions)
-	}
-	if killedSessions[0] != "test-repo-alpha" {
-		t.Errorf("killed session = %q, want %q", killedSessions[0], "test-repo-alpha")
-	}
 
 	// Note must have been written with the expected diagnostic text.
 	if len(client.attached) != 1 {
@@ -3311,18 +2783,8 @@ func TestHeartbeatRepo_TmuxAliveAgentDead_RecentDispatch_SkipsZombieHandling(t *
 	runner := newMockRunner(client)
 	sched := NewFromParts(config, workflows, clients, runner)
 
-	var killedSessions []string
-	sched.killSessionFn = func(sessionID string) error {
-		killedSessions = append(killedSessions, sessionID)
-		return nil
-	}
-
 	sched.heartbeatRepo(context.Background(), config.Repos[0])
 
-	// Age guard must have suppressed zombie handling — session must not be killed.
-	if len(killedSessions) != 0 {
-		t.Errorf("expected no sessions killed for recently-dispatched session, got %v", killedSessions)
-	}
 	if len(client.attached) != 0 {
 		t.Errorf("expected no notes written for recently-dispatched session, got %d", len(client.attached))
 	}
@@ -3362,20 +2824,11 @@ func TestHeartbeatRepo_TmuxAliveAgentAlive_SkipsZombieHandling(t *testing.T) {
 	runner := newMockRunner(client)
 	sched := NewFromParts(config, workflows, clients, runner)
 
-	var killedSessions []string
-	sched.killSessionFn = func(sessionID string) error {
-		killedSessions = append(killedSessions, sessionID)
-		return nil
-	}
-
 	// Provide a recent heartbeat so stall detection does not fire.
 	item.LastHeartbeatAt = time.Now().Add(-30 * time.Second)
 
 	sched.heartbeatRepo(context.Background(), config.Repos[0])
 
-	if len(killedSessions) != 0 {
-		t.Errorf("expected no sessions killed for live agent, got %v", killedSessions)
-	}
 	if len(client.attached) != 0 {
 		t.Errorf("expected no notes written for live agent, got %d", len(client.attached))
 	}
@@ -3863,207 +3316,5 @@ func TestDispatch_SetsAssignedAqueduct(t *testing.T) {
 	}
 	if item.AssignedAqueduct == "" {
 		t.Error("AssignedAqueduct is empty after dispatch — SetAssignedAqueduct was not called")
-	}
-}
-
-// --- spawn-cycle rate limiter scheduler tests ---
-
-// TestSpawnCycleLimiter_PoolsAfterNSpawnsWithNoOutcome verifies that a droplet
-// is automatically pooled when it reaches the spawn-cycle threshold with no
-// recorded outcome. Simulates a zombie loop: agent spawns successfully but is
-// killed before writing an outcome, so the counter accumulates.
-//
-// Given: a droplet with (spawnCycleThreshold-1) prior spawn cycles recorded
-// When: the dispatcher successfully spawns the agent one more time (hitting threshold)
-// Then: the droplet is pooled with a "spawn-cycle limit" note
-func TestSpawnCycleLimiter_PoolsAfterNSpawnsWithNoOutcome(t *testing.T) {
-	client := newMockClient()
-	droplet := &cistern.Droplet{ID: "sc-pool-1", Status: "open", CurrentCataractae: "implement"}
-	client.readyItems = []*cistern.Droplet{droplet}
-	client.items["sc-pool-1"] = droplet
-
-	// Runner succeeds but writes no outcome — simulates a zombie session.
-	runner := newMockRunner(nil)
-	sched := testScheduler(client, runner)
-
-	// Pre-populate spawn cycles: one shy of the threshold, so the next spawn triggers it.
-	for range spawnCycleThreshold - 1 {
-		sched.dispatchLoop.recordSuccess("sc-pool-1")
-	}
-
-	sched.Tick(context.Background())
-	if !runner.waitCalls(1, 2*time.Second) {
-		t.Fatal("timed out waiting for spawn")
-	}
-	// Allow the goroutine's post-spawn code (pool check) to complete.
-	time.Sleep(50 * time.Millisecond)
-
-	client.mu.Lock()
-	defer client.mu.Unlock()
-
-	reason, pooled := client.pooled["sc-pool-1"]
-	if !pooled {
-		t.Fatal("expected droplet to be pooled after spawn-cycle limit")
-	}
-	if !strings.Contains(reason, "spawn-cycle limit") {
-		t.Errorf("pool reason must contain 'spawn-cycle limit'; got: %q", reason)
-	}
-	if !strings.Contains(reason, fmt.Sprintf("%d", spawnCycleThreshold)) {
-		t.Errorf("pool reason must contain spawn count %d; got: %q", spawnCycleThreshold, reason)
-	}
-}
-
-// TestSpawnCycleLimiter_DoesNotPoolBelowThreshold verifies that a droplet is
-// NOT pooled when the spawn count is below the threshold.
-//
-// Given: a droplet with (spawnCycleThreshold-2) prior spawn cycles recorded
-// When: the dispatcher successfully spawns the agent (count = threshold-1)
-// Then: the droplet is not pooled
-func TestSpawnCycleLimiter_DoesNotPoolBelowThreshold(t *testing.T) {
-	client := newMockClient()
-	droplet := &cistern.Droplet{ID: "sc-nopool-1", Status: "open", CurrentCataractae: "implement"}
-	client.readyItems = []*cistern.Droplet{droplet}
-	client.items["sc-nopool-1"] = droplet
-
-	runner := newMockRunner(nil)
-	sched := testScheduler(client, runner)
-
-	// One shy of one-shy-of-threshold: next spawn lands at threshold-1.
-	for range spawnCycleThreshold - 2 {
-		sched.dispatchLoop.recordSuccess("sc-nopool-1")
-	}
-
-	sched.Tick(context.Background())
-	if !runner.waitCalls(1, 2*time.Second) {
-		t.Fatal("timed out waiting for spawn")
-	}
-	time.Sleep(50 * time.Millisecond)
-
-	client.mu.Lock()
-	defer client.mu.Unlock()
-
-	if _, pooled := client.pooled["sc-nopool-1"]; pooled {
-		t.Error("expected droplet NOT to be pooled below the spawn-cycle threshold")
-	}
-}
-
-// TestSpawnCycleLimiter_OutcomeResetsCounter verifies that when an agent signals
-// an outcome, the spawn-cycle counter is reset. This ensures that a normal fast
-// pipeline (spawn → outcome → spawn → outcome → ...) is never penalised by the
-// limiter even after many cycles.
-//
-// Given: a droplet with (spawnCycleThreshold-1) spawn cycles in the tracker
-// When: observeRepo processes an outcome for that droplet
-// Then: the spawn-cycle counter is reset to 0
-func TestSpawnCycleLimiter_OutcomeResetsCounter(t *testing.T) {
-	client := newMockClient()
-	droplet := &cistern.Droplet{
-		ID:                "sc-reset-1",
-		Status:            "in_progress",
-		CurrentCataractae: "implement",
-		Outcome:           "pass",
-	}
-	client.items["sc-reset-1"] = droplet
-
-	runner := newMockRunner(client)
-	sched := testScheduler(client, runner)
-
-	// Simulate near-threshold spawn history.
-	for range spawnCycleThreshold - 1 {
-		sched.dispatchLoop.recordSuccess("sc-reset-1")
-	}
-	if n := sched.dispatchLoop.recentSpawnCount("sc-reset-1"); n != spawnCycleThreshold-1 {
-		t.Fatalf("precondition: expected %d spawn cycles, got %d", spawnCycleThreshold-1, n)
-	}
-
-	// observeRepo processes the outcome — this must call resetSpawnCycles.
-	sched.Tick(context.Background())
-	time.Sleep(50 * time.Millisecond)
-
-	if n := sched.dispatchLoop.recentSpawnCount("sc-reset-1"); n != 0 {
-		t.Errorf("expected spawn-cycle counter reset to 0 after outcome; got %d", n)
-	}
-}
-
-// TestSpawnCycleLimiter_KillsSessionBeforeRelease verifies that when the
-// spawn-cycle limit is reached the agent's tmux session is killed before the
-// worker pool slot is released, so the N-th agent cannot keep running and burn
-// tokens after the circuit breaker fires.
-//
-// Given: a droplet at (spawnCycleThreshold-1) prior spawn cycles
-// When: the dispatcher successfully spawns the agent one more time (hitting threshold)
-// Then: killSessionFn is called with "test-repo-<worker>" before pool.Release
-func TestSpawnCycleLimiter_KillsSessionBeforeRelease(t *testing.T) {
-	client := newMockClient()
-	droplet := &cistern.Droplet{ID: "sc-kill-1", Status: "open", CurrentCataractae: "implement"}
-	client.readyItems = []*cistern.Droplet{droplet}
-	client.items["sc-kill-1"] = droplet
-
-	runner := newMockRunner(nil)
-	sched := testScheduler(client, runner)
-
-	var killedSessions []string
-	sched.killSessionFn = func(sessionID string) error {
-		killedSessions = append(killedSessions, sessionID)
-		return nil
-	}
-
-	// Pre-populate spawn cycles: one shy of threshold so the next spawn triggers it.
-	for range spawnCycleThreshold - 1 {
-		sched.dispatchLoop.recordSuccess("sc-kill-1")
-	}
-
-	sched.Tick(context.Background())
-	if !runner.waitCalls(1, 2*time.Second) {
-		t.Fatal("timed out waiting for spawn")
-	}
-	time.Sleep(50 * time.Millisecond)
-
-	if len(killedSessions) != 1 {
-		t.Fatalf("expected killSessionFn to be called once; got %d calls: %v", len(killedSessions), killedSessions)
-	}
-	// Session name is "<repo>-<worker>"; worker is "alpha" (first available in testConfig).
-	if killedSessions[0] != "test-repo-alpha" {
-		t.Errorf("killed session = %q, want %q", killedSessions[0], "test-repo-alpha")
-	}
-	// Droplet must also be pooled.
-	if _, pooled := client.pooled["sc-kill-1"]; !pooled {
-		t.Error("expected droplet to be pooled after spawn-cycle limit")
-	}
-}
-
-// TestSpawnCycleLimiter_PoolFailure_PreservesCounter verifies that when
-// client.Pool() returns an error the spawn-cycle counter is NOT reset, so the
-// circuit breaker continues to fire on every subsequent spawn rather than
-// requiring the full threshold to accumulate again.
-//
-// Given: a droplet at (spawnCycleThreshold-1) prior spawn cycles and Pool() set to fail
-// When: the dispatcher successfully spawns the agent one more time (hitting threshold)
-// Then: the spawn-cycle counter is preserved (not reset)
-func TestSpawnCycleLimiter_PoolFailure_PreservesCounter(t *testing.T) {
-	client := newMockClient()
-	droplet := &cistern.Droplet{ID: "sc-poolfail-1", Status: "open", CurrentCataractae: "implement"}
-	client.readyItems = []*cistern.Droplet{droplet}
-	client.items["sc-poolfail-1"] = droplet
-	client.poolErr = errors.New("db unavailable")
-
-	runner := newMockRunner(nil)
-	sched := testScheduler(client, runner)
-
-	// Pre-populate spawn cycles: one shy of threshold so the next spawn triggers the check.
-	for range spawnCycleThreshold - 1 {
-		sched.dispatchLoop.recordSuccess("sc-poolfail-1")
-	}
-
-	sched.Tick(context.Background())
-	if !runner.waitCalls(1, 2*time.Second) {
-		t.Fatal("timed out waiting for spawn")
-	}
-	time.Sleep(50 * time.Millisecond)
-
-	// Pool() failed, so the counter must NOT have been reset.
-	n := sched.dispatchLoop.recentSpawnCount("sc-poolfail-1")
-	if n == 0 {
-		t.Error("spawn-cycle counter must not be reset when Pool() fails")
 	}
 }

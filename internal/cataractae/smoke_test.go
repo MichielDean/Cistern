@@ -139,10 +139,10 @@ func TestProviderCommandStrings(t *testing.T) {
 				t.Fatalf("buildPresetCmd error: %v", err)
 			}
 
-			// Binary must be shell-quoted as the first token.
-			quotedCmd := "'" + tt.wantCommand + "'"
-			if !strings.HasPrefix(cmd, quotedCmd+" ") && cmd != quotedCmd {
-				t.Errorf("cmd does not start with shell-quoted binary %q:\n  got: %s", quotedCmd, cmd)
+			// Binary must be shell-quoted after the exec prefix.
+			wantPrefix := "exec '" + tt.wantCommand + "'"
+			if !strings.HasPrefix(cmd, wantPrefix) {
+				t.Errorf("cmd does not start with exec + shell-quoted binary %q:\n  got: %s", wantPrefix, cmd)
 			}
 
 			// Autonomous args must appear in the command (before -p).
