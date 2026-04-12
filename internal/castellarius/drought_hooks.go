@@ -302,31 +302,32 @@ func hookGitSync(cfg *aqueduct.AqueductConfig, sandboxRoot string, logger *slog.
 	return changed, nil
 }
 
-// syncSkillsFromRepo deploys all skills from the skills/ tree in origin/main into
-// ~/.cistern/skills/ via skills.Deploy. Errors are logged but not fatal.
+// syncSkillsFromRepo deploys all skills from the skills/ and internal/skills/
+// trees in origin/main into ~/.cistern/skills/ via skills.Deploy.
+// Errors are logged but not fatal.
 func syncSkillsFromRepo(cloneDir, repoName string, logger *slog.Logger) {
-	// List skill names directly inside origin/main:skills (colon syntax lists tree contents).
-	out, err := exec.Command("git", "-C", cloneDir, "ls-tree", "--name-only", "origin/main:skills").Output()
-	if err != nil {
-		// skills/ directory may not exist in origin/main — silently skip.
-		return
-	}
-
-	for _, name := range strings.Fields(strings.TrimSpace(string(out))) {
-		skillPath := "skills/" + name + "/SKILL.md"
-		content, err := exec.Command("git", "-C", cloneDir, "show", "origin/main:"+skillPath).Output()
+	for _, prefix := range []string{"skills", "internal/skills"} {
+		out, err := exec.Command("git", "-C", cloneDir, "ls-tree", "--name-only", "origin/main:"+prefix).Output()
 		if err != nil {
-			logger.Warn("git_sync: skill SKILL.md not found", "repo", repoName, "skill", name)
 			continue
 		}
 
-		changed, err := skills.Deploy(name, content)
-		if err != nil {
-			logger.Warn("git_sync: deploy skill failed", "repo", repoName, "skill", name, "error", err)
-			continue
-		}
-		if changed {
-			logger.Info("git_sync: skill deployed", "repo", repoName, "skill", name)
+		for _, name := range strings.Fields(strings.TrimSpace(string(out))) {
+			skillPath := prefix + "/" + name + "/SKILL.md"
+			content, err := exec.Command("git", "-C", cloneDir, "show", "origin/main:"+skillPath).Output()
+			if err != nil {
+				logger.Warn("git_sync: skill SKILL.md not found", "repo", repoName, "skill", name)
+				continue
+			}
+
+			changed, err := skills.Deploy(name, content)
+			if err != nil {
+				logger.Warn("git_sync: deploy skill failed", "repo", repoName, "skill", name, "error", err)
+				continue
+			}
+			if changed {
+				logger.Info("git_sync: skill deployed", "repo", repoName, "skill", name)
+			}
 		}
 	}
 }
