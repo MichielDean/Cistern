@@ -198,7 +198,7 @@ or, if no heartbeat has been emitted:
 **Rate-limiting:** To prevent log spam from long-stalled droplets, the scheduler writes at most one stall note per hour for the same droplet. If a droplet remains stalled beyond the first detection, no new note is written until 60 minutes have passed since the last note (or until the heartbeat advances, which resets the window).
 
 **What to do when you see stall notes:**
-1. Check the `heartbeat` field: if it shows `none`, the agent never emitted a heartbeat — it likely died before starting work. Check zombie detection logs and consider restarting: `ct droplet restart <id>`
+1. Check the `heartbeat` field: if it shows `none`, the agent never emitted a heartbeat — it likely died before starting work. Check exit detection logs and consider restarting: `ct droplet restart <id>`
 2. If `heartbeat` shows a timestamp, the agent was alive at that point. Check if the agent session is still running: `ct droplet peek <id>` (shows live session output)
 3. A stall note does **not** trigger an automatic respawn — the agent may simply be slow (e.g., waiting on an LLM response). Monitor before acting.
 4. If the droplet can proceed, restart it: `ct droplet restart <id>`
@@ -224,22 +224,20 @@ If the provider remains degraded, investigate:
 - Is authentication stale? Run `ct doctor --fix` to refresh tokens
 - Rate limiting? Reduce concurrent aqueducts or add delays in cataractae timeouts
 
-### Droplet Reset With "Session Zombie" Note
+### Droplet Reset With "Session Exited Without Outcome" Note
 
-If you see a droplet note like: `"Session zombie detected: tmux alive but claude process dead. Session killed. Re-dispatching. [<timestamp>]"`, the Castellarius detected and recovered an agent that exited without signaling an outcome.
+If you see a droplet note like: `"[scheduler:exit-no-outcome] Session <id> exited without outcome (worker=<name>, cataractae=<step>). [<timestamp>]"`, the Castellarius detected that an agent session exited without signaling an outcome.
 
 **What this means:**
-- The tmux session was still alive (server running, pane responsive)
-- But the claude agent process inside had exited (OOM kill, hard token limit, non-zero exit, or crash)
-- The agent never called `ct droplet pass/block/recirculate` before exiting
-- The Castellarius heartbeat detected this condition and automatically recovered it
+- The agent's tmux session is gone (agent finished and exited, or crashed)
+- The agent never called `ct droplet pass/recirculate/pool` before exiting
+- The Castellarius heartbeat detected this and checked the DB — no outcome was written, and the cataractae stage hadn't advanced — so it reset the droplet for re-dispatch
 
 **Expected behavior:**
 1. The note is added to the droplet history
-2. The session is killed (`tmux kill-session`)
-3. The aqueduct pool slot is released
-4. The droplet is reset to `open` status at the current cataractae
-5. It will be re-dispatched on the next cycle
+2. The aqueduct pool slot is released
+3. The droplet is reset to `open` status at the current cataractae
+4. It will be re-dispatched on the next cycle
 
 **Diagnosis (optional — automatic recovery handles this):**
 If you want to understand why the agent exited:
@@ -256,11 +254,11 @@ journalctl --user -u cistern-castellarius --since "1h ago" | grep <id>  # Check 
 - Look for patterns (e.g., always fails at the same percentage of work) that suggest a hard limit
 
 **Recovery action:**
-No action is needed — the droplet will be re-dispatched automatically. If it keeps hitting the same limit, file a bug to increase resources or optimize the agent implementation.
+No action is needed — the droplet will be re-dispatched automatically. If it keeps hitting the same limit, pool it with `ct droplet pool <id> --notes "..."` and investigate.
 
 ### Droplet Pooled With "Spawn-Cycle Limit" Note
 
-If you see a droplet note like: `"spawn-cycle limit: 5 spawns in window with no outcome recorded"`, the Castellarius detected a droplet that spawned multiple times in succession without signaling an outcome. This is an automatic circuit breaker for zombie loops.
+If you see a droplet note like: `"spawn-cycle limit: 5 spawns in window with no outcome recorded"`, the Castellarius detected a droplet that spawned multiple times in succession without signaling an outcome. This is an automatic circuit breaker for repeated exits without outcome.
 
 **What this means:**
 - The droplet was dispatched and spawned successfully 5 times within a 10-minute window

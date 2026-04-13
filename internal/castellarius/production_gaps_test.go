@@ -31,10 +31,6 @@ func TestHeartbeat_StallDetected_WhenNoSignals(t *testing.T) {
 	orig := isTmuxAliveFn
 	isTmuxAliveFn = func(_ string) bool { return true }
 	t.Cleanup(func() { isTmuxAliveFn = orig })
-	// Mock agent as alive so the agent-dead zombie path is not triggered.
-	origAgent := isAgentAliveFn
-	isAgentAliveFn = func(_ string) bool { return true }
-	t.Cleanup(func() { isAgentAliveFn = origAgent })
 
 	buf := &bytes.Buffer{}
 	client := newMockClient()
@@ -61,14 +57,11 @@ func TestHeartbeat_StallDetected_WhenNoSignals(t *testing.T) {
 // does not write a stall note when the agent's LastHeartbeatAt is within the
 // 45-minute default threshold.
 func TestHeartbeat_NoStallNote_WhenRecentHeartbeat(t *testing.T) {
-	// Mock tmux/agent as alive so zombie detection is bypassed and stall
+	// Mock tmux as alive so exit detection is bypassed and stall
 	// detection runs on the heartbeat timestamp.
 	orig := isTmuxAliveFn
 	isTmuxAliveFn = func(_ string) bool { return true }
 	t.Cleanup(func() { isTmuxAliveFn = orig })
-	origAgent := isAgentAliveFn
-	isAgentAliveFn = func(_ string) bool { return true }
-	t.Cleanup(func() { isAgentAliveFn = origAgent })
 
 	buf := &bytes.Buffer{}
 	client := newMockClient()
@@ -301,9 +294,6 @@ func TestHeartbeat_DB_NotStalled_WhenRecentHeartbeat(t *testing.T) {
 	origTmux := isTmuxAliveFn
 	isTmuxAliveFn = func(_ string) bool { return true }
 	t.Cleanup(func() { isTmuxAliveFn = origTmux })
-	origAgent := isAgentAliveFn
-	isAgentAliveFn = func(_ string) bool { return true }
-	t.Cleanup(func() { isAgentAliveFn = origAgent })
 
 	dbPath := filepath.Join(t.TempDir(), "test.db")
 	c, err := cistern.New(dbPath, "ts")
@@ -365,9 +355,6 @@ func TestHeartbeat_DB_Stalled_WhenNoHeartbeat(t *testing.T) {
 	origTmux := isTmuxAliveFn
 	isTmuxAliveFn = func(_ string) bool { return true }
 	t.Cleanup(func() { isTmuxAliveFn = origTmux })
-	origAgent := isAgentAliveFn
-	isAgentAliveFn = func(_ string) bool { return true }
-	t.Cleanup(func() { isAgentAliveFn = origAgent })
 
 	dbPath := filepath.Join(t.TempDir(), "test.db")
 	c, err := cistern.New(dbPath, "ts")

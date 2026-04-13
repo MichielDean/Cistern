@@ -272,7 +272,7 @@ func TestWriteContextFile_SchedulerNotes_ShownSeparately(t *testing.T) {
 	step := &aqueduct.WorkflowCataractae{Name: "implement", Type: "agent"}
 
 	notes := []cistern.CataractaeNote{
-		{CataractaeName: "scheduler", Content: "scheduler: zombie detected, recirculating"},
+		{CataractaeName: "scheduler", Content: "[scheduler:exit-no-outcome]"},
 		{CataractaeName: "implement", Content: "implement note A"},
 		{CataractaeName: "deliver", Content: "deliver note X"},
 		{CataractaeName: "scheduler", Content: "scheduler: timeout notice"},
@@ -302,7 +302,7 @@ func TestWriteContextFile_SchedulerNotes_ShownSeparately(t *testing.T) {
 		t.Fatal("'## Scheduler Notes' section not found — scheduler notes would be invisible (regression: ci-tgj96)")
 	}
 	schedulerSection := got[schedulerIdx:]
-	if !strings.Contains(schedulerSection, "scheduler: zombie detected, recirculating") {
+	if !strings.Contains(schedulerSection, "[scheduler:exit-no-outcome]") {
 		t.Error("expected first scheduler note in '## Scheduler Notes' section")
 	}
 	if !strings.Contains(schedulerSection, "scheduler: timeout notice") {

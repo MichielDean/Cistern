@@ -20,7 +20,7 @@ import (
 
 	"github.com/MichielDean/cistern/internal/aqueduct"
 	"github.com/MichielDean/cistern/internal/cistern"
-	"github.com/MichielDean/cistern/internal/proc"
+
 )
 
 const (
@@ -1196,9 +1196,9 @@ func (s *Castellarius) recoverInProgress() {
 	}
 }
 
-// heartbeatInProgress scans for orphaned in_progress droplets whose agent
-// sessions have died without writing an outcome. Resets them to open so the
-// main dispatch loop re-queues them on the next tick.
+// heartbeatInProgress scans for in_progress droplets whose agent sessions
+// have exited. If the agent wrote an outcome, the observe cycle handles it.
+// If not, the droplet is reset for re-dispatch.
 func (s *Castellarius) heartbeatInProgress(ctx context.Context) {
 	for _, repo := range s.config.Repos {
 		if ctx.Err() != nil {
@@ -1248,62 +1248,43 @@ func (s *Castellarius) heartbeatRepo(ctx context.Context, repo aqueduct.RepoConf
 			continue
 		}
 
-		// Dead session detection: tmux dead or agent process dead.
-		// Reset to open for re-dispatch. The circuit breaker below
-		// will pool the droplet if it keeps dying.
-		zombieGuard := 4 * s.heartbeatInterval
+		// Session exit detection: when the agent finishes and exits, tmux
+		// destroys the session (remain-on-exit is off). A dead tmux session
+		// is the normal completion signal — check the DB for an outcome
+		// before deciding whether to reset for re-dispatch.
+		exitGuard := 4 * s.heartbeatInterval
 		if item.Assignee != "" {
 			sessionID := repo.Name + "-" + item.Assignee
 			dispatchedAt := item.StageDispatchedAt
 			if dispatchedAt.IsZero() {
 				dispatchedAt = item.UpdatedAt
 			}
-			if time.Since(dispatchedAt) < zombieGuard {
+			if time.Since(dispatchedAt) < exitGuard {
 				continue
 			}
 
-			dead := false
-			tmuxDead := false
 			if !isTmuxAlive(sessionID) {
-				dead = true
-				tmuxDead = true
-				s.logger.Info("heartbeat: tmux dead — resetting to open",
-					"repo", repo.Name, "droplet", item.ID,
-					"assignee", item.Assignee, "session_age", time.Since(dispatchedAt).Round(time.Second).String())
-			} else if !isAgentAlive(sessionID) {
-				dead = true
-				exec.Command("tmux", "kill-session", "-t", sessionID).Run()
-				s.logger.Info("heartbeat: agent dead — killing session, resetting to open",
-					"repo", repo.Name, "droplet", item.ID,
-					"assignee", item.Assignee, "session", sessionID)
-			}
-
-			if dead {
-				// Re-read the item from the DB before resetting. The agent may
-				// have called ct droplet pass/recirculate/pool between when we
-				// fetched the list and now. If an outcome exists, the observe
-				// cycle will handle it. Even if the outcome was already consumed
-				// by the observe cycle (which clears it via Assign), we can detect
-				// that by checking if the cataractae stage advanced — if so, the
-				// droplet has already moved on and we must not reset it.
+				// Re-read from DB. The agent may have written an outcome between
+				// the initial List fetch and now. If so, the observe cycle handles it.
 				fresh, err := client.Get(item.ID)
 				if err == nil {
 					if fresh.Outcome != "" {
-						s.logger.Info("heartbeat: dead session but outcome already written — skipping reset",
+						s.logger.Info("heartbeat: session exited with outcome — observe will process",
 							"repo", repo.Name, "droplet", item.ID, "outcome", fresh.Outcome)
 						continue
 					}
 					if fresh.CurrentCataractae != item.CurrentCataractae {
-						s.logger.Info("heartbeat: dead session but cataractae already advanced — skipping reset",
+						s.logger.Info("heartbeat: cataractae already advanced — observe already processed",
 							"repo", repo.Name, "droplet", item.ID,
 							"was", item.CurrentCataractae, "now", fresh.CurrentCataractae)
 						continue
 					}
 				}
 
+				// Session exited with no outcome — reset for re-dispatch.
 				step := currentCataracta(item, wf)
 				if step == nil {
-					s.logger.Error("heartbeat: no step for dead session — skipping",
+					s.logger.Error("heartbeat: no step for exited session — skipping",
 						"repo", repo.Name, "droplet", item.ID)
 					continue
 				}
@@ -1312,14 +1293,8 @@ func (s *Castellarius) heartbeatRepo(ctx context.Context, repo aqueduct.RepoConf
 						pool.Release(w)
 					}
 				}
-				var noteMsg string
-				if tmuxDead {
-					noteMsg = fmt.Sprintf("[scheduler:zombie] Session %s died without outcome (worker=%s, cataractae=%s). [%s]",
-						sessionID, item.Assignee, step.Name, time.Now().UTC().Format(time.RFC3339))
-				} else {
-					noteMsg = fmt.Sprintf("Session killed. Re-dispatching (worker=%s, cataractae=%s). [%s]",
-						item.Assignee, step.Name, time.Now().UTC().Format(time.RFC3339))
-				}
+				noteMsg := fmt.Sprintf("[scheduler:exit-no-outcome] Session %s exited without outcome (worker=%s, cataractae=%s). [%s]",
+					sessionID, item.Assignee, step.Name, time.Now().UTC().Format(time.RFC3339))
 				s.addNote(client, item.ID, "scheduler", noteMsg)
 				if err := client.Assign(item.ID, "", step.Name); err != nil {
 					s.logger.Error("heartbeat: reset failed", "droplet", item.ID, "error", err)
@@ -1438,7 +1413,7 @@ func (s *Castellarius) circuitBreaker(repo aqueduct.RepoConfig, items []*cistern
 		dispatchCount := 0
 		for _, n := range notes {
 			if n.CataractaeName == "scheduler" &&
-				strings.Contains(n.Content, "Session died without outcome") &&
+				strings.Contains(n.Content, "Session exited without outcome") &&
 				n.CreatedAt.After(cutoff) {
 				dispatchCount++
 			}
@@ -1482,23 +1457,6 @@ var isTmuxAliveFn = func(sessionID string) bool {
 // isTmuxAlive returns true if a tmux session with the given name is running.
 func isTmuxAlive(sessionID string) bool {
 	return isTmuxAliveFn(sessionID)
-}
-
-// isAgentAliveFn returns true when a claude process is alive inside the tmux
-// session. It uses tmux display-message to find the pane root PID and then
-// walks /proc to find a claude descendant of that PID.
-// Injectable for testing without a real tmux server or process tree.
-var isAgentAliveFn = func(sessionID string) bool {
-	out, err := exec.Command("tmux", "display-message", "-p", "-t", sessionID, "#{pane_pid}").Output()
-	if err != nil {
-		return false
-	}
-	return proc.ClaudeAliveUnderPIDIn(strings.TrimSpace(string(out)), "/proc")
-}
-
-// isAgentAlive returns true when the tmux session contains a live claude process.
-func isAgentAlive(sessionID string) bool {
-	return isAgentAliveFn(sessionID)
 }
 
 // sandboxHead returns the current HEAD commit hash in the given directory.

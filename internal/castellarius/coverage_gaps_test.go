@@ -336,11 +336,6 @@ func TestHeartbeatRepo_StallDetected_ForAssignedDroplet(t *testing.T) {
 	orig := isTmuxAliveFn
 	isTmuxAliveFn = func(_ string) bool { return true }
 	t.Cleanup(func() { isTmuxAliveFn = orig })
-	// Mock agent as alive so the agent-dead zombie path is not triggered.
-	origAgent := isAgentAliveFn
-	isAgentAliveFn = func(_ string) bool { return true }
-	t.Cleanup(func() { isAgentAliveFn = origAgent })
-
 	client := newMockClient()
 	item := &cistern.Droplet{
 		ID:                "hb-assigned-stall",
@@ -368,11 +363,6 @@ func TestHeartbeatRepo_ActiveDroplet_NotStalled(t *testing.T) {
 	orig := isTmuxAliveFn
 	isTmuxAliveFn = func(_ string) bool { return true }
 	t.Cleanup(func() { isTmuxAliveFn = orig })
-	// Mock agent as alive so the agent-dead zombie path is not triggered.
-	origAgent := isAgentAliveFn
-	isAgentAliveFn = func(_ string) bool { return true }
-	t.Cleanup(func() { isAgentAliveFn = origAgent })
-
 	client := newMockClient()
 	item := &cistern.Droplet{
 		ID:                "hb-active",
@@ -401,11 +391,6 @@ func TestHeartbeatRepo_UnknownAssignee_WritesStallNote(t *testing.T) {
 	orig := isTmuxAliveFn
 	isTmuxAliveFn = func(_ string) bool { return true }
 	t.Cleanup(func() { isTmuxAliveFn = orig })
-	// Mock agent as alive so the agent-dead zombie path is not triggered.
-	origAgent := isAgentAliveFn
-	isAgentAliveFn = func(_ string) bool { return true }
-	t.Cleanup(func() { isAgentAliveFn = origAgent })
-
 	client := newMockClient()
 	item := &cistern.Droplet{
 		ID:                "hb-unknown",
@@ -426,18 +411,18 @@ func TestHeartbeatRepo_UnknownAssignee_WritesStallNote(t *testing.T) {
 	}
 }
 
-// TestHeartbeatRepo_ZombieDetected_AddsNoteAndResetsToOpen verifies that when
-// a tmux session is dead and the item is old enough, heartbeatRepo writes a
-// zombie note (containing session name, worker, and cataractae) and resets the
+// TestHeartbeatRepo_ExitNoOutcome_AddsNoteAndResetsToOpen verifies that when
+// a tmux session is dead and the item is old enough, heartbeatRepo writes an
+// exit-no-outcome note (containing session name, worker, and cataractae) and resets the
 // droplet to open for re-dispatch.
-func TestHeartbeatRepo_ZombieDetected_AddsNoteAndResetsToOpen(t *testing.T) {
+func TestHeartbeatRepo_ExitNoOutcome_AddsNoteAndResetsToOpen(t *testing.T) {
 	orig := isTmuxAliveFn
 	isTmuxAliveFn = func(_ string) bool { return false }
 	t.Cleanup(func() { isTmuxAliveFn = orig })
 
 	client := newMockClient()
 	item := &cistern.Droplet{
-		ID:                "zombie-1",
+		ID:                "exit-1",
 		CurrentCataractae: "implement",
 		Status:            "in_progress",
 		Assignee:          "alpha",
@@ -453,7 +438,7 @@ func TestHeartbeatRepo_ZombieDetected_AddsNoteAndResetsToOpen(t *testing.T) {
 	defer client.mu.Unlock()
 
 	if len(client.attached) != 1 {
-		t.Fatalf("expected 1 zombie note, got %d", len(client.attached))
+		t.Fatalf("expected 1 exit note, got %d", len(client.attached))
 	}
 	note := client.attached[0]
 	if note.fromStep != "scheduler" {
@@ -462,25 +447,25 @@ func TestHeartbeatRepo_ZombieDetected_AddsNoteAndResetsToOpen(t *testing.T) {
 	// Note must mention session name, aqueduct worker, cataractae, and UTC timestamp.
 	for _, want := range []string{"test-repo-alpha", "alpha", "implement", time.Now().UTC().Format("2006-01-02")} {
 		if !strings.Contains(note.notes, want) {
-			t.Errorf("zombie note missing %q; got: %s", want, note.notes)
+			t.Errorf("exit note missing %q; got: %s", want, note.notes)
 		}
 	}
 	// Droplet must be reset to open for re-dispatch.
 	if got := client.items[item.ID].Status; got != "open" {
-		t.Errorf("droplet status after zombie reset = %q, want %q", got, "open")
+		t.Errorf("droplet status after exit reset = %q, want %q", got, "open")
 	}
 }
 
-// TestHeartbeatRepo_ZombieYoungSession_Skipped verifies that a droplet whose
+// TestHeartbeatRepo_ExitGuardYoungSession_Skipped verifies that a droplet whose
 // tmux session is dead but was dispatched very recently is skipped (age guard).
-func TestHeartbeatRepo_ZombieYoungSession_Skipped(t *testing.T) {
+func TestHeartbeatRepo_ExitGuardYoungSession_Skipped(t *testing.T) {
 	orig := isTmuxAliveFn
 	isTmuxAliveFn = func(_ string) bool { return false }
 	t.Cleanup(func() { isTmuxAliveFn = orig })
 
 	client := newMockClient()
 	item := &cistern.Droplet{
-		ID:                "zombie-young",
+		ID:                "exit-young",
 		CurrentCataractae: "implement",
 		Status:            "in_progress",
 		Assignee:          "alpha",
@@ -496,10 +481,10 @@ func TestHeartbeatRepo_ZombieYoungSession_Skipped(t *testing.T) {
 	defer client.mu.Unlock()
 
 	if len(client.attached) != 0 {
-		t.Errorf("young zombie session should be skipped; got %d notes", len(client.attached))
+		t.Errorf("young session should be skipped by exit guard; got %d notes", len(client.attached))
 	}
 	if client.assignCalls != 0 {
-		t.Errorf("young zombie session should not trigger Assign; got %d calls", client.assignCalls)
+		t.Errorf("young session should not trigger Assign; got %d calls", client.assignCalls)
 	}
 }
 

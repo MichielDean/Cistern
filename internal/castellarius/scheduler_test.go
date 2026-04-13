@@ -2243,16 +2243,12 @@ func TestHeartbeatRepo_StallThreshold_DefaultsTo45Minutes(t *testing.T) {
 // TestHeartbeatRepo_StallWithAssignee_WritesNoteNoRespawn verifies that when a
 // stall is detected and the droplet has an assignee, a stall note is written but
 // runner.Spawn is NOT called. Stall detection no longer auto-respawns: agents
-// emitting heartbeats are alive, and dead agents are handled by zombie detection.
+// emitting heartbeats are alive, and dead agents are handled by exit detection.
 func TestHeartbeatRepo_StallWithAssignee_WritesNoteNoRespawn(t *testing.T) {
 	// Mock tmux as alive so liveness check passes through to stall detector.
 	orig := isTmuxAliveFn
 	isTmuxAliveFn = func(_ string) bool { return true }
 	t.Cleanup(func() { isTmuxAliveFn = orig })
-	// Mock agent as alive so the agent-dead zombie path is not triggered.
-	origAgent := isAgentAliveFn
-	isAgentAliveFn = func(_ string) bool { return true }
-	t.Cleanup(func() { isAgentAliveFn = origAgent })
 
 	client := newMockClient()
 	runner := newMockRunner(client)
@@ -2422,13 +2418,11 @@ func TestHeartbeatRepo_OrphanRecovery_AssignFailure_ClearsDebounce(t *testing.T)
 // actively emitting heartbeats (heartbeat < threshold) is not considered stalled,
 // even if it has been running for a long time without commits or an outcome.
 func TestHeartbeatRepo_AgentEmittingHeartbeat_NotStalled(t *testing.T) {
-	// Mock tmux/agent as alive to avoid zombie detection path.
+	// Mock tmux as alive so exit detection is bypassed and stall
+	// detection runs on the heartbeat timestamp.
 	orig := isTmuxAliveFn
 	isTmuxAliveFn = func(_ string) bool { return true }
 	t.Cleanup(func() { isTmuxAliveFn = orig })
-	origAgent := isAgentAliveFn
-	isAgentAliveFn = func(_ string) bool { return true }
-	t.Cleanup(func() { isAgentAliveFn = origAgent })
 
 	client := newMockClient()
 	runner := newMockRunner(client)
@@ -2468,13 +2462,10 @@ func TestHeartbeatRepo_AgentEmittingHeartbeat_NotStalled(t *testing.T) {
 // that has not emitted a heartbeat for longer than the stall threshold is
 // detected as stalled and an escalation note is written. No auto-respawn occurs.
 func TestHeartbeatRepo_AgentNotEmittingHeartbeat_Stalled(t *testing.T) {
-	// Mock tmux/agent as alive to avoid zombie detection path.
+	// Mock tmux as alive to avoid exit detection path.
 	orig := isTmuxAliveFn
 	isTmuxAliveFn = func(_ string) bool { return true }
 	t.Cleanup(func() { isTmuxAliveFn = orig })
-	origAgent := isAgentAliveFn
-	isAgentAliveFn = func(_ string) bool { return true }
-	t.Cleanup(func() { isAgentAliveFn = origAgent })
 
 	client := newMockClient()
 	runner := newMockRunner(nil) // nil client: Spawn must not be called
@@ -2509,7 +2500,7 @@ func TestHeartbeatRepo_AgentNotEmittingHeartbeat_Stalled(t *testing.T) {
 		t.Errorf("stall note missing heartbeat field; got: %s", client.attached[0].notes)
 	}
 
-	// No auto-respawn — stall detection does not respawn; that is zombie detection's job.
+	// No auto-respawn — stall detection does not respawn; that is exit detection's job.
 	runner.mu.Lock()
 	calls := runner.calls
 	runner.mu.Unlock()
@@ -2518,11 +2509,11 @@ func TestHeartbeatRepo_AgentNotEmittingHeartbeat_Stalled(t *testing.T) {
 	}
 }
 
-// --- heartbeat zombie detection tests ---
+// --- heartbeat exit detection tests ---
 
 // TestHeartbeatRepo_TmuxDead_WritesNoteAndResetsDroplet verifies that when the
-// tmux session is dead the droplet is reset to open for re-dispatch and a zombie
-// note is written.
+// tmux session is dead the droplet is reset to open for re-dispatch and an
+// exit-no-outcome note is written.
 func TestHeartbeatRepo_TmuxDead_WritesNoteAndResetsDroplet(t *testing.T) {
 	// Ensure tmux appears dead for our test session.
 	orig := isTmuxAliveFn
@@ -2532,7 +2523,7 @@ func TestHeartbeatRepo_TmuxDead_WritesNoteAndResetsDroplet(t *testing.T) {
 	client := newMockClient()
 
 	item := &cistern.Droplet{
-		ID:                "zombie-tmuxdead",
+		ID:                "exit-tmuxdead",
 		CurrentCataractae: "implement",
 		Status:            "in_progress",
 		Assignee:          "alpha",
@@ -2550,11 +2541,11 @@ func TestHeartbeatRepo_TmuxDead_WritesNoteAndResetsDroplet(t *testing.T) {
 
 	// Note must have been written.
 	if len(client.attached) != 1 {
-		t.Fatalf("expected 1 zombie note, got %d", len(client.attached))
+		t.Fatalf("expected 1 exit note, got %d", len(client.attached))
 	}
 	note := client.attached[0].notes
-	if !strings.Contains(note, "[scheduler:zombie]") {
-		t.Errorf("zombie note missing [scheduler:zombie] prefix; got: %s", note)
+	if !strings.Contains(note, "[scheduler:exit-no-outcome]") {
+		t.Errorf("exit note missing [scheduler:exit-no-outcome] prefix; got: %s", note)
 	}
 
 	// Droplet must have been reset to open for re-dispatch.
@@ -2563,373 +2554,6 @@ func TestHeartbeatRepo_TmuxDead_WritesNoteAndResetsDroplet(t *testing.T) {
 	}
 	if item.Assignee != "" {
 		t.Errorf("item assignee = %q, want empty after reset", item.Assignee)
-	}
-}
-
-// TestHeartbeatRepo_TmuxAliveAgentDead_WritesNoteKillsSessionAndResetsDroplet
-// verifies the path: tmux session alive but agent process has exited.
-// The heartbeat must kill the session, write a diagnostic note, and reset
-// the droplet to open for re-dispatch.
-func TestHeartbeatRepo_TmuxAliveAgentDead_WritesNoteKillsSessionAndResetsDroplet(t *testing.T) {
-	orig := isTmuxAliveFn
-	isTmuxAliveFn = func(_ string) bool { return true }
-	t.Cleanup(func() { isTmuxAliveFn = orig })
-
-	origAgent := isAgentAliveFn
-	isAgentAliveFn = func(_ string) bool { return false } // shell-only pane
-	t.Cleanup(func() { isAgentAliveFn = origAgent })
-
-	client := newMockClient()
-
-	item := &cistern.Droplet{
-		ID:                "zombie-agentdead",
-		CurrentCataractae: "implement",
-		Status:            "in_progress",
-		Assignee:          "alpha",
-	}
-	client.items[item.ID] = item
-
-	config := testConfig()
-	workflows := map[string]*aqueduct.Workflow{"test-repo": testWorkflow()}
-	clients := map[string]CisternClient{"test-repo": client}
-	runner := newMockRunner(client)
-	sched := NewFromParts(config, workflows, clients, runner)
-
-	sched.heartbeatRepo(context.Background(), config.Repos[0])
-
-	// Note must have been written with the expected diagnostic text.
-	if len(client.attached) != 1 {
-		t.Fatalf("expected 1 note, got %d", len(client.attached))
-	}
-	note := client.attached[0].notes
-	if !strings.Contains(note, "Session killed") {
-		t.Errorf("note missing 'Session killed'; got: %s", note)
-	}
-	if !strings.Contains(note, "Re-dispatching") {
-		t.Errorf("note missing 'Re-dispatching'; got: %s", note)
-	}
-
-	// Droplet must have been reset to open for re-dispatch.
-	if item.Status != "open" {
-		t.Errorf("item status = %q, want open", item.Status)
-	}
-	if item.Assignee != "" {
-		t.Errorf("item assignee = %q, want empty after reset", item.Assignee)
-	}
-}
-
-// TestHeartbeatRepo_TmuxAliveAgentDead_RecentDispatch_SkipsZombieHandling verifies
-// that the minimum age guard prevents false-positive zombie kills during the
-// startup window when tmux is alive but the agent process has not yet been forked.
-func TestHeartbeatRepo_TmuxAliveAgentDead_RecentDispatch_SkipsZombieHandling(t *testing.T) {
-	orig := isTmuxAliveFn
-	isTmuxAliveFn = func(_ string) bool { return true }
-	t.Cleanup(func() { isTmuxAliveFn = orig })
-
-	origAgent := isAgentAliveFn
-	isAgentAliveFn = func(_ string) bool { return false } // agent not yet forked
-	t.Cleanup(func() { isAgentAliveFn = origAgent })
-
-	client := newMockClient()
-
-	item := &cistern.Droplet{
-		ID:                "zombie-agentdead-recent",
-		CurrentCataractae: "implement",
-		Status:            "in_progress",
-		Assignee:          "alpha",
-		StageDispatchedAt: time.Now(), // just dispatched — within zombieGuard
-	}
-	client.items[item.ID] = item
-
-	config := testConfig()
-	config.StallThresholdMinutes = 60 // high threshold — not stalled
-	workflows := map[string]*aqueduct.Workflow{"test-repo": testWorkflow()}
-	clients := map[string]CisternClient{"test-repo": client}
-	runner := newMockRunner(client)
-	sched := NewFromParts(config, workflows, clients, runner)
-
-	sched.heartbeatRepo(context.Background(), config.Repos[0])
-
-	if len(client.attached) != 0 {
-		t.Errorf("expected no notes written for recently-dispatched session, got %d", len(client.attached))
-	}
-	if item.Status != "in_progress" {
-		t.Errorf("item status = %q, want in_progress", item.Status)
-	}
-	if item.Assignee != "alpha" {
-		t.Errorf("item assignee = %q, want alpha", item.Assignee)
-	}
-}
-
-// TestHeartbeatRepo_TmuxAliveAgentAlive_SkipsZombieHandling verifies that when
-// both tmux and the claude process are alive no zombie action is taken.
-func TestHeartbeatRepo_TmuxAliveAgentAlive_SkipsZombieHandling(t *testing.T) {
-	orig := isTmuxAliveFn
-	isTmuxAliveFn = func(_ string) bool { return true }
-	t.Cleanup(func() { isTmuxAliveFn = orig })
-
-	origAgent := isAgentAliveFn
-	isAgentAliveFn = func(_ string) bool { return true } // live claude process
-	t.Cleanup(func() { isAgentAliveFn = origAgent })
-
-	client := newMockClient()
-
-	item := &cistern.Droplet{
-		ID:                "agent-alive",
-		CurrentCataractae: "implement",
-		Status:            "in_progress",
-		Assignee:          "alpha",
-	}
-	client.items[item.ID] = item
-
-	config := testConfig()
-	config.StallThresholdMinutes = 60 // high threshold — not stalled
-	workflows := map[string]*aqueduct.Workflow{"test-repo": testWorkflow()}
-	clients := map[string]CisternClient{"test-repo": client}
-	runner := newMockRunner(client)
-	sched := NewFromParts(config, workflows, clients, runner)
-
-	// Provide a recent heartbeat so stall detection does not fire.
-	item.LastHeartbeatAt = time.Now().Add(-30 * time.Second)
-
-	sched.heartbeatRepo(context.Background(), config.Repos[0])
-
-	if len(client.attached) != 0 {
-		t.Errorf("expected no notes written for live agent, got %d", len(client.attached))
-	}
-	if item.Status != "in_progress" {
-		t.Errorf("item status = %q, want in_progress", item.Status)
-	}
-}
-
-// TestHeartbeatRepo_TmuxAliveAgentDead_NoAssignee_SkipsZombieCheck verifies that
-// when the droplet has no assignee the agent-dead check is not attempted.
-func TestHeartbeatRepo_TmuxAliveAgentDead_NoAssignee_SkipsZombieCheck(t *testing.T) {
-	var agentCheckCalled bool
-	origAgent := isAgentAliveFn
-	isAgentAliveFn = func(_ string) bool {
-		agentCheckCalled = true
-		return false
-	}
-	t.Cleanup(func() { isAgentAliveFn = origAgent })
-
-	client := newMockClient()
-
-	item := &cistern.Droplet{
-		ID:                "no-assignee",
-		CurrentCataractae: "implement",
-		Status:            "in_progress",
-		Assignee:          "", // no assignee — zombie checks should be skipped
-	}
-	client.items[item.ID] = item
-
-	config := testConfig()
-	config.StallThresholdMinutes = 60
-	workflows := map[string]*aqueduct.Workflow{"test-repo": testWorkflow()}
-	clients := map[string]CisternClient{"test-repo": client}
-	runner := newMockRunner(client)
-	sched := NewFromParts(config, workflows, clients, runner)
-
-	// Provide a recent heartbeat so stall detection does not fire.
-	item.LastHeartbeatAt = time.Now().Add(-30 * time.Second)
-
-	sched.heartbeatRepo(context.Background(), config.Repos[0])
-
-	if agentCheckCalled {
-		t.Error("isAgentAliveFn should not be called when droplet has no assignee")
-	}
-}
-
-// TestHeartbeatRepo_FastCompletingStage_StageDispatchedAtRecent_NotZombie verifies
-// acceptance criterion (a): a stage dispatched recently (StageDispatchedAt within
-// zombieGuard) is never declared a zombie, even if UpdatedAt is stale and the tmux
-// session is dead. This models the ci-y89g2 failure: a stage that completes in <2min
-// has its tmux session exit naturally; the dispatch timestamp guards against a false
-// positive regardless of when other updates touched the droplet.
-func TestHeartbeatRepo_FastCompletingStage_StageDispatchedAtRecent_NotZombie(t *testing.T) {
-	orig := isTmuxAliveFn
-	isTmuxAliveFn = func(_ string) bool { return false } // session already exited
-	t.Cleanup(func() { isTmuxAliveFn = orig })
-
-	client := newMockClient()
-
-	item := &cistern.Droplet{
-		ID:                "fast-complete",
-		CurrentCataractae: "implement",
-		Status:            "in_progress",
-		Assignee:          "alpha",
-		// StageDispatchedAt is recent — stage just started.
-		StageDispatchedAt: time.Now(),
-		// UpdatedAt is old (e.g. bumped by a prior note) — would fail the old guard.
-		UpdatedAt: time.Now().Add(-10 * time.Minute),
-	}
-	client.items[item.ID] = item
-
-	config := testConfig()
-	config.StallThresholdMinutes = 60
-	workflows := map[string]*aqueduct.Workflow{"test-repo": testWorkflow()}
-	clients := map[string]CisternClient{"test-repo": client}
-	runner := newMockRunner(client)
-	sched := NewFromParts(config, workflows, clients, runner)
-
-	// Add a recent note so stall detection does not fire.
-	client.notes[item.ID] = []cistern.CataractaeNote{
-		{CreatedAt: time.Now()},
-	}
-
-	sched.heartbeatRepo(context.Background(), config.Repos[0])
-
-	// Age guard (StageDispatchedAt is recent) must suppress zombie reset.
-	if item.Status != "in_progress" {
-		t.Errorf("item status = %q, want in_progress — fast stage must not be declared zombie", item.Status)
-	}
-	if item.Assignee != "alpha" {
-		t.Errorf("item assignee = %q, want alpha — fast stage must not be reset", item.Assignee)
-	}
-	if len(client.attached) != 0 {
-		t.Errorf("expected no zombie notes for fast-completing stage, got %d: %v",
-			len(client.attached), client.attached)
-	}
-}
-
-// TestHeartbeatRepo_GenuineZombie_StageDispatchedAtOld_Detected verifies
-// acceptance criterion (b): a session with a stale StageDispatchedAt, no outcome,
-// and a dead tmux session IS correctly identified as a zombie and reset.
-// UpdatedAt is kept recent here to confirm the guard uses StageDispatchedAt, not UpdatedAt.
-func TestHeartbeatRepo_GenuineZombie_StageDispatchedAtOld_Detected(t *testing.T) {
-	orig := isTmuxAliveFn
-	isTmuxAliveFn = func(_ string) bool { return false } // session dead
-	t.Cleanup(func() { isTmuxAliveFn = orig })
-
-	client := newMockClient()
-
-	item := &cistern.Droplet{
-		ID:                "genuine-zombie",
-		CurrentCataractae: "implement",
-		Status:            "in_progress",
-		Assignee:          "alpha",
-		Outcome:           "", // no outcome recorded — not a completed stage
-		// StageDispatchedAt is old — dispatch happened long ago.
-		StageDispatchedAt: time.Now().Add(-10 * time.Minute),
-		// UpdatedAt is recent — would suppress detection with the old UpdatedAt guard.
-		UpdatedAt: time.Now(),
-	}
-	client.items[item.ID] = item
-
-	config := testConfig()
-	workflows := map[string]*aqueduct.Workflow{"test-repo": testWorkflow()}
-	clients := map[string]CisternClient{"test-repo": client}
-	runner := newMockRunner(client)
-	sched := NewFromParts(config, workflows, clients, runner)
-
-	sched.heartbeatRepo(context.Background(), config.Repos[0])
-
-	// StageDispatchedAt is old → zombie guard fires → droplet must be reset to open.
-	if item.Status != "open" {
-		t.Errorf("item status = %q, want open — genuine zombie must be reset", item.Status)
-	}
-	if item.Assignee != "" {
-		t.Errorf("item assignee = %q, want empty — genuine zombie must be reset", item.Assignee)
-	}
-	if len(client.attached) != 1 {
-		t.Fatalf("expected 1 zombie note, got %d", len(client.attached))
-	}
-	if !strings.Contains(client.attached[0].notes, "zombie") {
-		t.Errorf("zombie note missing 'zombie'; got: %s", client.attached[0].notes)
-	}
-}
-
-// TestHeartbeatRepo_UpdatedAtFallback_StaleUpdatedAt_ZombieFires verifies the
-// migration fallback branch: when StageDispatchedAt is
-// zero (pre-migration droplet) and UpdatedAt is older than zombieGuard, the
-// droplet is treated as a zombie and pooled.
-func TestHeartbeatRepo_UpdatedAtFallback_StaleUpdatedAt_ZombieFires(t *testing.T) {
-	orig := isTmuxAliveFn
-	isTmuxAliveFn = func(_ string) bool { return false }
-	t.Cleanup(func() { isTmuxAliveFn = orig })
-
-	client := newMockClient()
-
-	item := &cistern.Droplet{
-		ID:                "fallback-stale",
-		CurrentCataractae: "implement",
-		Status:            "in_progress",
-		Assignee:          "alpha",
-		Outcome:           "",
-		StageDispatchedAt: time.Time{},                  // zero — pre-migration droplet
-		UpdatedAt:         time.Now().Add(-10 * time.Minute), // stale — older than zombieGuard
-	}
-	client.items[item.ID] = item
-
-	config := testConfig()
-	workflows := map[string]*aqueduct.Workflow{"test-repo": testWorkflow()}
-	clients := map[string]CisternClient{"test-repo": client}
-	runner := newMockRunner(client)
-	sched := NewFromParts(config, workflows, clients, runner)
-
-	sched.heartbeatRepo(context.Background(), config.Repos[0])
-
-	// UpdatedAt fallback: stale UpdatedAt → zombie fires → droplet must be reset to open.
-	if item.Status != "open" {
-		t.Errorf("item status = %q, want open — stale UpdatedAt fallback must trigger zombie reset", item.Status)
-	}
-	if item.Assignee != "" {
-		t.Errorf("item assignee = %q, want empty — zombie must clear assignee", item.Assignee)
-	}
-	if len(client.attached) != 1 {
-		t.Fatalf("expected 1 zombie note, got %d", len(client.attached))
-	}
-	if !strings.Contains(client.attached[0].notes, "zombie") {
-		t.Errorf("zombie note missing 'zombie'; got: %s", client.attached[0].notes)
-	}
-}
-
-// TestHeartbeatRepo_UpdatedAtFallback_RecentUpdatedAt_ZombieSuppressed verifies the
-// migration fallback branch: when StageDispatchedAt is
-// zero (pre-migration droplet) and UpdatedAt is recent (within zombieGuard), the
-// droplet is NOT declared a zombie — the age guard suppresses the pool.
-func TestHeartbeatRepo_UpdatedAtFallback_RecentUpdatedAt_ZombieSuppressed(t *testing.T) {
-	orig := isTmuxAliveFn
-	isTmuxAliveFn = func(_ string) bool { return false }
-	t.Cleanup(func() { isTmuxAliveFn = orig })
-
-	client := newMockClient()
-
-	item := &cistern.Droplet{
-		ID:                "fallback-recent",
-		CurrentCataractae: "implement",
-		Status:            "in_progress",
-		Assignee:          "alpha",
-		Outcome:           "",
-		StageDispatchedAt: time.Time{},  // zero — pre-migration droplet
-		UpdatedAt:         time.Now(),   // recent — within zombieGuard
-	}
-	client.items[item.ID] = item
-
-	config := testConfig()
-	config.StallThresholdMinutes = 60
-	workflows := map[string]*aqueduct.Workflow{"test-repo": testWorkflow()}
-	clients := map[string]CisternClient{"test-repo": client}
-	runner := newMockRunner(client)
-	sched := NewFromParts(config, workflows, clients, runner)
-
-	// Add a recent note so stall detection does not fire.
-	client.notes[item.ID] = []cistern.CataractaeNote{
-		{CreatedAt: time.Now()},
-	}
-
-	sched.heartbeatRepo(context.Background(), config.Repos[0])
-
-	// UpdatedAt fallback: recent UpdatedAt → age guard suppresses zombie reset.
-	if item.Status != "in_progress" {
-		t.Errorf("item status = %q, want in_progress — recent UpdatedAt fallback must suppress zombie", item.Status)
-	}
-	if item.Assignee != "alpha" {
-		t.Errorf("item assignee = %q, want alpha — age guard must not reset assignee", item.Assignee)
-	}
-	if len(client.attached) != 0 {
-		t.Errorf("expected no zombie notes for recent UpdatedAt fallback, got %d: %v",
-			len(client.attached), client.attached)
 	}
 }
 

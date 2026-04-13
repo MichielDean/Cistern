@@ -59,10 +59,10 @@ func (s *Session) Spawn() error {
 }
 
 // spawn creates a new tmux session running the agent fresh. With exec prefix,
-// if the session is alive, the agent IS alive — no zombie state is possible.
+// if the session is alive, the agent IS alive — no stale session is possible.
 func (s *Session) spawn() error {
 	// With exec prefix, if the session is alive the agent is alive.
-	// No zombie detection needed — return nil and let the existing session continue.
+	// No exit detection needed — return nil and let the existing session continue.
 	if isSessionAlive(s.ID) {
 		slog.Default().Info("session: already running — skipping respawn",
 			"session", s.ID)
@@ -458,7 +458,7 @@ Never manipulate droplet state by any means other than ct droplet pass/recircula
 Never exit without signaling — a stranded droplet burns resources indefinitely.
 
 **2. Session spawning must expose the agent process directly to tmux.**
-Do not wrap the agent command in a shell (bash -c, sh -c, pipes, tee) unless you have explicitly verified that pane_current_command and /proc/<pid>/cmdline still correctly identify the agent. Wrappers that change what the process monitor sees will cause every healthy session to be classified as zombie and respawned in a loop.
+Do not wrap the agent command in a shell (bash -c, sh -c, pipes, tee) unless you have explicitly verified that pane_current_command and /proc/<pid>/cmdline still correctly identify the agent. Wrappers that change what the process monitor sees will cause every healthy session to be misclassified as exited without outcome and respawned in a loop.
 
 **3. CONTEXT.md is pipeline state — never commit it.**
 CONTEXT.md is injected at dispatch time and listed in .gitignore. If you see it in a git add or git commit, stop. Committing it causes merge conflicts across concurrent deliveries and corrupts origin/main.
@@ -570,13 +570,6 @@ func (s *Session) resolveIdentityDir() string {
 // Delegates to resolveIdentityDir for location resolution.
 func (s *Session) resolveIdentityPath() string {
 	return filepath.Join(s.resolveIdentityDir(), s.Preset.InstrFile())
-}
-
-// kill terminates the tmux session. Errors are silently ignored since the
-// session may already be dead. Only called for confirmed zombie sessions;
-// healthy sessions are left running (see spawn guard above).
-func (s *Session) kill() {
-	exec.Command("tmux", "kill-session", "-t", s.ID).Run() //nolint:errcheck
 }
 
 // isAlive checks whether the tmux session still exists.

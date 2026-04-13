@@ -64,7 +64,7 @@ type Droplet struct {
 	// StageDispatchedAt is set only when a worker is assigned to this droplet
 	// (Assign(id, worker, step) with non-empty worker). Unlike UpdatedAt, it is
 	// not bumped by notes, outcome signals, or other state changes — making it
-	// the reliable anchor for the zombie detection age guard.
+	// the reliable anchor for the exit detection age guard.
 	StageDispatchedAt time.Time `json:"stage_dispatched_at,omitempty"`
 }
 

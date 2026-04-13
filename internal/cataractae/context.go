@@ -291,7 +291,7 @@ func writeContextFile(path string, p ContextParams) error {
 	// Partition notes in one pass:
 	//   ownNotes       — same cataractae only (avoids anchoring on unrelated stages)
 	//   manualNotes    — operator annotations via `ct droplet note` (never step-filtered)
-	//   schedulerNotes — scheduler system notes (zombie detection, timeouts, etc.)
+	//   schedulerNotes — scheduler system notes (exit detection, timeouts, etc.)
 	var ownNotes, manualNotes, schedulerNotes []cistern.CataractaeNote
 	for _, n := range p.Notes {
 		switch n.CataractaeName {

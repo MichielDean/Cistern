@@ -415,7 +415,7 @@ func TestFakeagent_SpawnOutcomeCycle(t *testing.T) {
 	if err := s.Spawn(); err != nil {
 		t.Fatalf("Spawn: %v", err)
 	}
-	t.Cleanup(func() { s.kill() })
+	t.Cleanup(func() { exec.Command("tmux", "kill-session", "-t", s.ID).Run() })
 
 	// Wait for the session to die (fakeagent exits after calling ct droplet pass).
 	deadline := time.Now().Add(15 * time.Second)
@@ -933,7 +933,7 @@ func TestSpawn_LogsFreshSession_WhenNoTmux(t *testing.T) {
 	}
 	// Spawn may fail (fake agent) — we only care about log output.
 	_ = s.spawn()
-	defer s.kill()
+	defer func() { exec.Command("tmux", "kill-session", "-t", s.ID).Run() }()
 
 	out := buf.String()
 	if !strings.Contains(out, "session=test-fresh-session") {
