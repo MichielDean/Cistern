@@ -54,42 +54,8 @@ Examples:
 			return fmt.Errorf("droplet %s has no current cataractae and --cataractae was not provided; specify one with --cataractae", id)
 		}
 
-		if restartCataractae != "" {
-			cfgPath := resolveConfigPath()
-			cfg, cfgErr := aqueduct.ParseAqueductConfig(cfgPath)
-			if cfgErr == nil {
-				repo := item.Repo
-				var workflow *aqueduct.Workflow
-				for _, r := range cfg.Repos {
-					if strings.EqualFold(r.Name, repo) {
-						if r.WorkflowPath == "" {
-							break
-						}
-						wf, wfErr := aqueduct.ParseWorkflow(r.WorkflowPath)
-						if wfErr != nil {
-							break
-						}
-						workflow = wf
-						break
-					}
-				}
-				if workflow != nil {
-					found := false
-					for _, step := range workflow.Cataractae {
-						if step.Name == restartCataractae {
-							found = true
-							break
-						}
-					}
-					if !found {
-						var validNames []string
-						for _, step := range workflow.Cataractae {
-							validNames = append(validNames, step.Name)
-						}
-						return fmt.Errorf("cataractae %q is not valid for repo %s; valid cataractae: %s", restartCataractae, repo, strings.Join(validNames, ", "))
-					}
-				}
-			}
+		if err := validateRestartCataractae(restartCataractae, item.Repo); err != nil {
+			return err
 		}
 
 		if restartNotes != "" {
@@ -117,4 +83,45 @@ Examples:
 func init() {
 	dropletRestartCmd.Flags().StringVar(&restartCataractae, "cataractae", "", "cataractae to restart from (defaults to current stage)")
 	dropletRestartCmd.Flags().StringVar(&restartNotes, "notes", "", "optional note to record before restarting")
+}
+
+func validateRestartCataractae(cataractaeName, repo string) error {
+	if cataractaeName == "" {
+		return nil
+	}
+	cfg, cfgErr := aqueduct.ParseAqueductConfig(resolveConfigPath())
+	if cfgErr != nil {
+		return nil
+	}
+	workflow := findWorkflowForRepo(cfg, repo)
+	if workflow == nil {
+		return nil
+	}
+	for _, step := range workflow.Cataractae {
+		if step.Name == cataractaeName {
+			return nil
+		}
+	}
+	var validNames []string
+	for _, step := range workflow.Cataractae {
+		validNames = append(validNames, step.Name)
+	}
+	return fmt.Errorf("cataractae %q is not valid for repo %s; valid cataractae: %s", cataractaeName, repo, strings.Join(validNames, ", "))
+}
+
+func findWorkflowForRepo(cfg *aqueduct.AqueductConfig, repo string) *aqueduct.Workflow {
+	for _, r := range cfg.Repos {
+		if !strings.EqualFold(r.Name, repo) {
+			continue
+		}
+		if r.WorkflowPath == "" {
+			return nil
+		}
+		wf, err := aqueduct.ParseWorkflow(r.WorkflowPath)
+		if err != nil {
+			return nil
+		}
+		return wf
+	}
+	return nil
 }
