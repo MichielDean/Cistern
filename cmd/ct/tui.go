@@ -28,23 +28,23 @@ const (
 
 // Action constants identify the pending Detail-panel action.
 const (
-	actionCancel         = "cancel"
-	actionPool           = "pool"
-	actionRestart        = "restart"
-	actionAddNote        = "addnote"
-	actionSetStep        = "setstep"
-	actionPass           = "pass"
-	actionRecirculate    = "recirculate"
-	actionClose          = "close"
-	actionReopen         = "reopen"
-	actionApprove        = "approve"
-	actionEditMeta       = "editmeta"       // multi-field: title, priority, complexity, description
-	actionCreateDroplet  = "create"         // multi-field: repo, title, description, complexity
-	actionAddDep         = "adddep"         // text: depends-on droplet ID
-	actionRemoveDep      = "removedep"      // text: dependency ID to remove
-	actionFileIssue      = "fileissue"      // text: issue description
-	actionResolveIssue   = "resolveissue"   // text: evidence (issue selected via cursor)
-	actionRejectIssue    = "rejectissue"    // text: evidence (issue selected via cursor)
+	actionCancel        = "cancel"
+	actionPool          = "pool"
+	actionRestart       = "restart"
+	actionAddNote       = "addnote"
+	actionSetStep       = "setstep"
+	actionPass          = "pass"
+	actionRecirculate   = "recirculate"
+	actionClose         = "close"
+	actionReopen        = "reopen"
+	actionApprove       = "approve"
+	actionEditMeta      = "editmeta"     // multi-field: title, priority, complexity, description
+	actionCreateDroplet = "create"       // multi-field: repo, title, description, complexity
+	actionAddDep        = "adddep"       // text: depends-on droplet ID
+	actionRemoveDep     = "removedep"    // text: dependency ID to remove
+	actionFileIssue     = "fileissue"    // text: issue description
+	actionResolveIssue  = "resolveissue" // text: evidence (issue selected via cursor)
+	actionRejectIssue   = "rejectissue"  // text: evidence (issue selected via cursor)
 )
 
 // isTerminalStatus reports whether a droplet status string is terminal
@@ -310,29 +310,24 @@ func (m tabAppModel) execMultiActionCmd(action string, values []string) tea.Cmd 
 			if desc := strings.TrimSpace(valAt(values, 3)); desc != "" {
 				fields.Description = &desc
 			}
-			hasEditFields := fields.Description != nil || fields.Priority != nil || fields.Complexity != nil
+			if title != "" {
+				fields.Title = &title
+			}
+			if fields.Title == nil && fields.Description == nil && fields.Priority == nil && fields.Complexity == nil {
+				break
+			}
 			// Guard: EditDroplet rejects in_progress/delivered droplets. Check
 			// status before touching anything so no partial update occurs.
-			if hasEditFields {
-				item, err := c.Get(selectedID)
-				if err != nil {
-					execErr = err
-					break
-				}
-				if item.Status != "open" && item.Status != "pooled" {
-					execErr = fmt.Errorf("droplet %s is %s — cannot edit a droplet that has been picked up", selectedID, item.Status)
-					break
-				}
+			item, err := c.Get(selectedID)
+			if err != nil {
+				execErr = err
+				break
 			}
-			if title != "" {
-				if err := c.UpdateTitle(selectedID, title); err != nil {
-					execErr = err
-					break
-				}
+			if item.Status != "open" && item.Status != "pooled" {
+				execErr = fmt.Errorf("droplet %s is %s — cannot edit a droplet that has been picked up", selectedID, item.Status)
+				break
 			}
-			if hasEditFields {
-				execErr = c.EditDroplet(selectedID, fields)
-			}
+			execErr = c.EditDroplet(selectedID, fields)
 		case actionResolveIssue, actionRejectIssue:
 			// values: [issue_id, evidence] (from palette multi-step path)
 			issueID := strings.TrimSpace(valAt(values, 0))

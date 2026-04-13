@@ -911,24 +911,21 @@ func TestSearch(t *testing.T) {
 	})
 }
 
-func TestUpdateTitle(t *testing.T) {
+func TestEditDroplet_Title_GuardInProgress(t *testing.T) {
 	c := testClient(t)
 	item, _ := c.Add("myrepo", "Old title", "", 1, 3)
+	c.UpdateStatus(item.ID, "in_progress")
 
-	if err := c.UpdateTitle(item.ID, "New title"); err != nil {
-		t.Fatal(err)
+	err := c.EditDroplet(item.ID, EditDropletFields{Title: ptr("New title")})
+	if err == nil {
+		t.Fatal("expected error for in_progress droplet title edit")
 	}
-
+	if !strings.Contains(err.Error(), "cannot edit a droplet that has been picked up") {
+		t.Errorf("unexpected error: %v", err)
+	}
 	got, _ := c.Get(item.ID)
-	if got.Title != "New title" {
-		t.Errorf("title = %q, want %q", got.Title, "New title")
-	}
-}
-
-func TestUpdateTitle_NotFound(t *testing.T) {
-	c := testClient(t)
-	if err := c.UpdateTitle("nonexistent", "New title"); err == nil {
-		t.Error("expected error for missing item")
+	if got.Title != "Old title" {
+		t.Errorf("title = %q, want %q (should not have changed)", got.Title, "Old title")
 	}
 }
 
@@ -1312,6 +1309,37 @@ func TestEditDroplet_NotFound(t *testing.T) {
 	err := c.EditDroplet("bf-xxxxx", EditDropletFields{Description: ptr("x")})
 	if err == nil {
 		t.Fatal("expected error for unknown droplet")
+	}
+}
+
+func TestEditDroplet_MultilineDescription(t *testing.T) {
+	c := testClient(t)
+	item, _ := c.Add("repo", "Title", "", 2, 3)
+
+	multiline := "line one\nline two\nline three"
+	err := c.EditDroplet(item.ID, EditDropletFields{Description: ptr(multiline)})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	got, _ := c.Get(item.ID)
+	if got.Description != multiline {
+		t.Errorf("description = %q, want %q", got.Description, multiline)
+	}
+}
+
+func TestEditDroplet_ClearDescription(t *testing.T) {
+	c := testClient(t)
+	item, _ := c.Add("repo", "Title", "has content", 2, 3)
+
+	err := c.EditDroplet(item.ID, EditDropletFields{Description: ptr("")})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	got, _ := c.Get(item.ID)
+	if got.Description != "" {
+		t.Errorf("description = %q, want empty", got.Description)
 	}
 }
 

@@ -1290,6 +1290,40 @@ func resetEditFlags() {
 	dropletEditCmd.Flags().IntVarP(&editPriority, "priority", "p", 0, "")
 }
 
+func TestEscapeNewlines(t *testing.T) {
+	tests := []struct {
+		in, want string
+	}{
+		{"hello", "hello"},
+		{"hello\nworld", `hello\nworld`},
+		{"line1\nline2\nline3", `line1\nline2\nline3`},
+		{"", ""},
+	}
+	for _, tt := range tests {
+		got := escapeNewlines(tt.in)
+		if got != tt.want {
+			t.Errorf("escapeNewlines(%q) = %q, want %q", tt.in, got, tt.want)
+		}
+	}
+}
+
+func TestUnescapeNewlines(t *testing.T) {
+	tests := []struct {
+		in, want string
+	}{
+		{"hello", "hello"},
+		{`hello\nworld`, "hello\nworld"},
+		{`line1\nline2\nline3`, "line1\nline2\nline3"},
+		{"", ""},
+	}
+	for _, tt := range tests {
+		got := unescapeNewlines(tt.in)
+		if got != tt.want {
+			t.Errorf("unescapeNewlines(%q) = %q, want %q", tt.in, got, tt.want)
+		}
+	}
+}
+
 func TestDropletEdit(t *testing.T) {
 	dir := t.TempDir()
 	db := filepath.Join(dir, "test.db")

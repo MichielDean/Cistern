@@ -527,7 +527,8 @@ var dropletRenameCmd = &cobra.Command{
 		}
 		defer c.Close()
 
-		if err := c.UpdateTitle(args[0], args[1]); err != nil {
+		newTitle := args[1]
+		if err := c.EditDroplet(args[0], cistern.EditDropletFields{Title: &newTitle}); err != nil {
 			return err
 		}
 		fmt.Printf("droplet %s renamed to %q\n", args[0], args[1])
@@ -1433,6 +1434,14 @@ droplet is in_progress or delivered.`,
 	},
 }
 
+func escapeNewlines(s string) string {
+	return strings.ReplaceAll(s, "\n", `\n`)
+}
+
+func unescapeNewlines(s string) string {
+	return strings.ReplaceAll(s, `\n`, "\n")
+}
+
 func editInteractive(c *cistern.Client, id string) error {
 	d, err := c.Get(id)
 	if err != nil {
@@ -1451,7 +1460,7 @@ func editInteractive(c *cistern.Client, id string) error {
 			"description: %s\n"+
 			"complexity: %s\n"+
 			"priority: %d\n",
-		id, d.Title, d.Description, complexityName(d.Complexity), d.Priority)
+		id, d.Title, escapeNewlines(d.Description), complexityName(d.Complexity), d.Priority)
 
 	tmp, err := os.CreateTemp("", "ct-edit-*.txt")
 	if err != nil {
@@ -1499,8 +1508,9 @@ func editInteractive(c *cistern.Client, id string) error {
 				fields.Title = &val
 			}
 		case "description":
-			if val != d.Description {
-				fields.Description = &val
+			unescaped := unescapeNewlines(val)
+			if unescaped != d.Description {
+				fields.Description = &unescaped
 			}
 		case "complexity":
 			cx, err := parseComplexity(val)

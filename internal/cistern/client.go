@@ -526,18 +526,6 @@ func (c *Client) Heartbeat(id string) error {
 	return checkRowsAffected(res, id)
 }
 
-// UpdateTitle sets the title field on a droplet.
-func (c *Client) UpdateTitle(id, title string) error {
-	res, err := c.db.Exec(
-		`UPDATE droplets SET title = ?, updated_at = ? WHERE id = ?`,
-		title, time.Now().UTC(), id,
-	)
-	if err != nil {
-		return fmt.Errorf("cistern: update title %s: %w", id, err)
-	}
-	return checkRowsAffected(res, id)
-}
-
 // EditDropletFields holds the optional fields for EditDroplet.
 // A nil pointer means "do not update this field".
 type EditDropletFields struct {
