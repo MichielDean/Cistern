@@ -51,12 +51,12 @@ func ClaudeAliveUnderPIDIn(panePIDStr, procRoot string) bool {
 		}
 	}
 
-	// BFS from panePIDStr; return true on the first claude descendant found.
+	// BFS from panePIDStr; return true on the first agent descendant found.
 	queue := []string{panePIDStr}
 	for len(queue) > 0 {
 		pid := queue[0]
 		queue = queue[1:]
-		if info, ok := infos[pid]; ok && IsClaudeCmdline(info.cmdline) {
+		if info, ok := infos[pid]; ok && IsAgentCmdline(info.cmdline) {
 			return true
 		}
 		queue = append(queue, children[pid]...)
@@ -88,9 +88,10 @@ func ParsePPid(status string) string {
 	return ""
 }
 
-// IsClaudeCmdline returns true when the null-separated cmdline identifies a
-// claude process — the base name of argv[0] is "claude" or starts with "claude-".
-func IsClaudeCmdline(cmdline string) bool {
+// IsAgentCmdline returns true when the null-separated cmdline identifies a
+// known agent process — the base name of argv[0] is "claude" (or "claude-*"),
+// "opencode", or "codex". These are the known agent binaries.
+func IsAgentCmdline(cmdline string) bool {
 	if cmdline == "" {
 		return false
 	}
@@ -99,5 +100,16 @@ func IsClaudeCmdline(cmdline string) bool {
 		return false
 	}
 	base := filepath.Base(argv0)
-	return base == "claude" || strings.HasPrefix(base, "claude-")
+	switch base {
+	case "claude", "opencode", "codex":
+		return true
+	default:
+		return strings.HasPrefix(base, "claude-")
+	}
+}
+
+// IsClaudeCmdline returns true when the cmdline identifies a claude process.
+// Kept for backward compatibility; delegates to IsAgentCmdline.
+func IsClaudeCmdline(cmdline string) bool {
+	return IsAgentCmdline(cmdline)
 }

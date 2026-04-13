@@ -12,7 +12,6 @@ cataractae:
   - name: implement
     type: agent
     identity: implementer
-    model: sonnet       # optional: any value accepted by claude CLI (e.g. sonnet, opus, haiku); omit to use agent default
     context: full_codebase
     skills:
       - name: cistern-droplet-state
@@ -26,7 +25,6 @@ cataractae:
   - name: simplify
     type: agent
     identity: simplifier
-    model: sonnet       # pattern recognition + refactoring — Sonnet 4.6 is sufficient, Opus is overkill
     context: full_codebase
     skills:
       - name: cistern-droplet-state
@@ -41,7 +39,6 @@ cataractae:
   - name: review
     type: agent
     identity: reviewer
-    model: opus          # adversarial multi-hop reasoning across full codebase — Opus required; Sonnet misses 6-hop inference chains
     context: full_codebase
     skills:
       - name: cistern-droplet-state
@@ -57,7 +54,6 @@ cataractae:
   - name: qa
     type: agent
     identity: qa
-    model: sonnet
     context: full_codebase
     skills:
       - name: cistern-droplet-state
@@ -71,7 +67,6 @@ cataractae:
   - name: security-review
     type: agent
     identity: security
-    model: opus          # attack chain tracing requires strong working memory — Opus required
     context: full_codebase
     skills:
       - name: cistern-droplet-state
@@ -84,7 +79,6 @@ cataractae:
   - name: docs
     type: agent
     identity: docs_writer
-    model: haiku        # mechanical copy-editing task — read diff, update .md files, no deep reasoning needed
     context: full_codebase
     skills:
       - name: cistern-droplet-state
@@ -98,7 +92,6 @@ cataractae:
   - name: delivery
     type: agent
     identity: delivery
-    model: sonnet       # delivery failure modes (merge conflicts, CI failures, rebase issues) require real reasoning — Sonnet required for edge cases
     skills:
       - name: cistern-github
       - name: cistern-droplet-state

@@ -66,8 +66,8 @@ func TestParsePPid_MissingLine(t *testing.T) {
 	}
 }
 
-// TestIsClaudeCmdline covers positive and negative cases.
-func TestIsClaudeCmdline(t *testing.T) {
+// TestIsAgentCmdline covers positive and negative cases for all known agent binaries.
+func TestIsAgentCmdline(t *testing.T) {
 	cases := []struct {
 		cmdline string
 		want    bool
@@ -75,16 +75,19 @@ func TestIsClaudeCmdline(t *testing.T) {
 		{"/usr/bin/claude\x00--dangerously-skip-permissions\x00", true},
 		{"claude\x00", true},
 		{"/home/user/.nvm/bin/claude-code\x00arg\x00", true},
+		{"/home/user/.opencode/bin/opencode\x00run\x00--dangerously-skip-permissions\x00--model\x00ollama/glm-5.1:cloud\x00hello\x00", true},
+		{"opencode\x00run\x00hello\x00", true},
+		{"/usr/local/bin/codex\x00--dangerously-skip-permissions\x00", true},
 		{"/bin/bash\x00-c\x00sleep 100\x00", false},
 		{"sh\x00", false},
 		{"", false},
 		{"\x00", false},
 		{"/usr/bin/notclaude\x00", false},
-		{"/usr/bin/claudeX\x00", false}, // not exact "claude" or "claude-*"
+		{"/usr/bin/claudeX\x00", false},
 	}
 	for _, tc := range cases {
-		if got := proc.IsClaudeCmdline(tc.cmdline); got != tc.want {
-			t.Errorf("IsClaudeCmdline(%q) = %v, want %v", tc.cmdline, got, tc.want)
+		if got := proc.IsAgentCmdline(tc.cmdline); got != tc.want {
+			t.Errorf("IsAgentCmdline(%q) = %v, want %v", tc.cmdline, got, tc.want)
 		}
 	}
 }
@@ -96,53 +99,67 @@ func TestClaudeAliveUnderPIDIn_EmptyPID_ReturnsFalse(t *testing.T) {
 	}
 }
 
-// TestClaudeAliveUnderPIDIn_NoClaudeProcess_ReturnsFalse verifies that a
-// process tree with no claude process returns false.
-func TestClaudeAliveUnderPIDIn_NoClaudeProcess_ReturnsFalse(t *testing.T) {
+// TestClaudeAliveUnderPIDIn_NoAgentProcess_ReturnsFalse verifies that a
+// process tree with no agent process returns false.
+func TestClaudeAliveUnderPIDIn_NoAgentProcess_ReturnsFalse(t *testing.T) {
 	procRoot := t.TempDir()
-	// Pane PID 1 (shell), child 2 (another shell). Neither is claude.
+	// Pane PID 1 (shell), child 2 (another shell). Neither is an agent.
 	writeFakeProcEntry(t, procRoot, "1", "0", "/bin/bash")
 	writeFakeProcEntry(t, procRoot, "2", "1", "/usr/bin/python3", "script.py")
 	if proc.ClaudeAliveUnderPIDIn("1", procRoot) {
-		t.Error("expected false when no claude descendant exists")
+		t.Error("expected false when no agent descendant exists")
 	}
 }
 
-// TestClaudeAliveUnderPIDIn_DirectClaudeChild_ReturnsTrue verifies that a
-// direct claude child of the pane PID is detected.
-func TestClaudeAliveUnderPIDIn_DirectClaudeChild_ReturnsTrue(t *testing.T) {
-	procRoot := t.TempDir()
-	writeFakeProcEntry(t, procRoot, "1", "0", "/bin/bash")
-	writeFakeProcEntry(t, procRoot, "2", "1", "/usr/local/bin/claude", "--dangerously-skip-permissions")
-	if !proc.ClaudeAliveUnderPIDIn("1", procRoot) {
-		t.Error("expected true when direct claude child exists")
+// TestClaudeAliveUnderPIDIn_DirectAgentChild_ReturnsTrue verifies that a
+// direct agent child of the pane PID is detected (claude, opencode, codex).
+func TestClaudeAliveUnderPIDIn_DirectAgentChild_ReturnsTrue(t *testing.T) {
+	t.Parallel()
+	for _, name := range []string{"claude", "opencode", "codex"} {
+		t.Run(name, func(t *testing.T) {
+			procRoot := t.TempDir()
+			writeFakeProcEntry(t, procRoot, "1", "0", "/bin/bash")
+			writeFakeProcEntry(t, procRoot, "2", "1", "/usr/local/bin/"+name, "--dangerously-skip-permissions")
+			if !proc.ClaudeAliveUnderPIDIn("1", procRoot) {
+				t.Errorf("expected true when direct %s child exists", name)
+			}
+		})
 	}
 }
 
-// TestClaudeAliveUnderPIDIn_DeepDescendant_ReturnsTrue verifies that claude is
-// found even when it is several levels deep in the process tree (bash → sh → node → claude).
+// TestClaudeAliveUnderPIDIn_DeepDescendant_ReturnsTrue verifies that an agent
+// is found even when it is several levels deep (bash → sh → node → agent).
 func TestClaudeAliveUnderPIDIn_DeepDescendant_ReturnsTrue(t *testing.T) {
-	procRoot := t.TempDir()
-	// Tree: 1 → 2 (sh) → 3 (node) → 4 (claude)
-	writeFakeProcEntry(t, procRoot, "1", "0", "/bin/bash")
-	writeFakeProcEntry(t, procRoot, "2", "1", "/bin/sh", "-c", "node launcher.js")
-	writeFakeProcEntry(t, procRoot, "3", "2", "/usr/bin/node", "launcher.js")
-	writeFakeProcEntry(t, procRoot, "4", "3", "/home/user/.local/bin/claude", "arg")
-	if !proc.ClaudeAliveUnderPIDIn("1", procRoot) {
-		t.Error("expected true when claude is a deep descendant")
+	t.Parallel()
+	for _, name := range []string{"claude", "opencode"} {
+		t.Run(name, func(t *testing.T) {
+			procRoot := t.TempDir()
+			writeFakeProcEntry(t, procRoot, "1", "0", "/bin/bash")
+			writeFakeProcEntry(t, procRoot, "2", "1", "/bin/sh", "-c", "node launcher.js")
+			writeFakeProcEntry(t, procRoot, "3", "2", "/usr/bin/node", "launcher.js")
+			writeFakeProcEntry(t, procRoot, "4", "3", "/home/user/.local/bin/"+name, "arg")
+			if !proc.ClaudeAliveUnderPIDIn("1", procRoot) {
+				t.Errorf("expected true when %s is a deep descendant", name)
+			}
+		})
 	}
 }
 
-// TestClaudeAliveUnderPIDIn_UnrelatedClaudeProcess_ReturnsFalse verifies that
-// a claude process that is NOT a descendant of the pane PID is not reported.
-func TestClaudeAliveUnderPIDIn_UnrelatedClaudeProcess_ReturnsFalse(t *testing.T) {
-	procRoot := t.TempDir()
-	// Pane PID is 10; claude runs under PID 1 (unrelated).
-	writeFakeProcEntry(t, procRoot, "1", "0", "/bin/bash")
-	writeFakeProcEntry(t, procRoot, "2", "1", "/usr/bin/claude")
-	writeFakeProcEntry(t, procRoot, "10", "0", "/bin/bash") // our pane, no claude children
-	if proc.ClaudeAliveUnderPIDIn("10", procRoot) {
-		t.Error("expected false when claude is not a descendant of pane PID")
+// TestClaudeAliveUnderPIDIn_UnrelatedAgentProcess_ReturnsFalse verifies that
+// an agent process that is NOT a descendant of the pane PID is not reported.
+func TestClaudeAliveUnderPIDIn_UnrelatedAgentProcess_ReturnsFalse(t *testing.T) {
+	t.Parallel()
+	for _, name := range []string{"claude", "opencode"} {
+		t.Run(name, func(t *testing.T) {
+			procRoot := t.TempDir()
+			// Pane PID is 10; agent runs under PID 1 (unrelated).
+			writeFakeProcEntry(t, procRoot, "1", "0", "/bin/bash")
+			writeFakeProcEntry(t, procRoot, "2", "1", "/usr/bin/"+name)
+			writeFakeProcEntry(t, procRoot, "10", "0", "/bin/bash") // our pane, no agent children
+			if proc.ClaudeAliveUnderPIDIn("10", procRoot) {
+				t.Errorf("expected false when %s is not a descendant of pane PID", name)
+			}
+		})
 	}
 }
 
