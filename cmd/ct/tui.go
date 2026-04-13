@@ -313,7 +313,7 @@ func (m tabAppModel) execMultiActionCmd(action string, values []string) tea.Cmd 
 			if title != "" {
 				fields.Title = &title
 			}
-			if fields.Title == nil && fields.Description == nil && fields.Priority == nil && fields.Complexity == nil {
+			if fields.Empty() {
 				break
 			}
 			// Guard: EditDroplet rejects in_progress/delivered droplets. Check

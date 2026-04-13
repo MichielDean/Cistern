@@ -535,11 +535,15 @@ type EditDropletFields struct {
 	Priority    *int
 }
 
+func (f EditDropletFields) Empty() bool {
+	return f.Title == nil && f.Description == nil && f.Complexity == nil && f.Priority == nil
+}
+
 // EditDroplet updates mutable fields on a droplet that has not yet been picked
 // up. Allowed statuses: open, pooled. Returns an error if the droplet is
 // in_progress or delivered.
 func (c *Client) EditDroplet(id string, fields EditDropletFields) error {
-	if fields.Title == nil && fields.Description == nil && fields.Complexity == nil && fields.Priority == nil {
+	if fields.Empty() {
 		return nil
 	}
 

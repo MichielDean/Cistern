@@ -1534,7 +1534,7 @@ func editInteractive(c *cistern.Client, id string) error {
 		}
 	}
 
-	if fields.Title == nil && fields.Description == nil && fields.Complexity == nil && fields.Priority == nil {
+	if fields.Empty() {
 		fmt.Println("no changes")
 		return nil
 	}
