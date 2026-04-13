@@ -35,7 +35,7 @@ Never manipulate droplet state by any means other than ct droplet pass/recircula
 Never exit without signaling — a stranded droplet burns resources indefinitely.
 
 **2. Session spawning must expose the agent process directly to tmux.**
-Do not wrap the agent command in a shell (bash -c, sh -c, pipes, tee) unless you have explicitly verified that pane_current_command and /proc/<pid>/cmdline still correctly identify the agent. Wrappers that change what the process monitor sees will cause every healthy session to be classified as zombie and respawned in a loop.
+Do not wrap the agent command in a shell (bash -c, sh -c, pipes, tee) unless you have explicitly verified that pane_current_command and /proc/<pid>/cmdline still correctly identify the agent. Wrappers that change what the process monitor sees will cause every healthy session to be misclassified as exited without outcome and respawned in a loop.
 
 **3. CONTEXT.md is pipeline state — never commit it.**
 CONTEXT.md is injected at dispatch time and listed in .gitignore. If you see it in a git add or git commit, stop. Committing it causes merge conflicts across concurrent deliveries and corrupts origin/main.

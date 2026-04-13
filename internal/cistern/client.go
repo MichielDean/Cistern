@@ -547,6 +547,10 @@ func (c *Client) EditDroplet(id string, fields EditDropletFields) error {
 		return nil
 	}
 
+	if fields.Title != nil && *fields.Title == "" {
+		return fmt.Errorf("cistern: title must not be empty")
+	}
+
 	if fields.Complexity != nil && (*fields.Complexity < 1 || *fields.Complexity > 3) {
 		return fmt.Errorf("cistern: complexity must be between 1 and 3, got %d", *fields.Complexity)
 	}

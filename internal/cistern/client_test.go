@@ -1181,6 +1181,19 @@ func TestEditDroplet_Title(t *testing.T) {
 	}
 }
 
+func TestEditDroplet_EmptyTitle(t *testing.T) {
+	c := testClient(t)
+	item, _ := c.Add("repo", "Title", "desc", 2, 3)
+
+	err := c.EditDroplet(item.ID, EditDropletFields{Title: ptr("")})
+	if err == nil {
+		t.Fatal("expected error for empty title")
+	}
+	if !strings.Contains(err.Error(), "title must not be empty") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
 func TestEditDroplet_InvalidPriority(t *testing.T) {
 	c := testClient(t)
 	item, _ := c.Add("repo", "Title", "", 2, 3)
