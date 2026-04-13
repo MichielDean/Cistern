@@ -2709,3 +2709,54 @@ func TestRestart_UpdatesTimestamp(t *testing.T) {
 		t.Errorf("UpdatedAt = %v, want after %v", got.UpdatedAt, before)
 	}
 }
+
+func TestRestart_ClearsStageDispatchedAt(t *testing.T) {
+	c := testClient(t)
+	item, _ := c.Add("myrepo", "Task", "", 1, 3)
+	c.GetReady("myrepo")
+	c.Assign(item.ID, "worker-1", "implement")
+
+	dispatched, _ := c.Get(item.ID)
+	if dispatched.StageDispatchedAt.IsZero() {
+		t.Fatal("precondition: StageDispatchedAt must be set after Assign with worker")
+	}
+
+	got, err := c.Restart(item.ID, "review")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.StageDispatchedAt.IsZero() {
+		t.Errorf("StageDispatchedAt = %v, want zero after restart", got.StageDispatchedAt)
+	}
+
+	reloaded, _ := c.Get(item.ID)
+	if !reloaded.StageDispatchedAt.IsZero() {
+		t.Errorf("reloaded StageDispatchedAt = %v, want zero after restart", reloaded.StageDispatchedAt)
+	}
+}
+
+func TestRestart_ClearsLastHeartbeatAt(t *testing.T) {
+	c := testClient(t)
+	item, _ := c.Add("myrepo", "Task", "", 1, 3)
+
+	if err := c.Heartbeat(item.ID); err != nil {
+		t.Fatal(err)
+	}
+	pre, _ := c.Get(item.ID)
+	if pre.LastHeartbeatAt.IsZero() {
+		t.Fatal("precondition: LastHeartbeatAt must be set after Heartbeat()")
+	}
+
+	got, err := c.Restart(item.ID, "implement")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.LastHeartbeatAt.IsZero() {
+		t.Errorf("LastHeartbeatAt = %v, want zero after restart", got.LastHeartbeatAt)
+	}
+
+	reloaded, _ := c.Get(item.ID)
+	if !reloaded.LastHeartbeatAt.IsZero() {
+		t.Errorf("reloaded LastHeartbeatAt = %v, want zero after restart", reloaded.LastHeartbeatAt)
+	}
+}

@@ -1,11 +1,14 @@
 package main
 
 import (
+	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/MichielDean/cistern/internal/aqueduct"
 	"github.com/MichielDean/cistern/internal/cistern"
 )
 
@@ -248,5 +251,190 @@ func TestDropletRestart_UpdatesTimestamp(t *testing.T) {
 	}
 	if !got.UpdatedAt.After(before) {
 		t.Errorf("UpdatedAt = %v, want after %v", got.UpdatedAt, before)
+	}
+}
+
+// --- validateRestartCataractae and findWorkflowForRepo tests ---
+
+// writeWorkflowConfig writes a minimal cistern.yaml with a repo entry that
+// references a workflow file, and writes the workflow YAML alongside it.
+// Returns the config path (to set CT_CONFIG).
+func writeWorkflowConfig(t *testing.T, repoName string, cataractaeNames []string) string {
+	t.Helper()
+	dir := t.TempDir()
+
+	workflowPath := filepath.Join(dir, "workflow.yaml")
+	var wfYAML strings.Builder
+	wfYAML.WriteString("name: test-flow\ncataractae:\n")
+	for _, name := range cataractaeNames {
+		wfYAML.WriteString(fmt.Sprintf("  - name: %s\n    type: agent\n    identity: %s-bot\n", name, name))
+	}
+	if err := os.WriteFile(workflowPath, []byte(wfYAML.String()), 0o644); err != nil {
+		t.Fatalf("write workflow: %v", err)
+	}
+
+	var cfgYAML strings.Builder
+	cfgYAML.WriteString("repos:\n")
+	cfgYAML.WriteString(fmt.Sprintf("  - name: %s\n    url: https://example.com/%s.git\n    workflow_path: %s\n    cataractae: 1\n    prefix: bf\n", repoName, repoName, workflowPath))
+
+	cfgPath := filepath.Join(dir, "cistern.yaml")
+	if err := os.WriteFile(cfgPath, []byte(cfgYAML.String()), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	return cfgPath
+}
+
+func TestValidateRestartCataractae_EmptyName_NoError(t *testing.T) {
+	if err := validateRestartCataractae("", "myrepo"); err != nil {
+		t.Errorf("expected nil error for empty cataractae name, got: %v", err)
+	}
+}
+
+func TestValidateRestartCataractae_ConfigLoadFails_PassesThrough(t *testing.T) {
+	t.Setenv("CT_CONFIG", filepath.Join(t.TempDir(), "nonexistent.yaml"))
+	if err := validateRestartCataractae("implement", "myrepo"); err != nil {
+		t.Errorf("expected nil error when config cannot be loaded (pass-through), got: %v", err)
+	}
+}
+
+func TestValidateRestartCataractae_ValidCataractae(t *testing.T) {
+	cfgPath := writeWorkflowConfig(t, "myrepo", []string{"implement", "review", "delivery"})
+	t.Setenv("CT_CONFIG", cfgPath)
+
+	if err := validateRestartCataractae("review", "myrepo"); err != nil {
+		t.Errorf("expected nil for valid cataractae, got: %v", err)
+	}
+}
+
+func TestValidateRestartCataractae_InvalidCataractae(t *testing.T) {
+	cfgPath := writeWorkflowConfig(t, "myrepo", []string{"implement", "review", "delivery"})
+	t.Setenv("CT_CONFIG", cfgPath)
+
+	err := validateRestartCataractae("nonexistent", "myrepo")
+	if err == nil {
+		t.Fatal("expected error for invalid cataractae, got nil")
+	}
+	if !strings.Contains(err.Error(), "not valid") {
+		t.Errorf("expected error to mention 'not valid', got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "implement") || !strings.Contains(err.Error(), "review") || !strings.Contains(err.Error(), "delivery") {
+		t.Errorf("expected error to list valid cataractae, got: %v", err)
+	}
+}
+
+func TestValidateRestartCataractae_UnknownRepo_PassesThrough(t *testing.T) {
+	cfgPath := writeWorkflowConfig(t, "myrepo", []string{"implement", "review", "delivery"})
+	t.Setenv("CT_CONFIG", cfgPath)
+
+	if err := validateRestartCataractae("implement", "unknown-repo"); err != nil {
+		t.Errorf("expected nil for unknown repo (pass-through), got: %v", err)
+	}
+}
+
+func TestValidateRestartCataractae_RepoWithNoWorkflowPath_PassesThrough(t *testing.T) {
+	dir := t.TempDir()
+	cfgYAML := "repos:\n  - name: bare-repo\n    url: https://example.com/bare.git\n    cataractae: 1\n    prefix: bf\n"
+	cfgPath := filepath.Join(dir, "cistern.yaml")
+	if err := os.WriteFile(cfgPath, []byte(cfgYAML), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("CT_CONFIG", cfgPath)
+
+	if err := validateRestartCataractae("implement", "bare-repo"); err != nil {
+		t.Errorf("expected nil for repo without workflow_path (pass-through), got: %v", err)
+	}
+}
+
+func TestFindWorkflowForRepo_MatchingRepo(t *testing.T) {
+	cfgPath := writeWorkflowConfig(t, "myrepo", []string{"implement", "review", "delivery"})
+	t.Setenv("CT_CONFIG", cfgPath)
+
+	cfg, err := aqueduct.ParseAqueductConfig(resolveConfigPath())
+	if err != nil {
+		t.Fatalf("parse config: %v", err)
+	}
+
+	wf := findWorkflowForRepo(cfg, "myrepo")
+	if wf == nil {
+		t.Fatal("expected workflow for matching repo, got nil")
+	}
+	found := false
+	for _, step := range wf.Cataractae {
+		if step.Name == "implement" {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("expected workflow to contain 'implement' cataractae")
+	}
+}
+
+func TestFindWorkflowForRepo_CaseInsensitiveMatch(t *testing.T) {
+	cfgPath := writeWorkflowConfig(t, "MyRepo", []string{"implement", "review"})
+	t.Setenv("CT_CONFIG", cfgPath)
+
+	cfg, err := aqueduct.ParseAqueductConfig(resolveConfigPath())
+	if err != nil {
+		t.Fatalf("parse config: %v", err)
+	}
+
+	wf := findWorkflowForRepo(cfg, "myrepo")
+	if wf == nil {
+		t.Error("expected case-insensitive match, got nil")
+	}
+}
+
+func TestFindWorkflowForRepo_NoMatchingRepo(t *testing.T) {
+	cfgPath := writeWorkflowConfig(t, "myrepo", []string{"implement"})
+	t.Setenv("CT_CONFIG", cfgPath)
+
+	cfg, err := aqueduct.ParseAqueductConfig(resolveConfigPath())
+	if err != nil {
+		t.Fatalf("parse config: %v", err)
+	}
+
+	wf := findWorkflowForRepo(cfg, "other-repo")
+	if wf != nil {
+		t.Errorf("expected nil for non-matching repo, got %v", wf)
+	}
+}
+
+func TestFindWorkflowForRepo_RepoWithNoWorkflowPath(t *testing.T) {
+	dir := t.TempDir()
+	cfgYAML := "repos:\n  - name: bare-repo\n    url: https://example.com/bare.git\n    cataractae: 1\n    prefix: bf\n"
+	cfgPath := filepath.Join(dir, "cistern.yaml")
+	if err := os.WriteFile(cfgPath, []byte(cfgYAML), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("CT_CONFIG", cfgPath)
+
+	cfg, err := aqueduct.ParseAqueductConfig(resolveConfigPath())
+	if err != nil {
+		t.Fatalf("parse config: %v", err)
+	}
+
+	wf := findWorkflowForRepo(cfg, "bare-repo")
+	if wf != nil {
+		t.Errorf("expected nil for repo without workflow_path, got %v", wf)
+	}
+}
+
+func TestFindWorkflowForRepo_InvalidWorkflowPath(t *testing.T) {
+	dir := t.TempDir()
+	cfgYAML := "repos:\n  - name: broken-repo\n    url: https://example.com/broken.git\n    workflow_path: /nonexistent/path/workflow.yaml\n    cataractae: 1\n    prefix: bf\n"
+	cfgPath := filepath.Join(dir, "cistern.yaml")
+	if err := os.WriteFile(cfgPath, []byte(cfgYAML), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("CT_CONFIG", cfgPath)
+
+	cfg, err := aqueduct.ParseAqueductConfig(resolveConfigPath())
+	if err != nil {
+		t.Fatalf("parse config: %v", err)
+	}
+
+	wf := findWorkflowForRepo(cfg, "broken-repo")
+	if wf != nil {
+		t.Errorf("expected nil for unparseable workflow path, got %v", wf)
 	}
 }

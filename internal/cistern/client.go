@@ -1338,7 +1338,8 @@ func (c *Client) Restart(id, cataractaeName string) (*Droplet, error) {
 	now := time.Now().UTC()
 	res, err := c.db.Exec(
 		`UPDATE droplets SET status = 'open', assignee = '', outcome = NULL,
-		 current_cataractae = ?, assigned_aqueduct = '', updated_at = ?
+		 current_cataractae = ?, assigned_aqueduct = '', updated_at = ?,
+		 stage_dispatched_at = NULL, last_heartbeat_at = NULL
 		 WHERE id = ?`,
 		cataractaeName, now, id,
 	)
@@ -1361,5 +1362,7 @@ func (c *Client) Restart(id, cataractaeName string) (*Droplet, error) {
 	droplet.CurrentCataractae = cataractaeName
 	droplet.AssignedAqueduct = ""
 	droplet.UpdatedAt = now
+	droplet.StageDispatchedAt = time.Time{}
+	droplet.LastHeartbeatAt = time.Time{}
 	return droplet, nil
 }
