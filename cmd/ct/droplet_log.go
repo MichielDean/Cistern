@@ -80,28 +80,25 @@ func buildLogEntries(item *cistern.Droplet, changes []cistern.DropletChange) []l
 	})
 
 	for _, ch := range changes {
-		var evt, detail string
-		var cataractae string
+		var evt, detail, cataractae string
 
+		prefix, suffix, found := strings.Cut(ch.Value, ": ")
 		if ch.Kind == "note" {
-			before, after, found := strings.Cut(ch.Value, ": ")
+			evt = "note"
 			if found {
-				cataractae = before
-				detail = after
+				cataractae = prefix
+				detail = suffix
 			} else {
 				detail = ch.Value
 			}
-			evt = "note"
 		} else {
-			before, after, found := strings.Cut(ch.Value, ": ")
 			if found {
-				evt = before
-				detail = after
+				evt = prefix
+				detail = suffix
 			} else {
 				evt = ch.Value
 			}
-			switch evt {
-			case "pool":
+			if evt == "pool" {
 				evt = "pooled"
 				if detail != "" {
 					detail = "reason: " + detail
@@ -126,10 +123,11 @@ func buildLogEntries(item *cistern.Droplet, changes []cistern.DropletChange) []l
 			Event:      "heartbeat",
 			Detail:     "last heartbeat recorded",
 		})
-		sort.SliceStable(entries, func(i, j int) bool {
-			return entries[i].sortTime.Before(entries[j].sortTime)
-		})
 	}
+
+	sort.SliceStable(entries, func(i, j int) bool {
+		return entries[i].sortTime.Before(entries[j].sortTime)
+	})
 
 	return entries
 }

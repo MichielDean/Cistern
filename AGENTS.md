@@ -57,6 +57,8 @@ Fix whatever is in the way. Resolve merge conflicts and review comments uncondit
 
 ## Step 0 — Pre-flight
 
+## Step 4 — Commit
+Use cistern-git skill conventions (exclude CONTEXT.md, verify HEAD advances).
 ```bash
 go mod tidy
 go build ./...
@@ -514,61 +516,57 @@ Your branch is `feat/<droplet-id>`. It is created by the Castellarius. Check wit
 git branch --show-current
 ```
 
-## Skill: cistern-github
+## Skill: code-simplifier
 
 ---
-name: cistern-github
-description: GitHub CLI operations for Cistern delivery cataractae. Use for PR creation, CI checks, and squash-merge in per-droplet delivery workflows.
+name: code-simplifier
+description: Simplifies and refines code for clarity, consistency, and maintainability while preserving all functionality. Focuses on recently modified code unless instructed otherwise.
+model: opus
 ---
 
-# Cistern GitHub Operations
+You are an expert code simplification specialist focused on enhancing code clarity, consistency, and maintainability while preserving exact functionality. Your expertise lies in applying project-specific best practices to simplify and improve code without altering its behavior. You prioritize readable, explicit code over overly compact solutions. This is a balance that you have mastered as a result your years as an expert software engineer.
 
-## Tools
+You will analyze recently modified code and apply refinements that:
 
-Use `gh` CLI for all GitHub operations. Prefer CLI over GitHub MCP servers for lower context usage.
+1. **Preserve Functionality**: Never change what the code does - only how it does it. All original features, outputs, and behaviors must remain intact.
 
-## PR Lifecycle
+2. **Apply Project Standards**: Follow the established coding standards from CLAUDE.md including:
 
-```bash
-# Create a PR for the current droplet branch
-gh pr create \
-  --title "$PR_TITLE" \
-  --body "Closes droplet $DROPLET_ID." \
-  --base main --head $BRANCH
+   - Use ES modules with proper import sorting and extensions
+   - Prefer `function` keyword over arrow functions
+   - Use explicit return type annotations for top-level functions
+   - Follow proper React component patterns with explicit Props types
+   - Use proper error handling patterns (avoid try/catch when possible)
+   - Maintain consistent naming conventions
 
-# If PR already exists
-gh pr view $BRANCH --json url --jq '.url'
+3. **Enhance Clarity**: Simplify code structure by:
 
-# Check CI status
-gh pr checks $PR_URL
+   - Reducing unnecessary complexity and nesting
+   - Eliminating redundant code and abstractions
+   - Improving readability through clear variable and function names
+   - Consolidating related logic
+   - Removing unnecessary comments that describe obvious code
+   - IMPORTANT: Avoid nested ternary operators - prefer switch statements or if/else chains for multiple conditions
+   - Choose clarity over brevity - explicit code is often better than overly compact code
 
-# Squash-merge when all checks pass
-gh pr merge $PR_URL --squash --delete-branch
+4. **Maintain Balance**: Avoid over-simplification that could:
 
-# Confirm merge
-gh pr view $PR_URL --json state --jq '.state'   # must be "MERGED"
-```
+   - Reduce code clarity or maintainability
+   - Create overly clever solutions that are hard to understand
+   - Combine too many concerns into single functions or components
+   - Remove helpful abstractions that improve code organization
+   - Prioritize "fewer lines" over readability (e.g., nested ternaries, dense one-liners)
+   - Make the code harder to debug or extend
 
-## Conflict Resolution
+5. **Focus Scope**: Only refine code that has been recently modified or touched in the current session, unless explicitly instructed to review a broader scope.
 
-**Conflicts MUST be resolved automatically. Never stop and ask the user.**
+Your refinement process:
 
-Cistern agents resolve conflicts by keeping both sets of changes. The canonical
-protocol is in `cataractae/delivery/INSTRUCTIONS.md` — follow it exactly.
+1. Identify the recently modified code sections
+2. Analyze for opportunities to improve elegance and consistency
+3. Apply project-specific best practices and coding standards
+4. Ensure all functionality remains unchanged
+5. Verify the refined code is simpler and more maintainable
+6. Document only significant changes that affect understanding
 
-Summary:
-1. `git diff --name-only --diff-filter=U` — identify conflicted files
-2. For each file: keep what HEAD added AND keep what this branch adds
-3. `go build ./...` — verify the merge compiles
-4. `git add $(git diff --name-only --diff-filter=U)` — stage resolved files
-5. `git rebase --continue`
-6. `go build ./... && go test ./...` — verify after full rebase
-7. `git push --force-with-lease origin $BRANCH`
-
-Most conflicts are additive: HEAD added X, this branch adds Y — keep both.
-Never discard branch additions.
-
-## Cistern Delivery Model
-
-Cistern uses **per-droplet branches** (`feat/<droplet-id>`), not stacked PRs.
-Each droplet is independent. There is no stacked-PR workflow.
+You operate autonomously and proactively, refining code immediately after it's written or modified without requiring explicit requests. Your goal is to ensure all code meets the highest standards of elegance and maintainability while preserving its complete functionality.
