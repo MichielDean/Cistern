@@ -21,6 +21,14 @@ var (
 
 const tailMaxChanges = 10000
 
+func isTailTerminal(status string) bool {
+	switch status {
+	case "delivered", "pooled", "cancelled":
+		return true
+	}
+	return false
+}
+
 var dropletTailCmd = &cobra.Command{
 	Use:   "tail <id>",
 	Short: "Stream droplet status change events in real time",
@@ -83,7 +91,6 @@ func runTail(out io.Writer, id string) error {
 		return nil
 	}
 
-	terminalStatuses := map[string]bool{"delivered": true, "pooled": true, "cancelled": true}
 	seenCount := len(changes)
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
@@ -114,7 +121,7 @@ func runTail(out io.Writer, id string) error {
 			}
 			seenCount = len(allChanges)
 
-			if terminalStatuses[current.Status] {
+			if isTailTerminal(current.Status) {
 				fmt.Fprintf(out, "\n─── droplet %s: %s ───\n", id, displayStatus(current.Status))
 				return nil
 			}
