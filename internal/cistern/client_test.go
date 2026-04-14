@@ -1563,6 +1563,36 @@ func TestCancel_NotFound(t *testing.T) {
 	}
 }
 
+func TestCancel_AlreadyCancelled_ReturnsTerminalError(t *testing.T) {
+	c := testClient(t)
+	item, _ := c.Add("myrepo", "Feature", "", 1, 3)
+	if err := c.Cancel(item.ID, "first cancel"); err != nil {
+		t.Fatal(err)
+	}
+	err := c.Cancel(item.ID, "second cancel")
+	if err == nil {
+		t.Fatal("expected error when re-cancelling already-cancelled droplet")
+	}
+	if !strings.Contains(err.Error(), "terminal status") {
+		t.Errorf("error = %v, want terminal status message", err)
+	}
+}
+
+func TestCancel_Delivered_ReturnsTerminalError(t *testing.T) {
+	c := testClient(t)
+	item, _ := c.Add("myrepo", "Feature", "", 1, 3)
+	if err := c.CloseItem(item.ID); err != nil {
+		t.Fatal(err)
+	}
+	err := c.Cancel(item.ID, "too late")
+	if err == nil {
+		t.Fatal("expected error when cancelling delivered droplet")
+	}
+	if !strings.Contains(err.Error(), "terminal status") {
+		t.Errorf("error = %v, want terminal status message", err)
+	}
+}
+
 func TestCancel_ExcludedFromGetReady(t *testing.T) {
 	c := testClient(t)
 	item, _ := c.Add("myrepo", "Old feature", "", 1, 3)

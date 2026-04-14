@@ -682,14 +682,22 @@ func (c *Client) Pool(id, reason string) error {
 func (c *Client) Cancel(id, reason string) error {
 	now := time.Now().UTC()
 	res, err := c.db.Exec(
-		`UPDATE droplets SET status = 'cancelled', assignee = '', outcome = NULL, assigned_aqueduct = '', updated_at = ? WHERE id = ?`,
+		`UPDATE droplets SET status = 'cancelled', assignee = '', outcome = NULL, assigned_aqueduct = '', updated_at = ? WHERE id = ? AND status NOT IN ('delivered', 'cancelled')`,
 		now, id,
 	)
 	if err != nil {
 		return fmt.Errorf("cistern: cancel %s: %w", id, err)
 	}
-	if err := checkRowsAffected(res, id); err != nil {
-		return err
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("cistern: cancel %s: rows affected: %w", id, err)
+	}
+	if n == 0 {
+		item, getErr := c.Get(id)
+		if getErr != nil {
+			return fmt.Errorf("cistern: droplet %s not found", id)
+		}
+		return fmt.Errorf("cistern: cancel %s: droplet has terminal status %q", id, item.Status)
 	}
 
 	ts := now.Format("2006-01-02 15:04:05")

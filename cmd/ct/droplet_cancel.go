@@ -37,14 +37,6 @@ Examples:
 		}
 		defer c.Close()
 
-		item, err := c.Get(args[0])
-		if err != nil {
-			return err
-		}
-		if item.Status == "delivered" || item.Status == "cancelled" {
-			return fmt.Errorf("cannot cancel: droplet %s has terminal status %q", args[0], item.Status)
-		}
-
 		if err := c.Cancel(args[0], cancelReason); err != nil {
 			return err
 		}
