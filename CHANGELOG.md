@@ -2,6 +2,33 @@
 
 ## Unreleased
 
+### ct droplet cancel: cancel a flowing or queued droplet (ci-cvcw4)
+
+Updated `ct droplet cancel <id>` to require `--reason` and enforce terminal-status guard. Previously, cancel accepted an optional `--notes` flag and had no status guard — it could silently overwrite delivered/delivered droplets.
+
+**Key changes:**
+- **`--reason` flag is required**: providing a reason is now mandatory; omitting it returns an error
+- **`--notes` deprecated alias**: `--notes` still works for backward compatibility but prints a deprecation warning
+- **Terminal-status guard**: cancelling a droplet that is already `delivered` or `cancelled` returns a clear error
+- **Outcome cleared on cancel**: `outcome` is set to NULL so stale outcomes don't confuse the scheduler
+- **Assigned aqueduct cleared**: no ghost assignments linger after cancellation
+- **Assignee preserved**: the assignee field is kept so the scheduler's external-cancel pool-release path can find and free the slot
+- **Scheduler note with timestamp**: cancel writes a `scheduler` note (e.g., `cancelled: superseded by ct-abc12 [2026-04-13 14:30:00]`) for audit trail
+- **Cancel event recorded**: a `cancel` event is inserted into the events table
+- **Existing notes preserved**: all prior notes remain intact for the audit trail
+- **Moved to its own file**: command definition extracted from `cmd/ct/cistern.go` into `cmd/ct/droplet_cancel.go`
+
+**Command syntax:**
+```bash
+ct droplet cancel <id> --reason "superseded by ct-abc12"    # Cancel with reason (required)
+ct droplet cancel <id> --notes "legacy reason"              # Deprecated: use --reason instead
+```
+
+**Files changed:**
+- `cmd/ct/droplet_cancel.go` — new file with command definition
+- `cmd/ct/cistern.go` — removed old inline cancel command
+- `internal/cistern/client.go` — Cancel method updated with terminal-status guard, outcome clearing, scheduler note, and event recording
+
 ### ct droplet log: show chronological activity log for a droplet (ci-ehjan)
 
 Added `ct droplet log <id>` command that displays a structured timeline of events for a droplet. While `ct droplet show` displays raw fields and `ct droplet tail` streams real-time events, the log command reconstructs a human-readable chronological view from the stored notes and change history.

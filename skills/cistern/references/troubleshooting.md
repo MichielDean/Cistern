@@ -159,7 +159,7 @@ Once you see an orphaned droplet, you have three options:
 
 2. **Cancel the droplet** if it's no longer needed:
    ```bash
-   ct droplet cancel <id> --notes "Orphaned; no longer applicable"
+   ct droplet cancel <id> --reason "Orphaned; no longer applicable"
    ```
 
 3. **Pool the droplet** if it requires manual intervention:

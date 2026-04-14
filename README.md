@@ -657,6 +657,7 @@ ct droplet recirculate <id> --to implement                        Send back to a
 ct droplet recirculate <id> --notes "..."                         Recirculate with notes
 ct droplet pool <id>                                             Mark as pooled — cannot proceed
 ct droplet pool <id> --notes "..."                               Pool with notes
+ct droplet cancel <id> --reason "..."                            Cancel — won't be implemented (reason required)
 
 # Human gate — critical droplets pause here before delivery
 ct droplet approve <id>                                           Approve a critical droplet for delivery

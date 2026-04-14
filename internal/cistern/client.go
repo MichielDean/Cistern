@@ -675,23 +675,48 @@ func (c *Client) Pool(id, reason string) error {
 
 // Cancel marks a droplet as cancelled. Cancelled droplets are excluded from the
 // dispatch queue and from default list views. They can still be retrieved with
-// List(repo, "cancelled"). If reason is non-empty it is recorded as a note.
-// assigned_aqueduct is cleared atomically so no ghost assignments linger.
+// List(repo, "cancelled"). It clears outcome and assigned_aqueduct atomically
+// so no ghost assignments linger. The assignee is preserved so the scheduler's
+// external-cancel pool-release path can find and free the slot. A scheduler
+// note with timestamp is recorded, and the reason (if non-empty) is included.
+// The cancel is recorded as an event in the events table for the audit trail.
 func (c *Client) Cancel(id, reason string) error {
+	now := time.Now().UTC()
 	res, err := c.db.Exec(
-		`UPDATE droplets SET status = 'cancelled', assigned_aqueduct = '', updated_at = ? WHERE id = ?`,
-		time.Now().UTC(), id,
+		`UPDATE droplets SET status = 'cancelled', outcome = NULL, assigned_aqueduct = '', updated_at = ? WHERE id = ? AND status NOT IN ('delivered', 'cancelled')`,
+		now, id,
 	)
 	if err != nil {
 		return fmt.Errorf("cistern: cancel %s: %w", id, err)
 	}
-	if err := checkRowsAffected(res, id); err != nil {
-		return err
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("cistern: cancel %s: rows affected: %w", id, err)
 	}
-	if reason != "" {
-		if err := c.AddNote(id, "cancel", reason); err != nil {
-			return err
+	if n == 0 {
+		item, getErr := c.Get(id)
+		if getErr != nil {
+			return fmt.Errorf("cistern: droplet %s not found", id)
 		}
+		return fmt.Errorf("cistern: cancel %s: droplet has terminal status %q", id, item.Status)
+	}
+
+	ts := now.Format("2006-01-02 15:04:05")
+	label := "cancelled"
+	if reason != "" {
+		label = "cancelled: " + reason
+	}
+	note := fmt.Sprintf("%s [%s]", label, ts)
+	if err := c.AddNote(id, "scheduler", note); err != nil {
+		return fmt.Errorf("cistern: cancel note %s: %w", id, err)
+	}
+
+	_, err = c.db.Exec(
+		`INSERT INTO events (droplet_id, event_type, payload, created_at) VALUES (?, 'cancel', ?, ?)`,
+		id, reason, now,
+	)
+	if err != nil {
+		return fmt.Errorf("cistern: cancel event %s: %w", id, err)
 	}
 	return nil
 }

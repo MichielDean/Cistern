@@ -98,7 +98,7 @@ ct droplet pool <id> --notes "Pooled: requirements ambiguity — <specific quest
 
 **Cancel (won't be implemented — superseded, filed in error, or no longer needed):**
 ```
-ct droplet cancel <id> --notes "<reason>"
+ct droplet cancel <id> --reason "<reason>"
 ```
 
 `pool` = waiting on something external. `cancel` = will not be implemented.

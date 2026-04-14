@@ -152,7 +152,7 @@ ct droplet show <id>
 ct droplet restart <id>                           # Restart from current cataractae
 ct droplet restart <id> --cataractae delivery     # Re-enter at a specific cataractae
 ct droplet pool <id>
-ct droplet cancel <id>
+ct droplet cancel <id> --reason "..."
 ct droplet note <id> "..."
 ct droplet deps <id> --add <dep-id>
 

@@ -166,7 +166,7 @@ ct droplet pool <id> --notes "Pooled: <specific reason>"
 
 **Cancel (won't be implemented — superseded, filed in error, or no longer needed):**
 ```
-ct droplet cancel <id> --notes "<reason>"
+ct droplet cancel <id> --reason "<reason>"
 ```
 
 Do **not** use `pool` for ordinary revision cycles — that is for genuine blockers only.
