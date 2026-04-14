@@ -934,10 +934,28 @@ func (s *Castellarius) dispatchRepo(ctx context.Context, repo aqueduct.RepoConfi
 	client := s.clients[repo.Name]
 	wf := s.workflows[repo.Name]
 
+	// Track workers whose tmux sessions are still alive from a previous
+	// cataractae. When SIGUSR1 triggers an immediate tick, the observe
+	// cycle may release a worker before its agent's tmux session has died.
+	// We can't assign new work to these workers until the session exits
+	// naturally — so we skip them and try the next idle worker.
+	sessionAlive := map[string]bool{}
+
 	for {
-		worker := pool.AvailableAqueduct()
+		worker := pool.AvailableAqueductExcluding(sessionAlive)
 		if worker == nil {
 			return
+		}
+
+		sessionID := repo.Name + "-" + worker.Name
+		if isTmuxAlive(sessionID) {
+			// Worker's previous session hasn't exited yet. Skip this worker
+			// and try another. The droplet stays open and will be retried
+			// on the next tick after the session dies naturally.
+			s.logger.Info("dispatch: worker session still alive — deferring",
+				"repo", repo.Name, "worker", worker.Name, "session", sessionID)
+			sessionAlive[worker.Name] = true
+			continue
 		}
 
 		// Each repo has its own pool — just get the next ready droplet for this repo.
