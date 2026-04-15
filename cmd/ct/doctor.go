@@ -975,8 +975,8 @@ func runDoctorSkillsCheck(cfg *aqueduct.AqueductConfig) {
 	cfgDir := filepath.Dir(resolveConfigPath())
 
 	type skillInfo struct {
-		name   string
-		usedBy []string
+		name      string
+		usedBySet map[string]struct{}
 	}
 
 	seen := map[string]*skillInfo{}
@@ -993,9 +993,9 @@ func runDoctorSkillsCheck(cfg *aqueduct.AqueductConfig) {
 		for _, step := range wf.Cataractae {
 			for _, sk := range step.Skills {
 				if _, exists := seen[sk.Name]; !exists {
-					seen[sk.Name] = &skillInfo{name: sk.Name}
+					seen[sk.Name] = &skillInfo{name: sk.Name, usedBySet: map[string]struct{}{}}
 				}
-				seen[sk.Name].usedBy = append(seen[sk.Name].usedBy, step.Name)
+				seen[sk.Name].usedBySet[step.Name] = struct{}{}
 			}
 		}
 	}
@@ -1023,7 +1023,12 @@ func runDoctorSkillsCheck(cfg *aqueduct.AqueductConfig) {
 		} else {
 			status = "✗ missing"
 		}
-		usedBy := strings.Join(info.usedBy, ", ")
+		usedByNames := make([]string, 0, len(info.usedBySet))
+		for n := range info.usedBySet {
+			usedByNames = append(usedByNames, n)
+		}
+		sort.Strings(usedByNames)
+		usedBy := strings.Join(usedByNames, ", ")
 		fmt.Fprintf(tw, "%s\t%s\t%s\n", name, status, usedBy)
 	}
 	tw.Flush()
