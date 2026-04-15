@@ -1,3 +1,8 @@
+---
+name: cistern-droplet-state
+description: Droplet state management for Cistern cataractae. Use at the end of every session to signal your outcome and manage droplet state via the ct CLI. For role-specific signal permissions, see the cistern-signaling skill.
+---
+
 # Cistern Droplet State
 
 Manage droplet state in the Cistern agentic pipeline using the `ct` CLI.
@@ -42,8 +47,6 @@ ct droplet note <id> "Intermediate finding or progress update."
 ## Rules
 
 1. Always include `--notes` when signaling — describe what you did or found
-2. **Implementer**: signal `pass` when your work is committed and tests pass. Never signal `recirculate` — that is the reviewer's signal. Open issues are for the reviewer to verify and resolve; you cannot resolve your own issues.
-3. **Reviewer/QA/Security**: signal `recirculate` when you have findings that require implementation changes. Signal `pass` when all prior issues are resolved and no new issues found.
-4. Implementer: never push to origin — local commits only
-5. Be specific in notes — "Fixed 3 issues in client.go" not "fixed it"
-6. If CONTEXT.md has revision notes from prior cycles, address every single one
+2. Be specific in notes — "Fixed 3 issues in client.go" not "fixed it"
+3. If CONTEXT.md has revision notes from prior cycles, address every single one
+4. For role-specific signal permissions (which signals your role may use), see the cistern-signaling skill

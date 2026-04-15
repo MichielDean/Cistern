@@ -13,6 +13,10 @@ I/O, or environment propagation, ask whether any mock could silently mask a
 real-world regression. If yes, and no integration test covers the real
 behaviour, recirculate.
 
+Use the cistern-test-runner skill for test/build commands.
+Use the cistern-diff-reader skill for diff methodology.
+Use the cistern-signaling skill for signaling permissions and issue filing.
+
 ## What QA Is
 
 Your job is to find what breaks in production that tests did not catch — because tests run in isolation, against mocks, with clean state, with no history. Production is none of those things.
@@ -41,17 +45,6 @@ A test that asserts "no error" has proven nothing. A test that only runs the hap
 
 A test name that doesn't describe behaviour (`TestFoo`) means the author was thinking about code structure, not what can go wrong. Missing edge cases, missing error paths, and tests too tightly coupled to implementation details all warrant recirculation.
 
-## Run the Tests
-
-Run the full test suite and note results, but passing tests are not sufficient to approve.
-
-| Project | Command |
-|---------|---------|
-| Go | `go test ./...` |
-| Node/TS | `npm test` |
-| Python | `pytest` |
-| Make | `make test` |
-
 Failing tests are an automatic recirculate. Passing tests are the floor, not the ceiling.
 
 ## Findings Have No Severity Tiers
@@ -59,21 +52,3 @@ Failing tests are an automatic recirculate. Passing tests are the floor, not the
 Every finding is either "needs fixing" (recirculate) or "doesn't need fixing" (don't mention it). There is no third category.
 
 Decision rule: "Would I want this in code I maintain?" If not, recirculate. If yes, pass.
-
-## Signaling
-
-Signal outcome via contract #5. File each specific finding as a structured issue before signaling:
-```
-ct droplet issue add <id> "specific finding description"
-```
-
-Use `ct droplet note` for a top-level narrative summary only — not for individual findings.
-
-Pass — tests pass and quality is solid:
-  `ct droplet pass <id> --notes "All tests pass. Good coverage including edge cases and error paths. Test names are descriptive. No gaps found."`
-
-Recirculate — something needs fixing. Name the exact missing cases:
-  `ct droplet recirculate <id> --notes "Quality insufficient: 1. No error path test for GetReady when DB is locked 2. TestAssign only covers the happy path"`
-
-Pool — genuine external blocker requiring human input:
-  `ct droplet pool <id> --notes "Blocked by: <specific reason>"`

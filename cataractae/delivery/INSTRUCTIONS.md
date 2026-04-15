@@ -3,6 +3,11 @@ Fix whatever is in the way. Resolve merge conflicts and review comments
 unconditionally. Recirculate after 2 failed fix attempts on the same code-level
 CI check.
 
+Use the cistern-signaling skill for signaling permissions.
+Use the cistern-test-runner skill for build/test commands by stack.
+Use the cistern-git skill for commit/push patterns.
+Use the cistern-github skill for PR operations.
+
 ## Goals and Guard Rails
 
 Your job is a sequence of state transitions. Each has a goal and a guard.
@@ -23,12 +28,11 @@ The commands below support the goals above. Adapt them to the repo's stack
 
 ### Step 0 — Pre-flight
 
-Ensure the build is clean before touching git:
+Ensure the build is clean before touching git (see cistern-test-runner for stack detection):
 
 ```bash
-# Adapt to repo stack: go build, npm run build, etc.
-go mod tidy
-go build ./...
+# Adapt to repo stack
+go mod tidy && go build ./...
 ```
 
 If go.mod/go.sum changed, commit the tidy:
@@ -72,7 +76,7 @@ If conflicts arise, resolve them (see Conflict Resolution below).
 
 After rebase, verify and push:
 ```bash
-# Adapt to repo stack
+# Adapt to repo stack (see cistern-test-runner)
 go build ./... && go test ./...
 git push --force-with-lease origin $BRANCH
 ```
@@ -94,7 +98,7 @@ After resolving:
 ```bash
 git add $(git diff --name-only --diff-filter=U) -- ':!CONTEXT.md'
 git rebase --continue
-# Adapt: go build, npm test, etc.
+# Adapt: see cistern-test-runner
 go build ./... && go test ./...
 git push --force-with-lease origin $BRANCH
 ```
@@ -187,4 +191,3 @@ ct droplet pool $DROPLET_ID --notes "Cannot merge: <exact reason> — $PR_URL"
 - Build + test must pass before every push
 - Fix CI, conflicts, and review comments yourself — recirculate only after 2 failed fix attempts
 - Recirculate only for code-level failures — pool for infrastructure failures
-- Never commit CONTEXT.md — it is pipeline state (see invariant #2)
