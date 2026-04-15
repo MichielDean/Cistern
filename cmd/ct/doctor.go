@@ -36,8 +36,7 @@ func init() {
 
 func runDoctor(cmd *cobra.Command, args []string) error {
 	if doctorSkills {
-		home, _ := os.UserHomeDir()
-		cfgPath := filepath.Join(home, ".cistern", "cistern.yaml")
+		cfgPath := resolveConfigPath()
 		cfg, err := aqueduct.ParseAqueductConfig(cfgPath)
 		if err != nil {
 			return fmt.Errorf("cannot parse config: %w", err)
@@ -976,9 +975,8 @@ func runDoctorSkillsCheck(cfg *aqueduct.AqueductConfig) {
 	cfgDir := filepath.Dir(resolveConfigPath())
 
 	type skillInfo struct {
-		name    string
-		usedBy  []string
-		missing bool
+		name   string
+		usedBy []string
 	}
 
 	seen := map[string]*skillInfo{}

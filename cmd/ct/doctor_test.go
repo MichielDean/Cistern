@@ -347,6 +347,61 @@ max_cataractae: 1
 	}
 }
 
+func TestRunDoctorSkillsCheck_ResolvesConfigViaCT_CONFIG(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+
+	altDir := t.TempDir()
+	aqueductDir := filepath.Join(altDir, "aqueduct")
+	skillsDir := filepath.Join(home, ".cistern", "skills")
+	for _, d := range []string{aqueductDir, skillsDir} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", d, err)
+		}
+	}
+
+	workflowWithSkills := `name: test
+cataractae:
+  - name: implement
+    type: agent
+    identity: implementer
+    skills:
+      - name: skill-ctconfig
+    on_pass: done
+`
+	wfPath := filepath.Join(aqueductDir, "workflow.yaml")
+	if err := os.WriteFile(wfPath, []byte(workflowWithSkills), 0o644); err != nil {
+		t.Fatalf("write workflow: %v", err)
+	}
+
+	cfgContent := `repos:
+  - name: testrepo
+    url: https://github.com/example/testrepo
+    workflow_path: aqueduct/workflow.yaml
+    cataractae: 1
+    prefix: ct
+max_cataractae: 1
+`
+	altCfgPath := filepath.Join(altDir, "cistern.yaml")
+	if err := os.WriteFile(altCfgPath, []byte(cfgContent), 0o644); err != nil {
+		t.Fatalf("write alt config: %v", err)
+	}
+
+	t.Setenv("CT_CONFIG", altCfgPath)
+
+	cfg, err := aqueduct.ParseAqueductConfig(altCfgPath)
+	if err != nil {
+		t.Fatalf("parse config: %v", err)
+	}
+
+	out := captureStdout(t, func() { runDoctorSkillsCheck(cfg) })
+
+	if !strings.Contains(out, "skill-ctconfig") {
+		t.Errorf("expected skill-ctconfig in output when CT_CONFIG set, got: %q", out)
+	}
+}
+
 // --- TestCheckWithFix unit tests ---
 
 func TestCheckWithFix_PassingCheck_DoesNotCallFix(t *testing.T) {
