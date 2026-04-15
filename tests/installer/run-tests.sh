@@ -160,7 +160,7 @@ _reset_scenario_state() {
 # the default aqueduct workflow. Satisfies both ct doctor and
 # ct castellarius start validation without requiring network access.
 _install_skill_stubs() {
-    local _skills="cistern-droplet-state cistern-git cistern-github code-simplifier critical-code-reviewer reviewer"
+    local _skills="cistern-droplet-state cistern-git cistern-github cistern-reviewer cistern-signaling cistern-test-runner cistern-diff-reader code-simplifier critical-code-reviewer"
     for _skill in ${_skills}; do
         mkdir -p "${HOME}/.cistern/skills/${_skill}"
         printf "# Test stub for %s\n" "${_skill}" > "${HOME}/.cistern/skills/${_skill}/SKILL.md"

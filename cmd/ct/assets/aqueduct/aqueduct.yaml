@@ -14,12 +14,10 @@ cataractae:
     identity: implementer
     context: full_codebase
     skills:
+      - name: cistern-signaling
       - name: cistern-droplet-state
-        path: skills/cistern-droplet-state/SKILL.md
       - name: cistern-git
-        path: skills/cistern-git/SKILL.md
-      - name: cistern-github
-        path: skills/cistern-github/SKILL.md
+      - name: cistern-test-runner
     timeout_minutes: 30
     on_pass: review
     on_fail: pooled
@@ -30,14 +28,11 @@ cataractae:
     identity: reviewer
     context: full_codebase
     skills:
+      - name: cistern-signaling
       - name: cistern-droplet-state
-        path: skills/cistern-droplet-state/SKILL.md
       - name: cistern-reviewer
-        path: skills/cistern-reviewer/SKILL.md
       - name: cistern-git
-        path: skills/cistern-git/SKILL.md
-      - name: cistern-github
-        path: skills/cistern-github/SKILL.md
+      - name: cistern-diff-reader
     timeout_minutes: 20
     on_pass: qa
     on_fail: implement
@@ -49,10 +44,11 @@ cataractae:
     identity: qa
     context: full_codebase
     skills:
+      - name: cistern-signaling
       - name: cistern-droplet-state
-        path: skills/cistern-droplet-state/SKILL.md
       - name: cistern-git
-        path: skills/cistern-git/SKILL.md
+      - name: cistern-test-runner
+      - name: cistern-diff-reader
     timeout_minutes: 20
     on_pass: security-review
     on_fail: implement
@@ -64,8 +60,9 @@ cataractae:
     identity: security
     context: full_codebase
     skills:
+      - name: cistern-signaling
       - name: cistern-droplet-state
-        path: skills/cistern-droplet-state/SKILL.md
+      - name: cistern-diff-reader
     timeout_minutes: 15
     on_pass: docs
     on_fail: implement
@@ -77,10 +74,10 @@ cataractae:
     identity: docs_writer
     context: full_codebase
     skills:
+      - name: cistern-signaling
       - name: cistern-droplet-state
-        path: skills/cistern-droplet-state/SKILL.md
       - name: cistern-git
-        path: skills/cistern-git/SKILL.md
+      - name: cistern-diff-reader
     timeout_minutes: 20
     on_pass: delivery
     on_fail: implement
@@ -91,12 +88,11 @@ cataractae:
     type: agent
     identity: delivery
     skills:
+      - name: cistern-signaling
       - name: cistern-github
-        path: skills/cistern-github/SKILL.md
       - name: cistern-droplet-state
-        path: skills/cistern-droplet-state/SKILL.md
       - name: cistern-git
-        path: skills/cistern-git/SKILL.md
+      - name: cistern-test-runner
     timeout_minutes: 60
     on_pass: done
     on_recirculate: implement

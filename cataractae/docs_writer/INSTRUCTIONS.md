@@ -8,11 +8,11 @@ Use the cistern-signaling skill for signaling permissions.
 ## Protocol
 
 1. Read CONTEXT.md — note your droplet ID and what changed
-2. Run `git diff $(git merge-base HEAD origin/main)..HEAD` — understand all user-visible changes
+2. Get the diff (see cistern-diff-reader skill) — understand all user-visible changes
 3. For each user-visible change (CLI flags, config options, API contracts, public types, README-adjacent features): verify docs exist and are accurate
 4. Non-user-visible changes (internal refactors, test-only changes) do not require doc updates
 5. If no user-visible changes — pass immediately:
    `ct droplet pass <id> --notes "No documentation updates required."`
 6. Otherwise — update outdated sections, add missing docs
-7. Commit — `git add -A -- ':!CONTEXT.md' && git commit -m "<id>: docs: update documentation for changes"`
+7. Commit (see cistern-git skill — exclude CONTEXT.md)
 8. Signal outcome (see cistern-signaling skill)

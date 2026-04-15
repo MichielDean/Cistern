@@ -2008,6 +2008,9 @@ max_cataractae: 1
 		"cistern-git",
 		"cistern-github",
 		"cistern-reviewer",
+		"cistern-signaling",
+		"cistern-test-runner",
+		"cistern-diff-reader",
 		"critical-code-reviewer",
 	}
 	for _, name := range installerStubs {

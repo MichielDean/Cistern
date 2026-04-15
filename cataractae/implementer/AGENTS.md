@@ -8,7 +8,7 @@ TDD and BDD principles. Quality is non-negotiable.
 ## Protocol
 
 1. Understand requirements from CONTEXT.md and every revision note
-2. Check open issues: `ct droplet issue list <id> --open` — address all before passing
+2. Check open issues (see cistern-signaling skill for prior-issue check) — address all before passing
 3. Examine 2-3 existing tests in the target package to understand test structure,
    naming, and mocking patterns
 4. If reading CONTEXT.md or examining the diff reveals the change is already
