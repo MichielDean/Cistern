@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"database/sql"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/MichielDean/cistern/internal/aqueduct"
 	"github.com/MichielDean/cistern/internal/cistern"
+	_ "github.com/mattn/go-sqlite3"
 )
 
 // --- helpers ---
@@ -1162,6 +1164,104 @@ func TestRenderAqueductRow_NoOverflow_EmptyAqueduct(t *testing.T) {
 	}
 }
 
+// TestRenderAqueductRow_StageElapsed_Shown verifies that renderAqueductRow
+// includes the stage elapsed time in the water channel when StageElapsed > 0.
+//
+// Given: an aqueduct with a flowing droplet where StageElapsed=2m 14s
+// When:  renderAqueductRow is called
+// Then:  the output contains the stage elapsed duration "2m 14s"
+func TestRenderAqueductRow_StageElapsed_Shown(t *testing.T) {
+	ch := CataractaeInfo{
+		Name:            "virgo",
+		DropletID:       "ci-abc12",
+		Step:            "implement",
+		Steps:           []string{"implement", "review", "qa"},
+		Elapsed:         5*time.Minute + 30*time.Second,
+		StageElapsed:    2*time.Minute + 14*time.Second,
+		CataractaeIndex: 1,
+		TotalCataractae: 3,
+	}
+	out := renderAqueductRow(ch, 120)
+	stripped := stripANSITest(out)
+	if !strings.Contains(stripped, "2m 14s") {
+		t.Errorf("renderAqueductRow should contain stage elapsed '2m 14s' when StageElapsed is set, got:\n%s", stripped)
+	}
+}
+
+// TestRenderAqueductRow_StageElapsedZero_OmitsStageAge verifies that
+// renderAqueductRow does not show a separate stage age when StageElapsed is 0.
+//
+// Given: an aqueduct with a flowing droplet where Elapsed=5m 30s, StageElapsed=0
+// When:  renderAqueductRow is called
+// Then:  the output contains "5m 30s" but not a second elapsed time (stage age)
+func TestRenderAqueductRow_StageElapsedZero_OmitsStageAge(t *testing.T) {
+	ch := CataractaeInfo{
+		Name:            "virgo",
+		DropletID:       "ci-abc12",
+		Step:            "implement",
+		Steps:           []string{"implement", "review", "qa"},
+		Elapsed:         5*time.Minute + 30*time.Second,
+		StageElapsed:    0,
+		CataractaeIndex: 1,
+		TotalCataractae: 3,
+	}
+	out := renderAqueductRow(ch, 120)
+	stripped := stripANSITest(out)
+	// "5m 30s" is the overall elapsed; there should be no separate "0s" token.
+	if strings.Contains(stripped, " 0s ") {
+		t.Errorf("renderAqueductRow should not show standalone '0s' stage age when StageElapsed=0, got:\n%s", stripped)
+	}
+}
+
+// TestRenderFlowGraphRow_StageElapsed_Shown verifies that renderFlowGraphRow
+// includes the stage elapsed time in the info line when StageElapsed > 0.
+//
+// Given: an aqueduct with a flowing droplet where StageElapsed=2m 14s
+// When:  renderFlowGraphRow is called
+// Then:  the info line contains the stage elapsed duration "2m 14s"
+func TestRenderFlowGraphRow_StageElapsed_Shown(t *testing.T) {
+	ch := CataractaeInfo{
+		Name:            "virgo",
+		DropletID:       "ci-abc12",
+		Step:            "review",
+		Steps:           []string{"implement", "review", "qa"},
+		Elapsed:         5*time.Minute + 30*time.Second,
+		StageElapsed:    2*time.Minute + 14*time.Second,
+		CataractaeIndex: 2,
+		TotalCataractae: 3,
+	}
+	_, infoLine := renderFlowGraphRow(ch)
+	if !strings.Contains(infoLine, "2m 14s") {
+		t.Errorf("renderFlowGraphRow info line should contain stage elapsed '2m 14s' when StageElapsed is set, got:\n%s", infoLine)
+	}
+}
+
+// TestRenderFlowGraphRow_StageElapsedZero_OmitsStageAge verifies that
+// renderFlowGraphRow does not show a stage age when StageElapsed is 0.
+//
+// Given: an aqueduct with a flowing droplet where Elapsed=5m 30s, StageElapsed=0
+// When:  renderFlowGraphRow is called
+// Then:  the info line contains "5m 30s" but not a separate "0s" stage age
+func TestRenderFlowGraphRow_StageElapsedZero_OmitsStageAge(t *testing.T) {
+	ch := CataractaeInfo{
+		Name:            "virgo",
+		DropletID:       "ci-abc12",
+		Step:            "review",
+		Steps:           []string{"implement", "review", "qa"},
+		Elapsed:         5*time.Minute + 30*time.Second,
+		StageElapsed:    0,
+		CataractaeIndex: 2,
+		TotalCataractae: 3,
+	}
+	_, infoLine := renderFlowGraphRow(ch)
+	if strings.Contains(infoLine, " 0s ") {
+		t.Errorf("renderFlowGraphRow info line should not show standalone '0s' stage age when StageElapsed=0, got:\n%s", infoLine)
+	}
+	if !strings.Contains(infoLine, "5m 30s") {
+		t.Errorf("renderFlowGraphRow info line should contain overall elapsed '5m 30s', got:\n%s", infoLine)
+	}
+}
+
 func TestActiveAqueducts_EmptyWhenAllIdle(t *testing.T) {
 	cataractae := []CataractaeInfo{
 		{Name: "virgo", DropletID: ""},
@@ -1497,8 +1597,22 @@ func TestFetchDashboardData_StageElapsed_ZeroWhenNotDispatched(t *testing.T) {
 
 	flowing, _ := c.Add("myrepo", "No stage dispatch test", "", 1, 2)
 	c.GetReady("myrepo")
-	c.Assign(flowing.ID, "virgo", "implement")
 	c.Close()
+
+	// Directly set assignee + status to in_progress WITHOUT setting
+	// stage_dispatched_at, simulating a droplet assigned but not yet dispatched.
+	db, err := sql.Open("sqlite3", dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	_, err = db.Exec(
+		`UPDATE droplets SET assignee = 'virgo', current_cataractae = 'implement', status = 'in_progress' WHERE id = ?`,
+		flowing.ID,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	data := fetchDashboardData(cfgPath, dbPath)
 
@@ -1512,11 +1626,10 @@ func TestFetchDashboardData_StageElapsed_ZeroWhenNotDispatched(t *testing.T) {
 		t.Fatal("cataractae virgo not found")
 	}
 
-	p := newStatusPanel("", "")
-	p.data = data
-	v := p.View()
-
-	if !strings.Contains(v, flowing.ID) {
-		t.Errorf("View should contain droplet ID %q; output:\n%s", flowing.ID, v)
+	if virgo.DropletID != flowing.ID {
+		t.Errorf("virgo.DropletID = %q, want %q", virgo.DropletID, flowing.ID)
+	}
+	if virgo.StageElapsed != 0 {
+		t.Errorf("virgo.StageElapsed = %v, want 0 (StageDispatchedAt not set)", virgo.StageElapsed)
 	}
 }
