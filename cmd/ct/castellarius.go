@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -364,6 +365,7 @@ var aqueductValidateCmd = &cobra.Command{
 
 var (
 	statusWatch    bool
+	statusJSON     bool
 	statusInterval int
 )
 
@@ -374,14 +376,28 @@ var statusCmd = &cobra.Command{
 		if statusInterval < 1 {
 			return fmt.Errorf("--interval must be at least 1")
 		}
+		if statusJSON && statusWatch {
+			return fmt.Errorf("--json is incompatible with --watch")
+		}
 
 		cfgPath := resolveConfigPath()
+		dbPath := resolveDBPath()
+
+		if statusJSON {
+			data := fetchDashboardData(cfgPath, dbPath)
+			out, err := json.MarshalIndent(data, "", "  ")
+			if err != nil {
+				return fmt.Errorf("marshal JSON: %w", err)
+			}
+			fmt.Println(string(out))
+			return nil
+		}
+
 		cfg, err := aqueduct.ParseAqueductConfig(cfgPath)
 		if err != nil {
 			return fmt.Errorf("loading config: %w", err)
 		}
 
-		dbPath := resolveDBPath()
 		c, err := cistern.New(dbPath, "")
 		if err != nil {
 			return fmt.Errorf("cistern: %w", err)
@@ -612,6 +628,7 @@ func init() {
 
 	statusCmd.Flags().BoolVar(&statusWatch, "watch", false, "continuously refresh status every N seconds")
 	statusCmd.Flags().IntVar(&statusInterval, "interval", 5, "refresh interval in seconds (min 1, used with --watch)")
+	statusCmd.Flags().BoolVar(&statusJSON, "json", false, "output machine-readable JSON instead of the human-readable summary")
 
 	castellariusCmd.AddCommand(castellariusStartCmd, castellariusStatusCmd, castellariusStopCmd, castellariusRestartCmd)
 	aqueductCmd.AddCommand(aqueductStatusCmd, aqueductValidateCmd)
