@@ -2,6 +2,30 @@
 
 ## Unreleased
 
+<<### ct status / dashboard: show droplet stage age alongside overall elapsed (ci-r2cby)
+
+All display surfaces now show how long each flowing droplet has been in its current cataractae stage (e.g., `2m14s (stage 30s)`), helping operators quickly identify stale or slow droplets without checking the full log.
+
+**Display format:** Stage age appears as `(stage X)` after the overall elapsed duration. It is omitted when the droplet has not been dispatched to a stage yet or the stage duration is under 1 second.
+
+**Surfaces updated (12 total):**
+- `ct status` — per-droplet line shows elapsed + stage age
+- `ct castellarius status` — STAGE column in operator table
+- `ct cataractae status` — per-step active droplet row
+- `ct droplet peek` — header line and `--follow` separator
+- `ct dashboard` — aqueduct arch row and flow-graph info line
+- `ct dashboard` (TUI) — aqueduct progress bar, inline peek, flow-graph row
+- `ct tui` — status panel aqueduct rows and peek header
+
+**Files changed:**
+- `cmd/ct/castellarius.go` — `ct castellarius status` and `ct status` add STAGE column and stage suffix
+- `cmd/ct/cataractae.go` — `ct cataractae status` adds stage column
+- `cmd/ct/cistern.go` — `ct droplet peek` header and `--follow` separator include stage age
+- `cmd/ct/dashboard.go` — `CataractaeInfo.StageElapsed` field, `formatStageElapsed()`, `renderAqueductRow`, `renderFlowGraphRow`
+- `cmd/ct/dashboard_tui.go` — `openInlinePeek`, `viewAqueductProgress`, `tuiFlowGraphRow`
+- `cmd/ct/status_panel_tui.go` — status panel aqueduct rows
+- `cmd/ct/tui.go` — `openPeek` header
+
 ### ct status --json: machine-readable JSON output (ci-fm13f)
 
 Added `--json` flag to `ct status` that outputs machine-readable JSON instead of the human-readable TUI summary. Enables scripts and dashboards to consume pipeline state without parsing tabular text.

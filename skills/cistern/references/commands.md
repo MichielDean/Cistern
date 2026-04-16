@@ -269,6 +269,7 @@ drought hooks: running (2m)
 
 - **Active aqueducts**: Shows how many of your configured aqueducts have a droplet currently flowing
 - **Per-repo summaries**: Lists each repo with queue depth (open droplets waiting) and active session count (droplets currently being processed)
+- **Stage age**: The operator table includes a STAGE column showing how long each flowing droplet has been in its current cataractae stage (e.g., `2m14s`). Shows `—` when not yet dispatched.
 - **Last tick**: Time since the Castellarius last completed a full poll cycle
   - `last tick: 5s ago` — Castellarius is healthy and actively polling
   - `last tick: unknown (health file missing)` — Health file not yet written (startup) or removed unexpectedly
@@ -318,7 +319,7 @@ The flow dashboard displays a live view of the aqueduct system with sections:
 
 **Aqueduct Arches** — ASCII art showing configured aqueducts and their status
 - For each active aqueduct: displays the progress bar with the droplet's current flow notes below it
-  - Shows droplet ID, current step, elapsed time, and title
+  - Shows droplet ID, current step, overall elapsed, stage age `(stage X)`, and title
   - Indicates which cataractae is currently processing the droplet
 - Idle aqueducts display as compact single-line rows
 
@@ -509,7 +510,7 @@ The Filter module provides an interactive multi-turn conversation for refining i
 ## Status & Health
 
 ```bash
-ct status                        # High-level pipeline health
+ct status                        # High-level pipeline health; shows (stage X) age per droplet
 ct status --json                 # Machine-readable JSON (flowing/queued counts, cataractae, aqueduct info)
 ct doctor                        # Check system health and configuration
 ct doctor --fix                  # Auto-repair common issues (credentials, permissions)
