@@ -155,7 +155,7 @@ myproject-virgo: 1 windows (review)
 myproject-marcia: 1 windows (implement)
 ```
 
-Before dispatching a droplet, the Castellarius checks the worktree for uncommitted files. If non-`CONTEXT.md` files are dirty, the droplet is recirculated with a diagnostic note rather than spawning an agent into inconsistent state.
+Before dispatching a droplet, the Castellarius checks the worktree for uncommitted files. If files are dirty (excluding `CONTEXT.md`, `.current-stage`, and the provider's InstructionsFile like `AGENTS.md` or `CLAUDE.md`), the droplet is recirculated with a diagnostic note rather than spawning an agent into inconsistent state.
 
 By convention, aqueduct names are drawn from historic Roman aqueducts (`virgo`, `marcia`, `claudia`, `traiana`, `julia`, `appia`, `anio`, `tepula`, `alexandrina`, …), but any names work.
 
@@ -284,11 +284,11 @@ Skills are referenced by name in your aqueduct YAML under each cataractae's `ski
 | Skill | Purpose | Cataractae |
 |---|---|---|
 | `cistern-droplet-state` | Signal pass/recirculate/block with `ct` CLI | All |
-| `cistern-git` | Git conventions: exclude CONTEXT.md, merge-base diff, no stash | implement, docs, delivery |
+| `cistern-git` | Git conventions: exclude CONTEXT.md and InstructionsFile, merge-base diff, no stash | implement, docs, delivery |
 | `cistern-github` | PR creation, CI checks, squash-merge, and automatic conflict resolution for Cistern delivery | implement, review, delivery |
 | `cistern-reviewer` | Adversarial code review for Go, TypeScript/Next.js, and TypeScript/React — all findings equal, recirculate on any finding, pass only when nothing remains | review |
 
-The `cistern-git` skill encodes hard-won rules: always use `git add -A -- ':!CONTEXT.md'`, always use merge-base diff (`git diff $(git merge-base HEAD origin/main)..HEAD`) instead of two-dot — two-dot includes other PRs that merged to main after branching on unrebased branches, never stash in per-droplet worktrees.
+The `cistern-git` skill encodes hard-won rules: always use `git add -A -- ':!CONTEXT.md' ':!<InstructionsFile>'` (where `<InstructionsFile>` is the provider-specific filename like `AGENTS.md`, `CLAUDE.md`, or `GEMINI.md`), always use merge-base diff (`git diff $(git merge-base HEAD origin/main)..HEAD`) instead of two-dot — two-dot includes other PRs that merged to main after branching on unrebased branches, never stash in per-droplet worktrees.
 
 ## Drought Protocols
 

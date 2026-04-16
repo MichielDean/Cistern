@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+### Exclude provider InstructionsFile from git operations in worktrees (ci-czkeg)
+
+The Castellarius now excludes the provider's InstructionsFile (e.g. `AGENTS.md` for opencode/codex, `CLAUDE.md` for claude, `GEMINI.md` for gemini) from all git operations in worktrees, alongside `CONTEXT.md` and `.current-stage`. Previously, the cataractae prompt overwritten into the InstructionsFile by the Castellarius could be committed back to the repo, replacing the repo's own content (e.g. Lobsterdog's personality file being replaced with the Cistern cataractae template).
+
+**Key changes:**
+- **`uncommittedFiles()` exclusion**: The provider's InstructionsFile is now excluded from the uncommitted-files check at dispatch time, preventing it from appearing in the "Uncommitted Files from Prior Session" section of CONTEXT.md
+- **`cistern-git` skill updated**: Staging and committing rules now exclude the InstructionsFile alongside CONTEXT.md (`git add -A -- ':!CONTEXT.md' ':!<InstructionsFile>'`)
+- **Delivery cataractae updated**: All `git add` commands in `cataractae/delivery/INSTRUCTIONS.md` now exclude the InstructionsFile
+- **Dynamic filename**: The filename is resolved from the active provider preset (not hardcoded), so all providers (claude, codex, gemini, copilot, opencode) are handled correctly
+
+**Files changed:**
+- `internal/cataractae/context.go` — `InstructionsFile` field on `ContextParams`, passed to `uncommittedFiles()` exclusion map
+- `internal/cataractae/runner.go` — passes `r.preset.InstrFile()` to `ContextParams`
+- `internal/cataractae/context_test.go` — tests for InstructionsFile exclusion, backward compatibility, and custom filenames
+- `internal/skills/cistern-git/SKILL.md` — staging and committing rules updated
+- `cataractae/delivery/INSTRUCTIONS.md` — git add exclusions and rule added
+
 <<### ct status / dashboard: show droplet stage age alongside overall elapsed (ci-r2cby)
 
 All display surfaces now show how long each flowing droplet has been in its current cataractae stage (e.g., `2m14s (stage 30s)`), helping operators quickly identify stale or slow droplets without checking the full log.
