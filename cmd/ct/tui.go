@@ -529,7 +529,11 @@ func (m tabAppModel) openPeek() (tabAppModel, tea.Cmd) {
 		}
 	} else {
 		session = ch.RepoName + "-" + ch.Name
-		header = fmt.Sprintf("[%s] %s — flowing %s", ch.DropletID, ch.Step, formatElapsed(ch.Elapsed))
+		stageSuffix := ""
+		if se := formatElapsed(ch.StageElapsed); se != "" && se != "0s" {
+			stageSuffix = " (stage " + se + ")"
+		}
+		header = fmt.Sprintf("[%s] %s — flowing %s%s", ch.DropletID, ch.Step, formatElapsed(ch.Elapsed), stageSuffix)
 	}
 
 	pk := newPeekModel(defaultCapturer, session, header, defaultPeekLines)
