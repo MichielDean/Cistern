@@ -975,7 +975,6 @@ func runDoctorSkillsCheck(cfg *aqueduct.AqueductConfig) {
 	cfgDir := filepath.Dir(resolveConfigPath())
 
 	type skillInfo struct {
-		name      string
 		usedBySet map[string]struct{}
 	}
 
@@ -996,7 +995,7 @@ func runDoctorSkillsCheck(cfg *aqueduct.AqueductConfig) {
 					continue
 				}
 				if _, exists := seen[sk.Name]; !exists {
-					seen[sk.Name] = &skillInfo{name: sk.Name, usedBySet: map[string]struct{}{}}
+					seen[sk.Name] = &skillInfo{usedBySet: map[string]struct{}{}}
 				}
 				seen[sk.Name].usedBySet[step.Name] = struct{}{}
 			}
