@@ -1573,12 +1573,14 @@ func init() {
 
 	dropletLogCmd.Flags().StringVar(&logFmt, "format", "text", "output format: text or json")
 
+	dropletHistoryCmd.Flags().StringVar(&historyFmt, "format", "text", "output format: text or json")
+
 	dropletCmd.AddCommand(dropletAddCmd, dropletListCmd, dropletShowCmd, dropletNoteCmd,
 		dropletCloseCmd, dropletReopenCmd, dropletPurgeCmd,
 		dropletPassCmd, dropletRecirculateCmd, dropletPoolCmd, dropletCancelCmd, dropletApproveCmd,
 		dropletStatsCmd, dropletDepsCmd, dropletPeekCmd, dropletIssueCmd, dropletSearchCmd,
 		dropletExportCmd, dropletRenameCmd, dropletRestartCmd, dropletEditCmd,
-		dropletTailCmd, dropletHeartbeatCmd, dropletLogCmd)
+		dropletTailCmd, dropletHeartbeatCmd, dropletLogCmd, dropletHistoryCmd)
 	rootCmd.AddCommand(dropletCmd)
 }
 
