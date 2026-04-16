@@ -885,6 +885,36 @@ func TestFormatElapsed_MinutesAndSeconds(t *testing.T) {
 	}
 }
 
+// --- TestFormatStageElapsed ---
+
+func TestFormatStageElapsed_NonZeroDuration_ReturnsFormattedString(t *testing.T) {
+	got := formatStageElapsed(2*time.Minute + 14*time.Second)
+	if got != "2m 14s" {
+		t.Errorf("formatStageElapsed(2m14s) = %q, want %q", got, "2m 14s")
+	}
+}
+
+func TestFormatStageElapsed_ZeroDuration_ReturnsEmpty(t *testing.T) {
+	got := formatStageElapsed(0)
+	if got != "" {
+		t.Errorf("formatStageElapsed(0) = %q, want empty string", got)
+	}
+}
+
+func TestFormatStageElapsed_SubSecondDuration_ReturnsEmpty(t *testing.T) {
+	got := formatStageElapsed(300 * time.Millisecond)
+	if got != "" {
+		t.Errorf("formatStageElapsed(300ms) = %q, want empty string (rounds to 0s)", got)
+	}
+}
+
+func TestFormatStageElapsed_OneSecond_Returns1s(t *testing.T) {
+	got := formatStageElapsed(1 * time.Second)
+	if got != "1s" {
+		t.Errorf("formatStageElapsed(1s) = %q, want %q", got, "1s")
+	}
+}
+
 // --- TestTuiAqueductRow — pillar template ---
 
 // stripANSITest removes ANSI escape sequences from s, returning plain text.

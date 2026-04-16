@@ -203,7 +203,9 @@ var castellariusStatusCmd = &cobra.Command{
 					elapsed := int(time.Since(item.UpdatedAt).Minutes())
 					stageAge := "—"
 					if !item.StageDispatchedAt.IsZero() {
-						stageAge = formatElapsed(time.Since(item.StageDispatchedAt))
+						if se := formatStageElapsed(time.Since(item.StageDispatchedAt)); se != "" {
+							stageAge = se
+						}
 					}
 					fmt.Fprintf(tw, "%s\t%s\t%s\t[%s]\t%s\t%dm\n",
 						name, repo.Name, item.ID, item.CurrentCataractae, stageAge, elapsed)
@@ -479,7 +481,7 @@ var statusCmd = &cobra.Command{
 						elapsed := formatElapsed(time.Since(item.UpdatedAt))
 						stageAge := ""
 						if !item.StageDispatchedAt.IsZero() {
-							if se := formatElapsed(time.Since(item.StageDispatchedAt)); se != "" && se != "0s" {
+							if se := formatStageElapsed(time.Since(item.StageDispatchedAt)); se != "" {
 								stageAge = " (stage " + se + ")"
 							}
 						}

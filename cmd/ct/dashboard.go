@@ -322,6 +322,14 @@ func formatElapsed(d time.Duration) string {
 	return fmt.Sprintf("%ds", s)
 }
 
+func formatStageElapsed(d time.Duration) string {
+	s := formatElapsed(d)
+	if s == "" || s == "0s" {
+		return ""
+	}
+	return s
+}
+
 // padToVisualWidth pads s with trailing spaces so its visual width (rune count
 // after stripping ANSI escape codes) equals width. If the visual width is already
 // >= width, s is returned unchanged.
@@ -396,7 +404,7 @@ func renderAqueductRow(ch CataractaeInfo, termWidth int) string {
 	if ch.DropletID != "" {
 		bar := progressBar(ch.CataractaeIndex, ch.TotalCataractae, 8)
 		stageAge := ""
-		if se := formatElapsed(ch.StageElapsed); se != "" && se != "0s" {
+		if se := formatStageElapsed(ch.StageElapsed); se != "" {
 			stageAge = " (stage " + se + ")"
 		}
 		content := fmt.Sprintf(" ≈ ≈  %s  %s%s  %s  ≈ ≈ ", ch.DropletID, formatElapsed(ch.Elapsed), stageAge, bar)
@@ -569,7 +577,7 @@ func renderFlowGraphRow(ch CataractaeInfo) (graphLine, infoLine string) {
 	if activeCol >= 0 {
 		bar := progressBar(ch.CataractaeIndex, ch.TotalCataractae, 8)
 		stageAge := ""
-		if se := formatElapsed(ch.StageElapsed); se != "" && se != "0s" {
+		if se := formatStageElapsed(ch.StageElapsed); se != "" {
 			stageAge = " (stage " + se + ")"
 		}
 		infoLine = strings.Repeat(" ", activeCol) + "↑ " + ch.Name + " · " + ch.DropletID + "  " + formatElapsed(ch.Elapsed) + stageAge + "  " + bar
