@@ -41,6 +41,7 @@ type CataractaeInfo struct {
 	Step            string        `json:"step"`
 	Steps           []string      `json:"steps"`            // workflow step names in order
 	Elapsed         time.Duration `json:"elapsed"`          // nanoseconds; use elapsed/1e9 for seconds
+	StageElapsed    time.Duration `json:"stage_elapsed"`    // time since StageDispatchedAt; 0 if not dispatched
 	CataractaeIndex int           `json:"cataractae_index"` // 1-based index; 0 if unknown
 	TotalCataractae int           `json:"total_cataractae"`
 }
@@ -166,6 +167,9 @@ func fetchDashboardData(cfgPath, dbPath string) (*DashboardData, error) {
 			ci.Title = item.Title
 			ci.Step = item.CurrentCataractae
 			ci.Elapsed = time.Since(item.UpdatedAt)
+			if !item.StageDispatchedAt.IsZero() {
+				ci.StageElapsed = time.Since(item.StageDispatchedAt)
+			}
 			ci.TotalCataractae = len(ci.Steps)
 			ci.CataractaeIndex = slices.Index(ci.Steps, item.CurrentCataractae) + 1
 		}
@@ -318,6 +322,14 @@ func formatElapsed(d time.Duration) string {
 	return fmt.Sprintf("%ds", s)
 }
 
+func formatStageElapsed(d time.Duration) string {
+	s := formatElapsed(d)
+	if s == "" || s == "0s" {
+		return ""
+	}
+	return s
+}
+
 // padToVisualWidth pads s with trailing spaces so its visual width (rune count
 // after stripping ANSI escape codes) equals width. If the visual width is already
 // >= width, s is returned unchanged.
@@ -391,7 +403,11 @@ func renderAqueductRow(ch CataractaeInfo, termWidth int) string {
 	var waterInner string
 	if ch.DropletID != "" {
 		bar := progressBar(ch.CataractaeIndex, ch.TotalCataractae, 8)
-		content := fmt.Sprintf(" ≈ ≈  %s  %s  %s  ≈ ≈ ", ch.DropletID, formatElapsed(ch.Elapsed), bar)
+		stageAge := ""
+		if se := formatStageElapsed(ch.StageElapsed); se != "" {
+			stageAge = " (stage " + se + ")"
+		}
+		content := fmt.Sprintf(" ≈ ≈  %s  %s%s  %s  ≈ ≈ ", ch.DropletID, formatElapsed(ch.Elapsed), stageAge, bar)
 		waterInner = padOrTruncCenter(content, chanW)
 		waterInner = colorGreen + waterInner + colorReset
 	} else {
@@ -560,7 +576,11 @@ func renderFlowGraphRow(ch CataractaeInfo) (graphLine, infoLine string) {
 	graphLine = g.String()
 	if activeCol >= 0 {
 		bar := progressBar(ch.CataractaeIndex, ch.TotalCataractae, 8)
-		infoLine = strings.Repeat(" ", activeCol) + "↑ " + ch.Name + " · " + ch.DropletID + "  " + formatElapsed(ch.Elapsed) + "  " + bar
+		stageAge := ""
+		if se := formatStageElapsed(ch.StageElapsed); se != "" {
+			stageAge = " (stage " + se + ")"
+		}
+		infoLine = strings.Repeat(" ", activeCol) + "↑ " + ch.Name + " · " + ch.DropletID + "  " + formatElapsed(ch.Elapsed) + stageAge + "  " + bar
 	}
 	return
 }

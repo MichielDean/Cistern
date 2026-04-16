@@ -2,12 +2,15 @@ package main
 
 import (
 	"bytes"
+	"database/sql"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/MichielDean/cistern/internal/cistern"
+	_ "github.com/mattn/go-sqlite3"
 )
 
 func TestStripANSI(t *testing.T) {
@@ -400,5 +403,235 @@ func TestDropletPeek_FollowWithoutSnapshot_ReturnsError(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "--snapshot") {
 		t.Errorf("error should mention --snapshot, got: %q", err.Error())
+	}
+}
+
+// TestDropletPeek_StageElapsedNonZero_ShowsStageAge verifies that the peek CLI
+// header includes '(stage X)' when StageDispatchedAt is set far enough in the
+// past to produce a non-zero formatted duration.
+//
+// Given: a droplet in_progress with StageDispatchedAt 5 minutes ago
+// When:  droplet peek is run
+// Then:  the header line contains '(stage 5m'
+func TestDropletPeek_StageElapsedNonZero_ShowsStageAge(t *testing.T) {
+	dir := t.TempDir()
+	db := filepath.Join(dir, "test.db")
+	t.Setenv("CT_DB", db)
+
+	c, err := cistern.New(db, "ts")
+	if err != nil {
+		t.Fatal(err)
+	}
+	dr, err := c.Add("myrepo", "Stage peek test", "", 1, 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	item, err := c.GetReady("myrepo")
+	if err != nil || item == nil {
+		t.Fatalf("GetReady failed: %v", err)
+	}
+	if err := c.Assign(item.ID, "test-worker", "implement"); err != nil {
+		t.Fatal(err)
+	}
+	c.Close()
+
+	// Backdate StageDispatchedAt so formatStageElapsed produces a visible duration.
+	dbConn, err := sql.Open("sqlite3", db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer dbConn.Close()
+	dispatchedAt := time.Now().Add(-5 * time.Minute)
+	_, err = dbConn.Exec(
+		`UPDATE droplets SET stage_dispatched_at = ? WHERE id = ?`,
+		dispatchedAt.UTC().Format("2006-01-02T15:04:05.999Z"), dr.ID,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	origHasSession := tmuxHasSession
+	tmuxHasSession = func(_ string) bool { return false }
+	defer func() { tmuxHasSession = origHasSession }()
+
+	old := os.Stdout
+	r2, w, _ := os.Pipe()
+	os.Stdout = w
+
+	peekLines = 50
+	peekRaw = false
+	peekFollow = false
+	peekSnapshot = false
+
+	err = dropletPeekCmd.RunE(dropletPeekCmd, []string{dr.ID})
+
+	w.Close()
+	os.Stdout = old
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	var buf bytes.Buffer
+	buf.ReadFrom(r2)
+	out := buf.String()
+
+	if !strings.Contains(out, "(stage ") {
+		t.Errorf("peek header should contain '(stage X)' when StageDispatchedAt is set, got:\n%q", out)
+	}
+	if !strings.Contains(out, "5m") && !strings.Contains(out, "4m") {
+		t.Errorf("peek header should show ~5m stage elapsed, got:\n%q", out)
+	}
+}
+
+// TestDropletPeek_StageElapsedZero_OmitsStageAge verifies that the peek CLI
+// header does not include '(stage' when StageDispatchedAt is not set.
+//
+// Given: a droplet in_progress with StageDispatchedAt = zero
+// When:  droplet peek is run
+// Then:  the header line contains 'flowing' but NOT '(stage'
+func TestDropletPeek_StageElapsedZero_OmitsStageAge(t *testing.T) {
+	dir := t.TempDir()
+	db := filepath.Join(dir, "test.db")
+	t.Setenv("CT_DB", db)
+
+	c, err := cistern.New(db, "ts")
+	if err != nil {
+		t.Fatal(err)
+	}
+	dr, err := c.Add("myrepo", "Zero dispatch test", "", 1, 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.Close()
+
+	// Directly set in_progress without StageDispatchedAt.
+	dbConn, err := sql.Open("sqlite3", db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer dbConn.Close()
+	_, err = dbConn.Exec(
+		`UPDATE droplets SET assignee = 'test-worker', current_cataractae = 'implement', status = 'in_progress' WHERE id = ?`,
+		dr.ID,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	origHasSession := tmuxHasSession
+	tmuxHasSession = func(_ string) bool { return false }
+	defer func() { tmuxHasSession = origHasSession }()
+
+	old := os.Stdout
+	r2, w, _ := os.Pipe()
+	os.Stdout = w
+
+	peekLines = 50
+	peekRaw = false
+	peekFollow = false
+	peekSnapshot = false
+
+	err = dropletPeekCmd.RunE(dropletPeekCmd, []string{dr.ID})
+
+	w.Close()
+	os.Stdout = old
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	var buf bytes.Buffer
+	buf.ReadFrom(r2)
+	out := buf.String()
+
+	if strings.Contains(out, "(stage ") {
+		t.Errorf("peek header should NOT contain '(stage' when StageDispatchedAt is zero, got:\n%q", out)
+	}
+}
+
+// TestDropletPeek_StageElapsedSubSecond_OmitsStageAge verifies that the peek CLI
+// header does not include '(stage X)' when StageDispatchedAt was set less than 1s
+// ago (formatElapsed rounds to "0s" which formatStageElapsed filters out).
+//
+// Given: a droplet just dispatched (StageDispatchedAt < 1s ago, formats to "0s")
+// When:  droplet peek is run
+// Then:  the header line does NOT contain '(stage'
+func TestDropletPeek_StageElapsedSubSecond_OmitsStageAge(t *testing.T) {
+	itemID := makeInProgressItem(t)
+
+	origHasSession := tmuxHasSession
+	tmuxHasSession = func(_ string) bool { return false }
+	defer func() { tmuxHasSession = origHasSession }()
+
+	old := os.Stdout
+	r2, w, _ := os.Pipe()
+	os.Stdout = w
+
+	peekLines = 50
+	peekRaw = false
+	peekFollow = false
+	peekSnapshot = false
+
+	err := dropletPeekCmd.RunE(dropletPeekCmd, []string{itemID})
+
+	w.Close()
+	os.Stdout = old
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	var buf bytes.Buffer
+	buf.ReadFrom(r2)
+	out := buf.String()
+
+	if strings.Contains(out, "(stage ") {
+		t.Errorf("peek header should NOT contain '(stage' when StageElapsed formats to '0s', got:\n%q", out)
+	}
+}
+
+func TestFormatPeekFollowSeparator_StageElapsedNonZero_IncludesStageAge(t *testing.T) {
+	updatedAt := time.Now().Add(-10 * time.Minute)
+	stageDispatchedAt := time.Now().Add(-5 * time.Minute)
+
+	got := formatPeekFollowSeparator(updatedAt, stageDispatchedAt)
+
+	if !strings.Contains(got, "(stage ") {
+		t.Errorf("expected '(stage X)' in separator when StageDispatchedAt is set, got: %q", got)
+	}
+	if !strings.Contains(got, "5m") && !strings.Contains(got, "4m") {
+		t.Errorf("expected ~5m stage elapsed in separator, got: %q", got)
+	}
+	if !strings.Contains(got, "10m") && !strings.Contains(got, "9m") {
+		t.Errorf("expected ~10m overall elapsed in separator, got: %q", got)
+	}
+}
+
+func TestFormatPeekFollowSeparator_StageDispatchedAtZero_OmitsStageAge(t *testing.T) {
+	updatedAt := time.Now().Add(-10 * time.Minute)
+	stageDispatchedAt := time.Time{}
+
+	got := formatPeekFollowSeparator(updatedAt, stageDispatchedAt)
+
+	if strings.Contains(got, "(stage ") {
+		t.Errorf("expected NO '(stage X)' in separator when StageDispatchedAt is zero, got: %q", got)
+	}
+	if !strings.Contains(got, "10m") && !strings.Contains(got, "9m") {
+		t.Errorf("expected overall elapsed in separator, got: %q", got)
+	}
+}
+
+func TestFormatPeekFollowSeparator_SubSecondStage_OmitsStageAge(t *testing.T) {
+	updatedAt := time.Now().Add(-10 * time.Minute)
+	stageDispatchedAt := time.Now().Add(-200 * time.Millisecond)
+
+	got := formatPeekFollowSeparator(updatedAt, stageDispatchedAt)
+
+	if strings.Contains(got, "(stage ") {
+		t.Errorf("expected NO '(stage X)' in separator when stage elapsed formats to 0s, got: %q", got)
+	}
+	if !strings.Contains(got, "10m") && !strings.Contains(got, "9m") {
+		t.Errorf("expected overall elapsed in separator, got: %q", got)
 	}
 }

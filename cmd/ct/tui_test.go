@@ -576,9 +576,10 @@ func TestTabApp_Detail_WindowResize_UpdatesDimensions(t *testing.T) {
 
 // helper: build a model with N single-line notes so content overflows the viewport.
 // height=10, viewH=9. Content (no steps, no issues):
-//   header + meta + sep + ISSUES heading + "(no issues)" + sep + NOTES heading = 7 fixed lines
-//   + (2N-1) note lines  →  2N+6 total.
-//   With N=5: 16 lines, maxScroll = 16-9 = 7.
+//
+//	header + meta + sep + ISSUES heading + "(no issues)" + sep + NOTES heading = 7 fixed lines
+//	+ (2N-1) note lines  →  2N+6 total.
+//	With N=5: 16 lines, maxScroll = 16-9 = 7.
 func detailModelWithNotes(n int) tabAppModel {
 	m := newTabAppModel("", "")
 	m.data = &DashboardData{}
@@ -3655,5 +3656,110 @@ func TestExecMultiActionCmd_EditMeta_InProgress_NoPartialUpdate(t *testing.T) {
 	}
 	if d.Title == "new title" {
 		t.Error("title was updated despite error — partial update occurred")
+	}
+}
+
+// ── openPeek stage elapsed display ──────────────────────────────────────────
+
+// TestOpenPeek_StageElapsedNonZero_ShowsStageAge verifies that openPeek includes
+// the stage age in the header when StageElapsed > 0, consistent with openInlinePeek.
+//
+// Given: a tabAppModel with a CataractaeInfo with Elapsed=10m and StageElapsed=3m22s
+// When:  openPeek is called
+// Then:  the peek header contains '(stage 3m 22s)'
+func TestOpenPeek_StageElapsedNonZero_ShowsStageAge(t *testing.T) {
+	m := newTabAppModel("", "")
+	m.data = &DashboardData{
+		Cataractae: []CataractaeInfo{
+			{
+				Name:         "virgo",
+				RepoName:     "myrepo",
+				DropletID:    "ci-test01",
+				Step:         "implement",
+				Steps:        []string{"implement", "review"},
+				Elapsed:      10 * time.Minute,
+				StageElapsed: 3*time.Minute + 22*time.Second,
+			},
+		},
+	}
+	m.selectedID = "ci-test01"
+	m.width = 80
+	m.height = 20
+
+	um, _ := m.openPeek()
+
+	if !strings.Contains(um.peek.header, "(stage 3m 22s)") {
+		t.Errorf("openPeek header should contain '(stage 3m 22s)' when StageElapsed is set, got:\n%s", um.peek.header)
+	}
+	if !strings.Contains(um.peek.header, "10m 0s") {
+		t.Errorf("openPeek header should contain overall elapsed '10m 0s', got:\n%s", um.peek.header)
+	}
+}
+
+// TestOpenPeek_StageElapsedZero_OmitsStageAge verifies that openPeek omits the
+// stage age from the header when StageElapsed is 0, consistent with all other
+// display surfaces.
+//
+// Given: a tabAppModel with a CataractaeInfo with Elapsed=5m30s and StageElapsed=0
+// When:  openPeek is called
+// Then:  the peek header does not contain '(stage'
+func TestOpenPeek_StageElapsedZero_OmitsStageAge(t *testing.T) {
+	m := newTabAppModel("", "")
+	m.data = &DashboardData{
+		Cataractae: []CataractaeInfo{
+			{
+				Name:         "virgo",
+				RepoName:     "myrepo",
+				DropletID:    "ci-test01",
+				Step:         "implement",
+				Steps:        []string{"implement", "review"},
+				Elapsed:      5*time.Minute + 30*time.Second,
+				StageElapsed: 0,
+			},
+		},
+	}
+	m.selectedID = "ci-test01"
+	m.width = 80
+	m.height = 20
+
+	um, _ := m.openPeek()
+
+	if strings.Contains(um.peek.header, "(stage") {
+		t.Errorf("openPeek header should not contain '(stage' when StageElapsed=0, got:\n%s", um.peek.header)
+	}
+	if !strings.Contains(um.peek.header, "5m 30s") {
+		t.Errorf("openPeek header should contain overall elapsed '5m 30s', got:\n%s", um.peek.header)
+	}
+}
+
+// TestOpenPeek_StageElapsedSubSecond_OmitsStageAge verifies that openPeek does
+// not show "(stage 0s)" when StageElapsed is > 0 but < 1s (formats to "0s").
+//
+// Given: a tabAppModel with a CataractaeInfo with StageElapsed=100ms
+// When:  openPeek is called
+// Then:  the peek header does not contain '(stage'
+func TestOpenPeek_StageElapsedSubSecond_OmitsStageAge(t *testing.T) {
+	m := newTabAppModel("", "")
+	m.data = &DashboardData{
+		Cataractae: []CataractaeInfo{
+			{
+				Name:         "virgo",
+				RepoName:     "myrepo",
+				DropletID:    "ci-test01",
+				Step:         "implement",
+				Steps:        []string{"implement", "review"},
+				Elapsed:      5 * time.Minute,
+				StageElapsed: 100 * time.Millisecond,
+			},
+		},
+	}
+	m.selectedID = "ci-test01"
+	m.width = 80
+	m.height = 20
+
+	um, _ := m.openPeek()
+
+	if strings.Contains(um.peek.header, "(stage") {
+		t.Errorf("openPeek header should not contain '(stage' when StageElapsed formats to '0s', got:\n%s", um.peek.header)
 	}
 }

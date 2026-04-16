@@ -565,7 +565,7 @@ The `/root/.cistern` volume persists config, skills, the SQLite database, and gh
 ```
 # Castellarius — the overseer that watches the cistern and routes droplets
 ct castellarius start          Wake the Castellarius (start processing)
-ct castellarius status         Show aqueduct flow — which are flowing, which are idle; includes per-repo queue depth, active session counts, and Castellarius health (last tick time)
+ct castellarius status         Show aqueduct flow — which are flowing, which are idle; includes per-repo queue depth, active session counts, Castellarius health (last tick time), and stage age per droplet
 
 # Dashboard
 ct dashboard                   Live TUI aqueduct arch diagram with cistern and recent flow
@@ -579,7 +579,7 @@ ct dashboard --web             HTTP web dashboard on 127.0.0.1:5737 — renders 
 ct dashboard --web --addr 127.0.0.1:8080  Custom listen address (must include hostname or IP)
 
 # Status — observe the system
-ct status                      Overall status: cistern level, aqueduct flow, cataractae chains
+ct status                      Overall status: cistern level, aqueduct flow, cataractae chains; shows (stage X) age per droplet
 ct status --json               Machine-readable JSON: flowing/queued counts, cataractae, aqueduct info
 ct status --watch              Continuously refresh every 5 seconds (Ctrl-C to stop)
 ct status --watch --interval N  Refresh every N seconds (min 1)
@@ -663,7 +663,7 @@ ct droplet cancel <id> --reason "..."                            Cancel — won'
 ct droplet approve <id>                                           Approve a critical droplet for delivery
 
 # Peek — observe live agent output
-ct droplet peek <id>                                              Attach read-only to the live tmux session (or show last notes if session ended)
+ct droplet peek <id>                                              Attach read-only to the live tmux session (or show last notes if session ended); header shows (stage X) age
 ct droplet peek <id> --snapshot                                   Capture a static snapshot instead of live attach
 ct droplet peek <id> --snapshot --lines 100                       With --snapshot: show only last 100 lines (default: full scrollback)
 ct droplet peek <id> --snapshot --follow                          With --snapshot: re-capture every 3 seconds (Ctrl-C to stop)
