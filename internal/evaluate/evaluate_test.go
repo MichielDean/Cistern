@@ -2,6 +2,7 @@ package evaluate
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 )
 
@@ -168,6 +169,78 @@ func TestEvaluate_PlaceholderResult(t *testing.T) {
 	}
 	if result.MaxScore != 40 {
 		t.Errorf("expected max score 40, got %d", result.MaxScore)
+	}
+}
+
+func TestExtractJSON_Plain(t *testing.T) {
+	input := `{"scores": [], "notes": "test"}`
+	result := extractJSON(input)
+	if result != input {
+		t.Errorf("expected %q, got %q", input, result)
+	}
+}
+
+func TestExtractJSON_WithPreamble(t *testing.T) {
+	input := `Here is my evaluation:
+{"scores": [{"dimension": "contract_correctness", "score": 5, "evidence": "good", "suggested": "n/a"}], "notes": "test"}
+Hope this helps!`
+	start := strings.Index(input, "{")
+	result := extractJSON(input[start:])
+	expected := `{"scores": [{"dimension": "contract_correctness", "score": 5, "evidence": "good", "suggested": "n/a"}], "notes": "test"}`
+	if result != expected {
+		t.Errorf("expected %q, got %q", expected, result)
+	}
+}
+
+func TestExtractJSON_NestedBraces(t *testing.T) {
+	input := `{"scores": [], "notes": "has {braces} inside"}`
+	result := extractJSON(input)
+	if result != input {
+		t.Errorf("expected %q, got %q", input, result)
+	}
+}
+
+func TestExtractJSON_EscapedQuotes(t *testing.T) {
+	input := `{"scores": [], "notes": "has \"quotes\" inside"}`
+	result := extractJSON(input)
+	if result != input {
+		t.Errorf("expected %q, got %q", input, result)
+	}
+}
+
+func TestParseEvaluationResult_WithPreamble(t *testing.T) {
+	body := `Here is my evaluation:
+
+{
+	"scores": [
+		{"dimension": "contract_correctness", "score": 5, "evidence": "all good", "suggested": "n/a"}
+	],
+	"notes": "test"
+}`
+
+	result, err := ParseEvaluationResult(body)
+	if err != nil {
+		t.Fatalf("ParseEvaluationResult with preamble failed: %v", err)
+	}
+	if len(result.Scores) != 1 {
+		t.Errorf("expected 1 score, got %d", len(result.Scores))
+	}
+}
+
+func TestAPICaller_Defaults(t *testing.T) {
+	caller := NewAPICaller("", "")
+	if caller.BaseURL != "http://localhost:11434/v1" {
+		t.Errorf("expected default base URL, got %s", caller.BaseURL)
+	}
+	if caller.Model != "glm-5.1:cloud" {
+		t.Errorf("expected default model, got %s", caller.Model)
+	}
+}
+
+func TestAPICaller_ModelName(t *testing.T) {
+	caller := NewAPICaller("http://test:1234/v1", "test-model")
+	if caller.ModelName() != "test-model" {
+		t.Errorf("expected 'test-model', got %s", caller.ModelName())
 	}
 }
 

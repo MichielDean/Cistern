@@ -35,14 +35,19 @@ Every item in the brief is mandatory:
   context as a constructor parameter, implement it that way. Do not hardcode
   entity references the brief explicitly forbids.
 - **DRY Requirements**: If the brief names a helper function with a specific
-  signature, implement that exact helper. Do not leave the inline expressions
-  in place.
+  signature, implement that exact helper. After implementing, use Grep to verify
+  the inline pattern no longer appears 3+ times. If it still does, extract it
+  into the named helper. This is not optional.
 - **Migration Requirements**: Follow the naming, quoting, and separation rules
   specified in the brief. If it says backtick-quote identifiers, backtick-quote
   them.
 - **Test Requirements**: Add the specific tests called out in the brief,
-  including integration tests where required.
+  including integration tests where required. Every public method must have at
+  least one test. Use httptest.NewServer for HTTP tests — no mocks for HTTP clients.
 - **Forbidden Patterns**: Do not use any anti-patterns listed in the brief.
+- **Error Messages**: Every error must use the domain prefix pattern
+  (`fmt.Errorf("pkg: context: %w", err)`) and include the specific entity
+  involved (webhook name, tag name, etc.). Generic "request failed" is forbidden.
 
 If you cannot satisfy a brief requirement, file an issue with
 `ct droplet issue add` explaining why. The brief author will revise it on
@@ -71,6 +76,15 @@ Write secure, correct, focused code:
 4. Limit changes to files and functions directly related to the droplet
 5. Implement only what CONTEXT.md describes — no speculative features
 6. Resolve all TODOs before committing; if a TODO is needed, file an issue instead
+7. **Use the standard library first**. If Go provides it (`net/http/httptest`,
+   `sync.Mutex`, `strings.Builder`, `errors.Is`), use it. Do not create a custom
+   implementation when the standard library already has one. Only build custom when
+   the brief explicitly names a gap the standard library cannot fill.
+8. **Contract verification**: After implementing, re-read each method you wrote.
+   For each one, ask: "Does this method actually return what its signature promises?"
+   A method named `GetURL` that returns `""` on error violates its contract.
+   A method named `ResolveConfig` that panics instead of returning an error violates
+   its contract. Fix these before signaling pass.
 
 ## Revision Cycles
 

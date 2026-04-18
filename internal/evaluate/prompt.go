@@ -32,7 +32,11 @@ Score guidelines per level:
 
 Dimensions to evaluate:` + dimensionDescriptions() + `
 
-IMPORTANT: You must score EVERY dimension. If a dimension is not applicable (e.g., MigrationSafety when there are no migrations), give it a score of 5 and explain why it is not applicable in the evidence field.
+IMPORTANT: You must score EVERY dimension. Only dimensions that are genuinely not applicable to the work described may receive a 5 with "not applicable" evidence. For example, MigrationSafety scores 5 when no migrations are expected for this type of change.
+
+If no code was produced or the diff is empty, score ALL dimensions 0 with evidence "No code was produced."
+
+If code exists but is fundamentally broken (e.g., stub methods returning placeholders, missing test files, hardcoded values where computation is expected), score those dimensions 0-1, NOT 5.
 
 You must provide SPECIFIC evidence for every score. Quote file paths and line numbers. Do not say "the code is generally good" - point to specific methods, specific test files, specific patterns.
 

@@ -98,6 +98,7 @@ type Result struct {
 	Ticket      string  `json:"ticket"`     // e.g., "PROJ-123" or ""
 	Branch      string  `json:"branch"`     // e.g., "feat/fix-thing"
 	Commit      string  `json:"commit"`     // git SHA or "HEAD"
+	PRNumber    int     `json:"pr_number,omitempty"`
 	Model      string   `json:"model"`      // LLM model used for evaluation
 	Scores     []Score  `json:"scores"`
 	TotalScore int      `json:"total_score"` // sum of all dimension scores

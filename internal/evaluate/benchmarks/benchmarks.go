@@ -1,5 +1,9 @@
 package benchmarks
 
+// Deprecated: The benchmark subcommand now scores real merged PRs via
+// ct evaluate benchmark --pr/--merged-since instead of synthetic items.
+// This package is retained for reference but is not used by the CLI.
+
 // Item is a synthetic work item designed to exercise specific rubric dimensions.
 // Each item represents a real-world task type that the Cistern pipeline handles.
 type Item struct {

@@ -55,9 +55,26 @@ For every pattern you prescribe, find at least one file that demonstrates it:
   reason? Find the specific usage. Quote the method signature.
 - **Migration conventions**: Find the most recent migration. What numbering does it
   use? Does it quote identifiers? Does it separate DDL from DML? Quote the SQL.
+- **Standard library vs custom**: Does the codebase use `golang.org/x/time/rate`,
+  `httptest`, `sql.NullString`, or custom implementations? Find the import and
+  quote it. Prefer standard library and well-known packages over custom code unless
+  the codebase already has an established custom pattern.
 
 If you write "the codebase uses Exposed DSL" without naming a file, your brief is
 incomplete. Find the file. Name it. Quote it.
+
+### Idiom Fit Rule
+
+The brief must prescribe the path of least resistance for each pattern. If the
+standard library or a well-known package (golang.org/x/time/rate, sync.Mutex,
+httptest.NewServer) provides what's needed, prescribe that — do not invent a custom
+implementation. Custom implementations are only justified when the standard library
+genuinely lacks the capability AND the brief explicitly names the gap.
+
+A brief that prescribes "create a token bucket rate limiter" when the codebase
+already imports golang.org/x/time/rate is a bad brief. It forces the implementer
+to fight the ecosystem. Prescribe the idiomatic approach first, custom only when
+necessary — and name the file:line that proves the standard approach is insufficient.
 
 ### Abstraction Boundary Analysis
 
@@ -76,10 +93,12 @@ reviewer not to flag over-coupling for something that is genuinely entity-specif
 
 ### Repeated Pattern Detection
 
-Search for repeated inline expressions across the codebase. When the same pattern
-appears 3+ times (e.g., boolean flag extraction, permission checks), it must be
-extracted into a helper. Name the helper, specify its signature, and show the
-existing code that demonstrates the pattern.
+You MUST use Grep to search for repeated patterns before writing this section.
+A brief with an empty or vague DRY section is incomplete and will be recirculated.
+
+Search for patterns that will appear in the new code (error wrapping, config resolution,
+HTTP client construction, retry logic). If a pattern appears 3+ times, name the helper
+to extract, specify its complete signature, and list every file:line where it appears.
 
 A brief that says "extract common patterns" is worthless. A brief that says
 "extract `boolPerm(orgId: Long, perm: String): Boolean` from `OrganizationDAO.kt`
@@ -135,6 +154,13 @@ description quality for reference data.>
 
 ## Test Requirements
 
+You MUST use Glob to find existing test files, then Read at least one to understand the
+test patterns in this codebase (table-driven tests, httptest.NewServer, t.Helper, t.Setenv, etc).
+
+For EVERY new public method, name the test function that covers it.
+For every HTTP client or external service, require an integration test using httptest.NewServer.
+A brief with no specific test function names is incomplete.
+
 <Specific: which test files need new tests, what kind (unit vs integration),
 exact naming convention for new test functions, and precise coverage gaps.>
 
@@ -148,7 +174,14 @@ codebase and explain why the new implementation must not repeat it.>
 <Before the implementer can pass, every item in this list must be addressed.
 Each item is a verification gate for both the implementer and downstream reviewers.>
 
-- [ ] <specific, verifiable constraint — e.g., "PermissionBooleanColumn.toQueryBuilder
+For each new method in the checklist, include a **contract clause**: what does this
+method promise to return for every input? If it returns an error, what does the
+error contain? The implementer must satisfy the contract, and the reviewer must verify
+the method does what it promises — not just that it compiles.
+
+- [ ] <specific, verifiable constraint with contract clause — e.g., "Notifier.Send
+      returns nil on success, wraps context errors with 'notifier:' prefix, and
+      never returns a bare io.EOF without wrapping it">
       returns a real EXISTS subquery, not a hardcoded string">
 - [ ] <specific, verifiable constraint — e.g., "loadPermissionsForOrgs returns
       Map<Long, Map<String, Set<String>>>, not List<String> for permission values">
