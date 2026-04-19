@@ -1,7 +1,7 @@
 package main
 
 import (
-	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 
@@ -29,7 +29,7 @@ func resolveDBPath() string {
 	}
 	home, err := os.UserHomeDir()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "ct: cannot resolve home directory: %v\n", err)
+		slog.Error("ct: cannot resolve home directory", "error", err)
 		os.Exit(1)
 	}
 	dir := filepath.Join(home, ".cistern")

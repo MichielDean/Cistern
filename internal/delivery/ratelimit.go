@@ -28,8 +28,14 @@ func (c *Config) applyDefaults() {
 }
 
 // RateLimiter enforces per-IP and per-token sliding-window request limits.
-// It is safe for concurrent use. Call Close when the limiter is no longer
-// needed to stop the background eviction goroutine.
+// It is safe for concurrent use.
+//
+// IMPORTANT: NewRateLimiter starts a background goroutine for eviction.
+// You MUST call Close() when the limiter is no longer needed, or the
+// goroutine leaks. Typical usage:
+//
+//	rl := delivery.NewRateLimiter(cfg)
+//	defer rl.Close()
 type RateLimiter struct {
 	mu          sync.Mutex
 	ipCounters  map[string]*windowCounter

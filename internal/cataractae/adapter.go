@@ -92,6 +92,9 @@ func (a *Adapter) spawnAutomated(ctx context.Context, req castellarius.Cataracta
 
 	// Use per-droplet sandbox if set by Castellarius, otherwise fall back to
 	// aqueduct-named sandbox for automated steps (they don't use the worktree directly).
+	// NOTE: Silent fallback to aqueduct-named sandbox is intentional for automated
+	// (gate) steps. Castellarius should always provide SandboxDir for manual steps;
+	// if missing for a manual step, SpawnStep returns an error.
 	sandboxDir := req.SandboxDir
 	if sandboxDir == "" {
 		home, err := os.UserHomeDir()

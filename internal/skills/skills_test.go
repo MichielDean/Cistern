@@ -5,7 +5,9 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 )
 
 func TestCachePath_UsesHomeDir(t *testing.T) {
@@ -429,5 +431,62 @@ func TestRemoveManifestEntry_PersistsCorrectly(t *testing.T) {
 		if e.Name == "second" {
 			t.Error("removed entry still present in manifest")
 		}
+	}
+}
+
+func TestFetcher_NilClientUsesDefault(t *testing.T) {
+	f := NewFetcher(nil)
+	if f.Client == nil {
+		t.Fatal("NewFetcher(nil) should set a default client")
+	}
+	if f.Client.Timeout != 30*time.Second {
+		t.Errorf("default timeout = %v, want 30s", f.Client.Timeout)
+	}
+}
+
+func TestFetcher_CustomClient(t *testing.T) {
+	custom := &http.Client{Timeout: 5 * time.Second}
+	f := NewFetcher(custom)
+	if f.Client != custom {
+		t.Error("NewFetcher should use the provided client")
+	}
+}
+
+func TestFetcher_Download_Integration(t *testing.T) {
+	const content = "# Fetched Skill\n\nFetched via custom Fetcher.\n"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(content)) //nolint:errcheck
+	}))
+	defer srv.Close()
+
+	f := NewFetcher(nil)
+	dest := filepath.Join(t.TempDir(), "skill", "SKILL.md")
+	if err := f.download(dest, srv.URL+"/SKILL.md"); err != nil {
+		t.Fatalf("download: %v", err)
+	}
+
+	data, err := os.ReadFile(dest)
+	if err != nil {
+		t.Fatalf("read downloaded file: %v", err)
+	}
+	if string(data) != content {
+		t.Errorf("downloaded content = %q, want %q", string(data), content)
+	}
+}
+
+func TestFetcher_Download_HTTPError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer srv.Close()
+
+	f := NewFetcher(nil)
+	dest := filepath.Join(t.TempDir(), "skill", "SKILL.md")
+	err := f.download(dest, srv.URL+"/SKILL.md")
+	if err == nil {
+		t.Fatal("expected error for HTTP 404")
+	}
+	if !strings.Contains(err.Error(), "HTTP 404") {
+		t.Errorf("error should mention HTTP status, got: %v", err)
 	}
 }

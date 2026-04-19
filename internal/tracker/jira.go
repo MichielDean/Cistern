@@ -10,17 +10,11 @@ import (
 	"time"
 )
 
-// JiraHTTPTimeout is the timeout applied to all Jira HTTP requests.
-// Tests may override this to a shorter value to exercise timeout behaviour.
-var JiraHTTPTimeout = 30 * time.Second
-
 func init() {
 	Register("jira", newJiraProvider)
 }
 
-// DefaultJiraPriorityMap maps Jira priority names to Cistern priorities.
-// Used as fallback when TrackerConfig.PriorityMap is empty.
-var DefaultJiraPriorityMap = map[string]int{
+var defaultJiraPriorityMap = map[string]int{
 	"Highest": 1,
 	"High":    1,
 	"Medium":  2,
@@ -29,12 +23,27 @@ var DefaultJiraPriorityMap = map[string]int{
 }
 
 type jiraProvider struct {
-	cfg    TrackerConfig
-	client *http.Client
+	cfg         TrackerConfig
+	client      *http.Client
+	httpTimeout time.Duration
+	priorityMap map[string]int
 }
 
 func newJiraProvider(cfg TrackerConfig) (TrackerProvider, error) {
-	return &jiraProvider{cfg: cfg, client: &http.Client{Timeout: JiraHTTPTimeout}}, nil
+	prioMap := make(map[string]int, len(defaultJiraPriorityMap))
+	for k, v := range defaultJiraPriorityMap {
+		prioMap[k] = v
+	}
+	timeout := cfg.HTTPTimeout
+	if timeout == 0 {
+		timeout = 30 * time.Second
+	}
+	return &jiraProvider{
+		cfg:         cfg,
+		httpTimeout: timeout,
+		priorityMap: prioMap,
+		client:      &http.Client{Timeout: timeout},
+	}, nil
 }
 
 // Name returns the provider identifier.
@@ -110,7 +119,7 @@ func (p *jiraProvider) FetchIssue(key string) (*ExternalIssue, error) {
 func (p *jiraProvider) mapPriority(name string) int {
 	pm := p.cfg.PriorityMap
 	if len(pm) == 0 {
-		pm = DefaultJiraPriorityMap
+		pm = p.priorityMap
 	}
 	if v, ok := pm[name]; ok {
 		return v

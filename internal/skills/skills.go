@@ -21,14 +21,31 @@ import (
 	"time"
 )
 
-// httpClient is package-level with a timeout to prevent indefinite hangs.
-var httpClient = &http.Client{Timeout: 30 * time.Second}
-
 // maxSkillSize is the maximum allowed size for a downloaded SKILL.md (1 MiB).
 const maxSkillSize = 1 << 20
 
 // validName matches safe skill names: alphanumeric, hyphen, underscore only.
 var validName = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
+
+// Fetcher downloads and deploys skills. Use NewFetcher to create one with
+// custom settings, or use the package-level DefaultFetcher for standard
+// behaviour.
+type Fetcher struct {
+	Client *http.Client
+}
+
+// NewFetcher creates a Fetcher with the given HTTP client. If client is nil,
+// a default client with a 30-second timeout is used.
+func NewFetcher(client *http.Client) *Fetcher {
+	if client == nil {
+		client = &http.Client{Timeout: 30 * time.Second}
+	}
+	return &Fetcher{Client: client}
+}
+
+// DefaultFetcher is the package-level fetcher used by Install, Update, and
+// other standalone functions.
+var DefaultFetcher = NewFetcher(nil)
 
 // ManifestEntry records where a skill came from and when it was installed.
 type ManifestEntry struct {
@@ -73,7 +90,7 @@ func Install(name, url string) error {
 	dest := LocalPath(name)
 	if _, err := os.Stat(dest); err != nil {
 		// Not on disk yet — download it.
-		if err := download(dest, url); err != nil {
+		if err := DefaultFetcher.download(dest, url); err != nil {
 			return err
 		}
 	}
@@ -90,7 +107,7 @@ func Update(name, url string) error {
 	if err := validateName(name); err != nil {
 		return err
 	}
-	if err := download(LocalPath(name), url); err != nil {
+	if err := DefaultFetcher.download(LocalPath(name), url); err != nil {
 		return err
 	}
 	return saveManifestEntry(ManifestEntry{
@@ -214,7 +231,7 @@ func writeManifest(entries []ManifestEntry) error {
 
 // --- HTTP download ---
 
-func download(dest, url string) error {
+func (f *Fetcher) download(dest, url string) error {
 	if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
 		return fmt.Errorf("skills: mkdir %s: %w", filepath.Dir(dest), err)
 	}
@@ -227,7 +244,7 @@ func download(dest, url string) error {
 	if token := os.Getenv("GH_TOKEN"); token != "" {
 		req.Header.Set("Authorization", "Bearer "+token)
 	}
-	resp, err := httpClient.Do(req)
+	resp, err := f.Client.Do(req)
 	if err != nil {
 		return fmt.Errorf("skills: fetch %s: %w", url, err)
 	}

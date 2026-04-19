@@ -243,3 +243,44 @@ func TestRateLimiter_PartialIncrementIsAtomic(t *testing.T) {
 		t.Fatal("fresh IP+token should be allowed after a rejected request")
 	}
 }
+
+func TestRateLimiter_CloseStopsGoroutine(t *testing.T) {
+	rl := NewRateLimiter(Config{PerIPRequests: 10, PerTokenRequests: 10, Window: time.Minute})
+
+	// Allow should work before and after Close — Close only stops the background
+	// eviction goroutine, not the rate limiting itself.
+	if !rl.Allow("1.2.3.4", "tok-a") {
+		t.Fatal("first request should be allowed")
+	}
+
+	rl.Close()
+
+	// After Close, Allow still works (eviction stops, not rate limiting).
+	if !rl.Allow("5.6.7.8", "tok-b") {
+		t.Fatal("request from new IP after Close should be allowed")
+	}
+}
+
+func TestRateLimiter_ConcurrentAccess(t *testing.T) {
+	rl := NewRateLimiter(Config{PerIPRequests: 1000, PerTokenRequests: 1000, Window: time.Minute})
+	defer rl.Close()
+
+	const goroutines = 50
+	const requestsPerGoroutine = 20
+	errs := make(chan error, goroutines)
+
+	for i := 0; i < goroutines; i++ {
+		go func(id int) {
+			ip := fmt.Sprintf("10.0.%d.%d", id/256, id%256)
+			token := fmt.Sprintf("tok-%d", id)
+			for j := 0; j < requestsPerGoroutine; j++ {
+				rl.Allow(ip, token)
+			}
+			errs <- nil
+		}(i)
+	}
+
+	for i := 0; i < goroutines; i++ {
+		<-errs
+	}
+}

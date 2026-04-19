@@ -83,8 +83,13 @@ type Client struct {
 	prefix string
 }
 
-// New opens (or creates) a SQLite database at dbPath, runs the schema, and
-// returns a Client. The prefix is used when generating droplet IDs.
+// New opens (or creates) a SQLite database at dbPath, applies the schema and
+// all numbered migrations, and returns a Client ready for use.
+// The prefix is used when generating droplet IDs (e.g., "bf" → "bf-a3k9x").
+//
+// IMPORTANT: This is the only way to create a valid *Client. The db field is
+// unexported. Do not construct Client manually — migrations and schema must
+// run exactly once, and New guarantees that.
 func New(dbPath, prefix string) (*Client, error) {
 	db, err := sql.Open("sqlite3", dbPath+"?_journal_mode=WAL&_busy_timeout=5000")
 	if err != nil {
@@ -95,92 +100,17 @@ func New(dbPath, prefix string) (*Client, error) {
 	// queue behind the same connection rather than racing across independent
 	// *sql.DB pools, which causes "database is locked" errors even with WAL mode.
 	db.SetMaxOpenConns(1)
-	// Migrations: rename legacy tables/columns before applying schema.
-	// Each statement is idempotent — errors are ignored (already-renamed or fresh DB).
-	db.Exec(`ALTER TABLE work_items RENAME TO droplets`)
-	db.Exec(`ALTER TABLE drops RENAME TO droplets`)
-	db.Exec(`ALTER TABLE step_notes RENAME TO cataractae_notes`)
-	db.Exec(`ALTER TABLE cataractae_notes RENAME COLUMN item_id TO droplet_id`)
-	db.Exec(`ALTER TABLE cataractae_notes RENAME COLUMN drop_id TO droplet_id`)
-	db.Exec(`ALTER TABLE cataractae_notes RENAME COLUMN step_name TO cataractae_name`)
-	db.Exec(`ALTER TABLE events RENAME COLUMN item_id TO droplet_id`)
-	db.Exec(`ALTER TABLE events RENAME COLUMN drop_id TO droplet_id`)
-	db.Exec(`ALTER TABLE droplets RENAME COLUMN current_step TO current_cataractae`)
-	db.Exec(`ALTER TABLE droplets ADD COLUMN complexity INTEGER DEFAULT 2`)
-	// Idempotent one-time migration: remap old 4-level complexity scheme
-	// (1=trivial, 2=standard, 3=full, 4=critical) to new 3-level scheme
-	// (1=standard, 2=full, 3=critical). Tracked in _schema_migrations so it
-	// runs exactly once per database.
-	db.Exec(`CREATE TABLE IF NOT EXISTS _schema_migrations (id TEXT PRIMARY KEY)`)
-	var migrationDone int
-	db.QueryRow(`SELECT COUNT(*) FROM _schema_migrations WHERE id = 'complexity_renumber'`).Scan(&migrationDone)
-	if migrationDone == 0 {
-		tx, err := db.Begin()
-		if err == nil {
-			tx.Exec(`UPDATE droplets SET complexity = complexity - 1 WHERE complexity >= 2`)
-			tx.Exec(`INSERT OR IGNORE INTO _schema_migrations (id) VALUES ('complexity_renumber')`)
-			tx.Commit()
-		}
-	}
-	// Idempotent one-time migration: normalize stored repo values to canonical casing
-	// (cistern, ScaledTest, PortfolioWebsite). Tracked in _schema_migrations so it
-	// runs exactly once per database.
-	var repoCaseMigrationDone int
-	db.QueryRow(`SELECT COUNT(*) FROM _schema_migrations WHERE id = 'repo_case_normalize'`).Scan(&repoCaseMigrationDone)
-	if repoCaseMigrationDone == 0 {
-		tx, err := db.Begin()
-		if err == nil {
-			for _, canonical := range []string{"cistern", "ScaledTest", "PortfolioWebsite"} {
-				tx.Exec(
-					`UPDATE droplets SET repo = ? WHERE LOWER(repo) = LOWER(?) AND repo != ?`,
-					canonical, canonical, canonical,
-				)
-			}
-			tx.Exec(`INSERT OR IGNORE INTO _schema_migrations (id) VALUES ('repo_case_normalize')`)
-			tx.Commit()
-		}
-	}
-	db.Exec(`ALTER TABLE droplets ADD COLUMN outcome TEXT DEFAULT NULL`)
-	// Vocabulary migrations: update legacy status values to canonical vocabulary.
-	db.Exec(`UPDATE droplets SET status = 'pooled' WHERE status IN ('stagnant', 'blocked', 'escalated')`)
-	// Dependency table migration for existing DBs (idempotent — IF NOT EXISTS).
-	db.Exec(`CREATE TABLE IF NOT EXISTS droplet_dependencies (
-		droplet_id TEXT NOT NULL REFERENCES droplets(id),
-		depends_on TEXT NOT NULL REFERENCES droplets(id),
-		PRIMARY KEY (droplet_id, depends_on)
-	)`)
-	// Issues table migration for existing DBs (idempotent — IF NOT EXISTS).
-	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS droplet_issues (
-		id          TEXT PRIMARY KEY,
-		droplet_id  TEXT NOT NULL REFERENCES droplets(id),
-		flagged_by  TEXT NOT NULL,
-		flagged_at  DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
-		description TEXT NOT NULL,
-		status      TEXT NOT NULL DEFAULT 'open',
-		evidence    TEXT,
-		resolved_at DATETIME
-	)`); err != nil {
-		db.Close()
-		return nil, fmt.Errorf("cistern: droplet_issues migration: %w", err)
-	}
-	db.Exec(`UPDATE droplets SET status = 'delivered' WHERE status = 'closed'`)
-	// Sticky aqueduct assignment migration (idempotent).
-	db.Exec(`ALTER TABLE droplets ADD COLUMN assigned_aqueduct TEXT DEFAULT ''`)
-	// Phantom commit prevention: track the last reviewed commit hash (idempotent).
-	db.Exec(`ALTER TABLE droplets ADD COLUMN last_reviewed_commit TEXT DEFAULT NULL`)
-	// External reference for imported issues (idempotent).
-	db.Exec(`ALTER TABLE droplets ADD COLUMN external_ref TEXT DEFAULT NULL`)
-	// Stage dispatch timestamp: set only when a worker is assigned (idempotent).
-	db.Exec(`ALTER TABLE droplets ADD COLUMN stage_dispatched_at DATETIME DEFAULT NULL`)
-	// Agent heartbeat timestamp: updated periodically while a cataractae is active (idempotent).
-	db.Exec(`ALTER TABLE droplets ADD COLUMN last_heartbeat_at DATETIME DEFAULT NULL`)
-	// Vocabulary: cataracta → cataractae (idempotent — errors ignored on already-renamed DBs).
-	db.Exec(`ALTER TABLE cataracta_notes RENAME TO cataractae_notes`)
-	db.Exec(`ALTER TABLE cataractae_notes RENAME COLUMN cataracta_name TO cataractae_name`)
-	db.Exec(`ALTER TABLE droplets RENAME COLUMN current_cataracta TO current_cataractae`)
+	// Apply schema first — CREATE TABLE IF NOT EXISTS creates the base tables.
+	// Migrations then add columns, rename things, and update data.
 	if _, err := db.Exec(schema); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("cistern: schema: %w", err)
+	}
+	// Run numbered migrations after schema is in place.
+	// Each migration is idempotent and tracked in _schema_migrations.
+	if err := runMigrations(db); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("cistern: migrations: %w", err)
 	}
 	return &Client{db: db, prefix: prefix}, nil
 }
@@ -317,22 +247,11 @@ func (c *Client) GetReady(repo string) (*Droplet, error) {
 	if err != nil {
 		return nil, fmt.Errorf("cistern: scan ready droplet: %w", err)
 	}
-	droplet.Assignee = assignee.String
-	droplet.CurrentCataractae = currentCataracta.String
-	droplet.Outcome = outcome.String
-	droplet.AssignedAqueduct = assignedAqueduct.String
-	droplet.LastReviewedCommit = lastReviewedCommit.String
-	droplet.ExternalRef = externalRef.String
-	if lastHeartbeatAt.Valid {
-		droplet.LastHeartbeatAt = lastHeartbeatAt.Time
-	}
-	if stageDispatchedAt.Valid {
-		droplet.StageDispatchedAt = stageDispatchedAt.Time
-	}
+	fillDropletFromNullable(&droplet, assignee, currentCataracta, outcome, assignedAqueduct, lastReviewedCommit, externalRef, lastHeartbeatAt, stageDispatchedAt)
 
 	now := time.Now().UTC()
 	if _, err := tx.Exec(
-		`UPDATE droplets SET status = 'in_progress', updated_at = ? WHERE id = ?`,
+		`UPDATE "droplets" SET "status" = 'in_progress', "updated_at" = ? WHERE "id" = ?`,
 		now, droplet.ID,
 	); err != nil {
 		return nil, fmt.Errorf("cistern: mark in_progress %s: %w", droplet.ID, err)
@@ -388,21 +307,10 @@ func (c *Client) GetReadyForAqueduct(repo, aqueductName string) (*Droplet, error
 	if err != nil {
 		return nil, fmt.Errorf("cistern: scan ready droplet: %w", err)
 	}
-	droplet.Assignee = assignee.String
-	droplet.CurrentCataractae = currentCataracta.String
-	droplet.Outcome = outcome.String
-	droplet.AssignedAqueduct = assignedAqueduct.String
-	droplet.LastReviewedCommit = lastReviewedCommit.String
-	droplet.ExternalRef = externalRef.String
-	if lastHeartbeatAt.Valid {
-		droplet.LastHeartbeatAt = lastHeartbeatAt.Time
-	}
-	if stageDispatchedAt.Valid {
-		droplet.StageDispatchedAt = stageDispatchedAt.Time
-	}
+	fillDropletFromNullable(&droplet, assignee, currentCataracta, outcome, assignedAqueduct, lastReviewedCommit, externalRef, lastHeartbeatAt, stageDispatchedAt)
 
 	if _, err := tx.Exec(
-		`UPDATE droplets SET status = 'in_progress', updated_at = ? WHERE id = ?`,
+		`UPDATE "droplets" SET "status" = 'in_progress', "updated_at" = ? WHERE "id" = ?`,
 		now, droplet.ID,
 	); err != nil {
 		return nil, fmt.Errorf("cistern: mark in_progress %s: %w", droplet.ID, err)
@@ -821,29 +729,11 @@ func (c *Client) List(repo, status string) ([]*Droplet, error) {
 
 	var droplets []*Droplet
 	for rows.Next() {
-		var droplet Droplet
-		var assignee, currentCataracta, outcome, assignedAqueduct, lastReviewedCommit, externalRef sql.NullString
-		var lastHeartbeatAt, stageDispatchedAt sql.NullTime
-		if err := rows.Scan(
-			&droplet.ID, &droplet.Repo, &droplet.Title, &droplet.Description,
-			&droplet.Priority, &droplet.Complexity, &droplet.Status, &assignee, &currentCataracta, &outcome, &assignedAqueduct, &lastReviewedCommit, &externalRef,
-			&lastHeartbeatAt, &droplet.CreatedAt, &droplet.UpdatedAt, &stageDispatchedAt,
-		); err != nil {
+		d, err := scanDropletFromRows(rows)
+		if err != nil {
 			return nil, fmt.Errorf("cistern: scan droplet: %w", err)
 		}
-		droplet.Assignee = assignee.String
-		droplet.CurrentCataractae = currentCataracta.String
-		droplet.Outcome = outcome.String
-		droplet.AssignedAqueduct = assignedAqueduct.String
-		droplet.LastReviewedCommit = lastReviewedCommit.String
-		droplet.ExternalRef = externalRef.String
-		if lastHeartbeatAt.Valid {
-			droplet.LastHeartbeatAt = lastHeartbeatAt.Time
-		}
-		if stageDispatchedAt.Valid {
-			droplet.StageDispatchedAt = stageDispatchedAt.Time
-		}
-		droplets = append(droplets, &droplet)
+		droplets = append(droplets, d)
 	}
 	return droplets, rows.Err()
 }
@@ -882,42 +772,24 @@ func (c *Client) Search(query, status string, priority int) ([]*Droplet, error) 
 
 	var droplets []*Droplet
 	for rows.Next() {
-		var droplet Droplet
-		var assignee, currentCataracta, outcome, assignedAqueduct, lastReviewedCommit, externalRef sql.NullString
-		var lastHeartbeatAt, stageDispatchedAt sql.NullTime
-		if err := rows.Scan(
-			&droplet.ID, &droplet.Repo, &droplet.Title, &droplet.Description,
-			&droplet.Priority, &droplet.Complexity, &droplet.Status, &assignee, &currentCataracta, &outcome, &assignedAqueduct, &lastReviewedCommit, &externalRef,
-			&lastHeartbeatAt, &droplet.CreatedAt, &droplet.UpdatedAt, &stageDispatchedAt,
-		); err != nil {
+		d, err := scanDropletFromRows(rows)
+		if err != nil {
 			return nil, fmt.Errorf("cistern: scan droplet: %w", err)
 		}
-		droplet.Assignee = assignee.String
-		droplet.CurrentCataractae = currentCataracta.String
-		droplet.Outcome = outcome.String
-		droplet.AssignedAqueduct = assignedAqueduct.String
-		droplet.LastReviewedCommit = lastReviewedCommit.String
-		droplet.ExternalRef = externalRef.String
-		if lastHeartbeatAt.Valid {
-			droplet.LastHeartbeatAt = lastHeartbeatAt.Time
-		}
-		if stageDispatchedAt.Valid {
-			droplet.StageDispatchedAt = stageDispatchedAt.Time
-		}
-		droplets = append(droplets, &droplet)
+		droplets = append(droplets, d)
 	}
 	return droplets, rows.Err()
 }
 
 // scanDroplet scans a single row into a Droplet. Returns nil, nil for sql.ErrNoRows.
 func scanDroplet(row *sql.Row) (*Droplet, error) {
-	var droplet Droplet
+	var d Droplet
 	var assignee, currentCataracta, outcome, assignedAqueduct, lastReviewedCommit, externalRef sql.NullString
 	var lastHeartbeatAt, stageDispatchedAt sql.NullTime
 	err := row.Scan(
-		&droplet.ID, &droplet.Repo, &droplet.Title, &droplet.Description,
-		&droplet.Priority, &droplet.Complexity, &droplet.Status, &assignee, &currentCataracta, &outcome, &assignedAqueduct, &lastReviewedCommit, &externalRef,
-		&lastHeartbeatAt, &droplet.CreatedAt, &droplet.UpdatedAt, &stageDispatchedAt,
+		&d.ID, &d.Repo, &d.Title, &d.Description,
+		&d.Priority, &d.Complexity, &d.Status, &assignee, &currentCataracta, &outcome, &assignedAqueduct, &lastReviewedCommit, &externalRef,
+		&lastHeartbeatAt, &d.CreatedAt, &d.UpdatedAt, &stageDispatchedAt,
 	)
 	if err == sql.ErrNoRows {
 		return nil, nil
@@ -925,19 +797,44 @@ func scanDroplet(row *sql.Row) (*Droplet, error) {
 	if err != nil {
 		return nil, err
 	}
-	droplet.Assignee = assignee.String
-	droplet.CurrentCataractae = currentCataracta.String
-	droplet.Outcome = outcome.String
-	droplet.AssignedAqueduct = assignedAqueduct.String
-	droplet.LastReviewedCommit = lastReviewedCommit.String
-	droplet.ExternalRef = externalRef.String
+	fillDropletFromNullable(&d, assignee, currentCataracta, outcome, assignedAqueduct, lastReviewedCommit, externalRef, lastHeartbeatAt, stageDispatchedAt)
+	return &d, nil
+}
+
+// scanDropletFromRows scans a single row from a Rows iterator into a Droplet.
+func scanDropletFromRows(rows *sql.Rows) (*Droplet, error) {
+	var d Droplet
+	var assignee, currentCataracta, outcome, assignedAqueduct, lastReviewedCommit, externalRef sql.NullString
+	var lastHeartbeatAt, stageDispatchedAt sql.NullTime
+	if err := rows.Scan(
+		&d.ID, &d.Repo, &d.Title, &d.Description,
+		&d.Priority, &d.Complexity, &d.Status, &assignee, &currentCataracta, &outcome, &assignedAqueduct, &lastReviewedCommit, &externalRef,
+		&lastHeartbeatAt, &d.CreatedAt, &d.UpdatedAt, &stageDispatchedAt,
+	); err != nil {
+		return nil, err
+	}
+	fillDropletFromNullable(&d, assignee, currentCataracta, outcome, assignedAqueduct, lastReviewedCommit, externalRef, lastHeartbeatAt, stageDispatchedAt)
+	return &d, nil
+}
+
+// fillDropletFromNullable populates nullable fields from sql.Null* scan targets.
+func fillDropletFromNullable(
+	d *Droplet,
+	assignee, currentCataracta, outcome, assignedAqueduct, lastReviewedCommit, externalRef sql.NullString,
+	lastHeartbeatAt, stageDispatchedAt sql.NullTime,
+) {
+	d.Assignee = assignee.String
+	d.CurrentCataractae = currentCataracta.String
+	d.Outcome = outcome.String
+	d.AssignedAqueduct = assignedAqueduct.String
+	d.LastReviewedCommit = lastReviewedCommit.String
+	d.ExternalRef = externalRef.String
 	if lastHeartbeatAt.Valid {
-		droplet.LastHeartbeatAt = lastHeartbeatAt.Time
+		d.LastHeartbeatAt = lastHeartbeatAt.Time
 	}
 	if stageDispatchedAt.Valid {
-		droplet.StageDispatchedAt = stageDispatchedAt.Time
+		d.StageDispatchedAt = stageDispatchedAt.Time
 	}
-	return &droplet, nil
 }
 
 // Purge deletes delivered/pooled/cancelled droplets older than olderThan, cascading to

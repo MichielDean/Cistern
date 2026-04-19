@@ -95,3 +95,69 @@ Failing tests are an automatic recirculate. Passing tests are the floor, not the
 Every finding is either "needs fixing" (recirculate) or "doesn't need fixing" (don't mention it). There is no third category.
 
 Decision rule: "Would I want this in code I maintain?" If not, recirculate. If yes, pass.
+
+## Test Requirements by Evaluation Dimension
+
+These are mandatory test checks derived from anti-patterns found during pipeline
+evaluation. For each one, verify the test exists or recirculate with a specific
+finding naming what is missing.
+
+### migration_safety
+
+- Verify migrations are numbered files (001_xxx.sql, 002_xxx.sql) and tracked
+  in a schema migrations table
+- Verify ALL SQL identifiers are quoted in migration files — grep for
+  unquoted identifiers
+- Verify DDL and DML are in separate files, DML wrapped in transactions
+- Verify migrations are embedded via embed.FS, not inline string constants
+- If the diff adds DB migrations, verify an E2E schema verification test exists
+  that runs the migrations and verifies the resulting schema
+
+### dry
+
+- Grep for repeated code blocks of 5+ lines appearing 3+ times. If found,
+  verify a helper function exists and the inline pattern is gone
+- Common case: verify NullString scan blocks are extracted into
+  scanXxxFromRows / fillXxxFromNullable helpers
+
+### contract_correctness
+
+- Verify every exported method has documented preconditions
+- Verify no lazy initialization patterns exist (initClient, ensureConnected) —
+  constructors must leave objects in a fully usable state
+- Verify no SetXxx mutation methods are used for testing — constructor
+  injection via config fields is the required pattern
+
+### coupling
+
+- Verify no shared mutable package-level state (maps, vars) — must be struct
+  fields with constructor injection
+- Verify constructors make defensive copies of map/slice parameters
+
+### idiom_fit
+
+- Verify no package-level mutable vars for config (timeouts, HTTP clients) —
+  must be struct fields
+- Verify operational logging uses slog, not fmt.Printf or fmt.Fprintf(os.Stderr)
+- Verify embedded resources use embed.FS
+
+### naming_clarity
+
+- Verify unexported structs have no PascalCase fields
+  (e.g., HTTPTimeout on type jiraProvider struct is wrong)
+- Verify no names shadow Go builtins (min, max, any)
+
+### error_messages
+
+- Verify no fmt.Fprintf(os.Stderr) for errors — must use slog
+- Verify every error message includes domain context (entity, operation)
+- Verify no errors are silently swallowed — at minimum slog.Debug
+- Verify errors use fmt.Errorf("pkg: context: %w", err) wrapping
+
+### integration_coverage
+
+- If the diff adds DB migrations, verify an E2E schema verification test exists
+- If the diff adds HTTP client code, verify an integration test using
+  httptest.NewServer exists — mocks for HTTP clients are forbidden
+- Verify every new public method on a struct that connects to external services
+  has an integration test

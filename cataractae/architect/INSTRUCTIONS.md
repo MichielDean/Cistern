@@ -55,6 +55,15 @@ For every pattern you prescribe, find at least one file that demonstrates it:
   reason? Find the specific usage. Quote the method signature.
 - **Migration conventions**: Find the most recent migration. What numbering does it
   use? Does it quote identifiers? Does it separate DDL from DML? Quote the SQL.
+  Migrations MUST be numbered sequentially (001_xxx.sql, 002_xxx.sql) and tracked
+  in a schema migrations table (e.g., _schema_migrations). ALL SQL identifiers must
+  be quoted with the dialect-appropriate quoting ("id", "droplets" for PostgreSQL,
+  `id`, `droplets` for MySQL/SQLite). DDL (CREATE TABLE, ALTER TABLE) and DML
+  (INSERT, UPDATE) must be separated into different migration files — DML files
+  must be wrapped in transactions. Inline migrations in Go code (string constants
+  executed by db.Exec) are FORBIDDEN — use embed.FS with numbered .sql files.
+  Anti-pattern: a migration with both CREATE TABLE and INSERT in one file, or
+  unquoted identifiers like `CREATE TABLE droplets (id TEXT)`.
 - **Standard library vs custom**: Does the codebase use `golang.org/x/time/rate`,
   `httptest`, `sql.NullString`, or custom implementations? Find the import and
   quote it. Prefer standard library and well-known packages over custom code unless
@@ -100,6 +109,15 @@ Search for patterns that will appear in the new code (error wrapping, config res
 HTTP client construction, retry logic). If a pattern appears 3+ times, name the helper
 to extract, specify its complete signature, and list every file:line where it appears.
 
+If the same code block (5+ lines) appears 3+ times, it MUST be extracted into a
+named helper. The brief must specify the helper name, its complete signature, and
+list every file:line where the repeated block appears. Common cases:
+- NullString scan blocks: when scanning nullable DB columns, if the
+  `var x sql.NullString; if rows.Scan(&x); if x.Valid { ... }` block appears 3+
+  times, prescribe a `scanXxxFromRows` or `fillXxxFromNullable` helper.
+- Error wrapping: if `fmt.Errorf("pkg: context: %w", err)` appears in 5+ places,
+  prescribe a helper that wraps the domain prefix.
+
 A brief that says "extract common patterns" is worthless. A brief that says
 "extract `boolPerm(orgId: Long, perm: String): Boolean` from `OrganizationDAO.kt`
 lines 45, 52, 59, 66, 73, 80, 87, 94, 101, 108, 115, 122, 129" gives the
@@ -123,15 +141,36 @@ must contain these sections:
 
 ### Naming Conventions
 <Specific pattern, file path, and line number>
+Unexported structs MUST have unexported fields — no PascalCase fields on
+unexported structs (e.g., type jiraProvider struct { httpTimeout time.Duration },
+NOT type jiraProvider struct { HTTPTimeout time.Duration }). Find existing
+unexported structs in the codebase and verify their field naming. Do not shadow
+Go builtins (min, max, any).
 
 ### Error Handling
 <Specific pattern, file path, and line number>
+Use slog.Error/slog.Warn for operational errors — never fmt.Fprintf(os.Stderr).
+Error messages MUST include domain context (which entity, which operation).
+Wrap errors with fmt.Errorf("pkg: context: %w", err). Never silently swallow
+errors — at minimum log at slog.Debug.
 
 ### Collection Types
 <Specific collection choice, file path, and the reason (e.g., UNIQUE constraint)>
 
 ### Migrations
-<Specific numbering, quoting, separation, and description quality — with file evidence>
+<Specific: numbered files (001_xxx.sql), tracked in _schema_migrations, ALL
+identifiers quoted with dialect-appropriate quoting, DDL and DML separated into
+different files, DML wrapped in transactions, embedded via embed.FS — not
+inline string constants in Go code>
+
+### Idiom Fit
+Package-level mutable vars for config (timeouts, HTTP clients, priority maps)
+are FORBIDDEN — MUST be struct fields with constructor injection. Use
+constructor params, not post-hoc SetXxx mutation methods. If cfg.Field == 0,
+default to sensible zero-value — document this in the brief. Use slog for
+operational logging, not fmt.Printf. Use embed.FS for embedded resources
+(migrations, templates). Find existing constructor patterns in the codebase
+and match them.
 
 ### Testing
 <Specific test file, naming convention, and integration test location>
@@ -141,6 +180,15 @@ must contain these sections:
 <For each new class/utility: is it entity-specific or generic? If generic, what
 parameter makes it reusable? If specific, state that explicitly.>
 
+## Coupling Requirements
+
+Shared mutable package-level state (maps, vars, sync.Map) is FORBIDDEN — all
+mutable state MUST be struct fields with constructor injection. If a struct
+field is a map or slice, the constructor MUST make a defensive copy when
+initializing from a parameter. Hardcoded entity references inside generic
+utilities (e.g., DropletEvent hardcoded into EventBus) are FORBIDDEN — the
+utility must accept its context as a constructor parameter.
+
 ## DRY Requirements
 
 <Any repeated pattern identified by 3+ occurrences. Name the helper and specify
@@ -149,8 +197,11 @@ pattern appears.>
 
 ## Migration Requirements
 
-<Specific: file naming, identifier quoting (with dialect), DDL/DML separation,
-description quality for reference data.>
+<Specific: file naming MUST be numbered (001_xxx.sql, 002_xxx.sql), tracked in
+_schema_migrations, ALL identifiers quoted with dialect-appropriate quoting, DDL
+and DML separated into different files, DML wrapped in transactions, embedded via
+embed.FS — not inline string constants in Go code. Description quality for
+reference data.>
 
 ## Test Requirements
 
@@ -159,6 +210,9 @@ test patterns in this codebase (table-driven tests, httptest.NewServer, t.Helper
 
 For EVERY new public method, name the test function that covers it.
 For every HTTP client or external service, require an integration test using httptest.NewServer.
+If the change involves DB migrations, require an E2E schema verification test that runs the
+migrations and verifies the schema matches expectations.
+Every new public method on a struct that connects to external services needs an integration test.
 A brief with no specific test function names is incomplete.
 
 <Specific: which test files need new tests, what kind (unit vs integration),
@@ -167,7 +221,23 @@ exact naming convention for new test functions, and precise coverage gaps.>
 ## Forbidden Patterns
 
 <Anti-patterns to exclude. Each entry must reference an existing example in the
-codebase and explain why the new implementation must not repeat it.>
+codebase and explain why the new implementation must not repeat it. Mandatory
+entries when applicable:
+
+- Inline migrations in Go code — use embed.FS with numbered .sql files
+- Unquoted SQL identifiers — always quote with dialect-appropriate quoting
+- Mixed DDL/DML in a single migration file — separate them
+- Package-level mutable vars for config (timeouts, HTTP clients, priority maps)
+  — must be struct fields with constructor injection
+- SetXxx mutation methods for testing — use constructor injection via config fields
+- Lazy initialization (initClient pattern) — use eager constructor initialization
+- Shared mutable package-level state (maps, vars) — must be struct fields with
+  defensive copies
+- PascalCase fields on unexported structs — match access level
+- fmt.Fprintf(os.Stderr) for errors — use slog.Error/slog.Warn
+- Silently swallowing errors — at minimum log at slog.Debug
+- Shadowing Go builtins (min, max, any)
+>
 
 ## API Surface Checklist
 
@@ -179,10 +249,19 @@ method promise to return for every input? If it returns an error, what does the
 error contain? The implementer must satisfy the contract, and the reviewer must verify
 the method does what it promises — not just that it compiles.
 
+Every exported method MUST document its preconditions in the contract clause.
+Lazy initialization anti-pattern: if a method requires initClient() to have been
+called first, or Start() before Publish(), the contract is fragile. Prefer eager
+constructor initialization — the constructor must leave the object in a fully
+usable state. SetXxx mutation methods for testing are forbidden — use constructor
+injection via config fields instead.
+
 - [ ] <specific, verifiable constraint with contract clause — e.g., "Notifier.Send
       returns nil on success, wraps context errors with 'notifier:' prefix, and
       never returns a bare io.EOF without wrapping it">
-      returns a real EXISTS subquery, not a hardcoded string">
+- [ ] <specific, verifiable constraint with precondition — e.g., "Client.Publish
+      requires no prior initialization — the constructor leaves the client in a
+      fully usable state (no initClient/setXxx pattern)">
 - [ ] <specific, verifiable constraint — e.g., "loadPermissionsForOrgs returns
       Map<Long, Map<String, Set<String>>>, not List<String> for permission values">
 - [ ] ...
@@ -204,6 +283,9 @@ A brief is complete when:
    reviewer can check each item with a `grep` or by reading a named file
 3. There are no "TBD" or "determine during implementation" items
 4. The DRY requirements name exact file:line locations, not vague "similar patterns"
+5. Every exported method has a documented precondition in its contract clause
+6. Coupling requirements identify any shared mutable state and prescribe struct fields
+7. Migration requirements specify numbering, quoting, DDL/DML separation, and embed.FS
 
 A brief that fails any of these checks is incomplete. Signal recirculate with a
 note explaining what you cannot determine from the codebase.

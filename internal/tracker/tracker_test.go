@@ -240,18 +240,14 @@ func TestJiraProvider_FetchIssue_TimesOutOnSlowServer(t *testing.T) {
 	defer srv.Close()
 	defer close(done)
 
-	// Override the package-level timeout to a short value for this test.
-	orig := tracker.JiraHTTPTimeout
-	tracker.JiraHTTPTimeout = 50 * time.Millisecond
-	defer func() { tracker.JiraHTTPTimeout = orig }()
-
 	ctor, _ := tracker.Resolve("jira")
 	t.Setenv("JIRA_TOKEN_TIMEOUT", "test-token")
 
 	p, err := ctor(tracker.TrackerConfig{
-		Name:     "jira",
-		BaseURL:  srv.URL,
-		TokenEnv: "JIRA_TOKEN_TIMEOUT",
+		Name:        "jira",
+		BaseURL:     srv.URL,
+		TokenEnv:    "JIRA_TOKEN_TIMEOUT",
+		HTTPTimeout: 50 * time.Millisecond,
 	})
 	if err != nil {
 		t.Fatal(err)

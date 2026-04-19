@@ -2,6 +2,8 @@
 // for modular issue tracker integrations in Cistern.
 package tracker
 
+import "time"
+
 // ExternalIssue represents a work item fetched from an external issue tracker.
 // Fields map to Cistern droplet fields when importing an issue.
 type ExternalIssue struct {
@@ -47,6 +49,9 @@ type TrackerConfig struct {
 	// Cistern priorities (1=highest, 2=normal, 3=low). When absent the
 	// provider's built-in defaults are used.
 	PriorityMap map[string]int `yaml:"priority_map,omitempty"`
+	// HTTPTimeout overrides the default HTTP client timeout for this provider.
+	// Zero means use the provider's built-in default (typically 30s).
+	HTTPTimeout time.Duration `yaml:"http_timeout,omitempty"`
 }
 
 // Constructor is a factory function that builds a TrackerProvider from a

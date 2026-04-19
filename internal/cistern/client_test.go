@@ -2303,9 +2303,9 @@ func TestNew_RepoCaseMigration_IsIdempotent(t *testing.T) {
 	}
 	defer c2.Close()
 
-	// Verify the migration sentinel exists exactly once.
+	// Verify the migration sentinel exists exactly once (under the numbered ID).
 	var count int
-	if err := c2.db.QueryRow(`SELECT COUNT(*) FROM _schema_migrations WHERE id = 'repo_case_normalize'`).Scan(&count); err != nil {
+	if err := c2.db.QueryRow(`SELECT COUNT(*) FROM _schema_migrations WHERE id = '004_repo_case_normalize'`).Scan(&count); err != nil {
 		t.Fatal(err)
 	}
 	if count != 1 {

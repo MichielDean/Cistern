@@ -66,6 +66,82 @@ These are common ways the contract principle manifests in specific languages. Th
 
 **SQL/ORM:** N+1 query patterns, raw string interpolation in queries (injection risk), missing indexes on frequently queried columns, unbounded queries without LIMIT, unquoted identifiers in DML/DDL, migrations that bundle DDL and reference data DML, placeholder descriptions in reference data INSERTs.
 
+## Rubric Dimension Checks
+
+Each check below maps to a specific evaluation dimension. For every one, the
+answer is mechanical — yes (pass) or no (finding). If the answer is no, file a
+finding with the specific file:line and what must change.
+
+### migration_safety
+
+- [ ] Are migrations numbered files (001_xxx.sql, 002_xxx.sql)?
+- [ ] Are migrations tracked in _schema_migrations or equivalent?
+- [ ] Are ALL SQL identifiers quoted with dialect-appropriate quoting?
+- [ ] Are DDL and DML separated into different files?
+- [ ] Is DML wrapped in transactions?
+- [ ] Are migrations embedded via embed.FS, not inline string constants in Go?
+
+### dry
+
+- [ ] Does any code block of 5+ lines appear 3+ times? (Use Grep to verify.)
+  If yes, it must be extracted into a named helper.
+- [ ] Are NullString scan blocks extracted into helpers (scanXxxFromRows,
+  fillXxxFromNullable) rather than repeated inline?
+
+### contract_correctness
+
+- [ ] Does every exported method document its preconditions?
+- [ ] Is there any lazy initialization pattern (initClient, ensureConnected)?
+  If yes, flag it — the constructor must leave the object usable.
+- [ ] Are there SetXxx mutation methods used for testing? If yes, flag it —
+  use constructor injection via config fields instead.
+- [ ] Does every method return what its signature promises? (Check for ""
+  or nil returns where a computed result is implied.)
+
+### coupling
+
+- [ ] Is there any shared mutable package-level state (maps, vars, sync.Map)?
+  If yes, it must be struct fields with constructor injection.
+- [ ] Does any constructor accept a map/slice param without making a defensive
+  copy? If yes, add `maps.Clone()` or manual copy.
+- [ ] Are entity-specific types hardcoded into generic utilities?
+  (e.g., DropletEvent inside EventBus) If yes, flag it.
+
+### idiom_fit
+
+- [ ] Are package-level mutable vars used for timeouts, HTTP clients, or
+  priority maps? If yes, they must be struct fields.
+- [ ] Is config passed through constructor params, not post-hoc setters?
+- [ ] Are zero-value defaults documented when cfg.Field == 0?
+- [ ] Is slog used for operational logging (not fmt.Printf or
+  fmt.Fprintf(os.Stderr))?
+- [ ] Is embed.FS used for embedded resources (migrations, templates)?
+
+### naming_clarity
+
+- [ ] Do unexported structs have PascalCase fields? If yes, rename to
+  unexported (e.g., HTTPTimeout → httpTimeout on unexported structs).
+- [ ] Do any names shadow Go builtins (min, max, any, cap, len)?
+- [ ] Does every name match its access level?
+
+### error_messages
+
+- [ ] Is fmt.Fprintf(os.Stderr) used for errors anywhere? If yes, replace
+  with slog.Error/slog.Warn.
+- [ ] Does every error message include domain context (entity name, operation)?
+- [ ] Are any errors silently swallowed? (e.g., `_ = someFunc()` or
+  `if err != nil {}` with empty body) If yes, add slog.Debug at minimum.
+- [ ] Are errors wrapped with fmt.Errorf("pkg: context: %w", err)?
+
+### integration_coverage
+
+- [ ] If the diff adds DB migrations, does an E2E schema verification test
+  exist?
+- [ ] If the diff adds HTTP client code, does an integration test using
+  httptest.NewServer exist? (Mocks for HTTP clients are forbidden.)
+- [ ] Does every new public method on a struct that connects to external
+  services have an integration test?
+
 ## What to Review, What to Skip
 
 Review for **correctness**: logic errors, nil/null dereferences, race conditions, missing error handling, security vulnerabilities (injection, auth bypass, hardcoded secrets, path traversal), missing tests for new behavior, resource leaks, and broken contracts with calling code.
