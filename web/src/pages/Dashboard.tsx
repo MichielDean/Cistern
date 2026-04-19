@@ -1,10 +1,10 @@
 import { useState, useMemo } from 'react';
-import { useDashboardEvents } from '../hooks/useDashboardEvents';
+import { useDashboard } from '../context/DashboardContext';
 import { AqueductArch, DropletRow, PeekPanel } from '../components';
 import type { DashboardData, CataractaeInfo, FlowActivity, Droplet } from '../api/types';
 
 export function Dashboard() {
-  const { data, error } = useDashboardEvents();
+  const { data, error } = useDashboard();
   const [peekAqueduct, setPeekAqueduct] = useState<string | null>(null);
   const [, setSelectedDroplet] = useState<string | null>(null);
 

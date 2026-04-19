@@ -2,11 +2,19 @@ import { useState } from 'react';
 import { Outlet } from 'react-router-dom';
 import { Sidebar } from './components/Sidebar';
 import { Header } from './components/Header';
-import { useDashboardEvents } from './hooks/useDashboardEvents';
+import { DashboardProvider, useDashboard } from './context/DashboardContext';
 
 export function AppLayout() {
+  return (
+    <DashboardProvider>
+      <AppLayoutInner />
+    </DashboardProvider>
+  );
+}
+
+function AppLayoutInner() {
   const [sidebarOpen, setSidebarOpen] = useState(true);
-  const { data, connected } = useDashboardEvents();
+  const { data, connected } = useDashboard();
 
   return (
     <div className="h-screen flex overflow-hidden bg-cistern-bg">
