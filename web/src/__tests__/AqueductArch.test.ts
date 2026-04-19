@@ -21,4 +21,12 @@ describe('formatElapsed', () => {
   it('formats large durations', () => {
     expect(formatElapsed(90_000_000_000_000)).toBe('25h00m');
   });
+
+  it('returns placeholder for NaN', () => {
+    expect(formatElapsed(NaN)).toBe('--');
+  });
+
+  it('returns placeholder for undefined coerced to number', () => {
+    expect(formatElapsed(Number(undefined))).toBe('--');
+  });
 });
