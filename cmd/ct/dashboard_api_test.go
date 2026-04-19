@@ -1206,6 +1206,10 @@ func TestAPI_DropletEvents_NonexistentDroplet(t *testing.T) {
 	if w.Code != http.StatusNotFound {
 		t.Errorf("status = %d, want 404 for nonexistent droplet SSE", w.Code)
 	}
+	ct := w.Header().Get("Content-Type")
+	if !strings.Contains(ct, "application/json") {
+		t.Errorf("Content-Type = %q, want application/json for error response", ct)
+	}
 }
 
 func TestAPI_ApproveDroplet_NonexistentID(t *testing.T) {
@@ -1444,5 +1448,86 @@ func TestAPI_CancelDroplet_EmptyBody(t *testing.T) {
 	mux.ServeHTTP(w, req)
 	if w.Code != http.StatusOK {
 		t.Errorf("status = %d, want 200 for cancel with empty body", w.Code)
+	}
+}
+
+func TestAPI_GetDropletByID_NonexistentID_ReturnsJSON(t *testing.T) {
+	mux := newDashboardMux(tempCfg(t), tempDB(t))
+	req := httptest.NewRequest(http.MethodGet, "/api/droplets/nonexistent-id-12345", nil)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+	if w.Code != http.StatusNotFound {
+		t.Errorf("status = %d, want 404", w.Code)
+	}
+	ct := w.Header().Get("Content-Type")
+	if !strings.Contains(ct, "application/json") {
+		t.Errorf("Content-Type = %q, want application/json", ct)
+	}
+	var body map[string]string
+	json.Unmarshal(w.Body.Bytes(), &body)
+	if _, ok := body["error"]; !ok {
+		t.Error("response should contain 'error' key")
+	}
+}
+
+func TestAPI_ApproveDroplet_NonexistentID_ReturnsJSON(t *testing.T) {
+	mux := newDashboardMux(tempCfg(t), tempDB(t))
+	req := httptest.NewRequest(http.MethodPost, "/api/droplets/nonexistent-id-12345/approve", nil)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+	if w.Code != http.StatusNotFound {
+		t.Errorf("status = %d, want 404", w.Code)
+	}
+	ct := w.Header().Get("Content-Type")
+	if !strings.Contains(ct, "application/json") {
+		t.Errorf("Content-Type = %q, want application/json", ct)
+	}
+	var body map[string]string
+	json.Unmarshal(w.Body.Bytes(), &body)
+	if _, ok := body["error"]; !ok {
+		t.Error("response should contain 'error' key")
+	}
+}
+
+func TestAPI_RestartDroplet_EmptyBody(t *testing.T) {
+	db := tempDB(t)
+	c, err := cistern.New(db, "mr")
+	if err != nil {
+		t.Fatal(err)
+	}
+	d, _ := c.Add("myrepo", "Test", "", 1, 2)
+	c.Close()
+
+	mux := newDashboardMux(tempCfg(t), db)
+	req := httptest.NewRequest(http.MethodPost, "/api/droplets/"+d.ID+"/restart", nil)
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Errorf("restart with empty body: status = %d, want 200", w.Code)
+	}
+}
+
+func TestAPI_AddNote_NonexistentDroplet(t *testing.T) {
+	mux := newDashboardMux(tempCfg(t), tempDB(t))
+	body := `{"cataractae":"implementer","content":"a note"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/droplets/nonexistent-id-12345/notes", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+	if w.Code != http.StatusNotFound {
+		t.Errorf("add note to nonexistent droplet: status = %d, want 404", w.Code)
+	}
+}
+
+func TestAPI_AddIssue_NonexistentDroplet(t *testing.T) {
+	mux := newDashboardMux(tempCfg(t), tempDB(t))
+	body := `{"flagged_by":"reviewer","description":"a bug"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/droplets/nonexistent-id-12345/issues", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+	if w.Code != http.StatusNotFound {
+		t.Errorf("add issue to nonexistent droplet: status = %d, want 404", w.Code)
 	}
 }

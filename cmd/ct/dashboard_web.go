@@ -1127,8 +1127,7 @@ func handleGetDroplet(dbPath string) http.HandlerFunc {
 		apiClient(dbPath, w, func(c *cistern.Client) error {
 			d, err := c.Get(id)
 			if err != nil {
-				writeAPIError(w, http.StatusNotFound, err.Error())
-				return nil // already handled
+				return err
 			}
 			writeAPIJSON(w, http.StatusOK, d)
 			return nil
@@ -1464,7 +1463,7 @@ func handleRestartDroplet(dbPath string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id := r.PathValue("id")
 		var req restartRequest
-		if !decodeJSON(w, r, &req) {
+		if !decodeJSONOptional(w, r, &req) {
 			return
 		}
 		if req.Cataractae == "" {
@@ -1487,8 +1486,7 @@ func handleApproveDroplet(dbPath string) http.HandlerFunc {
 		apiClient(dbPath, w, func(c *cistern.Client) error {
 			item, err := c.Get(id)
 			if err != nil {
-				writeAPIError(w, http.StatusNotFound, err.Error())
-				return nil
+				return err
 			}
 			if item.CurrentCataractae != "human" {
 				writeAPIError(w, http.StatusBadRequest, "droplet is not awaiting human approval (cataractae: "+item.CurrentCataractae+")")
@@ -1558,6 +1556,9 @@ func handleAddNote(dbPath string) http.HandlerFunc {
 			name = "manual"
 		}
 		apiClient(dbPath, w, func(c *cistern.Client) error {
+			if _, err := c.Get(id); err != nil {
+				return err
+			}
 			if err := c.AddNote(id, name, req.Content); err != nil {
 				return err
 			}
@@ -1613,6 +1614,9 @@ func handleAddIssue(dbPath string) http.HandlerFunc {
 			flaggedBy = "manual"
 		}
 		apiClient(dbPath, w, func(c *cistern.Client) error {
+			if _, err := c.Get(id); err != nil {
+				return err
+			}
 			iss, err := c.AddIssue(id, flaggedBy, req.Description)
 			if err != nil {
 				return err
@@ -1897,20 +1901,24 @@ func handleDropletEvents(cfgPath, dbPath string) http.HandlerFunc {
 
 		flusher, ok := w.(http.Flusher)
 		if !ok {
-			http.Error(w, "streaming unsupported", http.StatusInternalServerError)
+			writeAPIError(w, http.StatusInternalServerError, "streaming unsupported")
 			return
 		}
 
 		c, err := cistern.New(dbPath, "")
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			writeAPIError(w, http.StatusInternalServerError, err.Error())
 			return
 		}
 		defer c.Close()
 
 		d, err := c.Get(id)
 		if err != nil {
-			http.Error(w, "droplet not found", http.StatusNotFound)
+			if isNotFoundError(err) {
+				writeAPIError(w, http.StatusNotFound, err.Error())
+			} else {
+				writeAPIError(w, http.StatusInternalServerError, err.Error())
+			}
 			return
 		}
 
