@@ -1186,3 +1186,68 @@ func TestAPI_DropletEvents_NonexistentDroplet(t *testing.T) {
 		t.Errorf("status = %d, want 404 for nonexistent droplet SSE", w.Code)
 	}
 }
+
+func TestAPI_ApproveDroplet_NonexistentID(t *testing.T) {
+	mux := newDashboardMux(tempCfg(t), tempDB(t))
+	req := httptest.NewRequest(http.MethodPost, "/api/droplets/nonexistent-id-12345/approve", nil)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+	if w.Code != http.StatusNotFound {
+		t.Errorf("status = %d, want 404 for approving nonexistent droplet", w.Code)
+	}
+}
+
+func TestAPI_DropletLog_FormatNotes(t *testing.T) {
+	db := tempDB(t)
+	c, err := cistern.New(db, "mr")
+	if err != nil {
+		t.Fatal(err)
+	}
+	d, _ := c.Add("myrepo", "Test", "", 1, 2)
+	c.AddNote(d.ID, "implementer", "note one")
+	c.AddNote(d.ID, "reviewer", "note two")
+	c.Close()
+
+	mux := newDashboardMux(tempCfg(t), db)
+	req := httptest.NewRequest(http.MethodGet, "/api/droplets/"+d.ID+"/log?format=notes", nil)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", w.Code)
+	}
+	var notes []cistern.CataractaeNote
+	if err := json.NewDecoder(w.Body).Decode(&notes); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(notes) != 2 {
+		t.Errorf("expected 2 notes, got %d", len(notes))
+	}
+}
+
+func TestAPI_DropletLog_FormatDefault_ReturnsTimeline(t *testing.T) {
+	db := tempDB(t)
+	c, err := cistern.New(db, "mr")
+	if err != nil {
+		t.Fatal(err)
+	}
+	d, _ := c.Add("myrepo", "Test", "", 1, 2)
+	c.AddNote(d.ID, "implementer", "started")
+	c.Close()
+
+	mux := newDashboardMux(tempCfg(t), db)
+	req := httptest.NewRequest(http.MethodGet, "/api/droplets/"+d.ID+"/log", nil)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", w.Code)
+	}
+	var changes []cistern.DropletChange
+	if err := json.NewDecoder(w.Body).Decode(&changes); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(changes) == 0 {
+		t.Errorf("expected at least 1 change entry with default format, got 0")
+	}
+}

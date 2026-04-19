@@ -1455,7 +1455,8 @@ func handleApproveDroplet(dbPath string) http.HandlerFunc {
 		apiClient(dbPath, w, func(c *cistern.Client) error {
 			item, err := c.Get(id)
 			if err != nil {
-				return err
+				writeAPIError(w, http.StatusNotFound, err.Error())
+				return nil
 			}
 			if item.CurrentCataractae != "human" {
 				writeAPIError(w, http.StatusBadRequest, "droplet is not awaiting human approval (cataractae: "+item.CurrentCataractae+")")
@@ -1701,16 +1702,30 @@ func handleDropletLog(dbPath string) http.HandlerFunc {
 				limit = n
 			}
 		}
+		format := r.URL.Query().Get("format")
 		apiClient(dbPath, w, func(c *cistern.Client) error {
-			changes, err := c.GetDropletChanges(id, limit)
-			if err != nil {
-				return err
+			switch format {
+			case "notes":
+				notes, err := c.GetNotes(id)
+				if err != nil {
+					return err
+				}
+				if notes == nil {
+					notes = []cistern.CataractaeNote{}
+				}
+				writeAPIJSON(w, http.StatusOK, notes)
+				return nil
+			default:
+				changes, err := c.GetDropletChanges(id, limit)
+				if err != nil {
+					return err
+				}
+				if changes == nil {
+					changes = []cistern.DropletChange{}
+				}
+				writeAPIJSON(w, http.StatusOK, changes)
+				return nil
 			}
-			if changes == nil {
-				changes = []cistern.DropletChange{}
-			}
-			writeAPIJSON(w, http.StatusOK, changes)
-			return nil
 		})
 	}
 }
@@ -1867,7 +1882,7 @@ func handleDropletEvents(cfgPath, dbPath string) http.HandlerFunc {
 			return
 		}
 
-		if d != nil {
+		{
 			b, _ := json.Marshal(d)
 			fmt.Fprintf(w, "data: %s\n\n", b)
 			flusher.Flush()
