@@ -242,22 +242,11 @@ func (c *Client) GetReady(repo string) (*Droplet, error) {
 	if err != nil {
 		return nil, fmt.Errorf("cistern: scan ready droplet: %w", err)
 	}
-	droplet.Assignee = assignee.String
-	droplet.CurrentCataractae = currentCataracta.String
-	droplet.Outcome = outcome.String
-	droplet.AssignedAqueduct = assignedAqueduct.String
-	droplet.LastReviewedCommit = lastReviewedCommit.String
-	droplet.ExternalRef = externalRef.String
-	if lastHeartbeatAt.Valid {
-		droplet.LastHeartbeatAt = lastHeartbeatAt.Time
-	}
-	if stageDispatchedAt.Valid {
-		droplet.StageDispatchedAt = stageDispatchedAt.Time
-	}
+	fillDropletFromNullable(&droplet, assignee, currentCataracta, outcome, assignedAqueduct, lastReviewedCommit, externalRef, lastHeartbeatAt, stageDispatchedAt)
 
 	now := time.Now().UTC()
 	if _, err := tx.Exec(
-		`UPDATE droplets SET status = 'in_progress', updated_at = ? WHERE id = ?`,
+		`UPDATE "droplets" SET "status" = 'in_progress', "updated_at" = ? WHERE "id" = ?`,
 		now, droplet.ID,
 	); err != nil {
 		return nil, fmt.Errorf("cistern: mark in_progress %s: %w", droplet.ID, err)
@@ -313,21 +302,10 @@ func (c *Client) GetReadyForAqueduct(repo, aqueductName string) (*Droplet, error
 	if err != nil {
 		return nil, fmt.Errorf("cistern: scan ready droplet: %w", err)
 	}
-	droplet.Assignee = assignee.String
-	droplet.CurrentCataractae = currentCataracta.String
-	droplet.Outcome = outcome.String
-	droplet.AssignedAqueduct = assignedAqueduct.String
-	droplet.LastReviewedCommit = lastReviewedCommit.String
-	droplet.ExternalRef = externalRef.String
-	if lastHeartbeatAt.Valid {
-		droplet.LastHeartbeatAt = lastHeartbeatAt.Time
-	}
-	if stageDispatchedAt.Valid {
-		droplet.StageDispatchedAt = stageDispatchedAt.Time
-	}
+	fillDropletFromNullable(&droplet, assignee, currentCataracta, outcome, assignedAqueduct, lastReviewedCommit, externalRef, lastHeartbeatAt, stageDispatchedAt)
 
 	if _, err := tx.Exec(
-		`UPDATE droplets SET status = 'in_progress', updated_at = ? WHERE id = ?`,
+		`UPDATE "droplets" SET "status" = 'in_progress', "updated_at" = ? WHERE "id" = ?`,
 		now, droplet.ID,
 	); err != nil {
 		return nil, fmt.Errorf("cistern: mark in_progress %s: %w", droplet.ID, err)
@@ -746,29 +724,11 @@ func (c *Client) List(repo, status string) ([]*Droplet, error) {
 
 	var droplets []*Droplet
 	for rows.Next() {
-		var droplet Droplet
-		var assignee, currentCataracta, outcome, assignedAqueduct, lastReviewedCommit, externalRef sql.NullString
-		var lastHeartbeatAt, stageDispatchedAt sql.NullTime
-		if err := rows.Scan(
-			&droplet.ID, &droplet.Repo, &droplet.Title, &droplet.Description,
-			&droplet.Priority, &droplet.Complexity, &droplet.Status, &assignee, &currentCataracta, &outcome, &assignedAqueduct, &lastReviewedCommit, &externalRef,
-			&lastHeartbeatAt, &droplet.CreatedAt, &droplet.UpdatedAt, &stageDispatchedAt,
-		); err != nil {
+		d, err := scanDropletFromRows(rows)
+		if err != nil {
 			return nil, fmt.Errorf("cistern: scan droplet: %w", err)
 		}
-		droplet.Assignee = assignee.String
-		droplet.CurrentCataractae = currentCataracta.String
-		droplet.Outcome = outcome.String
-		droplet.AssignedAqueduct = assignedAqueduct.String
-		droplet.LastReviewedCommit = lastReviewedCommit.String
-		droplet.ExternalRef = externalRef.String
-		if lastHeartbeatAt.Valid {
-			droplet.LastHeartbeatAt = lastHeartbeatAt.Time
-		}
-		if stageDispatchedAt.Valid {
-			droplet.StageDispatchedAt = stageDispatchedAt.Time
-		}
-		droplets = append(droplets, &droplet)
+		droplets = append(droplets, d)
 	}
 	return droplets, rows.Err()
 }
@@ -807,42 +767,24 @@ func (c *Client) Search(query, status string, priority int) ([]*Droplet, error) 
 
 	var droplets []*Droplet
 	for rows.Next() {
-		var droplet Droplet
-		var assignee, currentCataracta, outcome, assignedAqueduct, lastReviewedCommit, externalRef sql.NullString
-		var lastHeartbeatAt, stageDispatchedAt sql.NullTime
-		if err := rows.Scan(
-			&droplet.ID, &droplet.Repo, &droplet.Title, &droplet.Description,
-			&droplet.Priority, &droplet.Complexity, &droplet.Status, &assignee, &currentCataracta, &outcome, &assignedAqueduct, &lastReviewedCommit, &externalRef,
-			&lastHeartbeatAt, &droplet.CreatedAt, &droplet.UpdatedAt, &stageDispatchedAt,
-		); err != nil {
+		d, err := scanDropletFromRows(rows)
+		if err != nil {
 			return nil, fmt.Errorf("cistern: scan droplet: %w", err)
 		}
-		droplet.Assignee = assignee.String
-		droplet.CurrentCataractae = currentCataracta.String
-		droplet.Outcome = outcome.String
-		droplet.AssignedAqueduct = assignedAqueduct.String
-		droplet.LastReviewedCommit = lastReviewedCommit.String
-		droplet.ExternalRef = externalRef.String
-		if lastHeartbeatAt.Valid {
-			droplet.LastHeartbeatAt = lastHeartbeatAt.Time
-		}
-		if stageDispatchedAt.Valid {
-			droplet.StageDispatchedAt = stageDispatchedAt.Time
-		}
-		droplets = append(droplets, &droplet)
+		droplets = append(droplets, d)
 	}
 	return droplets, rows.Err()
 }
 
 // scanDroplet scans a single row into a Droplet. Returns nil, nil for sql.ErrNoRows.
 func scanDroplet(row *sql.Row) (*Droplet, error) {
-	var droplet Droplet
+	var d Droplet
 	var assignee, currentCataracta, outcome, assignedAqueduct, lastReviewedCommit, externalRef sql.NullString
 	var lastHeartbeatAt, stageDispatchedAt sql.NullTime
 	err := row.Scan(
-		&droplet.ID, &droplet.Repo, &droplet.Title, &droplet.Description,
-		&droplet.Priority, &droplet.Complexity, &droplet.Status, &assignee, &currentCataracta, &outcome, &assignedAqueduct, &lastReviewedCommit, &externalRef,
-		&lastHeartbeatAt, &droplet.CreatedAt, &droplet.UpdatedAt, &stageDispatchedAt,
+		&d.ID, &d.Repo, &d.Title, &d.Description,
+		&d.Priority, &d.Complexity, &d.Status, &assignee, &currentCataracta, &outcome, &assignedAqueduct, &lastReviewedCommit, &externalRef,
+		&lastHeartbeatAt, &d.CreatedAt, &d.UpdatedAt, &stageDispatchedAt,
 	)
 	if err == sql.ErrNoRows {
 		return nil, nil
@@ -850,19 +792,44 @@ func scanDroplet(row *sql.Row) (*Droplet, error) {
 	if err != nil {
 		return nil, err
 	}
-	droplet.Assignee = assignee.String
-	droplet.CurrentCataractae = currentCataracta.String
-	droplet.Outcome = outcome.String
-	droplet.AssignedAqueduct = assignedAqueduct.String
-	droplet.LastReviewedCommit = lastReviewedCommit.String
-	droplet.ExternalRef = externalRef.String
+	fillDropletFromNullable(&d, assignee, currentCataracta, outcome, assignedAqueduct, lastReviewedCommit, externalRef, lastHeartbeatAt, stageDispatchedAt)
+	return &d, nil
+}
+
+// scanDropletFromRows scans a single row from a Rows iterator into a Droplet.
+func scanDropletFromRows(rows *sql.Rows) (*Droplet, error) {
+	var d Droplet
+	var assignee, currentCataracta, outcome, assignedAqueduct, lastReviewedCommit, externalRef sql.NullString
+	var lastHeartbeatAt, stageDispatchedAt sql.NullTime
+	if err := rows.Scan(
+		&d.ID, &d.Repo, &d.Title, &d.Description,
+		&d.Priority, &d.Complexity, &d.Status, &assignee, &currentCataracta, &outcome, &assignedAqueduct, &lastReviewedCommit, &externalRef,
+		&lastHeartbeatAt, &d.CreatedAt, &d.UpdatedAt, &stageDispatchedAt,
+	); err != nil {
+		return nil, err
+	}
+	fillDropletFromNullable(&d, assignee, currentCataracta, outcome, assignedAqueduct, lastReviewedCommit, externalRef, lastHeartbeatAt, stageDispatchedAt)
+	return &d, nil
+}
+
+// fillDropletFromNullable populates nullable fields from sql.Null* scan targets.
+func fillDropletFromNullable(
+	d *Droplet,
+	assignee, currentCataracta, outcome, assignedAqueduct, lastReviewedCommit, externalRef sql.NullString,
+	lastHeartbeatAt, stageDispatchedAt sql.NullTime,
+) {
+	d.Assignee = assignee.String
+	d.CurrentCataractae = currentCataracta.String
+	d.Outcome = outcome.String
+	d.AssignedAqueduct = assignedAqueduct.String
+	d.LastReviewedCommit = lastReviewedCommit.String
+	d.ExternalRef = externalRef.String
 	if lastHeartbeatAt.Valid {
-		droplet.LastHeartbeatAt = lastHeartbeatAt.Time
+		d.LastHeartbeatAt = lastHeartbeatAt.Time
 	}
 	if stageDispatchedAt.Valid {
-		droplet.StageDispatchedAt = stageDispatchedAt.Time
+		d.StageDispatchedAt = stageDispatchedAt.Time
 	}
-	return &droplet, nil
 }
 
 // Purge deletes delivered/pooled/cancelled droplets older than olderThan, cascading to
