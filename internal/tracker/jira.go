@@ -30,18 +30,16 @@ type jiraProvider struct {
 }
 
 func newJiraProvider(cfg TrackerConfig) (TrackerProvider, error) {
+	prioMap := make(map[string]int, len(defaultJiraPriorityMap))
+	for k, v := range defaultJiraPriorityMap {
+		prioMap[k] = v
+	}
 	return &jiraProvider{
 		cfg:         cfg,
 		HTTPTimeout: 30 * time.Second,
-		PriorityMap: defaultJiraPriorityMap,
-		client:      nil,
+		PriorityMap: prioMap,
+		client:      &http.Client{Timeout: 30 * time.Second},
 	}, nil
-}
-
-func (p *jiraProvider) initClient() {
-	if p.client == nil {
-		p.client = &http.Client{Timeout: p.HTTPTimeout}
-	}
 }
 
 // SetHTTPTimeout replaces the HTTP client timeout. Used by tests to exercise
@@ -71,8 +69,6 @@ type jiraIssueResponse struct {
 // FetchIssue retrieves an issue from Jira by key (e.g. "PROJ-123") and maps
 // it to an ExternalIssue.
 func (p *jiraProvider) FetchIssue(key string) (*ExternalIssue, error) {
-	p.initClient()
-
 	token := os.Getenv(p.cfg.TokenEnv)
 	if token == "" {
 		return nil, fmt.Errorf("tracker: env var %s is not set", p.cfg.TokenEnv)

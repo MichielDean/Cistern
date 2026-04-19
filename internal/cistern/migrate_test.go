@@ -1,6 +1,8 @@
 package cistern
 
 import (
+	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -72,6 +74,58 @@ func TestMigrationsAreApplied(t *testing.T) {
 	c.db.QueryRow(`SELECT COUNT(*) FROM "_schema_migrations" WHERE "id" = '004_repo_case_normalize'`).Scan(&count004)
 	if count004 != 1 {
 		t.Errorf("expected 004_repo_case_normalize to be tracked, got count=%d", count004)
+	}
+}
+
+func TestSplitStatements_EscapedQuotes(t *testing.T) {
+	sql := `UPDATE "droplets" SET "description" = 'it''s a test' WHERE "id" = 'abc';
+UPDATE "droplets" SET "title" = 'O''Brien' WHERE "id" = 'def';`
+	stmts := splitStatements(sql)
+	if len(stmts) != 2 {
+		t.Fatalf("expected 2 statements, got %d: %v", len(stmts), stmts)
+	}
+	if !strings.Contains(stmts[0], "it''s a test") {
+		t.Errorf("first statement should contain escaped quote, got: %s", stmts[0])
+	}
+	if !strings.Contains(stmts[1], "O''Brien") {
+		t.Errorf("second statement should contain escaped quote, got: %s", stmts[1])
+	}
+}
+
+func TestSplitStatements_SemicolonInString(t *testing.T) {
+	sql := `UPDATE "droplets" SET "description" = 'a;b' WHERE "id" = 'x';`
+	stmts := splitStatements(sql)
+	if len(stmts) != 1 {
+		t.Fatalf("expected 1 statement (semicolons inside strings are not delimiters), got %d: %v", len(stmts), stmts)
+	}
+}
+
+func TestMigrationsAreApplied_LegacyCompat(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "legacy.db")
+
+	// Simulate a DB with the old migration IDs.
+	c, err := New(dbPath, "lc")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+
+	// Insert a legacy migration ID (as the old system would have).
+	c.db.Exec(`INSERT OR IGNORE INTO "_schema_migrations" ("id") VALUES ('complexity_renumber')`)
+	c.db.Exec(`INSERT OR IGNORE INTO "_schema_migrations" ("id") VALUES ('repo_case_normalize')`)
+
+	// Verify legacy aliases are mapped to numbered IDs.
+	var count003 int
+	c.db.QueryRow(`SELECT COUNT(*) FROM "_schema_migrations" WHERE "id" = '003_complexity_renumber'`).Scan(&count003)
+	if count003 != 1 {
+		t.Errorf("legacy 'complexity_renumber' should be aliased to '003_complexity_renumber', got count=%d", count003)
+	}
+
+	var count004 int
+	c.db.QueryRow(`SELECT COUNT(*) FROM "_schema_migrations" WHERE "id" = '004_repo_case_normalize'`).Scan(&count004)
+	if count004 != 1 {
+		t.Errorf("legacy 'repo_case_normalize' should be aliased to '004_repo_case_normalize', got count=%d", count004)
 	}
 }
 

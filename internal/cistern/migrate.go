@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"embed"
 	"fmt"
+	"log/slog"
 	"sort"
 	"strconv"
 	"strings"
@@ -145,11 +146,11 @@ func applyMigration(db *sql.DB, m migrationEntry) error {
 		return tx.Commit()
 	}
 
-	// DDL-only: tolerate errors (already-exists is expected on idempotent migrations).
+	// DDL-only: tolerate errors for idempotent operations (already-exists
+	// columns/tables), but log them so broken migrations don't go silently undetected.
 	for _, s := range statements {
 		if _, err := db.Exec(s); err != nil {
-			// Tolerate DDL errors — these are idempotent migrations
-			// (ALTER TABLE RENAME, ADD COLUMN, CREATE TABLE IF NOT EXISTS).
+			slog.Debug("migration DDL tolerance", "migration", m.migrationID(), "error", err)
 		}
 	}
 	_, err := db.Exec(`INSERT OR IGNORE INTO "_schema_migrations" ("id") VALUES (?)`, m.migrationID())
@@ -157,35 +158,39 @@ func applyMigration(db *sql.DB, m migrationEntry) error {
 }
 
 // splitStatements splits a migration SQL file into individual statements,
-// preserving quoted strings and ignoring comments.
+// preserving quoted strings (including '' escapes) and ignoring comments.
 func splitStatements(sql string) []string {
 	var statements []string
 	var current strings.Builder
 	inQuote := false
 
-	for _, ch := range sql {
+	for i := 0; i < len(sql); i++ {
+		ch := sql[i]
 		switch {
 		case ch == '\'' && !inQuote:
 			inQuote = true
-			current.WriteRune(ch)
+			current.WriteByte(ch)
 		case ch == '\'' && inQuote:
-			inQuote = false
-			current.WriteRune(ch)
-		case ch == '-' && !inQuote:
-			// Could be a comment start — peek ahead is hard in rune iteration,
-			// but SQL comments start with --. We handle this by stripping
-			// comment lines before splitting.
-			current.WriteRune(ch)
-		default:
-			current.WriteRune(ch)
-		}
-
-		if ch == ';' && !inQuote {
+			// Check for escaped quote ('' — two consecutive single quotes).
+			if i+1 < len(sql) && sql[i+1] == '\'' {
+				// Escaped quote: write both and skip the next one.
+				current.WriteByte(ch)
+				current.WriteByte(sql[i+1])
+				i++ // skip the second quote
+				// Stay in quote — the string continues.
+			} else {
+				// End of string.
+				inQuote = false
+				current.WriteByte(ch)
+			}
+		case ch == ';' && !inQuote:
 			s := strings.TrimSpace(current.String())
 			if s != "" && s != ";" {
 				statements = append(statements, stripComments(s))
 			}
 			current.Reset()
+		default:
+			current.WriteByte(ch)
 		}
 	}
 
