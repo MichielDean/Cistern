@@ -19,10 +19,6 @@ import (
 	_ "github.com/mattn/go-sqlite3"
 )
 
-// gitFetchTimeout is the maximum time allowed for a single git fetch to complete.
-// Exposed as a package-level variable so tests can override it without waiting 30 s.
-var gitFetchTimeout = 30 * time.Second
-
 // DroughtHookParams bundles the context needed by RunDroughtHooks.
 // Using a struct avoids a long positional parameter list and makes call sites
 // self-documenting — callers only set the fields they need.
@@ -43,6 +39,9 @@ type DroughtHookParams struct {
 	// OnDroughtEnd is called just before RunDroughtHooks returns (via defer).
 	// Used to clear drought liveness tracking on completion.
 	OnDroughtEnd func()
+	// GitFetchTimeout is the maximum time allowed for a single git fetch.
+	// Defaults to 30 seconds if zero.
+	GitFetchTimeout time.Duration
 }
 
 // RunDroughtHooks executes all configured drought hooks sequentially.
@@ -56,6 +55,10 @@ type DroughtHookParams struct {
 //
 // This ensures the Castellarius never dies without something to bring it back.
 func RunDroughtHooks(p DroughtHookParams) {
+	gitFetchTimeout := p.GitFetchTimeout
+	if gitFetchTimeout == 0 {
+		gitFetchTimeout = 30 * time.Second
+	}
 	startedAt := time.Now().UTC()
 	if p.OnDroughtStart != nil {
 		p.OnDroughtStart(startedAt)
@@ -89,7 +92,7 @@ func RunDroughtHooks(p DroughtHookParams) {
 		switch hook.Action {
 		case "git_sync":
 			var changed bool
-			changed, err = hookGitSync(p.Config, p.SandboxRoot, logger)
+			changed, err = hookGitSync(p.Config, p.SandboxRoot, gitFetchTimeout, logger)
 			if changed {
 				workflowChanged = true
 				if hook.RestartIfUpdated {
@@ -196,7 +199,7 @@ func mtimeAdvanced(path string, baseline time.Time) bool {
 // (those not named `_primary`) because it never resets them. The `_primary` clone is
 // additionally reset to `origin/main` so new worktrees always branch from a clean base.
 // Must run before cataractae_generate so roles are rebuilt from the freshest YAML.
-func hookGitSync(cfg *aqueduct.AqueductConfig, sandboxRoot string, logger *slog.Logger) (changed bool, err error) {
+func hookGitSync(cfg *aqueduct.AqueductConfig, sandboxRoot string, gitFetchTimeout time.Duration, logger *slog.Logger) (changed bool, err error) {
 	home, hErr := os.UserHomeDir()
 	if hErr != nil {
 		return false, fmt.Errorf("git_sync: home dir: %w", hErr)

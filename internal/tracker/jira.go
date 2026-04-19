@@ -10,17 +10,11 @@ import (
 	"time"
 )
 
-// JiraHTTPTimeout is the timeout applied to all Jira HTTP requests.
-// Tests may override this to a shorter value to exercise timeout behaviour.
-var JiraHTTPTimeout = 30 * time.Second
-
 func init() {
 	Register("jira", newJiraProvider)
 }
 
-// DefaultJiraPriorityMap maps Jira priority names to Cistern priorities.
-// Used as fallback when TrackerConfig.PriorityMap is empty.
-var DefaultJiraPriorityMap = map[string]int{
+var defaultJiraPriorityMap = map[string]int{
 	"Highest": 1,
 	"High":    1,
 	"Medium":  2,
@@ -29,12 +23,32 @@ var DefaultJiraPriorityMap = map[string]int{
 }
 
 type jiraProvider struct {
-	cfg    TrackerConfig
-	client *http.Client
+	cfg        TrackerConfig
+	client     *http.Client
+	HTTPTimeout time.Duration
+	PriorityMap map[string]int
 }
 
 func newJiraProvider(cfg TrackerConfig) (TrackerProvider, error) {
-	return &jiraProvider{cfg: cfg, client: &http.Client{Timeout: JiraHTTPTimeout}}, nil
+	return &jiraProvider{
+		cfg:         cfg,
+		HTTPTimeout: 30 * time.Second,
+		PriorityMap: defaultJiraPriorityMap,
+		client:      nil,
+	}, nil
+}
+
+func (p *jiraProvider) initClient() {
+	if p.client == nil {
+		p.client = &http.Client{Timeout: p.HTTPTimeout}
+	}
+}
+
+// SetHTTPTimeout replaces the HTTP client timeout. Used by tests to exercise
+// timeout behaviour without waiting 30 s.
+func (p *jiraProvider) SetHTTPTimeout(d time.Duration) {
+	p.HTTPTimeout = d
+	p.client = &http.Client{Timeout: d}
 }
 
 // Name returns the provider identifier.
@@ -57,6 +71,8 @@ type jiraIssueResponse struct {
 // FetchIssue retrieves an issue from Jira by key (e.g. "PROJ-123") and maps
 // it to an ExternalIssue.
 func (p *jiraProvider) FetchIssue(key string) (*ExternalIssue, error) {
+	p.initClient()
+
 	token := os.Getenv(p.cfg.TokenEnv)
 	if token == "" {
 		return nil, fmt.Errorf("tracker: env var %s is not set", p.cfg.TokenEnv)
@@ -110,7 +126,7 @@ func (p *jiraProvider) FetchIssue(key string) (*ExternalIssue, error) {
 func (p *jiraProvider) mapPriority(name string) int {
 	pm := p.cfg.PriorityMap
 	if len(pm) == 0 {
-		pm = DefaultJiraPriorityMap
+		pm = p.PriorityMap
 	}
 	if v, ok := pm[name]; ok {
 		return v

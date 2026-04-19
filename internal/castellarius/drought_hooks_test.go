@@ -407,7 +407,7 @@ func TestHookGitSync_DeploysSkillsToSkillsDir(t *testing.T) {
 
 	// When: hookGitSync runs.
 	logger := discardLogger()
-	if _, err := hookGitSync(cfg, sandboxRoot, logger); err != nil {
+	if _, err := hookGitSync(cfg, sandboxRoot, 30*time.Second, logger); err != nil {
 		t.Fatalf("hookGitSync: %v", err)
 	}
 
@@ -443,12 +443,12 @@ func TestHookGitSync_SkillsDeployIsIdempotent(t *testing.T) {
 	logger := discardLogger()
 
 	// First run: deploys skill.
-	if _, err := hookGitSync(cfg, sandboxRoot, logger); err != nil {
+	if _, err := hookGitSync(cfg, sandboxRoot, 30*time.Second, logger); err != nil {
 		t.Fatalf("first hookGitSync: %v", err)
 	}
 
 	// When: second run with identical content.
-	if _, err := hookGitSync(cfg, sandboxRoot, logger); err != nil {
+	if _, err := hookGitSync(cfg, sandboxRoot, 30*time.Second, logger); err != nil {
 		t.Fatalf("second hookGitSync: %v", err)
 	}
 
@@ -500,7 +500,7 @@ func TestHookGitSync_SkillsSyncGracefulWhenNoSkillsDir(t *testing.T) {
 	// When: hookGitSync runs.
 	// Then: no error, no crash — gracefully handles missing skills/ directory.
 	logger := discardLogger()
-	if _, err := hookGitSync(cfg, sandboxRoot, logger); err != nil {
+	if _, err := hookGitSync(cfg, sandboxRoot, 30*time.Second, logger); err != nil {
 		t.Fatalf("hookGitSync: %v", err)
 	}
 
@@ -622,7 +622,7 @@ cataractae:
 		MaxCataractae: 1,
 	}
 
-	if _, err := hookGitSync(cfg, sandboxRoot, discardLogger()); err != nil {
+	if _, err := hookGitSync(cfg, sandboxRoot, 30*time.Second, discardLogger()); err != nil {
 		t.Fatalf("hookGitSync: %v", err)
 	}
 
@@ -686,7 +686,7 @@ cataractae:
 		MaxCataractae: 1,
 	}
 
-	if _, err := hookGitSync(cfg, sandboxRoot, discardLogger()); err != nil {
+	if _, err := hookGitSync(cfg, sandboxRoot, 30*time.Second, discardLogger()); err != nil {
 		t.Fatalf("hookGitSync: %v", err)
 	}
 
@@ -738,9 +738,7 @@ func TestHookGitSync_FetchTimeout_SkipsRepoAndContinues(t *testing.T) {
 	t.Setenv("PATH", fakeBinDir+":"+os.Getenv("PATH"))
 
 	// Override the fetch timeout to a very small value so the test completes quickly.
-	origTimeout := gitFetchTimeout
-	gitFetchTimeout = 150 * time.Millisecond
-	defer func() { gitFetchTimeout = origTimeout }()
+	shortTimeout := 150 * time.Millisecond
 
 	cfg := &aqueduct.AqueductConfig{
 		Repos: []aqueduct.RepoConfig{
@@ -751,7 +749,7 @@ func TestHookGitSync_FetchTimeout_SkipsRepoAndContinues(t *testing.T) {
 	start := time.Now()
 
 	// When: hookGitSync is called with a stalled fetch.
-	_, syncErr := hookGitSync(cfg, sandboxRoot, discardLogger())
+	_, syncErr := hookGitSync(cfg, sandboxRoot, shortTimeout, discardLogger())
 
 	// Then: returns well within the test budget — not blocked by the stalled fetch.
 	if elapsed := time.Since(start); elapsed > 5*time.Second {
@@ -1145,7 +1143,7 @@ cataractae:
 	}
 
 	// Must not error when cataractae source files are absent from the remote.
-	if _, err := hookGitSync(cfg, sandboxRoot, discardLogger()); err != nil {
+	if _, err := hookGitSync(cfg, sandboxRoot, 30*time.Second, discardLogger()); err != nil {
 		t.Fatalf("hookGitSync should not error for missing cataractae files: %v", err)
 	}
 
@@ -1323,7 +1321,7 @@ func TestHookGitSync_WorkingTreeReset(t *testing.T) {
 				},
 			}
 
-			if _, err := hookGitSync(cfg, sandboxRoot, discardLogger()); err != nil {
+			if _, err := hookGitSync(cfg, sandboxRoot, 30*time.Second, discardLogger()); err != nil {
 				t.Fatalf("hookGitSync: %v", err)
 			}
 
