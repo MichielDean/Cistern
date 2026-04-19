@@ -1006,6 +1006,7 @@ func newDashboardMuxInternalWith(cfgPath, dbPath string, tui *DashboardTUI, fetc
 
 // apiClient opens a cistern.Client for the given dbPath and calls f.
 // It writes the error response if the client cannot be opened or f returns an error.
+// "Not found" errors from cistern.Client are mapped to 404; all others to 500.
 func apiClient(dbPath string, w http.ResponseWriter, f func(*cistern.Client) error) {
 	c, err := cistern.New(dbPath, "")
 	if err != nil {
@@ -1014,8 +1015,18 @@ func apiClient(dbPath string, w http.ResponseWriter, f func(*cistern.Client) err
 	}
 	defer c.Close()
 	if err := f(c); err != nil {
-		writeAPIError(w, http.StatusInternalServerError, err.Error())
+		if isNotFoundError(err) {
+			writeAPIError(w, http.StatusNotFound, err.Error())
+		} else {
+			writeAPIError(w, http.StatusInternalServerError, err.Error())
+		}
 	}
+}
+
+// isNotFoundError returns true if the error is a "not found" error from cistern.Client.
+func isNotFoundError(err error) bool {
+	msg := err.Error()
+	return strings.Contains(msg, " not found")
 }
 
 // writeAPIJSON marshals v to JSON and writes it with the given status code.
@@ -1051,6 +1062,20 @@ func corsMiddleware(next http.Handler) http.Handler {
 // Writes 400 and returns false on failure.
 func decodeJSON(w http.ResponseWriter, r *http.Request, dst any) bool {
 	if err := json.NewDecoder(r.Body).Decode(dst); err != nil {
+		writeAPIError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
+		return false
+	}
+	return true
+}
+
+// decodeJSONOptional decodes a JSON request body into dst. Returns true on success
+// or if the body is empty (EOF). Writes 400 and returns false on malformed JSON.
+func decodeJSONOptional(w http.ResponseWriter, r *http.Request, dst any) bool {
+	err := json.NewDecoder(r.Body).Decode(dst)
+	if err != nil {
+		if err == io.EOF {
+			return true
+		}
 		writeAPIError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
 		return false
 	}
@@ -1315,8 +1340,9 @@ func handlePassDroplet(dbPath string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id := r.PathValue("id")
 		var req signalRequest
-		// notes are optional
-		_ = json.NewDecoder(r.Body).Decode(&req)
+		if !decodeJSONOptional(w, r, &req) {
+			return
+		}
 		apiClient(dbPath, w, func(c *cistern.Client) error {
 			if req.Notes != "" {
 				if err := c.AddNote(id, "manual", req.Notes); err != nil {
@@ -1337,7 +1363,9 @@ func handleRecirculateDroplet(dbPath string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id := r.PathValue("id")
 		var req signalRequest
-		_ = json.NewDecoder(r.Body).Decode(&req)
+		if !decodeJSONOptional(w, r, &req) {
+			return
+		}
 		apiClient(dbPath, w, func(c *cistern.Client) error {
 			if req.Notes != "" {
 				if err := c.AddNote(id, "manual", "♻ "+req.Notes); err != nil {
@@ -1362,7 +1390,9 @@ func handlePoolDroplet(dbPath string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id := r.PathValue("id")
 		var req signalRequest
-		_ = json.NewDecoder(r.Body).Decode(&req)
+		if !decodeJSONOptional(w, r, &req) {
+			return
+		}
 		apiClient(dbPath, w, func(c *cistern.Client) error {
 			if req.Notes != "" {
 				if err := c.AddNote(id, "manual", req.Notes); err != nil {
@@ -1413,7 +1443,9 @@ func handleCancelDroplet(dbPath string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id := r.PathValue("id")
 		var req cancelRequest
-		_ = json.NewDecoder(r.Body).Decode(&req)
+		if !decodeJSONOptional(w, r, &req) {
+			return
+		}
 		apiClient(dbPath, w, func(c *cistern.Client) error {
 			if err := c.Cancel(id, req.Reason); err != nil {
 				return err

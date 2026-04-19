@@ -14,6 +14,27 @@ import (
 	"github.com/MichielDean/cistern/internal/cistern"
 )
 
+// --- isNotFoundError unit test ---
+
+func TestIsNotFoundError(t *testing.T) {
+	tests := []struct {
+		err  error
+		want bool
+	}{
+		{fmt.Errorf("cistern: droplet %s not found", "abc123"), true},
+		{fmt.Errorf("cistern: issue %s not found", "xyz789"), true},
+		{fmt.Errorf("cistern: dependency %s not found", "dep1"), true},
+		{fmt.Errorf("some other error"), false},
+		{fmt.Errorf("database is locked"), false},
+	}
+	for _, tt := range tests {
+		got := isNotFoundError(tt.err)
+		if got != tt.want {
+			t.Errorf("isNotFoundError(%q) = %v, want %v", tt.err.Error(), got, tt.want)
+		}
+	}
+}
+
 // --- Droplet CRUD ---
 
 func TestAPI_GetDroplets_ReturnsJSON(t *testing.T) {
@@ -992,8 +1013,8 @@ func TestAPI_EditDroplet_NonexistentID(t *testing.T) {
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	mux.ServeHTTP(w, req)
-	if w.Code != http.StatusInternalServerError {
-		t.Errorf("status = %d, want 500 for edit of nonexistent droplet", w.Code)
+	if w.Code != http.StatusNotFound {
+		t.Errorf("status = %d, want 404 for edit of nonexistent droplet", w.Code)
 	}
 }
 
@@ -1004,8 +1025,8 @@ func TestAPI_PassDroplet_NonexistentID(t *testing.T) {
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	mux.ServeHTTP(w, req)
-	if w.Code != http.StatusInternalServerError {
-		t.Errorf("status = %d, want 500 for pass of nonexistent droplet", w.Code)
+	if w.Code != http.StatusNotFound {
+		t.Errorf("status = %d, want 404 for pass of nonexistent droplet", w.Code)
 	}
 }
 
@@ -1249,5 +1270,179 @@ func TestAPI_DropletLog_FormatDefault_ReturnsTimeline(t *testing.T) {
 	}
 	if len(changes) == 0 {
 		t.Errorf("expected at least 1 change entry with default format, got 0")
+	}
+}
+
+// --- 404 for nonexistent droplets on state transitions ---
+
+func TestAPI_CloseDroplet_NonexistentID(t *testing.T) {
+	mux := newDashboardMux(tempCfg(t), tempDB(t))
+	req := httptest.NewRequest(http.MethodPost, "/api/droplets/nonexistent-id-12345/close", nil)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+	if w.Code != http.StatusNotFound {
+		t.Errorf("status = %d, want 404 for close of nonexistent droplet", w.Code)
+	}
+}
+
+func TestAPI_ReopenDroplet_NonexistentID(t *testing.T) {
+	mux := newDashboardMux(tempCfg(t), tempDB(t))
+	req := httptest.NewRequest(http.MethodPost, "/api/droplets/nonexistent-id-12345/reopen", nil)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+	if w.Code != http.StatusNotFound {
+		t.Errorf("status = %d, want 404 for reopen of nonexistent droplet", w.Code)
+	}
+}
+
+func TestAPI_CancelDroplet_NonexistentID(t *testing.T) {
+	mux := newDashboardMux(tempCfg(t), tempDB(t))
+	body := `{"reason":"done"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/droplets/nonexistent-id-12345/cancel", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+	if w.Code != http.StatusNotFound {
+		t.Errorf("status = %d, want 404 for cancel of nonexistent droplet", w.Code)
+	}
+}
+
+func TestAPI_PoolDroplet_NonexistentID(t *testing.T) {
+	mux := newDashboardMux(tempCfg(t), tempDB(t))
+	body := `{"notes":"blocked"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/droplets/nonexistent-id-12345/pool", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+	if w.Code != http.StatusNotFound {
+		t.Errorf("status = %d, want 404 for pool of nonexistent droplet", w.Code)
+	}
+}
+
+func TestAPI_RecirculateDroplet_NonexistentID(t *testing.T) {
+	mux := newDashboardMux(tempCfg(t), tempDB(t))
+	body := `{"notes":"redo"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/droplets/nonexistent-id-12345/recirculate", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+	if w.Code != http.StatusNotFound {
+		t.Errorf("status = %d, want 404 for recirculate of nonexistent droplet", w.Code)
+	}
+}
+
+// --- 400 for malformed JSON on signal endpoints ---
+
+func TestAPI_PassDroplet_InvalidJSON(t *testing.T) {
+	db := tempDB(t)
+	c, err := cistern.New(db, "mr")
+	if err != nil {
+		t.Fatal(err)
+	}
+	d, _ := c.Add("myrepo", "Test", "", 1, 2)
+	c.Close()
+
+	mux := newDashboardMux(tempCfg(t), db)
+	req := httptest.NewRequest(http.MethodPost, "/api/droplets/"+d.ID+"/pass", strings.NewReader("{invalid"))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400 for invalid JSON in pass", w.Code)
+	}
+}
+
+func TestAPI_RecirculateDroplet_InvalidJSON(t *testing.T) {
+	db := tempDB(t)
+	c, err := cistern.New(db, "mr")
+	if err != nil {
+		t.Fatal(err)
+	}
+	d, _ := c.Add("myrepo", "Test", "", 1, 2)
+	c.Close()
+
+	mux := newDashboardMux(tempCfg(t), db)
+	req := httptest.NewRequest(http.MethodPost, "/api/droplets/"+d.ID+"/recirculate", strings.NewReader("{invalid"))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400 for invalid JSON in recirculate", w.Code)
+	}
+}
+
+func TestAPI_PoolDroplet_InvalidJSON(t *testing.T) {
+	db := tempDB(t)
+	c, err := cistern.New(db, "mr")
+	if err != nil {
+		t.Fatal(err)
+	}
+	d, _ := c.Add("myrepo", "Test", "", 1, 2)
+	c.Close()
+
+	mux := newDashboardMux(tempCfg(t), db)
+	req := httptest.NewRequest(http.MethodPost, "/api/droplets/"+d.ID+"/pool", strings.NewReader("{invalid"))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400 for invalid JSON in pool", w.Code)
+	}
+}
+
+func TestAPI_CancelDroplet_InvalidJSON(t *testing.T) {
+	db := tempDB(t)
+	c, err := cistern.New(db, "mr")
+	if err != nil {
+		t.Fatal(err)
+	}
+	d, _ := c.Add("myrepo", "Test", "", 1, 2)
+	c.Close()
+
+	mux := newDashboardMux(tempCfg(t), db)
+	req := httptest.NewRequest(http.MethodPost, "/api/droplets/"+d.ID+"/cancel", strings.NewReader("{invalid"))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400 for invalid JSON in cancel", w.Code)
+	}
+}
+
+// --- Optional body still works for signal endpoints ---
+
+func TestAPI_PassDroplet_EmptyBody(t *testing.T) {
+	db := tempDB(t)
+	c, err := cistern.New(db, "mr")
+	if err != nil {
+		t.Fatal(err)
+	}
+	d, _ := c.Add("myrepo", "Test", "", 1, 2)
+	c.Close()
+
+	mux := newDashboardMux(tempCfg(t), db)
+	req := httptest.NewRequest(http.MethodPost, "/api/droplets/"+d.ID+"/pass", nil)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Errorf("status = %d, want 200 for pass with empty body", w.Code)
+	}
+}
+
+func TestAPI_CancelDroplet_EmptyBody(t *testing.T) {
+	db := tempDB(t)
+	c, err := cistern.New(db, "mr")
+	if err != nil {
+		t.Fatal(err)
+	}
+	d, _ := c.Add("myrepo", "Test", "", 1, 2)
+	c.Close()
+
+	mux := newDashboardMux(tempCfg(t), db)
+	req := httptest.NewRequest(http.MethodPost, "/api/droplets/"+d.ID+"/cancel", nil)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Errorf("status = %d, want 200 for cancel with empty body", w.Code)
 	}
 }
