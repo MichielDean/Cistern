@@ -206,6 +206,15 @@ type AqueductConfig struct {
 	// dashboard UI. Defaults to a monospace stack when empty.
 	DashboardFontFamily string `yaml:"dashboard_font_family,omitempty"`
 
+	// DashboardAPIKey is the Bearer token required to access the REST API.
+	// When unset, the API is open (no auth). Set via config or the
+	// CISTERN_DASHBOARD_API_KEY environment variable.
+	DashboardAPIKey string `yaml:"dashboard_api_key,omitempty"`
+
+	// DashboardAllowedOrigins is a list of origins allowed by CORS for the
+	// REST API. When unset, defaults to localhost origins only.
+	DashboardAllowedOrigins []string `yaml:"dashboard_allowed_origins,omitempty"`
+
 	// Trackers lists external issue tracker integrations (e.g. Jira).
 	// Each entry maps a provider name (e.g. "jira") to its connection parameters.
 	// Use ct import <provider> <issue-key> --repo <repo> to import issues.

@@ -418,6 +418,18 @@ max_backoff_minutes: 30
 # Omit to default to a sensible monospace font stack for terminal rendering
 dashboard_font_family: 'Liberation Mono, DejaVu Sans Mono, Menlo, Consolas, monospace'
 
+# Dashboard REST API authentication
+# When set, all /api/ endpoints require Bearer token auth.
+# Also settable via CISTERN_DASHBOARD_API_KEY environment variable.
+# When unset, all endpoints are open (a warning is logged at startup).
+# dashboard_api_key: 'your-secret-api-key-here'
+
+# Dashboard CORS allowed origins
+# Defaults to localhost variants when unset.
+# dashboard_allowed_origins:
+#   - 'http://localhost:3000'
+#   - 'http://localhost:5737'
+
 # Rate limit: protect the delivery cataractae API endpoint
 # Omit to use defaults (60 req/min per IP, 120 req/min per token)
 # rate_limit:
@@ -577,6 +589,111 @@ ct dashboard --web             HTTP web dashboard on 127.0.0.1:5737 — renders 
                                Programmatic endpoints preserved: /api/dashboard/events (SSE),
                                /ws/aqueducts/{name}/peek (WebSocket)
 ct dashboard --web --addr 127.0.0.1:8080  Custom listen address (must include hostname or IP)
+
+## REST API
+
+The web dashboard exposes a REST API at `/api/` that mirrors all TUI operations. Every CLI command has a corresponding HTTP endpoint.
+
+**Authentication**: When `dashboard_api_key` is configured (or `CISTERN_DASHBOARD_API_KEY` env var is set), all `/api/` endpoints require a `Bearer` token in the `Authorization` header. Without an API key, all endpoints are open (a warning is logged at startup). The Castellarius start/stop/restart endpoints always require auth regardless of configuration.
+
+**CORS**: Allowed origins default to `localhost` variants. Configure `dashboard_allowed_origins` in `cistern.yaml` to allow additional origins. The API handles CORS preflight (OPTIONS) requests automatically.
+
+### Droplet CRUD
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/api/droplets` | List droplets (query params: `?repo=&status=&output=json`) |
+| `GET` | `/api/droplets/search` | Search droplets (query params: `?query=&status=&priority=`) |
+| `GET` | `/api/droplets/{id}` | Get single droplet detail |
+| `POST` | `/api/droplets` | Create droplet (JSON body: `repo`, `title`, `description`, `priority`, `complexity`, `depends_on`) |
+| `PATCH` | `/api/droplets/{id}` | Edit mutable fields (JSON body: `title`, `description`, `priority`, `complexity`) |
+| `POST` | `/api/droplets/{id}/rename` | Rename droplet (JSON body: `title`) |
+
+### Droplet state transitions
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `POST` | `/api/droplets/{id}/pass` | Signal pass (optional JSON body: `notes`) |
+| `POST` | `/api/droplets/{id}/recirculate` | Signal recirculate (JSON body: `to`, `notes`) |
+| `POST` | `/api/droplets/{id}/pool` | Signal pool (optional JSON body: `notes`) |
+| `POST` | `/api/droplets/{id}/close` | Close/deliver droplet |
+| `POST` | `/api/droplets/{id}/reopen` | Reopen a closed droplet |
+| `POST` | `/api/droplets/{id}/cancel` | Cancel droplet (JSON body: `reason`) |
+| `POST` | `/api/droplets/{id}/restart` | Restart at step (optional JSON body: `cataractae`) |
+| `POST` | `/api/droplets/{id}/approve` | Approve human-gated droplet |
+| `POST` | `/api/droplets/{id}/heartbeat` | Record agent heartbeat |
+
+### Notes
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/api/droplets/{id}/notes` | List notes |
+| `POST` | `/api/droplets/{id}/notes` | Add note (JSON body: `cataractae`, `content`) |
+
+### Issues
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/api/droplets/{id}/issues` | List issues (query params: `?open=true&flagged_by=`) |
+| `POST` | `/api/droplets/{id}/issues` | File issue (JSON body: `flagged_by`, `description`) |
+| `POST` | `/api/issues/{id}/resolve` | Resolve issue (JSON body: `evidence`) |
+| `POST` | `/api/issues/{id}/reject` | Reject issue (JSON body: `evidence`) |
+
+### Dependencies
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/api/droplets/{id}/dependencies` | List dependencies |
+| `POST` | `/api/droplets/{id}/dependencies` | Add dependency (JSON body: `depends_on`) |
+| `DELETE` | `/api/droplets/{id}/dependencies/{dep_id}` | Remove dependency |
+
+### History & Stats
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/api/droplets/{id}/log` | Event timeline (query params: `?format=notes&limit=`) |
+| `GET` | `/api/droplets/{id}/changes` | Ordered changes (query params: `?limit=`) |
+| `GET` | `/api/stats` | Droplet counts by status |
+
+### Export & Purge
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/api/droplets/export` | Export droplets (query params: `?format=json|csv&status=&priority=&repo=`) |
+| `POST` | `/api/droplets/purge` | Delete old completed droplets (JSON body: `older_than`, `dry_run`) |
+
+### SSE (Server-Sent Events)
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/api/droplets/{id}/events` | Real-time droplet updates (SSE stream, max 64 concurrent connections) |
+
+### Castellarius, Doctor, Repos & Skills
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/api/castellarius/status` | Current Castellarius status |
+| `POST` | `/api/castellarius/start` | Start the daemon (requires auth) |
+| `POST` | `/api/castellarius/stop` | Stop the daemon (requires auth) |
+| `POST` | `/api/castellarius/restart` | Restart the daemon (requires auth) |
+| `GET` | `/api/doctor` | Run health check (query param: `?fix=true`) |
+| `GET` | `/api/repos` | List configured repos |
+| `GET` | `/api/skills` | List installed skills |
+
+### Input validation
+
+All endpoints enforce field length limits:
+
+| Field | Max length |
+|-------|-----------|
+| `title` | 256 |
+| `repo` | 128 |
+| `description` | 4096 |
+| `notes` / `reason` | 65536 |
+| `content` (issues/notes) | 65536 |
+| `depends_on` | 128 |
+
+Request bodies are capped at 1 MiB. Aqueduct names in WebSocket/SSE endpoints are validated to prevent tmux injection. CSV export sanitizes cells to prevent formula injection.
 
 # Status — observe the system
 ct status                      Overall status: cistern level, aqueduct flow, cataractae chains; shows (stage X) age per droplet

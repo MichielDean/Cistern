@@ -5,13 +5,16 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha1"
+	"crypto/subtle"
 	"embed"
 	"encoding/base64"
 	"encoding/binary"
+	"encoding/csv"
 	"encoding/json"
 	"fmt"
 	"io"
 	"io/fs"
+	"log"
 	"net"
 	"net/http"
 	"net/url"
@@ -21,11 +24,13 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
 	"github.com/MichielDean/cistern/internal/aqueduct"
 	"github.com/MichielDean/cistern/internal/cistern"
+	"github.com/MichielDean/cistern/internal/skills"
 	"github.com/creack/pty"
 )
 
@@ -54,6 +59,28 @@ const wsMaxClientPayload = 4096
 
 // ptyReadBufSize is the read buffer for forwarding PTY output to WebSocket.
 const ptyReadBufSize = 4096
+
+// Field length limits for input validation.
+const (
+	maxTitleLen       = 256
+	maxRepoLen        = 128
+	maxDescriptionLen = 4096
+	maxContentLen     = 65536
+	maxDependsOnLen   = 128
+	maxNotesLen       = 65536
+	maxReasonLen      = 65536
+)
+
+// apiMaxBodyBytes is the maximum request body size accepted by API endpoints.
+// Prevents unbounded memory consumption from large payloads.
+const apiMaxBodyBytes = 1 << 20 // 1 MiB
+
+// maxSSEConnections limits the number of simultaneous SSE client connections
+// per server to prevent resource exhaustion.
+const maxSSEConnections = 64
+
+// currentSSEConnections tracks the number of active SSE connections.
+var currentSSEConnections int64
 
 // dashboardDefaultFontFamily is the CSS font-family fallback used when
 // dashboard_font_family is not set in cistern.yaml.
@@ -110,6 +137,22 @@ func parsePeekLines(r *http.Request) int {
 		}
 	}
 	return defaultPeekLines
+}
+
+// isValidAqueductName validates that an aqueduct name contains only
+// alphanumeric characters, hyphens, and underscores — characters safe for
+// use in tmux session names. Rejects names containing tmux metacharacters
+// (colon, dot, shell operators) that could enable tmux injection.
+func isValidAqueductName(name string) bool {
+	if name == "" {
+		return false
+	}
+	for _, ch := range name {
+		if !((ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9') || ch == '-' || ch == '_') {
+			return false
+		}
+	}
+	return true
 }
 
 // wsAcceptKey computes Sec-WebSocket-Accept per RFC 6455 §4.2.2.
@@ -721,11 +764,16 @@ func newDashboardMuxInternal(cfgPath, dbPath string, tui *DashboardTUI) http.Han
 // newDashboardMuxInternalWith returns an http.Handler for the web dashboard with custom
 // fetcher and refresh intervals. Exposed for testing.
 func newDashboardMuxInternalWith(cfgPath, dbPath string, tui *DashboardTUI, fetcher func(cfg, db string) (*DashboardData, error), fastInterval, slowInterval time.Duration) http.Handler {
-	// Read dashboard_font_family fresh at server start so a cistern.yaml edit
+	// Read dashboard config fresh at server start so a cistern.yaml edit
 	// followed by restarting ct dashboard --web takes effect without recompiling.
 	// This is the supported update path: edit cistern.yaml, restart the server.
+	var cfg *aqueduct.AqueductConfig
+	if parsedCfg, err := aqueduct.ParseAqueductConfig(cfgPath); err == nil {
+		cfg = parsedCfg
+	}
+
 	fontFamily := dashboardDefaultFontFamily
-	if cfg, err := aqueduct.ParseAqueductConfig(cfgPath); err == nil && cfg.DashboardFontFamily != "" {
+	if cfg != nil && cfg.DashboardFontFamily != "" {
 		// Use json.Marshal to produce a fully JS-safe escaped string (handles
 		// backslash, double-quote, newlines, </script> sequences, and Unicode
 		// line/paragraph separators). Trim the surrounding JSON quotes since the
@@ -733,6 +781,25 @@ func newDashboardMuxInternalWith(cfgPath, dbPath string, tui *DashboardTUI, fetc
 		b, _ := json.Marshal(cfg.DashboardFontFamily)
 		fontFamily = string(b[1 : len(b)-1])
 	}
+
+	// Resolve API key: env var takes precedence over config file.
+	apiKey := os.Getenv("CISTERN_DASHBOARD_API_KEY")
+	if apiKey == "" && cfg != nil {
+		apiKey = cfg.DashboardAPIKey
+	}
+	if apiKey == "" {
+		log.Println("warning: no dashboard_api_key configured; all endpoints are unauthenticated")
+	}
+
+	// Build allowed origins list for CORS.
+	var allowedOrigins []string
+	if cfg != nil {
+		allowedOrigins = cfg.DashboardAllowedOrigins
+	}
+	if len(allowedOrigins) == 0 {
+		allowedOrigins = defaultAllowedOrigins()
+	}
+
 	html := strings.Replace(dashboardHTML, "__DASHBOARD_FONT_FAMILY__", fontFamily, 1)
 
 	mux := http.NewServeMux()
@@ -772,6 +839,10 @@ func newDashboardMuxInternalWith(cfgPath, dbPath string, tui *DashboardTUI, fetc
 			return
 		}
 		name := r.PathValue("name")
+		if !isValidAqueductName(name) {
+			http.Error(w, "invalid aqueduct name", http.StatusBadRequest)
+			return
+		}
 		lines := parsePeekLines(r)
 		sess, ok := lookupAqueductSession(dbPath, name)
 		capturer := defaultCapturer
@@ -792,6 +863,10 @@ func newDashboardMuxInternalWith(cfgPath, dbPath string, tui *DashboardTUI, fetc
 	// WS /ws/aqueducts/{name}/peek — live streaming peek (poll every 500ms, send diffs).
 	mux.HandleFunc("/ws/aqueducts/{name}/peek", func(w http.ResponseWriter, r *http.Request) {
 		name := r.PathValue("name")
+		if !isValidAqueductName(name) {
+			http.Error(w, "invalid aqueduct name", http.StatusBadRequest)
+			return
+		}
 		lines := parsePeekLines(r)
 
 		conn, brw, err := wsUpgrade(w, r)
@@ -930,7 +1005,1189 @@ func newDashboardMuxInternalWith(cfgPath, dbPath string, tui *DashboardTUI, fetc
 		}
 	})
 
-	return mux
+	// ── REST API endpoints ──
+
+	// apiMux is a sub-mux for the /api/ tree with CORS headers on every response.
+	apiMux := http.NewServeMux()
+
+	// Droplet CRUD
+	apiMux.HandleFunc("GET /api/droplets", handleGetDroplets(dbPath))
+	apiMux.HandleFunc("GET /api/droplets/search", handleSearchDroplets(dbPath))
+	apiMux.HandleFunc("GET /api/droplets/export", handleExportDroplets(dbPath))
+	apiMux.HandleFunc("POST /api/droplets", handleCreateDroplet(dbPath))
+	apiMux.HandleFunc("GET /api/droplets/{id}", handleGetDroplet(dbPath))
+	apiMux.HandleFunc("PATCH /api/droplets/{id}", handleEditDroplet(dbPath))
+	apiMux.HandleFunc("POST /api/droplets/{id}/rename", handleRenameDroplet(dbPath))
+	apiMux.HandleFunc("POST /api/droplets/purge", handlePurgeDroplets(dbPath))
+
+	// Droplet state transitions
+	apiMux.HandleFunc("POST /api/droplets/{id}/pass", handlePassDroplet(dbPath))
+	apiMux.HandleFunc("POST /api/droplets/{id}/recirculate", handleRecirculateDroplet(dbPath))
+	apiMux.HandleFunc("POST /api/droplets/{id}/pool", handlePoolDroplet(dbPath))
+	apiMux.HandleFunc("POST /api/droplets/{id}/close", handleCloseDroplet(dbPath))
+	apiMux.HandleFunc("POST /api/droplets/{id}/reopen", handleReopenDroplet(dbPath))
+	apiMux.HandleFunc("POST /api/droplets/{id}/cancel", handleCancelDroplet(dbPath))
+	apiMux.HandleFunc("POST /api/droplets/{id}/restart", handleRestartDroplet(dbPath))
+	apiMux.HandleFunc("POST /api/droplets/{id}/approve", handleApproveDroplet(dbPath))
+	apiMux.HandleFunc("POST /api/droplets/{id}/heartbeat", handleHeartbeatDroplet(dbPath))
+
+	// Notes
+	apiMux.HandleFunc("GET /api/droplets/{id}/notes", handleGetNotes(dbPath))
+	apiMux.HandleFunc("POST /api/droplets/{id}/notes", handleAddNote(dbPath))
+
+	// Issues
+	apiMux.HandleFunc("GET /api/droplets/{id}/issues", handleListIssues(dbPath))
+	apiMux.HandleFunc("POST /api/droplets/{id}/issues", handleAddIssue(dbPath))
+	apiMux.HandleFunc("POST /api/issues/{id}/resolve", handleResolveIssue(dbPath))
+	apiMux.HandleFunc("POST /api/issues/{id}/reject", handleRejectIssue(dbPath))
+
+	// Dependencies
+	apiMux.HandleFunc("GET /api/droplets/{id}/dependencies", handleGetDependencies(dbPath))
+	apiMux.HandleFunc("POST /api/droplets/{id}/dependencies", handleAddDependency(dbPath))
+	apiMux.HandleFunc("DELETE /api/droplets/{id}/dependencies/{dep_id}", handleRemoveDependency(dbPath))
+
+	// History/Log
+	apiMux.HandleFunc("GET /api/droplets/{id}/log", handleDropletLog(dbPath))
+	apiMux.HandleFunc("GET /api/droplets/{id}/changes", handleDropletChanges(dbPath))
+
+	// Stats
+	apiMux.HandleFunc("GET /api/stats", handleGetStats(dbPath))
+
+	// Castellarius
+	apiMux.HandleFunc("GET /api/castellarius/status", handleCastellariusStatus())
+	apiMux.HandleFunc("POST /api/castellarius/start", handleCastellariusStart())
+	apiMux.HandleFunc("POST /api/castellarius/stop", handleCastellariusStop())
+	apiMux.HandleFunc("POST /api/castellarius/restart", handleCastellariusRestart())
+
+	// Doctor
+	apiMux.HandleFunc("GET /api/doctor", handleDoctor(cfgPath))
+
+	// Repos & Skills
+	apiMux.HandleFunc("GET /api/repos", handleGetRepos(cfgPath))
+	apiMux.HandleFunc("GET /api/skills", handleGetSkills())
+
+	// SSE for droplet detail
+	apiMux.HandleFunc("GET /api/droplets/{id}/events", handleDropletEvents(cfgPath, dbPath))
+
+	// Wrap the API mux with CORS and body-size middleware.
+	// Auth is applied to the entire mux below so that pre-existing endpoints
+	// (/api/dashboard, /ws/tui, etc.) are also protected.
+	var apiHandler http.Handler = apiMux
+	apiHandler = corsMiddleware(apiHandler, allowedOrigins)
+	apiHandler = apiBodyLimitMiddleware(apiHandler)
+	mux.Handle("/api/", apiHandler)
+
+	var handler http.Handler = mux
+	if apiKey != "" {
+		handler = apiAuthMiddleware(handler, apiKey)
+	}
+
+	return handler
+}
+
+// ── API handler helpers ──
+
+// csvSanitizeCell prevents CSV formula injection by prefixing cells that
+// start with dangerous characters (=, +, -, @, tab, carriage return) with
+// a single-quote prefix, which Excel and Sheets interpret as a literal string.
+func csvSanitizeCell(s string) string {
+	if len(s) == 0 {
+		return s
+	}
+	switch s[0] {
+	case '=', '+', '-', '@', '\t', '\r':
+		return "'" + s
+	}
+	return s
+}
+
+// apiClient opens a cistern.Client for the given dbPath and calls f.
+// It writes the error response if the client cannot be opened or f returns an error.
+// "Not found" errors from cistern.Client are mapped to 404; all others to 500.
+// Internal error details are sanitized before being sent to the client.
+func apiClient(dbPath string, w http.ResponseWriter, f func(*cistern.Client) error) {
+	c, err := cistern.New(dbPath, "")
+	if err != nil {
+		writeAPIError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	defer c.Close()
+	if err := f(c); err != nil {
+		if isNotFoundError(err) {
+			writeAPIError(w, http.StatusNotFound, err.Error())
+		} else {
+			writeAPIError(w, http.StatusInternalServerError, "internal error")
+		}
+	}
+}
+
+// isNotFoundError returns true if the error is a "not found" error from cistern.Client.
+func isNotFoundError(err error) bool {
+	msg := err.Error()
+	return strings.Contains(msg, " not found")
+}
+
+// writeAPIJSON marshals v to JSON and writes it with the given status code.
+func writeAPIJSON(w http.ResponseWriter, code int, v any) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(code)
+	json.NewEncoder(w).Encode(v) //nolint:errcheck
+}
+
+// writeAPIError writes a JSON error response.
+// For 500 Internal Server Error responses, the message is sanitized to
+// "internal error" to avoid leaking database paths, SQL statements, or
+// other internal details. Other status codes pass the message through verbatim.
+func writeAPIError(w http.ResponseWriter, code int, msg string) {
+	if code == http.StatusInternalServerError {
+		msg = "internal error"
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(code)
+	json.NewEncoder(w).Encode(map[string]string{"error": msg}) //nolint:errcheck
+}
+
+// defaultAllowedOrigins returns the default CORS origin list used when
+// dashboard_allowed_origins is not configured. Accepts localhost variants
+// and the loopback address on the default dashboard port (5737).
+func defaultAllowedOrigins() []string {
+	return []string{
+		"http://localhost:5737",
+		"http://127.0.0.1:5737",
+		"http://[::1]:5737",
+	}
+}
+
+// apiAuthMiddleware rejects requests that lack a valid Bearer token when
+// an API key is configured. When no key is configured, all requests pass through.
+// Uses constant-time comparison to prevent timing side-channel attacks.
+// CORS preflight (OPTIONS) requests are always allowed through, since browsers
+// send them without Authorization headers and the CORS middleware must respond.
+func apiAuthMiddleware(next http.Handler, apiKey string) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodOptions {
+			next.ServeHTTP(w, r)
+			return
+		}
+		auth := r.Header.Get("Authorization")
+		if auth == "" {
+			writeAPIError(w, http.StatusUnauthorized, "authorization required")
+			return
+		}
+		const prefix = "Bearer "
+		if !strings.HasPrefix(auth, prefix) || subtle.ConstantTimeCompare([]byte(strings.TrimPrefix(auth, prefix)), []byte(apiKey)) != 1 {
+			writeAPIError(w, http.StatusUnauthorized, "invalid API key")
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// apiBodyLimitMiddleware wraps requests with an http.MaxBytesReader to prevent
+// unbounded memory consumption from large request bodies.
+func apiBodyLimitMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Body != nil {
+			r.Body = http.MaxBytesReader(w, r.Body, apiMaxBodyBytes)
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// corsMiddleware wraps an http.Handler with CORS headers.
+// Only origins in allowedOrigins are permitted; others receive no
+// Access-Control-Allow-Origin header, which browsers interpret as a rejection.
+// Preflight OPTIONS requests are handled directly.
+func corsMiddleware(next http.Handler, allowedOrigins []string) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		origin := r.Header.Get("Origin")
+		matched := ""
+		for _, ao := range allowedOrigins {
+			if strings.EqualFold(origin, ao) {
+				matched = ao
+				break
+			}
+		}
+		if matched != "" {
+			w.Header().Set("Access-Control-Allow-Origin", matched)
+			w.Header().Set("Vary", "Origin")
+		}
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PATCH, DELETE, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+		w.Header().Set("Access-Control-Allow-Credentials", "true")
+		if r.Method == http.MethodOptions {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// decodeJSON decodes a JSON request body into dst. Returns true on success.
+// Writes 400 and returns false on failure. Error messages are sanitized to
+// avoid leaking Go internal type information.
+func decodeJSON(w http.ResponseWriter, r *http.Request, dst any) bool {
+	if err := json.NewDecoder(r.Body).Decode(dst); err != nil {
+		msg := "invalid JSON"
+		if err == io.EOF {
+			msg = "request body is empty"
+		} else if !strings.HasPrefix(err.Error(), "invalid character") && !strings.HasPrefix(err.Error(), "json:") {
+			msg = "invalid JSON: " + err.Error()
+		}
+		writeAPIError(w, http.StatusBadRequest, msg)
+		return false
+	}
+	return true
+}
+
+// decodeJSONOptional decodes a JSON request body into dst. Returns true on success
+// or if the body is empty (EOF). Writes 400 and returns false on malformed JSON.
+func decodeJSONOptional(w http.ResponseWriter, r *http.Request, dst any) bool {
+	err := json.NewDecoder(r.Body).Decode(dst)
+	if err != nil {
+		if err == io.EOF {
+			return true
+		}
+		msg := "invalid JSON"
+		if !strings.HasPrefix(err.Error(), "invalid character") && !strings.HasPrefix(err.Error(), "json:") {
+			msg = "invalid JSON: " + err.Error()
+		}
+		writeAPIError(w, http.StatusBadRequest, msg)
+		return false
+	}
+	return true
+}
+
+// ── Droplet CRUD handlers ──
+
+func handleGetDroplets(dbPath string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		repo := r.URL.Query().Get("repo")
+		status := r.URL.Query().Get("status")
+		apiClient(dbPath, w, func(c *cistern.Client) error {
+			items, err := c.List(repo, status)
+			if err != nil {
+				return err
+			}
+			if items == nil {
+				items = []*cistern.Droplet{}
+			}
+			writeAPIJSON(w, http.StatusOK, items)
+			return nil
+		})
+	}
+}
+
+func handleSearchDroplets(dbPath string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		query := r.URL.Query().Get("query")
+		status := r.URL.Query().Get("status")
+		priority, _ := strconv.Atoi(r.URL.Query().Get("priority"))
+		apiClient(dbPath, w, func(c *cistern.Client) error {
+			items, err := c.Search(query, status, priority)
+			if err != nil {
+				return err
+			}
+			if items == nil {
+				items = []*cistern.Droplet{}
+			}
+			writeAPIJSON(w, http.StatusOK, items)
+			return nil
+		})
+	}
+}
+
+func handleGetDroplet(dbPath string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id := r.PathValue("id")
+		apiClient(dbPath, w, func(c *cistern.Client) error {
+			d, err := c.Get(id)
+			if err != nil {
+				return err
+			}
+			writeAPIJSON(w, http.StatusOK, d)
+			return nil
+		})
+	}
+}
+
+type createDropletRequest struct {
+	Repo        string   `json:"repo"`
+	Title       string   `json:"title"`
+	Description string   `json:"description"`
+	Priority    int      `json:"priority"`
+	Complexity  int      `json:"complexity"`
+	DependsOn   []string `json:"depends_on"`
+}
+
+func handleCreateDroplet(dbPath string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var req createDropletRequest
+		if !decodeJSON(w, r, &req) {
+			return
+		}
+		if req.Title == "" {
+			writeAPIError(w, http.StatusBadRequest, "title is required")
+			return
+		}
+		if len(req.Title) > maxTitleLen {
+			writeAPIError(w, http.StatusBadRequest, fmt.Sprintf("title exceeds maximum length (%d)", maxTitleLen))
+			return
+		}
+		if req.Repo == "" {
+			writeAPIError(w, http.StatusBadRequest, "repo is required")
+			return
+		}
+		if len(req.Repo) > maxRepoLen {
+			writeAPIError(w, http.StatusBadRequest, fmt.Sprintf("repo exceeds maximum length (%d)", maxRepoLen))
+			return
+		}
+		if len(req.Description) > maxDescriptionLen {
+			writeAPIError(w, http.StatusBadRequest, fmt.Sprintf("description exceeds maximum length (%d)", maxDescriptionLen))
+			return
+		}
+		if req.Complexity < 1 || req.Complexity > 3 {
+			req.Complexity = 2
+		}
+		if req.Priority < 1 {
+			req.Priority = 2
+		}
+		apiClient(dbPath, w, func(c *cistern.Client) error {
+			d, err := c.Add(req.Repo, req.Title, req.Description, req.Priority, req.Complexity, req.DependsOn...)
+			if err != nil {
+				return err
+			}
+			writeAPIJSON(w, http.StatusCreated, d)
+			return nil
+		})
+	}
+}
+
+type editDropletRequest struct {
+	Title       *string `json:"title,omitempty"`
+	Description *string `json:"description,omitempty"`
+	Complexity  *int    `json:"complexity,omitempty"`
+	Priority    *int    `json:"priority,omitempty"`
+}
+
+func handleEditDroplet(dbPath string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id := r.PathValue("id")
+		var req editDropletRequest
+		if !decodeJSON(w, r, &req) {
+			return
+		}
+		if req.Title != nil && len(*req.Title) > maxTitleLen {
+			writeAPIError(w, http.StatusBadRequest, fmt.Sprintf("title exceeds maximum length (%d)", maxTitleLen))
+			return
+		}
+		if req.Description != nil && len(*req.Description) > maxDescriptionLen {
+			writeAPIError(w, http.StatusBadRequest, fmt.Sprintf("description exceeds maximum length (%d)", maxDescriptionLen))
+			return
+		}
+		apiClient(dbPath, w, func(c *cistern.Client) error {
+			if err := c.EditDroplet(id, cistern.EditDropletFields{
+				Title:       req.Title,
+				Description: req.Description,
+				Complexity:  req.Complexity,
+				Priority:    req.Priority,
+			}); err != nil {
+				return err
+			}
+			d, err := c.Get(id)
+			if err != nil {
+				return err
+			}
+			writeAPIJSON(w, http.StatusOK, d)
+			return nil
+		})
+	}
+}
+
+type renameDropletRequest struct {
+	Title string `json:"title"`
+}
+
+func handleRenameDroplet(dbPath string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id := r.PathValue("id")
+		var req renameDropletRequest
+		if !decodeJSON(w, r, &req) {
+			return
+		}
+		if req.Title == "" {
+			writeAPIError(w, http.StatusBadRequest, "title is required")
+			return
+		}
+		if len(req.Title) > maxTitleLen {
+			writeAPIError(w, http.StatusBadRequest, fmt.Sprintf("title exceeds maximum length (%d)", maxTitleLen))
+			return
+		}
+		apiClient(dbPath, w, func(c *cistern.Client) error {
+			if err := c.EditDroplet(id, cistern.EditDropletFields{Title: &req.Title}); err != nil {
+				return err
+			}
+			d, err := c.Get(id)
+			if err != nil {
+				return err
+			}
+			writeAPIJSON(w, http.StatusOK, d)
+			return nil
+		})
+	}
+}
+
+func handleExportDroplets(dbPath string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		format := r.URL.Query().Get("format")
+		if format == "" {
+			format = "json"
+		}
+		repo := r.URL.Query().Get("repo")
+		query := r.URL.Query().Get("query")
+		status := r.URL.Query().Get("status")
+		priority, _ := strconv.Atoi(r.URL.Query().Get("priority"))
+		apiClient(dbPath, w, func(c *cistern.Client) error {
+			var items []*cistern.Droplet
+			var err error
+			if repo != "" && query == "" && status == "" && priority == 0 {
+				items, err = c.List(repo, "")
+			} else if repo != "" {
+				items, err = c.Search(query, status, priority)
+				if err != nil {
+					return err
+				}
+				filtered := make([]*cistern.Droplet, 0, len(items))
+				for _, d := range items {
+					if strings.EqualFold(d.Repo, repo) {
+						filtered = append(filtered, d)
+					}
+				}
+				items = filtered
+			} else {
+				items, err = c.Search(query, status, priority)
+			}
+			if err != nil {
+				return err
+			}
+			if items == nil {
+				items = []*cistern.Droplet{}
+			}
+			switch format {
+			case "csv":
+				w.Header().Set("Content-Type", "text/csv")
+				cw := csv.NewWriter(w)
+				if err := cw.Write([]string{"id", "repo", "title", "description", "priority", "complexity", "status", "assignee", "current_cataractae", "outcome", "created_at", "updated_at"}); err != nil {
+					return err
+				}
+				for _, item := range items {
+					if err := cw.Write([]string{
+						csvSanitizeCell(item.ID), csvSanitizeCell(item.Repo), csvSanitizeCell(item.Title), csvSanitizeCell(item.Description),
+						strconv.Itoa(item.Priority), strconv.Itoa(item.Complexity),
+						csvSanitizeCell(item.Status), csvSanitizeCell(item.Assignee), csvSanitizeCell(item.CurrentCataractae), csvSanitizeCell(item.Outcome),
+						item.CreatedAt.Format(time.RFC3339), item.UpdatedAt.Format(time.RFC3339),
+					}); err != nil {
+						return err
+					}
+				}
+				cw.Flush()
+				return cw.Error()
+			default:
+				w.Header().Set("Content-Type", "application/json")
+				json.NewEncoder(w).Encode(items) //nolint:errcheck
+				return nil
+			}
+		})
+	}
+}
+
+type purgeRequest struct {
+	OlderThan string `json:"older_than"`
+	DryRun    bool   `json:"dry_run"`
+}
+
+func handlePurgeDroplets(dbPath string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var req purgeRequest
+		if !decodeJSON(w, r, &req) {
+			return
+		}
+		d, err := parseDuration(req.OlderThan)
+		if err != nil {
+			writeAPIError(w, http.StatusBadRequest, "invalid older_than: "+err.Error())
+			return
+		}
+		apiClient(dbPath, w, func(c *cistern.Client) error {
+			n, err := c.Purge(d, req.DryRun)
+			if err != nil {
+				return err
+			}
+			writeAPIJSON(w, http.StatusOK, map[string]any{"purged": n, "dry_run": req.DryRun})
+			return nil
+		})
+	}
+}
+
+// ── Droplet state transition handlers ──
+
+type signalRequest struct {
+	Notes string `json:"notes"`
+	To    string `json:"to"`
+}
+
+func handlePassDroplet(dbPath string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id := r.PathValue("id")
+		var req signalRequest
+		if !decodeJSONOptional(w, r, &req) {
+			return
+		}
+		if len(req.Notes) > maxNotesLen {
+			writeAPIError(w, http.StatusBadRequest, fmt.Sprintf("notes exceeds maximum length (%d)", maxNotesLen))
+			return
+		}
+		apiClient(dbPath, w, func(c *cistern.Client) error {
+			if req.Notes != "" {
+				if err := c.AddNote(id, "manual", req.Notes); err != nil {
+					return err
+				}
+			}
+			if err := c.SetOutcome(id, "pass"); err != nil {
+				return err
+			}
+			notifyCastellarius()
+			writeAPIJSON(w, http.StatusOK, map[string]string{"id": id, "outcome": "pass"})
+			return nil
+		})
+	}
+}
+
+func handleRecirculateDroplet(dbPath string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id := r.PathValue("id")
+		var req signalRequest
+		if !decodeJSONOptional(w, r, &req) {
+			return
+		}
+		if len(req.Notes) > maxNotesLen {
+			writeAPIError(w, http.StatusBadRequest, fmt.Sprintf("notes exceeds maximum length (%d)", maxNotesLen))
+			return
+		}
+		apiClient(dbPath, w, func(c *cistern.Client) error {
+			if req.Notes != "" {
+				if err := c.AddNote(id, "manual", "♻ "+req.Notes); err != nil {
+					return err
+				}
+			}
+			outcome := "recirculate"
+			if req.To != "" {
+				outcome = "recirculate:" + req.To
+			}
+			if err := c.SetOutcome(id, outcome); err != nil {
+				return err
+			}
+			notifyCastellarius()
+			writeAPIJSON(w, http.StatusOK, map[string]string{"id": id, "outcome": outcome})
+			return nil
+		})
+	}
+}
+
+func handlePoolDroplet(dbPath string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id := r.PathValue("id")
+		var req signalRequest
+		if !decodeJSONOptional(w, r, &req) {
+			return
+		}
+		if len(req.Notes) > maxNotesLen {
+			writeAPIError(w, http.StatusBadRequest, fmt.Sprintf("notes exceeds maximum length (%d)", maxNotesLen))
+			return
+		}
+		apiClient(dbPath, w, func(c *cistern.Client) error {
+			if req.Notes != "" {
+				if err := c.AddNote(id, "manual", req.Notes); err != nil {
+					return err
+				}
+			}
+			if err := c.Pool(id, req.Notes); err != nil {
+				return err
+			}
+			notifyCastellarius()
+			writeAPIJSON(w, http.StatusOK, map[string]string{"id": id, "status": "pooled"})
+			return nil
+		})
+	}
+}
+
+func handleCloseDroplet(dbPath string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id := r.PathValue("id")
+		apiClient(dbPath, w, func(c *cistern.Client) error {
+			if err := c.CloseItem(id); err != nil {
+				return err
+			}
+			writeAPIJSON(w, http.StatusOK, map[string]string{"id": id, "status": "delivered"})
+			return nil
+		})
+	}
+}
+
+func handleReopenDroplet(dbPath string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id := r.PathValue("id")
+		apiClient(dbPath, w, func(c *cistern.Client) error {
+			if err := c.UpdateStatus(id, "open"); err != nil {
+				return err
+			}
+			writeAPIJSON(w, http.StatusOK, map[string]string{"id": id, "status": "open"})
+			return nil
+		})
+	}
+}
+
+type cancelRequest struct {
+	Reason string `json:"reason"`
+}
+
+func handleCancelDroplet(dbPath string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id := r.PathValue("id")
+		var req cancelRequest
+		if !decodeJSONOptional(w, r, &req) {
+			return
+		}
+		if len(req.Reason) > maxReasonLen {
+			writeAPIError(w, http.StatusBadRequest, fmt.Sprintf("reason exceeds maximum length (%d)", maxReasonLen))
+			return
+		}
+		apiClient(dbPath, w, func(c *cistern.Client) error {
+			if err := c.Cancel(id, req.Reason); err != nil {
+				return err
+			}
+			writeAPIJSON(w, http.StatusOK, map[string]string{"id": id, "status": "cancelled"})
+			return nil
+		})
+	}
+}
+
+type restartRequest struct {
+	Cataractae string `json:"cataractae"`
+}
+
+func handleRestartDroplet(dbPath string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id := r.PathValue("id")
+		var req restartRequest
+		if !decodeJSONOptional(w, r, &req) {
+			return
+		}
+		if req.Cataractae == "" {
+			req.Cataractae = "implement"
+		}
+		apiClient(dbPath, w, func(c *cistern.Client) error {
+			d, err := c.Restart(id, req.Cataractae)
+			if err != nil {
+				return err
+			}
+			writeAPIJSON(w, http.StatusOK, d)
+			return nil
+		})
+	}
+}
+
+func handleApproveDroplet(dbPath string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id := r.PathValue("id")
+		apiClient(dbPath, w, func(c *cistern.Client) error {
+			item, err := c.Get(id)
+			if err != nil {
+				return err
+			}
+			if item.CurrentCataractae != "human" {
+				writeAPIError(w, http.StatusBadRequest, "droplet is not awaiting human approval")
+				return nil
+			}
+			// Empty worker is intentional: Assign(id, "", step) clears the assignee
+			// and marks the droplet for the scheduler to pick up at the given step.
+			if err := c.Assign(id, "", "delivery"); err != nil {
+				return err
+			}
+			writeAPIJSON(w, http.StatusOK, map[string]string{"id": id, "status": "approved"})
+			return nil
+		})
+	}
+}
+
+func handleHeartbeatDroplet(dbPath string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id := r.PathValue("id")
+		apiClient(dbPath, w, func(c *cistern.Client) error {
+			if err := c.Heartbeat(id); err != nil {
+				return err
+			}
+			writeAPIJSON(w, http.StatusOK, map[string]string{"id": id, "heartbeat": "recorded"})
+			return nil
+		})
+	}
+}
+
+// ── Notes handlers ──
+
+func handleGetNotes(dbPath string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id := r.PathValue("id")
+		apiClient(dbPath, w, func(c *cistern.Client) error {
+			notes, err := c.GetNotes(id)
+			if err != nil {
+				return err
+			}
+			if notes == nil {
+				notes = []cistern.CataractaeNote{}
+			}
+			writeAPIJSON(w, http.StatusOK, notes)
+			return nil
+		})
+	}
+}
+
+type addNoteRequest struct {
+	Cataractae string `json:"cataractae"`
+	Content    string `json:"content"`
+}
+
+func handleAddNote(dbPath string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id := r.PathValue("id")
+		var req addNoteRequest
+		if !decodeJSON(w, r, &req) {
+			return
+		}
+		if req.Content == "" {
+			writeAPIError(w, http.StatusBadRequest, "content is required")
+			return
+		}
+		if len(req.Content) > maxContentLen {
+			writeAPIError(w, http.StatusBadRequest, fmt.Sprintf("content exceeds maximum length (%d)", maxContentLen))
+			return
+		}
+		name := req.Cataractae
+		if name == "" {
+			name = "manual"
+		}
+		apiClient(dbPath, w, func(c *cistern.Client) error {
+			if _, err := c.Get(id); err != nil {
+				return err
+			}
+			if err := c.AddNote(id, name, req.Content); err != nil {
+				return err
+			}
+			notes, err := c.GetNotes(id)
+			if err != nil {
+				return err
+			}
+			writeAPIJSON(w, http.StatusCreated, notes)
+			return nil
+		})
+	}
+}
+
+// ── Issues handlers ──
+
+func handleListIssues(dbPath string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id := r.PathValue("id")
+		openOnly := r.URL.Query().Get("open") == "true"
+		flaggedBy := r.URL.Query().Get("flagged_by")
+		apiClient(dbPath, w, func(c *cistern.Client) error {
+			issues, err := c.ListIssues(id, openOnly, flaggedBy)
+			if err != nil {
+				return err
+			}
+			if issues == nil {
+				issues = []cistern.DropletIssue{}
+			}
+			writeAPIJSON(w, http.StatusOK, issues)
+			return nil
+		})
+	}
+}
+
+type addIssueRequest struct {
+	FlaggedBy   string `json:"flagged_by"`
+	Description string `json:"description"`
+}
+
+func handleAddIssue(dbPath string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id := r.PathValue("id")
+		var req addIssueRequest
+		if !decodeJSON(w, r, &req) {
+			return
+		}
+		if req.Description == "" {
+			writeAPIError(w, http.StatusBadRequest, "description is required")
+			return
+		}
+		if len(req.Description) > maxContentLen {
+			writeAPIError(w, http.StatusBadRequest, fmt.Sprintf("description exceeds maximum length (%d)", maxContentLen))
+			return
+		}
+		flaggedBy := req.FlaggedBy
+		if flaggedBy == "" {
+			flaggedBy = "manual"
+		}
+		apiClient(dbPath, w, func(c *cistern.Client) error {
+			if _, err := c.Get(id); err != nil {
+				return err
+			}
+			iss, err := c.AddIssue(id, flaggedBy, req.Description)
+			if err != nil {
+				return err
+			}
+			writeAPIJSON(w, http.StatusCreated, iss)
+			return nil
+		})
+	}
+}
+
+type evidenceRequest struct {
+	Evidence string `json:"evidence"`
+}
+
+func handleResolveIssue(dbPath string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id := r.PathValue("id")
+		var req evidenceRequest
+		if !decodeJSON(w, r, &req) {
+			return
+		}
+		apiClient(dbPath, w, func(c *cistern.Client) error {
+			if err := c.ResolveIssue(id, req.Evidence); err != nil {
+				return err
+			}
+			writeAPIJSON(w, http.StatusOK, map[string]string{"id": id, "status": "resolved"})
+			return nil
+		})
+	}
+}
+
+func handleRejectIssue(dbPath string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id := r.PathValue("id")
+		var req evidenceRequest
+		if !decodeJSON(w, r, &req) {
+			return
+		}
+		apiClient(dbPath, w, func(c *cistern.Client) error {
+			if err := c.RejectIssue(id, req.Evidence); err != nil {
+				return err
+			}
+			writeAPIJSON(w, http.StatusOK, map[string]string{"id": id, "status": "unresolved"})
+			return nil
+		})
+	}
+}
+
+// ── Dependencies handlers ──
+
+func handleGetDependencies(dbPath string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id := r.PathValue("id")
+		apiClient(dbPath, w, func(c *cistern.Client) error {
+			deps, err := c.GetDependencies(id)
+			if err != nil {
+				return err
+			}
+			if deps == nil {
+				deps = []string{}
+			}
+			writeAPIJSON(w, http.StatusOK, deps)
+			return nil
+		})
+	}
+}
+
+type addDepRequest struct {
+	DependsOn string `json:"depends_on"`
+}
+
+func handleAddDependency(dbPath string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id := r.PathValue("id")
+		var req addDepRequest
+		if !decodeJSON(w, r, &req) {
+			return
+		}
+		if req.DependsOn == "" {
+			writeAPIError(w, http.StatusBadRequest, "depends_on is required")
+			return
+		}
+		if len(req.DependsOn) > maxDependsOnLen {
+			writeAPIError(w, http.StatusBadRequest, fmt.Sprintf("depends_on exceeds maximum length (%d)", maxDependsOnLen))
+			return
+		}
+		apiClient(dbPath, w, func(c *cistern.Client) error {
+			if err := c.AddDependency(id, req.DependsOn); err != nil {
+				return err
+			}
+			deps, err := c.GetDependencies(id)
+			if err != nil {
+				return err
+			}
+			writeAPIJSON(w, http.StatusCreated, deps)
+			return nil
+		})
+	}
+}
+
+func handleRemoveDependency(dbPath string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id := r.PathValue("id")
+		depID := r.PathValue("dep_id")
+		apiClient(dbPath, w, func(c *cistern.Client) error {
+			if err := c.RemoveDependency(id, depID); err != nil {
+				return err
+			}
+			writeAPIJSON(w, http.StatusOK, map[string]string{"removed": depID})
+			return nil
+		})
+	}
+}
+
+// ── History/Log handlers ──
+
+func handleDropletLog(dbPath string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id := r.PathValue("id")
+		limit := 100
+		if v := r.URL.Query().Get("limit"); v != "" {
+			if n, err := strconv.Atoi(v); err == nil && n > 0 {
+				limit = n
+				if limit > 1000 {
+					limit = 1000
+				}
+			}
+		}
+		format := r.URL.Query().Get("format")
+		apiClient(dbPath, w, func(c *cistern.Client) error {
+			switch format {
+			case "notes":
+				notes, err := c.GetNotes(id)
+				if err != nil {
+					return err
+				}
+				if notes == nil {
+					notes = []cistern.CataractaeNote{}
+				}
+				writeAPIJSON(w, http.StatusOK, notes)
+				return nil
+			default:
+				changes, err := c.GetDropletChanges(id, limit)
+				if err != nil {
+					return err
+				}
+				if changes == nil {
+					changes = []cistern.DropletChange{}
+				}
+				writeAPIJSON(w, http.StatusOK, changes)
+				return nil
+			}
+		})
+	}
+}
+
+func handleDropletChanges(dbPath string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id := r.PathValue("id")
+		limit := 20
+		if v := r.URL.Query().Get("limit"); v != "" {
+			if n, err := strconv.Atoi(v); err == nil && n > 0 {
+				limit = n
+				if limit > 1000 {
+					limit = 1000
+				}
+			}
+		}
+		apiClient(dbPath, w, func(c *cistern.Client) error {
+			changes, err := c.GetDropletChanges(id, limit)
+			if err != nil {
+				return err
+			}
+			if changes == nil {
+				changes = []cistern.DropletChange{}
+			}
+			writeAPIJSON(w, http.StatusOK, changes)
+			return nil
+		})
+	}
+}
+
+// ── Stats handler ──
+
+func handleGetStats(dbPath string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		apiClient(dbPath, w, func(c *cistern.Client) error {
+			stats, err := c.Stats()
+			if err != nil {
+				return err
+			}
+			writeAPIJSON(w, http.StatusOK, stats)
+			return nil
+		})
+	}
+}
+
+// ── Castellarius handlers ──
+
+func handleCastellariusStatus() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		writeAPIJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+	}
+}
+
+func handleCastellariusStart() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		writeAPIError(w, http.StatusNotImplemented, "castellarius start via API is not yet supported; use 'ct castellarius start'")
+	}
+}
+
+func handleCastellariusStop() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		writeAPIError(w, http.StatusNotImplemented, "castellarius stop via API is not yet supported; use 'ct castellarius stop'")
+	}
+}
+
+func handleCastellariusRestart() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		writeAPIError(w, http.StatusNotImplemented, "castellarius restart via API is not yet supported; use 'ct castellarius restart'")
+	}
+}
+
+// ── Doctor handler ──
+
+func handleDoctor(cfgPath string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		_ = r.URL.Query().Get("fix") // fix param accepted but not applied via API
+		cfg, err := aqueduct.ParseAqueductConfig(cfgPath)
+		if err != nil {
+			writeAPIError(w, http.StatusInternalServerError, "internal error")
+			return
+		}
+		type repoInfo struct {
+			Name string `json:"name"`
+			URL  string `json:"url"`
+		}
+		var repos []repoInfo
+		for _, r := range cfg.Repos {
+			repos = append(repos, repoInfo{Name: r.Name, URL: r.URL})
+		}
+		writeAPIJSON(w, http.StatusOK, map[string]any{
+			"config_ok": true,
+			"repos":     repos,
+		})
+	}
+}
+
+// ── Repos handler ──
+
+func handleGetRepos(cfgPath string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		cfg, err := aqueduct.ParseAqueductConfig(cfgPath)
+		if err != nil {
+			writeAPIError(w, http.StatusInternalServerError, "internal error")
+			return
+		}
+		type repoInfo struct {
+			Name string `json:"name"`
+			URL  string `json:"url"`
+		}
+		var repos []repoInfo
+		for _, r := range cfg.Repos {
+			repos = append(repos, repoInfo{Name: r.Name, URL: r.URL})
+		}
+		writeAPIJSON(w, http.StatusOK, repos)
+	}
+}
+
+// ── Skills handler ──
+
+func handleGetSkills() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		entries, err := skills.ListInstalled()
+		if err != nil {
+			writeAPIError(w, http.StatusInternalServerError, "internal error")
+			return
+		}
+		writeAPIJSON(w, http.StatusOK, entries)
+	}
+}
+
+// ── Droplet events SSE handler ──
+
+func handleDropletEvents(cfgPath, dbPath string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id := r.PathValue("id")
+
+		// Limit concurrent SSE connections to prevent resource exhaustion.
+		if atomic.AddInt64(&currentSSEConnections, 1) > maxSSEConnections {
+			atomic.AddInt64(&currentSSEConnections, -1)
+			writeAPIError(w, http.StatusServiceUnavailable, "too many SSE connections")
+			return
+		}
+		defer atomic.AddInt64(&currentSSEConnections, -1)
+
+		// Validate droplet existence and flusher support before setting SSE headers,
+		// so error responses use clean Content-Type instead of text/event-stream.
+		flusher, ok := w.(http.Flusher)
+		if !ok {
+			writeAPIError(w, http.StatusInternalServerError, "streaming unsupported")
+			return
+		}
+
+		c, err := cistern.New(dbPath, "")
+		if err != nil {
+			writeAPIError(w, http.StatusInternalServerError, "internal error")
+			return
+		}
+		defer c.Close()
+
+		d, err := c.Get(id)
+		if err != nil {
+			if isNotFoundError(err) {
+				writeAPIError(w, http.StatusNotFound, err.Error())
+			} else {
+				writeAPIError(w, http.StatusInternalServerError, "internal error")
+			}
+			return
+		}
+
+		// All validation passed — now set SSE headers and begin streaming.
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.Header().Set("Cache-Control", "no-cache")
+		w.Header().Set("Connection", "keep-alive")
+		w.Header().Set("X-Accel-Buffering", "no")
+
+		b, _ := json.Marshal(d)
+		fmt.Fprintf(w, "data: %s\n\n", b)
+		flusher.Flush()
+
+		ticker := time.NewTicker(2 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-r.Context().Done():
+				return
+			case <-ticker.C:
+				d, _ := c.Get(id)
+				if d != nil {
+					b, _ := json.Marshal(d)
+					fmt.Fprintf(w, "data: %s\n\n", b)
+					flusher.Flush()
+				}
+			}
+		}
+	}
 }
 
 // RunDashboardWeb starts the HTTP web dashboard on addr and blocks until

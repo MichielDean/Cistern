@@ -2,6 +2,35 @@
 
 ## Unreleased
 
+### Web UI: REST API layer (ci-stus4)
+
+Added a comprehensive REST API layer to the Cistern web dashboard that exposes all TUI operations as HTTP endpoints. This is the backend foundation for the web UI — every operation available via `ct` CLI is now also accessible via API.
+
+**Key features:**
+- **Full CRUD**: Create, read, update, and delete droplets via JSON endpoints
+- **State transitions**: Pass, recirculate, pool, close, reopen, cancel, restart, approve, and heartbeat — all mirrored from CLI commands
+- **Notes & Issues**: Add/list notes, file/resolve/reject issues with structured endpoints
+- **Dependencies**: Add, list, and remove droplet dependencies
+- **History**: Droplet event timeline and ordered changes with configurable limits
+- **Stats & Export**: Droplet counts by status, JSON/CSV export with filters
+- **Castellarius control**: Status, start, stop, restart endpoints (start/stop/restart are 501 stubs)
+- **Doctor & introspection**: Health check, list repos, list installed skills
+- **SSE streaming**: Real-time droplet updates via `/api/droplets/{id}/events` (max 64 concurrent connections)
+- **Authentication**: Bearer token auth via `dashboard_api_key` config or `CISTERN_DASHBOARD_API_KEY` env var; Castellarius control endpoints always require auth
+- **CORS**: Configurable allowed origins (defaults to localhost); OPTIONS requests bypass auth for preflight
+- **Input validation**: Length limits on all fields, 1 MiB body cap, aqueduct name validation, CSV formula sanitization
+- **Proper status codes**: 201 for creation, 400 for invalid input, 404 for not found, 409 for conflicts, 500 for internal errors
+
+**Configuration:**
+- `dashboard_api_key` — Bearer token for API authentication (env var: `CISTERN_DASHBOARD_API_KEY`)
+- `dashboard_allowed_origins` — CORS origin whitelist (defaults to localhost)
+
+**Files changed:**
+- `cmd/ct/dashboard_web.go` — API handlers, auth middleware, CORS middleware, SSE handler, input validation
+- `cmd/ct/dashboard_api_test.go` — 111 API tests against real SQLite backend
+- `cmd/ct/dashboard_test.go` — Test helpers for API test setup
+- `internal/aqueduct/types.go` — `DashboardAPIKey` and `DashboardAllowedOrigins` config fields
+
 ### Exclude provider InstructionsFile from git operations in worktrees (ci-czkeg)
 
 The Castellarius now excludes the provider's InstructionsFile (e.g. `AGENTS.md` for opencode/codex, `CLAUDE.md` for claude, `GEMINI.md` for gemini) from all git operations in worktrees, alongside `CONTEXT.md` and `.current-stage`. Previously, the cataractae prompt overwritten into the InstructionsFile by the Castellarius could be committed back to the repo, replacing the repo's own content (e.g. Lobsterdog's personality file being replaced with the Cistern cataractae template).

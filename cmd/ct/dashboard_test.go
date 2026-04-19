@@ -30,6 +30,45 @@ func tempCfg(t *testing.T) string {
 	return tempCfgWithFontFamily(t, "")
 }
 
+// tempCfgWithAPIKey writes a minimal cistern.yaml with the given
+// dashboard_api_key value set.
+func tempCfgWithAPIKey(t *testing.T, apiKey string) string {
+	t.Helper()
+	dir := t.TempDir()
+
+	wfContent := `name: test
+cataractae:
+  - name: implement
+    type: agent
+  - name: review
+    type: agent
+  - name: merge
+    type: automated
+`
+	wfPath := filepath.Join(dir, "aqueduct.yaml")
+	if err := os.WriteFile(wfPath, []byte(wfContent), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfgContent := `repos:
+  - name: myrepo
+    url: https://example.com/repo
+    workflow_path: aqueduct.yaml
+    cataractae: 2
+    names:
+      - virgo
+      - marcia
+    prefix: mr
+max_cataractae: 4
+dashboard_api_key: "` + apiKey + `"
+`
+	cfgPath := filepath.Join(dir, "cistern.yaml")
+	if err := os.WriteFile(cfgPath, []byte(cfgContent), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return cfgPath
+}
+
 // tempCfgWithFontFamily writes a minimal cistern.yaml with the given
 // dashboard_font_family value. Pass "" to omit the field entirely.
 func tempCfgWithFontFamily(t *testing.T, fontFamily string) string {
