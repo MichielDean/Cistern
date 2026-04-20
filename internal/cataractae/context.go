@@ -51,9 +51,12 @@ type ContextParams struct {
 	// If nil, slog.Default() is used.
 	Logger *slog.Logger
 	// InstructionsFile is the provider-specific filename written into the worktree
-	// (e.g. "AGENTS.md" for opencode/codex, "CLAUDE.md" for claude, "GEMINI.md" for gemini).
-	// It is excluded from all git operations alongside CONTEXT.md and .current-stage
-	// to prevent the cataractae prompt from being committed back to the repo.
+	// by Cistern (e.g. "CATARACTAE.md" for codex/copilot, "CLAUDE.md" for claude,
+	// "GEMINI.md" for gemini). It is excluded from all git operations alongside
+	// CONTEXT.md and .current-stage to prevent per-dispatch cataractae instructions
+	// from being committed back to the repo.
+	// For providers with AgentFlag support (opencode), this field is not used —
+	// the prompt is delivered via an agent markdown file instead.
 	InstructionsFile string
 }
 
