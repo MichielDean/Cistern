@@ -38,8 +38,8 @@ const (
 	actionClose         = "close"
 	actionReopen        = "reopen"
 	actionApprove       = "approve"
-	actionEditMeta      = "editmeta"     // multi-field: title, priority, complexity, description
-	actionCreateDroplet = "create"       // multi-field: repo, title, description, complexity
+	actionEditMeta      = "editmeta"     // multi-field: title, priority, description
+	actionCreateDroplet = "create"       // multi-field: repo, title, description
 	actionAddDep        = "adddep"       // text: depends-on droplet ID
 	actionRemoveDep     = "removedep"    // text: dependency ID to remove
 	actionFileIssue     = "fileissue"    // text: issue description
@@ -284,31 +284,24 @@ func (m tabAppModel) execMultiActionCmd(action string, values []string) tea.Cmd 
 		var execErr error
 		switch action {
 		case actionCreateDroplet:
-			// values: [repo, title, description, complexity]
+			// values: [repo, title, description]
 			repo := strings.TrimSpace(valAt(values, 0))
 			title := strings.TrimSpace(valAt(values, 1))
 			description := strings.TrimSpace(valAt(values, 2))
-			complexity := 1
-			if n, err := strconv.Atoi(strings.TrimSpace(valAt(values, 3))); err == nil && n >= 1 && n <= 3 {
-				complexity = n
-			}
 			if repo == "" || title == "" {
 				execErr = fmt.Errorf("repo and title are required to create a droplet")
 				break
 			}
-			_, execErr = c.Add(repo, title, description, 1, complexity)
+			_, execErr = c.Add(repo, title, description, 1)
 		case actionEditMeta:
-			// values: [title, priority, complexity, description]
+			// values: [title, priority, description]
 			// Each field is optional — skip empty/invalid values.
 			title := strings.TrimSpace(valAt(values, 0))
 			fields := cistern.EditDropletFields{}
 			if p, err := strconv.Atoi(strings.TrimSpace(valAt(values, 1))); err == nil && p > 0 {
 				fields.Priority = &p
 			}
-			if cx, err := strconv.Atoi(strings.TrimSpace(valAt(values, 2))); err == nil && cx >= 1 && cx <= 3 {
-				fields.Complexity = &cx
-			}
-			if desc := strings.TrimSpace(valAt(values, 3)); desc != "" {
+			if desc := strings.TrimSpace(valAt(values, 2)); desc != "" {
 				fields.Description = &desc
 			}
 			if title != "" {
@@ -370,7 +363,7 @@ func openMultiOverlay(m tabAppModel, fields []string) tabAppModel {
 // creation form. Callers set m.tab as needed before calling.
 func openCreateDropletOverlay(m tabAppModel) tabAppModel {
 	m.overlayAction = actionCreateDroplet
-	return openMultiOverlay(m, []string{"repo", "title", "description", "complexity (1-3)"})
+	return openMultiOverlay(m, []string{"repo", "title", "description"})
 }
 
 // overlayMultiFooter renders the progress footer shown during a multi-field form.
@@ -665,7 +658,7 @@ func (m tabAppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				actionAddDep, actionRemoveDep, actionFileIssue:
 				updated.overlayMode = overlayText
 			case actionEditMeta:
-				updated = openMultiOverlay(updated, []string{"title", "priority (1-5)", "complexity (1-3)", "description"})
+				updated = openMultiOverlay(updated, []string{"title", "priority (1-5)", "description"})
 			case actionResolveIssue, actionRejectIssue:
 				updated = openMultiOverlay(updated, []string{"issue ID", "evidence"})
 			}

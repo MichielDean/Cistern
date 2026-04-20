@@ -114,7 +114,7 @@ func TestStatusJSONOutput_WithFlowingData(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	item, err := c.Add("repo", "Test droplet", "", 1, 3)
+	item, err := c.Add("repo", "Test droplet", "", 1)
 	if err != nil {
 		t.Fatal(err)
 	}

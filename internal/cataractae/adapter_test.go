@@ -98,7 +98,7 @@ func TestSpawnAutomated_SetsOutcome(t *testing.T) {
 	client := testQueueClient(t)
 	a := newTestAdapter(t, "testrepo", client)
 
-	item, err := client.Add("testrepo", "Automated test", "", 1, 1)
+	item, err := client.Add("testrepo", "Automated test", "", 1)
 	if err != nil {
 		t.Fatalf("Create droplet: %v", err)
 	}
@@ -135,7 +135,7 @@ func TestSpawnAutomated_SandboxDirFallback(t *testing.T) {
 	client := testQueueClient(t)
 	a := newTestAdapter(t, "testrepo", client)
 
-	item, err := client.Add("testrepo", "Fallback test", "", 1, 1)
+	item, err := client.Add("testrepo", "Fallback test", "", 1)
 	if err != nil {
 		t.Fatalf("Create droplet: %v", err)
 	}
@@ -190,7 +190,7 @@ func TestSpawnAutomated_WithMetaNotes(t *testing.T) {
 	client := testQueueClient(t)
 	a := newTestAdapter(t, "testrepo", client)
 
-	item, err := client.Add("testrepo", "Meta test", "", 1, 1)
+	item, err := client.Add("testrepo", "Meta test", "", 1)
 	if err != nil {
 		t.Fatalf("Create droplet: %v", err)
 	}
@@ -258,7 +258,7 @@ func TestAdapterSpawn_DispatchesToSpawnAutomated(t *testing.T) {
 	client := testQueueClient(t)
 	a := newTestAdapter(t, "testrepo", client)
 
-	item, err := client.Add("testrepo", "Dispatch test", "", 1, 1)
+	item, err := client.Add("testrepo", "Dispatch test", "", 1)
 	if err != nil {
 		t.Fatalf("Create droplet: %v", err)
 	}

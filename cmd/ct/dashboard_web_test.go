@@ -193,10 +193,10 @@ func TestDashboardWebMux_APIReturnsCorrectCounts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	flowing, _ := c.Add("myrepo", "Feature A", "", 1, 2)
+	flowing, _ := c.Add("myrepo", "Feature A", "", 1)
 	c.GetReady("myrepo")
 	c.Assign(flowing.ID, "virgo", "implement")
-	c.Add("myrepo", "Feature B", "", 2, 2)
+	c.Add("myrepo", "Feature B", "", 2)
 	c.Close()
 
 	mux := newDashboardMux(cfgPath, dbPath)
@@ -224,7 +224,7 @@ func TestDashboardWebMux_NoteFieldsRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	droplet, _ := c.Add("myrepo", "Note Test", "", 1, 2)
+	droplet, _ := c.Add("myrepo", "Note Test", "", 1)
 	c.GetReady("myrepo")
 	c.Assign(droplet.ID, "virgo", "implement")
 	if err := c.AddNote(droplet.ID, "implementer", "hello world"); err != nil {
@@ -264,7 +264,7 @@ func TestDashboardWebMux_NoteFieldsSnakeCaseJSON(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	droplet, _ := c.Add("myrepo", "Snake Case Test", "", 1, 2)
+	droplet, _ := c.Add("myrepo", "Snake Case Test", "", 1)
 	c.GetReady("myrepo")
 	c.Assign(droplet.ID, "virgo", "implement")
 	if err := c.AddNote(droplet.ID, "implementer", "snake test"); err != nil {
@@ -425,7 +425,7 @@ func TestLookupAqueductSession_NoMatch(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	item, _ := c.Add("myrepo", "Some work", "", 1, 2)
+	item, _ := c.Add("myrepo", "Some work", "", 1)
 	c.GetReady("myrepo")
 	c.Assign(item.ID, "other-aqueduct", "implement")
 	c.Close()
@@ -444,7 +444,7 @@ func TestLookupAqueductSession_Found(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	item, _ := c.Add("myrepo", "Peek target", "", 1, 2)
+	item, _ := c.Add("myrepo", "Peek target", "", 1)
 	c.GetReady("myrepo")
 	c.Assign(item.ID, "virgo", "implement")
 	c.Close()
@@ -497,7 +497,7 @@ func TestPeekHTTP_ActiveWithMockCapturer(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	item, _ := c.Add("myrepo", "Peek work", "", 1, 2)
+	item, _ := c.Add("myrepo", "Peek work", "", 1)
 	c.GetReady("myrepo")
 	c.Assign(item.ID, "virgo", "implement")
 	c.Close()
@@ -526,7 +526,7 @@ func TestPeekHTTP_ActiveButSessionGone(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	item, _ := c.Add("myrepo", "Gone session", "", 1, 2)
+	item, _ := c.Add("myrepo", "Gone session", "", 1)
 	c.GetReady("myrepo")
 	c.Assign(item.ID, "virgo", "implement")
 	c.Close()
@@ -739,7 +739,7 @@ func TestWsPeek_SuccessfulStreamActive(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	item, _ := c.Add("myrepo", "Peek work", "", 1, 2)
+	item, _ := c.Add("myrepo", "Peek work", "", 1)
 	c.GetReady("myrepo")
 	c.Assign(item.ID, "virgo", "implement")
 	c.Close()

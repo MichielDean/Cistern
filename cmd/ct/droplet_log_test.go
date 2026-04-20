@@ -33,7 +33,7 @@ func runLogCapture(t *testing.T, id string) (string, error) {
 
 func TestDropletLog_ShowsCreationAndNotes(t *testing.T) {
 	c := setupLogTestDB(t)
-	item, err := c.Add("myrepo", "Log task", "do something", 1, 2)
+	item, err := c.Add("myrepo", "Log task", "do something", 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -61,7 +61,7 @@ func TestDropletLog_ShowsCreationAndNotes(t *testing.T) {
 
 func TestDropletLog_ShowsPoolEvent(t *testing.T) {
 	c := setupLogTestDB(t)
-	item, err := c.Add("myrepo", "Pool task", "", 1, 2)
+	item, err := c.Add("myrepo", "Pool task", "", 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -79,7 +79,7 @@ func TestDropletLog_ShowsPoolEvent(t *testing.T) {
 
 func TestDropletLog_ShowsStageAssignment(t *testing.T) {
 	c := setupLogTestDB(t)
-	item, err := c.Add("myrepo", "Stage task", "", 1, 2)
+	item, err := c.Add("myrepo", "Stage task", "", 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -100,7 +100,7 @@ func TestDropletLog_ShowsStageAssignment(t *testing.T) {
 
 func TestDropletLog_ShowsHeader(t *testing.T) {
 	c := setupLogTestDB(t)
-	item, err := c.Add("myrepo", "Header task", "desc", 1, 2)
+	item, err := c.Add("myrepo", "Header task", "desc", 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -120,7 +120,7 @@ func TestDropletLog_ShowsHeader(t *testing.T) {
 
 func TestDropletLog_ChronologicalOrder(t *testing.T) {
 	c := setupLogTestDB(t)
-	item, err := c.Add("myrepo", "Order task", "", 1, 2)
+	item, err := c.Add("myrepo", "Order task", "", 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -154,7 +154,7 @@ func TestDropletLog_NonexistentDroplet(t *testing.T) {
 
 func TestDropletLog_EmptyDroplet(t *testing.T) {
 	c := setupLogTestDB(t)
-	item, err := c.Add("myrepo", "Empty task", "", 1, 2)
+	item, err := c.Add("myrepo", "Empty task", "", 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -177,7 +177,7 @@ func TestDropletLog_JsonFormat(t *testing.T) {
 	t.Cleanup(func() { logFmt = "text" })
 
 	c := setupLogTestDB(t)
-	item, err := c.Add("myrepo", "Json log task", "", 1, 2)
+	item, err := c.Add("myrepo", "Json log task", "", 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -223,7 +223,7 @@ func TestDropletLog_InvalidFormat(t *testing.T) {
 	t.Cleanup(func() { logFmt = "text" })
 
 	c := setupLogTestDB(t)
-	item, err := c.Add("myrepo", "Format task", "", 1, 2)
+	item, err := c.Add("myrepo", "Format task", "", 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -239,7 +239,7 @@ func TestDropletLog_InvalidFormat(t *testing.T) {
 
 func TestDropletLog_ShowsHeartbeat(t *testing.T) {
 	c := setupLogTestDB(t)
-	item, err := c.Add("myrepo", "Heartbeat task", "", 1, 2)
+	item, err := c.Add("myrepo", "Heartbeat task", "", 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -275,7 +275,7 @@ func TestDropletLog_ShowsHeartbeat(t *testing.T) {
 
 func TestDropletLog_HeartbeatInChronologicalOrder(t *testing.T) {
 	c := setupLogTestDB(t)
-	item, err := c.Add("myrepo", "Heartbeat order task", "", 1, 2)
+	item, err := c.Add("myrepo", "Heartbeat order task", "", 1)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -61,12 +61,12 @@ func TestFlowInspectCisternCounts(t *testing.T) {
 		t.Fatal(err)
 	}
 	// open item
-	_, err = c.Add("repo", "open item", "", 2, 2)
+	_, err = c.Add("repo", "open item", "", 2)
 	if err != nil {
 		t.Fatal(err)
 	}
 	// in_progress item
-	item2, err := c.Add("repo", "flowing item", "", 2, 2)
+	item2, err := c.Add("repo", "flowing item", "", 2)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -74,7 +74,7 @@ func TestFlowInspectCisternCounts(t *testing.T) {
 		t.Fatal(err)
 	}
 	// pooled item
-	item3, err := c.Add("repo", "pooled item", "", 2, 2)
+	item3, err := c.Add("repo", "pooled item", "", 2)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -82,7 +82,7 @@ func TestFlowInspectCisternCounts(t *testing.T) {
 		t.Fatal(err)
 	}
 	// closed item
-	item4, err := c.Add("repo", "closed item", "", 2, 2)
+	item4, err := c.Add("repo", "closed item", "", 2)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -145,7 +145,7 @@ func TestFlowInspectElapsedSeconds(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	item, err := c.Add("repo", "in_progress item", "", 2, 2)
+	item, err := c.Add("repo", "in_progress item", "", 2)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -207,7 +207,7 @@ func TestBuildInspectOutput_UsesProvidedPathsAndIncludesPooled(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	item, err := c.Add("myrepo", "pooled item", "", 2, 2)
+	item, err := c.Add("myrepo", "pooled item", "", 2)
 	if err != nil {
 		t.Fatal(err)
 	}

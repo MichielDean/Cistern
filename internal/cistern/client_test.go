@@ -29,105 +29,6 @@ func TestNew_CreatesDB(t *testing.T) {
 	}
 }
 
-// TestNew_FreshDB_DefaultComplexityIsTwo verifies that a fresh database created
-// from schema.sql defaults the complexity column to 2 (full), not 3 (critical).
-func TestNew_FreshDB_DefaultComplexityIsTwo(t *testing.T) {
-	c := testClient(t)
-	// Add a droplet, then fetch it back directly to check the schema-level default
-	// is not involved (Add validates and stores explicitly). Instead, verify the
-	// schema default by inserting a row without specifying complexity.
-	_, err := c.db.Exec(`INSERT INTO droplets (id, repo, title) VALUES ('bf-test1', 'repo', 'title')`)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var got int
-	if err := c.db.QueryRow(`SELECT complexity FROM droplets WHERE id = 'bf-test1'`).Scan(&got); err != nil {
-		t.Fatal(err)
-	}
-	if got != 2 {
-		t.Errorf("schema DEFAULT complexity = %d, want 2 (full)", got)
-	}
-}
-
-// TestNew_ComplexityMigration_RemapsOldSchemeValues verifies that when New() is
-// called on a DB containing old-scheme complexity values (1=trivial, 2=standard,
-// 3=full, 4=critical), they are remapped to the new scheme (1=standard, 2=full,
-// 3=critical).
-func TestNew_ComplexityMigration_RemapsOldSchemeValues(t *testing.T) {
-	dbPath := filepath.Join(t.TempDir(), "migrate.db")
-
-	// Seed the DB with old-scheme complexity values using the raw driver,
-	// bypassing New() so the migration has not yet run.
-	seedDB, err := sql.Open("sqlite3", dbPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, err = seedDB.Exec(`CREATE TABLE IF NOT EXISTS droplets (
-		id TEXT PRIMARY KEY,
-		repo TEXT NOT NULL,
-		title TEXT NOT NULL,
-		description TEXT DEFAULT '',
-		priority INTEGER DEFAULT 2,
-		complexity INTEGER DEFAULT 3,
-		status TEXT DEFAULT 'open',
-		assignee TEXT DEFAULT '',
-		current_cataractae TEXT DEFAULT '',
-		outcome TEXT DEFAULT NULL,
-		assigned_aqueduct TEXT DEFAULT '',
-		last_reviewed_commit TEXT DEFAULT NULL,
-		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-		updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
-	)`)
-	if err != nil {
-		t.Fatal(err)
-	}
-	// Insert rows with old-scheme values: trivial=1, standard=2, full=3, critical=4.
-	for _, row := range []struct {
-		id         string
-		complexity int
-	}{
-		{"old-trivial", 1},
-		{"old-standard", 2},
-		{"old-full", 3},
-		{"old-critical", 4},
-	} {
-		if _, err := seedDB.Exec(`INSERT INTO droplets (id, repo, title, complexity) VALUES (?, 'r', 't', ?)`, row.id, row.complexity); err != nil {
-			t.Fatal(err)
-		}
-	}
-	seedDB.Close()
-
-	// Open with New() to trigger the migration.
-	c, err := New(dbPath, "bf")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer c.Close()
-
-	// Given: old scheme 1=trivial → new scheme 1=standard (unchanged, trivial removed)
-	// Given: old scheme 2=standard → new scheme 1=standard
-	// Given: old scheme 3=full    → new scheme 2=full
-	// Given: old scheme 4=critical → new scheme 3=critical
-	cases := []struct {
-		id      string
-		wantNew int
-	}{
-		{"old-trivial", 1},
-		{"old-standard", 1},
-		{"old-full", 2},
-		{"old-critical", 3},
-	}
-	for _, tc := range cases {
-		var got int
-		if err := c.db.QueryRow(`SELECT complexity FROM droplets WHERE id = ?`, tc.id).Scan(&got); err != nil {
-			t.Fatalf("id=%s: %v", tc.id, err)
-		}
-		if got != tc.wantNew {
-			t.Errorf("id=%s: complexity after migration = %d, want %d", tc.id, got, tc.wantNew)
-		}
-	}
-}
-
 func TestGenerateID(t *testing.T) {
 	c := testClient(t)
 	id, err := c.generateID()
@@ -157,7 +58,7 @@ func TestGenerateID(t *testing.T) {
 
 func TestAdd_And_Get(t *testing.T) {
 	c := testClient(t)
-	item, err := c.Add("github.com/org/repo", "Fix bug", "Details here", 1, 3)
+	item, err := c.Add("github.com/org/repo", "Fix bug", "Details here", 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -185,9 +86,9 @@ func TestAdd_And_Get(t *testing.T) {
 
 func TestGetReady_PriorityOrdering(t *testing.T) {
 	c := testClient(t)
-	c.Add("myrepo", "Low priority", "", 3, 3)
-	c.Add("myrepo", "High priority", "", 1, 3)
-	c.Add("myrepo", "Medium priority", "", 2, 3)
+	c.Add("myrepo", "Low priority", "", 3)
+	c.Add("myrepo", "High priority", "", 1)
+	c.Add("myrepo", "Medium priority", "", 2)
 
 	item, err := c.GetReady("myrepo")
 	if err != nil {
@@ -203,8 +104,8 @@ func TestGetReady_PriorityOrdering(t *testing.T) {
 
 func TestGetReady_RepoFilter(t *testing.T) {
 	c := testClient(t)
-	c.Add("repo-a", "A task", "", 1, 3)
-	c.Add("repo-b", "B task", "", 1, 3)
+	c.Add("repo-a", "A task", "", 1)
+	c.Add("repo-b", "B task", "", 1)
 
 	item, err := c.GetReady("repo-a")
 	if err != nil {
@@ -225,7 +126,7 @@ func TestGetReady_RepoFilter(t *testing.T) {
 
 func TestGetReady_OnlyOpen(t *testing.T) {
 	c := testClient(t)
-	c.Add("myrepo", "Task", "", 1, 3)
+	c.Add("myrepo", "Task", "", 1)
 
 	// First GetReady atomically claims the item.
 	got, err := c.GetReady("myrepo")
@@ -259,7 +160,7 @@ func TestGetReady_NoWork(t *testing.T) {
 
 func TestAssign(t *testing.T) {
 	c := testClient(t)
-	item, _ := c.Add("myrepo", "Task", "", 1, 3)
+	item, _ := c.Add("myrepo", "Task", "", 1)
 
 	// Claim the item via GetReady (atomically sets in_progress).
 	c.GetReady("myrepo")
@@ -282,7 +183,7 @@ func TestAssign(t *testing.T) {
 
 func TestAssign_EmptyWorker_SetsOpen(t *testing.T) {
 	c := testClient(t)
-	item, _ := c.Add("myrepo", "Task", "", 1, 3)
+	item, _ := c.Add("myrepo", "Task", "", 1)
 	c.GetReady("myrepo") // claim item (sets in_progress)
 	c.Assign(item.ID, "alice", "implement")
 
@@ -308,7 +209,7 @@ func TestAssign_EmptyWorker_SetsOpen(t *testing.T) {
 // droplet is not locked to a stale aqueduct operator.
 func TestAssign_EmptyWorker_ClearsAssignedAqueduct(t *testing.T) {
 	c := testClient(t)
-	item, _ := c.Add("myrepo", "Task", "", 1, 3)
+	item, _ := c.Add("myrepo", "Task", "", 1)
 	c.GetReady("myrepo")
 	c.Assign(item.ID, "alice", "implement")
 	c.SetAssignedAqueduct(item.ID, "cistern-alice")
@@ -330,7 +231,7 @@ func TestAssign_EmptyWorker_ClearsAssignedAqueduct(t *testing.T) {
 
 func TestUpdateStatus(t *testing.T) {
 	c := testClient(t)
-	item, _ := c.Add("myrepo", "Task", "", 1, 3)
+	item, _ := c.Add("myrepo", "Task", "", 1)
 
 	if err := c.UpdateStatus(item.ID, "in_progress"); err != nil {
 		t.Fatal(err)
@@ -344,7 +245,7 @@ func TestUpdateStatus(t *testing.T) {
 
 func TestAddNote_And_GetNotes(t *testing.T) {
 	c := testClient(t)
-	item, _ := c.Add("myrepo", "Task", "", 1, 3)
+	item, _ := c.Add("myrepo", "Task", "", 1)
 
 	if err := c.AddNote(item.ID, "implement", "wrote the code"); err != nil {
 		t.Fatal(err)
@@ -382,7 +283,7 @@ func TestGetNotes_Empty(t *testing.T) {
 
 func TestPool(t *testing.T) {
 	c := testClient(t)
-	item, _ := c.Add("myrepo", "Task", "", 1, 3)
+	item, _ := c.Add("myrepo", "Task", "", 1)
 
 	if err := c.Pool(item.ID, "stuck on flaky test"); err != nil {
 		t.Fatal(err)
@@ -396,7 +297,7 @@ func TestPool(t *testing.T) {
 
 func TestCloseItem(t *testing.T) {
 	c := testClient(t)
-	item, _ := c.Add("myrepo", "Task", "", 1, 3)
+	item, _ := c.Add("myrepo", "Task", "", 1)
 
 	if err := c.CloseItem(item.ID); err != nil {
 		t.Fatal(err)
@@ -410,9 +311,9 @@ func TestCloseItem(t *testing.T) {
 
 func TestList_All(t *testing.T) {
 	c := testClient(t)
-	c.Add("myrepo", "Task 1", "", 1, 3)
-	c.Add("myrepo", "Task 2", "", 2, 3)
-	c.Add("other", "Task 3", "", 1, 3)
+	c.Add("myrepo", "Task 1", "", 1)
+	c.Add("myrepo", "Task 2", "", 2)
+	c.Add("other", "Task 3", "", 1)
 
 	items, err := c.List("", "")
 	if err != nil {
@@ -425,8 +326,8 @@ func TestList_All(t *testing.T) {
 
 func TestList_ByRepo(t *testing.T) {
 	c := testClient(t)
-	c.Add("myrepo", "Task 1", "", 1, 3)
-	c.Add("other", "Task 2", "", 1, 3)
+	c.Add("myrepo", "Task 1", "", 1)
+	c.Add("other", "Task 2", "", 1)
 
 	items, err := c.List("myrepo", "")
 	if err != nil {
@@ -442,8 +343,8 @@ func TestList_ByRepo(t *testing.T) {
 
 func TestList_ByStatus(t *testing.T) {
 	c := testClient(t)
-	item1, _ := c.Add("myrepo", "Open task", "", 1, 3)
-	item2, _ := c.Add("myrepo", "Closed task", "", 1, 3)
+	item1, _ := c.Add("myrepo", "Open task", "", 1)
+	item2, _ := c.Add("myrepo", "Closed task", "", 1)
 	_ = item1
 	c.CloseItem(item2.ID)
 
@@ -483,7 +384,7 @@ func TestAssign_NotFound(t *testing.T) {
 // (the field is preserved as-is when resetting to open).
 func TestAssign_SetsStageDispatchedAt(t *testing.T) {
 	c := testClient(t)
-	item, _ := c.Add("myrepo", "Task", "", 1, 2)
+	item, _ := c.Add("myrepo", "Task", "", 1)
 	c.GetReady("myrepo")
 
 	before := time.Now()
@@ -510,85 +411,10 @@ func TestAssign_SetsStageDispatchedAt(t *testing.T) {
 	}
 }
 
-func TestAdd_WithComplexity(t *testing.T) {
-	c := testClient(t)
-	item, err := c.Add("myrepo", "Trivial fix", "", 2, 1)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if item.Complexity != 1 {
-		t.Errorf("complexity = %d, want 1", item.Complexity)
-	}
-
-	got, err := c.Get(item.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got.Complexity != 1 {
-		t.Errorf("stored complexity = %d, want 1", got.Complexity)
-	}
-}
-
-func TestAdd_ComplexityDefault(t *testing.T) {
-	c := testClient(t)
-	// Out-of-range complexity should default to 2 (full).
-	item, err := c.Add("myrepo", "Bad cx", "", 2, 99)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if item.Complexity != 2 {
-		t.Errorf("complexity = %d, want 2 (default)", item.Complexity)
-	}
-}
-
-func TestGetReady_ReturnsComplexity(t *testing.T) {
-	c := testClient(t)
-	c.Add("myrepo", "Critical task", "", 1, 3)
-
-	item, err := c.GetReady("myrepo")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if item.Complexity != 3 {
-		t.Errorf("complexity = %d, want 3", item.Complexity)
-	}
-}
-
-func TestList_ReturnsComplexity(t *testing.T) {
-	c := testClient(t)
-	c.Add("myrepo", "Standard", "", 1, 1)
-	c.Add("myrepo", "Critical", "", 1, 3)
-
-	items, err := c.List("myrepo", "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(items) != 2 {
-		t.Fatalf("got %d items, want 2", len(items))
-	}
-	if items[0].Complexity != 1 {
-		t.Errorf("items[0].Complexity = %d, want 1", items[0].Complexity)
-	}
-	if items[1].Complexity != 3 {
-		t.Errorf("items[1].Complexity = %d, want 3", items[1].Complexity)
-	}
-}
-
-func TestStats_EmptyDB(t *testing.T) {
-	c := testClient(t)
-	s, err := c.Stats()
-	if err != nil {
-		t.Fatalf("Stats on empty DB: %v", err)
-	}
-	if s.Flowing != 0 || s.Queued != 0 || s.Delivered != 0 || s.Pooled != 0 {
-		t.Errorf("expected all zeros on empty DB, got %+v", s)
-	}
-}
-
 func TestAdd_WithDeps(t *testing.T) {
 	c := testClient(t)
-	parent, _ := c.Add("myrepo", "Parent", "", 1, 3)
-	child, err := c.Add("myrepo", "Child", "", 1, 3, parent.ID)
+	parent, _ := c.Add("myrepo", "Parent", "", 1)
+	child, err := c.Add("myrepo", "Child", "", 1, parent.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -603,7 +429,7 @@ func TestAdd_WithDeps(t *testing.T) {
 
 func TestAdd_UnknownDep(t *testing.T) {
 	c := testClient(t)
-	_, err := c.Add("myrepo", "Child", "", 1, 3, "nonexistent")
+	_, err := c.Add("myrepo", "Child", "", 1, "nonexistent")
 	if err == nil {
 		t.Error("expected error for unknown dep ID")
 	}
@@ -611,8 +437,8 @@ func TestAdd_UnknownDep(t *testing.T) {
 
 func TestAddDependency_And_RemoveDependency(t *testing.T) {
 	c := testClient(t)
-	a, _ := c.Add("myrepo", "A", "", 1, 3)
-	b, _ := c.Add("myrepo", "B", "", 1, 3)
+	a, _ := c.Add("myrepo", "A", "", 1)
+	b, _ := c.Add("myrepo", "B", "", 1)
 
 	if err := c.AddDependency(b.ID, a.ID); err != nil {
 		t.Fatal(err)
@@ -633,7 +459,7 @@ func TestAddDependency_And_RemoveDependency(t *testing.T) {
 
 func TestAddDependency_UnknownDroplet(t *testing.T) {
 	c := testClient(t)
-	a, _ := c.Add("myrepo", "A", "", 1, 3)
+	a, _ := c.Add("myrepo", "A", "", 1)
 	if err := c.AddDependency("nonexistent", a.ID); err == nil {
 		t.Error("expected error for unknown droplet")
 	}
@@ -644,8 +470,8 @@ func TestAddDependency_UnknownDroplet(t *testing.T) {
 
 func TestGetBlockedBy(t *testing.T) {
 	c := testClient(t)
-	parent, _ := c.Add("myrepo", "Parent", "", 1, 3)
-	child, _ := c.Add("myrepo", "Child", "", 1, 3, parent.ID)
+	parent, _ := c.Add("myrepo", "Parent", "", 1)
+	child, _ := c.Add("myrepo", "Child", "", 1, parent.ID)
 
 	// Parent not delivered — child is blocked.
 	blocked, err := c.GetBlockedBy(child.ID)
@@ -669,8 +495,8 @@ func TestGetBlockedBy(t *testing.T) {
 
 func TestGetReady_SkipsBlocked(t *testing.T) {
 	c := testClient(t)
-	parent, _ := c.Add("myrepo", "Parent", "", 1, 3)
-	_, _ = c.Add("myrepo", "Child", "", 1, 3, parent.ID)
+	parent, _ := c.Add("myrepo", "Parent", "", 1)
+	_, _ = c.Add("myrepo", "Child", "", 1, parent.ID)
 
 	// GetReady should return parent (child is blocked).
 	got, err := c.GetReady("myrepo")
@@ -699,8 +525,8 @@ func TestGetReady_SkipsBlocked(t *testing.T) {
 
 func TestGetReady_SkipsBlocked_NothingAvailable(t *testing.T) {
 	c := testClient(t)
-	parent, _ := c.Add("myrepo", "Parent", "", 1, 3)
-	_, _ = c.Add("myrepo", "Child", "", 1, 3, parent.ID)
+	parent, _ := c.Add("myrepo", "Parent", "", 1)
+	_, _ = c.Add("myrepo", "Child", "", 1, parent.ID)
 
 	// Claim parent.
 	c.GetReady("myrepo") // claims parent (in_progress)
@@ -716,7 +542,7 @@ func TestGetReady_SkipsBlocked_NothingAvailable(t *testing.T) {
 
 func TestSetAndGetLastReviewedCommit(t *testing.T) {
 	c := testClient(t)
-	item, _ := c.Add("myrepo", "Task", "", 1, 3)
+	item, _ := c.Add("myrepo", "Task", "", 1)
 
 	// Initially empty.
 	commit, err := c.GetLastReviewedCommit(item.ID)
@@ -745,7 +571,7 @@ func TestSetAndGetLastReviewedCommit(t *testing.T) {
 
 func TestSetLastReviewedCommit_Overwrite(t *testing.T) {
 	c := testClient(t)
-	item, _ := c.Add("myrepo", "Task", "", 1, 3)
+	item, _ := c.Add("myrepo", "Task", "", 1)
 
 	if err := c.SetLastReviewedCommit(item.ID, "hash-old"); err != nil {
 		t.Fatal(err)
@@ -765,7 +591,7 @@ func TestSetLastReviewedCommit_Overwrite(t *testing.T) {
 
 func TestGetLastReviewedCommit_PersistedInGet(t *testing.T) {
 	c := testClient(t)
-	item, _ := c.Add("myrepo", "Task", "", 1, 3)
+	item, _ := c.Add("myrepo", "Task", "", 1)
 
 	hash := "deadbeef00"
 	if err := c.SetLastReviewedCommit(item.ID, hash); err != nil {
@@ -785,13 +611,13 @@ func TestStats_WithData(t *testing.T) {
 	c := testClient(t)
 
 	// Add 2 open (queued), 1 in_progress (flowing), 3 delivered, 1 pooled.
-	c.Add("repo", "q1", "", 1, 3)
-	c.Add("repo", "q2", "", 1, 3)
-	item3, _ := c.Add("repo", "ip1", "", 1, 3)
-	item4, _ := c.Add("repo", "d1", "", 1, 3)
-	item5, _ := c.Add("repo", "d2", "", 1, 3)
-	item6, _ := c.Add("repo", "d3", "", 1, 3)
-	item7, _ := c.Add("repo", "s1", "", 1, 3)
+	c.Add("repo", "q1", "", 1)
+	c.Add("repo", "q2", "", 1)
+	item3, _ := c.Add("repo", "ip1", "", 1)
+	item4, _ := c.Add("repo", "d1", "", 1)
+	item5, _ := c.Add("repo", "d2", "", 1)
+	item6, _ := c.Add("repo", "d3", "", 1)
+	item7, _ := c.Add("repo", "s1", "", 1)
 
 	c.UpdateStatus(item3.ID, "in_progress")
 	c.CloseItem(item4.ID)
@@ -819,10 +645,10 @@ func TestStats_WithData(t *testing.T) {
 
 func TestSearch(t *testing.T) {
 	c := testClient(t)
-	c.Add("repo", "Fix login bug", "", 1, 3)
-	c.Add("repo", "Add dashboard feature", "", 2, 3)
-	c.Add("repo", "Fix signup flow", "", 1, 2)
-	ip, _ := c.Add("repo", "Refactor auth module", "", 3, 3)
+	c.Add("repo", "Fix login bug", "", 1)
+	c.Add("repo", "Add dashboard feature", "", 2)
+	c.Add("repo", "Fix signup flow", "", 1)
+	ip, _ := c.Add("repo", "Refactor auth module", "", 3)
 	c.UpdateStatus(ip.ID, "in_progress")
 
 	t.Run("empty query returns all", func(t *testing.T) {
@@ -913,7 +739,7 @@ func TestSearch(t *testing.T) {
 
 func TestEditDroplet_Title_GuardInProgress(t *testing.T) {
 	c := testClient(t)
-	item, _ := c.Add("myrepo", "Old title", "", 1, 3)
+	item, _ := c.Add("myrepo", "Old title", "", 1)
 	c.UpdateStatus(item.ID, "in_progress")
 
 	err := c.EditDroplet(item.ID, EditDropletFields{Title: ptr("New title")})
@@ -933,7 +759,7 @@ func TestSetOutcome(t *testing.T) {
 	for _, outcome := range []string{"pass", "recirculate", "pool"} {
 		t.Run(outcome, func(t *testing.T) {
 			c := testClient(t)
-			item, _ := c.Add("myrepo", "Task", "", 1, 3)
+			item, _ := c.Add("myrepo", "Task", "", 1)
 			if err := c.SetOutcome(item.ID, outcome); err != nil {
 				t.Fatal(err)
 			}
@@ -947,7 +773,7 @@ func TestSetOutcome(t *testing.T) {
 
 func TestSetOutcome_Clear(t *testing.T) {
 	c := testClient(t)
-	item, _ := c.Add("myrepo", "Task", "", 1, 3)
+	item, _ := c.Add("myrepo", "Task", "", 1)
 	c.SetOutcome(item.ID, "pass")
 
 	if err := c.SetOutcome(item.ID, ""); err != nil {
@@ -969,7 +795,7 @@ func TestSetOutcome_NotFound(t *testing.T) {
 
 func TestSetCataractae(t *testing.T) {
 	c := testClient(t)
-	item, _ := c.Add("myrepo", "Task", "", 1, 3)
+	item, _ := c.Add("myrepo", "Task", "", 1)
 
 	if err := c.SetCataractae(item.ID, "review"); err != nil {
 		t.Fatal(err)
@@ -990,9 +816,9 @@ func TestSetCataractae_NotFound(t *testing.T) {
 
 func TestPurge(t *testing.T) {
 	c := testClient(t)
-	delivered, _ := c.Add("myrepo", "Delivered", "", 1, 3)
-	pooled, _ := c.Add("myrepo", "Pooled", "", 1, 3)
-	inProgress, _ := c.Add("myrepo", "In progress", "", 1, 3)
+	delivered, _ := c.Add("myrepo", "Delivered", "", 1)
+	pooled, _ := c.Add("myrepo", "Pooled", "", 1)
+	inProgress, _ := c.Add("myrepo", "In progress", "", 1)
 
 	c.CloseItem(delivered.ID)  // status = delivered
 	c.Pool(pooled.ID, "stuck") // status = pooled
@@ -1023,7 +849,7 @@ func TestPurge(t *testing.T) {
 
 func TestPurge_DryRun(t *testing.T) {
 	c := testClient(t)
-	item, _ := c.Add("myrepo", "Task", "", 1, 3)
+	item, _ := c.Add("myrepo", "Task", "", 1)
 	c.CloseItem(item.ID)
 
 	n, err := c.Purge(-time.Hour, true) // dry run
@@ -1041,7 +867,7 @@ func TestPurge_DryRun(t *testing.T) {
 
 func TestPurge_LeavesInProgress(t *testing.T) {
 	c := testClient(t)
-	item, _ := c.Add("myrepo", "Task", "", 1, 3)
+	item, _ := c.Add("myrepo", "Task", "", 1)
 	c.UpdateStatus(item.ID, "in_progress")
 
 	n, err := c.Purge(-time.Hour, false)
@@ -1069,7 +895,7 @@ func TestListRecentEvents_Empty(t *testing.T) {
 
 func TestListRecentEvents_WithEvents(t *testing.T) {
 	c := testClient(t)
-	item, _ := c.Add("myrepo", "Task", "", 1, 3)
+	item, _ := c.Add("myrepo", "Task", "", 1)
 
 	// AddNote writes to cataractae_notes; Pool writes to events.
 	c.AddNote(item.ID, "implement", "wrote the code")
@@ -1091,7 +917,7 @@ func TestListRecentEvents_WithEvents(t *testing.T) {
 
 func TestListRecentEvents_Limit(t *testing.T) {
 	c := testClient(t)
-	item, _ := c.Add("myrepo", "Task", "", 1, 3)
+	item, _ := c.Add("myrepo", "Task", "", 1)
 
 	for range 5 {
 		c.AddNote(item.ID, "step", "note")
@@ -1110,7 +936,7 @@ func ptr[T any](v T) *T { return &v }
 
 func TestEditDroplet_Description(t *testing.T) {
 	c := testClient(t)
-	item, _ := c.Add("repo", "Title", "old desc", 2, 3)
+	item, _ := c.Add("repo", "Title", "old desc", 2)
 
 	err := c.EditDroplet(item.ID, EditDropletFields{Description: ptr("new desc")})
 	if err != nil {
@@ -1125,32 +951,11 @@ func TestEditDroplet_Description(t *testing.T) {
 	if got.Priority != 2 {
 		t.Errorf("priority = %d, want 2", got.Priority)
 	}
-	if got.Complexity != 3 {
-		t.Errorf("complexity = %d, want 3", got.Complexity)
-	}
-}
-
-func TestEditDroplet_Complexity(t *testing.T) {
-	c := testClient(t)
-	item, _ := c.Add("repo", "Title", "desc", 2, 3)
-
-	err := c.EditDroplet(item.ID, EditDropletFields{Complexity: ptr(1)})
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	got, _ := c.Get(item.ID)
-	if got.Complexity != 1 {
-		t.Errorf("complexity = %d, want 1", got.Complexity)
-	}
-	if got.Description != "desc" {
-		t.Errorf("description changed unexpectedly: %q", got.Description)
-	}
 }
 
 func TestEditDroplet_Priority(t *testing.T) {
 	c := testClient(t)
-	item, _ := c.Add("repo", "Title", "", 2, 3)
+	item, _ := c.Add("repo", "Title", "", 2)
 
 	err := c.EditDroplet(item.ID, EditDropletFields{Priority: ptr(1)})
 	if err != nil {
@@ -1165,7 +970,7 @@ func TestEditDroplet_Priority(t *testing.T) {
 
 func TestEditDroplet_Title(t *testing.T) {
 	c := testClient(t)
-	item, _ := c.Add("repo", "Old Title", "desc", 2, 3)
+	item, _ := c.Add("repo", "Old Title", "desc", 2)
 
 	err := c.EditDroplet(item.ID, EditDropletFields{Title: ptr("New Title")})
 	if err != nil {
@@ -1183,7 +988,7 @@ func TestEditDroplet_Title(t *testing.T) {
 
 func TestEditDroplet_EmptyTitle(t *testing.T) {
 	c := testClient(t)
-	item, _ := c.Add("repo", "Title", "desc", 2, 3)
+	item, _ := c.Add("repo", "Title", "desc", 2)
 
 	err := c.EditDroplet(item.ID, EditDropletFields{Title: ptr("")})
 	if err == nil {
@@ -1196,7 +1001,7 @@ func TestEditDroplet_EmptyTitle(t *testing.T) {
 
 func TestEditDroplet_InvalidPriority(t *testing.T) {
 	c := testClient(t)
-	item, _ := c.Add("repo", "Title", "", 2, 3)
+	item, _ := c.Add("repo", "Title", "", 2)
 
 	for _, bad := range []int{0, -1} {
 		err := c.EditDroplet(item.ID, EditDropletFields{Priority: ptr(bad)})
@@ -1210,12 +1015,11 @@ func TestEditDroplet_InvalidPriority(t *testing.T) {
 
 func TestEditDroplet_AllFields(t *testing.T) {
 	c := testClient(t)
-	item, _ := c.Add("repo", "Title", "old", 3, 3)
+	item, _ := c.Add("repo", "Title", "old", 3)
 
 	err := c.EditDroplet(item.ID, EditDropletFields{
 		Title:       ptr("New Title"),
 		Description: ptr("updated"),
-		Complexity:  ptr(2),
 		Priority:    ptr(1),
 	})
 	if err != nil {
@@ -1229,9 +1033,6 @@ func TestEditDroplet_AllFields(t *testing.T) {
 	if got.Description != "updated" {
 		t.Errorf("description = %q, want %q", got.Description, "updated")
 	}
-	if got.Complexity != 2 {
-		t.Errorf("complexity = %d, want 2", got.Complexity)
-	}
 	if got.Priority != 1 {
 		t.Errorf("priority = %d, want 1", got.Priority)
 	}
@@ -1239,7 +1040,7 @@ func TestEditDroplet_AllFields(t *testing.T) {
 
 func TestEditDroplet_GuardInProgress(t *testing.T) {
 	c := testClient(t)
-	item, _ := c.Add("repo", "Title", "", 1, 3)
+	item, _ := c.Add("repo", "Title", "", 1)
 	c.UpdateStatus(item.ID, "in_progress")
 
 	err := c.EditDroplet(item.ID, EditDropletFields{Description: ptr("new")})
@@ -1256,7 +1057,7 @@ func TestEditDroplet_GuardInProgress(t *testing.T) {
 
 func TestEditDroplet_GuardDelivered(t *testing.T) {
 	c := testClient(t)
-	item, _ := c.Add("repo", "Title", "", 1, 3)
+	item, _ := c.Add("repo", "Title", "", 1)
 	c.CloseItem(item.ID)
 
 	err := c.EditDroplet(item.ID, EditDropletFields{Description: ptr("new")})
@@ -1270,7 +1071,7 @@ func TestEditDroplet_GuardDelivered(t *testing.T) {
 
 func TestEditDroplet_AllowPooled(t *testing.T) {
 	c := testClient(t)
-	item, _ := c.Add("repo", "Title", "old", 1, 3)
+	item, _ := c.Add("repo", "Title", "old", 1)
 	c.Pool(item.ID, "stuck")
 
 	err := c.EditDroplet(item.ID, EditDropletFields{Description: ptr("updated")})
@@ -1286,33 +1087,12 @@ func TestEditDroplet_AllowPooled(t *testing.T) {
 
 func TestEditDroplet_NoFields(t *testing.T) {
 	c := testClient(t)
-	item, _ := c.Add("repo", "Title", "desc", 2, 3)
+	item, _ := c.Add("repo", "Title", "desc", 2)
 
 	// No-op: no fields specified should be fine at the client layer.
 	err := c.EditDroplet(item.ID, EditDropletFields{})
 	if err != nil {
 		t.Fatalf("unexpected error for no-op edit: %v", err)
-	}
-}
-
-func TestEditDroplet_InvalidComplexity(t *testing.T) {
-	c := testClient(t)
-	item, _ := c.Add("repo", "Title", "desc", 2, 3)
-
-	for _, bad := range []int{0, -1, 4, 5, 100} {
-		err := c.EditDroplet(item.ID, EditDropletFields{Complexity: ptr(bad)})
-		if err == nil {
-			t.Errorf("expected error for complexity=%d", bad)
-		} else if !strings.Contains(err.Error(), "complexity must be between 1 and 3") {
-			t.Errorf("complexity=%d: unexpected error: %v", bad, err)
-		}
-	}
-
-	// Valid boundary values should succeed.
-	for _, ok := range []int{1, 3} {
-		if err := c.EditDroplet(item.ID, EditDropletFields{Complexity: ptr(ok)}); err != nil {
-			t.Errorf("complexity=%d should be valid, got: %v", ok, err)
-		}
 	}
 }
 
@@ -1327,7 +1107,7 @@ func TestEditDroplet_NotFound(t *testing.T) {
 
 func TestEditDroplet_MultilineDescription(t *testing.T) {
 	c := testClient(t)
-	item, _ := c.Add("repo", "Title", "", 2, 3)
+	item, _ := c.Add("repo", "Title", "", 2)
 
 	multiline := "line one\nline two\nline three"
 	err := c.EditDroplet(item.ID, EditDropletFields{Description: ptr(multiline)})
@@ -1343,7 +1123,7 @@ func TestEditDroplet_MultilineDescription(t *testing.T) {
 
 func TestEditDroplet_ClearDescription(t *testing.T) {
 	c := testClient(t)
-	item, _ := c.Add("repo", "Title", "has content", 2, 3)
+	item, _ := c.Add("repo", "Title", "has content", 2)
 
 	err := c.EditDroplet(item.ID, EditDropletFields{Description: ptr("")})
 	if err != nil {
@@ -1358,7 +1138,7 @@ func TestEditDroplet_ClearDescription(t *testing.T) {
 
 func TestCancel_SetsStatusCancelled(t *testing.T) {
 	c := testClient(t)
-	item, _ := c.Add("myrepo", "Superseded feature", "", 1, 3)
+	item, _ := c.Add("myrepo", "Superseded feature", "", 1)
 
 	if err := c.Cancel(item.ID, "superseded by newer approach"); err != nil {
 		t.Fatal(err)
@@ -1375,7 +1155,7 @@ func TestCancel_SetsStatusCancelled(t *testing.T) {
 
 func TestCancel_RecordsSchedulerNoteWithReason(t *testing.T) {
 	c := testClient(t)
-	item, _ := c.Add("myrepo", "Old feature", "", 1, 3)
+	item, _ := c.Add("myrepo", "Old feature", "", 1)
 
 	reason := "filed in error"
 	if err := c.Cancel(item.ID, reason); err != nil {
@@ -1400,7 +1180,7 @@ func TestCancel_RecordsSchedulerNoteWithReason(t *testing.T) {
 
 func TestCancel_EmptyReason_WritesSchedulerNote(t *testing.T) {
 	c := testClient(t)
-	item, _ := c.Add("myrepo", "Old feature", "", 1, 3)
+	item, _ := c.Add("myrepo", "Old feature", "", 1)
 
 	if err := c.Cancel(item.ID, ""); err != nil {
 		t.Fatal(err)
@@ -1423,7 +1203,7 @@ func TestCancel_EmptyReason_WritesSchedulerNote(t *testing.T) {
 
 func TestCancel_PreservesAssignee(t *testing.T) {
 	c := testClient(t)
-	item, _ := c.Add("myrepo", "Obsolete task", "", 1, 2)
+	item, _ := c.Add("myrepo", "Obsolete task", "", 1)
 	c.Assign(item.ID, "worker-1", "implement")
 
 	pre, err := c.Get(item.ID)
@@ -1449,7 +1229,7 @@ func TestCancel_PreservesAssignee(t *testing.T) {
 
 func TestCancel_ClearsOutcome(t *testing.T) {
 	c := testClient(t)
-	item, _ := c.Add("myrepo", "Obsolete task", "", 1, 2)
+	item, _ := c.Add("myrepo", "Obsolete task", "", 1)
 	c.Assign(item.ID, "worker-1", "implement")
 	c.SetOutcome(item.ID, "pass")
 
@@ -1476,7 +1256,7 @@ func TestCancel_ClearsOutcome(t *testing.T) {
 
 func TestCancel_ClearsAssignedAqueduct(t *testing.T) {
 	c := testClient(t)
-	item, _ := c.Add("myrepo", "Obsolete task", "", 1, 2)
+	item, _ := c.Add("myrepo", "Obsolete task", "", 1)
 	c.SetAssignedAqueduct(item.ID, "cistern-gamma")
 	pre, err := c.Get(item.ID)
 	if err != nil {
@@ -1501,7 +1281,7 @@ func TestCancel_ClearsAssignedAqueduct(t *testing.T) {
 
 func TestCancel_RecordsCancelEvent(t *testing.T) {
 	c := testClient(t)
-	item, _ := c.Add("myrepo", "Obsolete task", "", 1, 2)
+	item, _ := c.Add("myrepo", "Obsolete task", "", 1)
 
 	reason := "superseded by ct-abc12"
 	if err := c.Cancel(item.ID, reason); err != nil {
@@ -1526,7 +1306,7 @@ func TestCancel_RecordsCancelEvent(t *testing.T) {
 
 func TestCancel_PreservesExistingNotes(t *testing.T) {
 	c := testClient(t)
-	item, _ := c.Add("myrepo", "Obsolete task", "", 1, 2)
+	item, _ := c.Add("myrepo", "Obsolete task", "", 1)
 
 	c.AddNote(item.ID, "implement", "started work")
 	c.AddNote(item.ID, "review", "found issues")
@@ -1565,7 +1345,7 @@ func TestCancel_NotFound(t *testing.T) {
 
 func TestCancel_AlreadyCancelled_ReturnsTerminalError(t *testing.T) {
 	c := testClient(t)
-	item, _ := c.Add("myrepo", "Feature", "", 1, 3)
+	item, _ := c.Add("myrepo", "Feature", "", 1)
 	if err := c.Cancel(item.ID, "first cancel"); err != nil {
 		t.Fatal(err)
 	}
@@ -1580,7 +1360,7 @@ func TestCancel_AlreadyCancelled_ReturnsTerminalError(t *testing.T) {
 
 func TestCancel_Delivered_ReturnsTerminalError(t *testing.T) {
 	c := testClient(t)
-	item, _ := c.Add("myrepo", "Feature", "", 1, 3)
+	item, _ := c.Add("myrepo", "Feature", "", 1)
 	if err := c.CloseItem(item.ID); err != nil {
 		t.Fatal(err)
 	}
@@ -1595,7 +1375,7 @@ func TestCancel_Delivered_ReturnsTerminalError(t *testing.T) {
 
 func TestCancel_ExcludedFromGetReady(t *testing.T) {
 	c := testClient(t)
-	item, _ := c.Add("myrepo", "Old feature", "", 1, 3)
+	item, _ := c.Add("myrepo", "Old feature", "", 1)
 
 	if err := c.Cancel(item.ID, "won't do"); err != nil {
 		t.Fatal(err)
@@ -1613,8 +1393,8 @@ func TestCancel_ExcludedFromGetReady(t *testing.T) {
 
 func TestList_ExcludesCancelledByDefault(t *testing.T) {
 	c := testClient(t)
-	c.Add("myrepo", "Active", "", 1, 3)
-	cancelled, _ := c.Add("myrepo", "Cancelled", "", 1, 3)
+	c.Add("myrepo", "Active", "", 1)
+	cancelled, _ := c.Add("myrepo", "Cancelled", "", 1)
 	c.Cancel(cancelled.ID, "not needed")
 
 	// List with no status filter must not include cancelled items.
@@ -1631,8 +1411,8 @@ func TestList_ExcludesCancelledByDefault(t *testing.T) {
 
 func TestList_CancelledStatus_ReturnsOnlyCancelled(t *testing.T) {
 	c := testClient(t)
-	c.Add("myrepo", "Active", "", 1, 3)
-	cancelled, _ := c.Add("myrepo", "Cancelled", "", 1, 3)
+	c.Add("myrepo", "Active", "", 1)
+	cancelled, _ := c.Add("myrepo", "Cancelled", "", 1)
 	c.Cancel(cancelled.ID, "not needed")
 
 	items, err := c.List("myrepo", "cancelled")
@@ -1671,7 +1451,7 @@ func TestCancel_NotFound_NoOrphanNote(t *testing.T) {
 // TestPurge_IncludesCancelled verifies that cancelled droplets are cleaned up by Purge.
 func TestPurge_IncludesCancelled(t *testing.T) {
 	c := testClient(t)
-	item, _ := c.Add("myrepo", "Cancelled task", "", 1, 3)
+	item, _ := c.Add("myrepo", "Cancelled task", "", 1)
 	c.Cancel(item.ID, "won't do")
 
 	n, err := c.Purge(-time.Hour, false)
@@ -1690,8 +1470,8 @@ func TestPurge_IncludesCancelled(t *testing.T) {
 // dependency was cancelled is still dispatched (cancelled != unresolved).
 func TestGetReady_CancelledDependency_DoesNotBlock(t *testing.T) {
 	c := testClient(t)
-	dep, _ := c.Add("myrepo", "Dependency", "", 1, 3)
-	child, _ := c.Add("myrepo", "Child", "", 2, 3, dep.ID)
+	dep, _ := c.Add("myrepo", "Dependency", "", 1)
+	child, _ := c.Add("myrepo", "Child", "", 2, dep.ID)
 
 	// Cancel the dependency instead of delivering it.
 	if err := c.Cancel(dep.ID, "no longer needed"); err != nil {
@@ -1715,8 +1495,8 @@ func TestGetReady_CancelledDependency_DoesNotBlock(t *testing.T) {
 // droplets when no status filter is given (consistent with List behaviour).
 func TestSearch_ExcludesCancelledByDefault(t *testing.T) {
 	c := testClient(t)
-	c.Add("myrepo", "Active task", "", 1, 3)
-	cancelled, _ := c.Add("myrepo", "Cancelled task", "", 1, 3)
+	c.Add("myrepo", "Active task", "", 1)
+	cancelled, _ := c.Add("myrepo", "Cancelled task", "", 1)
 	c.Cancel(cancelled.ID, "not needed")
 
 	results, err := c.Search("", "", 0)
@@ -1735,7 +1515,7 @@ func TestSearch_ExcludesCancelledByDefault(t *testing.T) {
 func TestGetReady_CaseInsensitiveRepo_ReturnsDropletStoredWithWrongCase(t *testing.T) {
 	c := testClient(t)
 	// Given: a droplet stored with lower-case repo name.
-	_, err := c.Add("portfoliowebsite", "My task", "", 1, 2)
+	_, err := c.Add("portfoliowebsite", "My task", "", 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1759,7 +1539,7 @@ func TestGetReady_CaseInsensitiveRepo_ReturnsDropletStoredWithWrongCase(t *testi
 // ExternalRef — the column defaults to NULL and is scanned as an empty string.
 func TestExternalRef_IsNullByDefault(t *testing.T) {
 	c := testClient(t)
-	item, err := c.Add("myrepo", "Task", "", 1, 2)
+	item, err := c.Add("myrepo", "Task", "", 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1776,7 +1556,7 @@ func TestExternalRef_IsNullByDefault(t *testing.T) {
 // the external reference and Get returns it correctly.
 func TestSetExternalRef_And_Get_RoundTrips(t *testing.T) {
 	c := testClient(t)
-	item, err := c.Add("myrepo", "Imported task", "", 1, 2)
+	item, err := c.Add("myrepo", "Imported task", "", 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1800,7 +1580,7 @@ func TestSetExternalRef_And_Get_RoundTrips(t *testing.T) {
 // empty string to SetExternalRef stores NULL (returned as empty string by Get).
 func TestSetExternalRef_ClearsField_WhenEmptyStringPassed(t *testing.T) {
 	c := testClient(t)
-	item, err := c.Add("myrepo", "Imported task", "", 1, 2)
+	item, err := c.Add("myrepo", "Imported task", "", 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1827,7 +1607,7 @@ func TestSetExternalRef_ClearsField_WhenEmptyStringPassed(t *testing.T) {
 // external_ref stored on the droplet.
 func TestExternalRef_RoundTrips_ThroughGetReady(t *testing.T) {
 	c := testClient(t)
-	item, err := c.Add("myrepo", "Task", "", 1, 2)
+	item, err := c.Add("myrepo", "Task", "", 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1854,7 +1634,7 @@ func TestExternalRef_RoundTrips_ThroughGetReady(t *testing.T) {
 // external_ref stored on each droplet.
 func TestExternalRef_RoundTrips_ThroughList(t *testing.T) {
 	c := testClient(t)
-	item, err := c.Add("myrepo", "Task", "", 1, 2)
+	item, err := c.Add("myrepo", "Task", "", 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1881,7 +1661,7 @@ func TestExternalRef_RoundTrips_ThroughList(t *testing.T) {
 // external_ref stored on each droplet.
 func TestExternalRef_RoundTrips_ThroughSearch(t *testing.T) {
 	c := testClient(t)
-	item, err := c.Add("myrepo", "Imported feature", "", 1, 2)
+	item, err := c.Add("myrepo", "Imported feature", "", 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1911,7 +1691,7 @@ func TestExternalRef_RoundTrips_ThroughSearch(t *testing.T) {
 // leave LastHeartbeatAt zero and this test would fail.
 func TestHeartbeat_RoundTrips_ThroughGet(t *testing.T) {
 	c := testClient(t)
-	item, err := c.Add("myrepo", "Task", "", 1, 2)
+	item, err := c.Add("myrepo", "Task", "", 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1941,7 +1721,7 @@ func TestHeartbeat_RoundTrips_ThroughGet(t *testing.T) {
 // last_heartbeat_at written by Heartbeat().
 func TestHeartbeat_RoundTrips_ThroughList(t *testing.T) {
 	c := testClient(t)
-	item, err := c.Add("myrepo", "Task", "", 1, 2)
+	item, err := c.Add("myrepo", "Task", "", 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1974,7 +1754,7 @@ func TestHeartbeat_RoundTrips_ThroughList(t *testing.T) {
 // last_heartbeat_at written by Heartbeat().
 func TestHeartbeat_RoundTrips_ThroughSearch(t *testing.T) {
 	c := testClient(t)
-	item, err := c.Add("myrepo", "Heartbeat task", "", 1, 2)
+	item, err := c.Add("myrepo", "Heartbeat task", "", 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2007,7 +1787,7 @@ func TestHeartbeat_RoundTrips_ThroughSearch(t *testing.T) {
 // last_heartbeat_at written by Heartbeat().
 func TestHeartbeat_RoundTrips_ThroughGetReady(t *testing.T) {
 	c := testClient(t)
-	item, err := c.Add("myrepo", "Task", "", 1, 2)
+	item, err := c.Add("myrepo", "Task", "", 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2040,7 +1820,7 @@ func TestHeartbeat_RoundTrips_ThroughGetReady(t *testing.T) {
 // GetReadyForAqueduct returns the last_heartbeat_at written by Heartbeat().
 func TestHeartbeat_RoundTrips_ThroughGetReadyForAqueduct(t *testing.T) {
 	c := testClient(t)
-	item, err := c.Add("myrepo", "Task", "", 1, 2)
+	item, err := c.Add("myrepo", "Task", "", 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2084,7 +1864,7 @@ func TestSetExternalRef_ReturnsError_WhenDropletNotFound(t *testing.T) {
 // names or that break the delivery shell awk extraction (spaces, ~, ^, etc.).
 func TestSetExternalRef_RejectsInvalidFormat(t *testing.T) {
 	c := testClient(t)
-	item, err := c.Add("myrepo", "Task", "", 1, 2)
+	item, err := c.Add("myrepo", "Task", "", 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2128,7 +1908,7 @@ func TestSetExternalRef_RejectsInvalidFormat(t *testing.T) {
 // well-formed 'provider:key' values with git-branch-safe characters.
 func TestSetExternalRef_AcceptsValidFormats(t *testing.T) {
 	c := testClient(t)
-	item, err := c.Add("myrepo", "Task", "", 1, 2)
+	item, err := c.Add("myrepo", "Task", "", 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2157,7 +1937,7 @@ func TestSetExternalRef_AcceptsValidFormats(t *testing.T) {
 func TestGetReadyForAqueduct_CaseInsensitiveRepo_ReturnsDroplet(t *testing.T) {
 	c := testClient(t)
 	// Given: a droplet stored with upper-case repo name.
-	_, err := c.Add("CISTERN", "Cistern task", "", 1, 2)
+	_, err := c.Add("CISTERN", "Cistern task", "", 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2182,9 +1962,9 @@ func TestGetReadyForAqueduct_CaseInsensitiveRepo_ReturnsDroplet(t *testing.T) {
 func TestList_CaseInsensitiveRepo_ReturnsDroplets(t *testing.T) {
 	c := testClient(t)
 	// Given: droplets stored with mixed-case repo names.
-	c.Add("scaledtest", "Task A", "", 1, 2)
-	c.Add("SCALEDTEST", "Task B", "", 1, 2)
-	c.Add("other", "Task C", "", 1, 2)
+	c.Add("scaledtest", "Task A", "", 1)
+	c.Add("SCALEDTEST", "Task B", "", 1)
+	c.Add("other", "Task C", "", 1)
 
 	// When: List is called with canonical casing.
 	items, err := c.List("ScaledTest", "")
@@ -2216,7 +1996,6 @@ func TestNew_RepoCaseMigration_NormalizesCanonicalRepos(t *testing.T) {
 		title TEXT NOT NULL,
 		description TEXT DEFAULT '',
 		priority INTEGER DEFAULT 2,
-		complexity INTEGER DEFAULT 2,
 		status TEXT DEFAULT 'open',
 		assignee TEXT DEFAULT '',
 		current_cataractae TEXT DEFAULT '',
@@ -2293,7 +2072,7 @@ func TestNew_RepoCaseMigration_IsIdempotent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	c1.Add("cistern", "Task", "", 1, 2)
+	c1.Add("cistern", "Task", "", 1)
 	c1.Close()
 
 	// Second open: migration must be a no-op.
@@ -2317,8 +2096,8 @@ func TestNew_RepoCaseMigration_IsIdempotent(t *testing.T) {
 // status="cancelled" filter returns cancelled droplets.
 func TestSearch_CancelledStatus_ReturnsCancelled(t *testing.T) {
 	c := testClient(t)
-	c.Add("myrepo", "Active task", "", 1, 3)
-	cancelled, _ := c.Add("myrepo", "Cancelled task", "", 1, 3)
+	c.Add("myrepo", "Active task", "", 1)
+	cancelled, _ := c.Add("myrepo", "Cancelled task", "", 1)
 	c.Cancel(cancelled.ID, "not needed")
 
 	results, err := c.Search("", "cancelled", 0)
@@ -2337,7 +2116,7 @@ func TestSearch_CancelledStatus_ReturnsCancelled(t *testing.T) {
 // the assigned_aqueduct so no ghost assignments linger after terminal state.
 func TestCloseItem_ClearsAssignedAqueduct(t *testing.T) {
 	c := testClient(t)
-	item, _ := c.Add("myrepo", "Feature", "", 1, 2)
+	item, _ := c.Add("myrepo", "Feature", "", 1)
 	c.SetAssignedAqueduct(item.ID, "cistern-alpha")
 	pre, err := c.Get(item.ID)
 	if err != nil {
@@ -2364,7 +2143,7 @@ func TestCloseItem_ClearsAssignedAqueduct(t *testing.T) {
 // removes assigned_aqueduct so no ghost assignments linger.
 func TestPool_ClearsAssignedAqueduct(t *testing.T) {
 	c := testClient(t)
-	item, _ := c.Add("myrepo", "Stuck task", "", 1, 2)
+	item, _ := c.Add("myrepo", "Stuck task", "", 1)
 	c.SetAssignedAqueduct(item.ID, "cistern-beta")
 	pre, err := c.Get(item.ID)
 	if err != nil {
@@ -2392,7 +2171,7 @@ func TestPool_ClearsAssignedAqueduct(t *testing.T) {
 // overwriting an existing assignment.
 func TestSetAssignedAqueduct_WhenAlreadySet_DoesNotOverwrite(t *testing.T) {
 	c := testClient(t)
-	item, _ := c.Add("myrepo", "Contested task", "", 1, 2)
+	item, _ := c.Add("myrepo", "Contested task", "", 1)
 
 	// First assignment should succeed.
 	if err := c.SetAssignedAqueduct(item.ID, "cistern-alpha"); err != nil {
@@ -2442,7 +2221,6 @@ func TestNew_LastHeartbeatAtMigration_AddsColumnToExistingDB(t *testing.T) {
 		title TEXT NOT NULL,
 		description TEXT DEFAULT '',
 		priority INTEGER DEFAULT 2,
-		complexity INTEGER DEFAULT 1,
 		status TEXT DEFAULT 'open',
 		assignee TEXT DEFAULT '',
 		current_cataractae TEXT DEFAULT '',
@@ -2493,7 +2271,7 @@ func TestNew_LastHeartbeatAtMigration_AddsColumnToExistingDB(t *testing.T) {
 func TestExternalRef_RoundTrips_ThroughGetReadyForAqueduct(t *testing.T) {
 	c := testClient(t)
 	// Given: a droplet with an external_ref set.
-	item, err := c.Add("myrepo", "Imported task", "", 1, 2)
+	item, err := c.Add("myrepo", "Imported task", "", 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2521,7 +2299,7 @@ func TestExternalRef_RoundTrips_ThroughGetReadyForAqueduct(t *testing.T) {
 
 func TestGetDropletChanges_Empty(t *testing.T) {
 	c := testClient(t)
-	item, err := c.Add("myrepo", "Task", "", 1, 2)
+	item, err := c.Add("myrepo", "Task", "", 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2537,7 +2315,7 @@ func TestGetDropletChanges_Empty(t *testing.T) {
 
 func TestGetDropletChanges_ReturnsNotes(t *testing.T) {
 	c := testClient(t)
-	item, err := c.Add("myrepo", "Task", "", 1, 2)
+	item, err := c.Add("myrepo", "Task", "", 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2566,7 +2344,7 @@ func TestGetDropletChanges_ReturnsNotes(t *testing.T) {
 
 func TestGetDropletChanges_ReturnsEvents(t *testing.T) {
 	c := testClient(t)
-	item, err := c.Add("myrepo", "Task", "", 1, 2)
+	item, err := c.Add("myrepo", "Task", "", 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2590,7 +2368,7 @@ func TestGetDropletChanges_ReturnsEvents(t *testing.T) {
 
 func TestGetDropletChanges_MixedNotesAndEvents(t *testing.T) {
 	c := testClient(t)
-	item, err := c.Add("myrepo", "Task", "", 1, 2)
+	item, err := c.Add("myrepo", "Task", "", 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2620,7 +2398,7 @@ func TestGetDropletChanges_MixedNotesAndEvents(t *testing.T) {
 
 func TestGetDropletChanges_RespectsLimit_ReturnsNewest(t *testing.T) {
 	c := testClient(t)
-	item, err := c.Add("myrepo", "Task", "", 1, 2)
+	item, err := c.Add("myrepo", "Task", "", 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2647,7 +2425,7 @@ func TestGetDropletChanges_RespectsLimit_ReturnsNewest(t *testing.T) {
 
 func TestGetDropletChanges_OrderedOldestFirst(t *testing.T) {
 	c := testClient(t)
-	item, err := c.Add("myrepo", "Task", "", 1, 2)
+	item, err := c.Add("myrepo", "Task", "", 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2684,7 +2462,7 @@ func TestGetDropletChanges_NotFoundReturnEmpty(t *testing.T) {
 
 func TestRestart_WithCataractae(t *testing.T) {
 	c := testClient(t)
-	item, err := c.Add("myrepo", "Stuck feature", "", 1, 3)
+	item, err := c.Add("myrepo", "Stuck feature", "", 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2715,7 +2493,7 @@ func TestRestart_WithCataractae(t *testing.T) {
 
 func TestRestart_WithSameCataractae(t *testing.T) {
 	c := testClient(t)
-	item, err := c.Add("myrepo", "Task", "", 1, 3)
+	item, err := c.Add("myrepo", "Task", "", 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2739,7 +2517,7 @@ func TestRestart_WithSameCataractae(t *testing.T) {
 
 func TestRestart_WritesSchedulerNote(t *testing.T) {
 	c := testClient(t)
-	item, err := c.Add("myrepo", "Task", "", 1, 3)
+	item, err := c.Add("myrepo", "Task", "", 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2772,7 +2550,7 @@ func TestRestart_WritesSchedulerNote(t *testing.T) {
 
 func TestRestart_PreservesExistingNotes(t *testing.T) {
 	c := testClient(t)
-	item, err := c.Add("myrepo", "Task", "", 1, 3)
+	item, err := c.Add("myrepo", "Task", "", 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2801,7 +2579,7 @@ func TestRestart_PreservesExistingNotes(t *testing.T) {
 
 func TestRestart_ClearsOutcomeAndAssignee(t *testing.T) {
 	c := testClient(t)
-	item, err := c.Add("myrepo", "Task", "", 1, 3)
+	item, err := c.Add("myrepo", "Task", "", 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2835,7 +2613,7 @@ func TestRestart_NotFound(t *testing.T) {
 
 func TestRestart_UpdatesTimestamp(t *testing.T) {
 	c := testClient(t)
-	item, err := c.Add("myrepo", "Task", "", 1, 3)
+	item, err := c.Add("myrepo", "Task", "", 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2853,7 +2631,7 @@ func TestRestart_UpdatesTimestamp(t *testing.T) {
 
 func TestRestart_ClearsStageDispatchedAt(t *testing.T) {
 	c := testClient(t)
-	item, _ := c.Add("myrepo", "Task", "", 1, 3)
+	item, _ := c.Add("myrepo", "Task", "", 1)
 	c.GetReady("myrepo")
 	c.Assign(item.ID, "worker-1", "implement")
 
@@ -2878,7 +2656,7 @@ func TestRestart_ClearsStageDispatchedAt(t *testing.T) {
 
 func TestRestart_ClearsLastHeartbeatAt(t *testing.T) {
 	c := testClient(t)
-	item, _ := c.Add("myrepo", "Task", "", 1, 3)
+	item, _ := c.Add("myrepo", "Task", "", 1)
 
 	if err := c.Heartbeat(item.ID); err != nil {
 		t.Fatal(err)

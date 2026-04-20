@@ -213,11 +213,10 @@ func TestPrintDropletListTerminal(t *testing.T) {
 		return &cistern.Droplet{
 			ID:                id,
 			Title:             title,
-			Status:            status,
-			CurrentCataractae: cataractae,
-			Complexity:        2,
-			UpdatedAt:         time.Now(),
-		}
+ 			Status:            status,
+ 			CurrentCataractae: cataractae,
+ 			UpdatedAt:         time.Now(),
+ 		}
 	}
 
 	t.Run("empty lists print only header", func(t *testing.T) {
@@ -225,7 +224,7 @@ func TestPrintDropletListTerminal(t *testing.T) {
 			printDropletListTerminal(nil, nil, false, 30)
 		})
 		// Header must contain all column labels.
-		for _, label := range []string{"ID", "COMPLEXITY", "TITLE", "STATUS", "ELAPSED", "CATARACTA"} {
+		for _, label := range []string{"ID", "TITLE", "STATUS", "ELAPSED", "CATARACTA"} {
 			if !strings.Contains(out, label) {
 				t.Errorf("header missing column %q:\n%s", label, out)
 			}

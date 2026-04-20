@@ -325,13 +325,12 @@ func TestRenderTemplate_DropletFields(t *testing.T) {
 		Name:       "test",
 		Cataractae: []WorkflowCataractae{{Name: "s", Type: CataractaeTypeGate, OnPass: "done"}},
 	}
-	content := `ID={{.Droplet.ID}} Title={{.Droplet.Title}} Complexity={{.Droplet.Complexity}}`
+	content := `ID={{.Droplet.ID}} Title={{.Droplet.Title}}`
 	ctx := TemplateContext{
 		Step: BuildStepTemplateContext(wf, &wf.Cataractae[0]),
 		Droplet: DropletTemplateContext{
-			ID:         "ct-999",
-			Title:      "My Feature",
-			Complexity: 2,
+			ID:    "ct-999",
+			Title: "My Feature",
 		},
 		Pipeline: BuildPipeline(wf),
 	}
@@ -342,8 +341,5 @@ func TestRenderTemplate_DropletFields(t *testing.T) {
 	}
 	if !strings.Contains(result, "Title=My Feature") {
 		t.Errorf("result should contain Title, got %q", result)
-	}
-	if !strings.Contains(result, "Complexity=2") {
-		t.Errorf("result should contain Complexity, got %q", result)
 	}
 }

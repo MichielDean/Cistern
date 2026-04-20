@@ -7,7 +7,7 @@ import (
 
 func TestAddIssue_And_ListIssues(t *testing.T) {
 	c := testClient(t)
-	item, _ := c.Add("myrepo", "Task", "", 1, 3)
+	item, _ := c.Add("myrepo", "Task", "", 1)
 
 	iss, err := c.AddIssue(item.ID, "reviewer", "missing error handling in foo()")
 	if err != nil {
@@ -40,7 +40,7 @@ func TestAddIssue_And_ListIssues(t *testing.T) {
 
 func TestListIssues_OpenOnly(t *testing.T) {
 	c := testClient(t)
-	item, _ := c.Add("myrepo", "Task", "", 1, 3)
+	item, _ := c.Add("myrepo", "Task", "", 1)
 
 	iss1, _ := c.AddIssue(item.ID, "reviewer", "issue one")
 	iss2, _ := c.AddIssue(item.ID, "reviewer", "issue two")
@@ -74,7 +74,7 @@ func TestListIssues_OpenOnly(t *testing.T) {
 
 func TestResolveIssue(t *testing.T) {
 	c := testClient(t)
-	item, _ := c.Add("myrepo", "Task", "", 1, 3)
+	item, _ := c.Add("myrepo", "Task", "", 1)
 	iss, _ := c.AddIssue(item.ID, "reviewer", "some finding")
 
 	if err := c.ResolveIssue(iss.ID, "grep output shows it's fixed"); err != nil {
@@ -95,7 +95,7 @@ func TestResolveIssue(t *testing.T) {
 
 func TestRejectIssue(t *testing.T) {
 	c := testClient(t)
-	item, _ := c.Add("myrepo", "Task", "", 1, 3)
+	item, _ := c.Add("myrepo", "Task", "", 1)
 	iss, _ := c.AddIssue(item.ID, "reviewer", "some finding")
 
 	if err := c.RejectIssue(iss.ID, "still present: grep shows it"); err != nil {
@@ -129,7 +129,7 @@ func TestRejectIssue_NotFound(t *testing.T) {
 
 func TestCountOpenIssues(t *testing.T) {
 	c := testClient(t)
-	item, _ := c.Add("myrepo", "Task", "", 1, 3)
+	item, _ := c.Add("myrepo", "Task", "", 1)
 
 	n, err := c.CountOpenIssues(item.ID)
 	if err != nil {
@@ -157,7 +157,7 @@ func TestCountOpenIssues(t *testing.T) {
 
 func TestListIssues_FlaggedByFilter(t *testing.T) {
 	c := testClient(t)
-	item, _ := c.Add("myrepo", "Task", "", 1, 3)
+	item, _ := c.Add("myrepo", "Task", "", 1)
 
 	// Given: issues from two different cataractae.
 	c.AddIssue(item.ID, "reviewer", "reviewer issue one")
@@ -206,7 +206,7 @@ func TestListIssues_FlaggedByFilter(t *testing.T) {
 func TestSetOutcome_BlockedByOpenIssues(t *testing.T) {
 	// Verify CountOpenIssues returns correct data so the CLI can enforce the block.
 	c := testClient(t)
-	item, _ := c.Add("myrepo", "Task", "", 1, 3)
+	item, _ := c.Add("myrepo", "Task", "", 1)
 	c.AddIssue(item.ID, "reviewer", "unfixed issue")
 
 	n, err := c.CountOpenIssues(item.ID)

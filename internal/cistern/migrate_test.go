@@ -108,7 +108,7 @@ func TestEndToEndSchemaVerification(t *testing.T) {
 	defer c.Close()
 
 	expectedColumns := []string{
-		"id", "repo", "title", "description", "priority", "complexity",
+		"id", "repo", "title", "description", "priority",
 		"status", "assignee", "current_cataractae", "outcome",
 		"assigned_aqueduct", "last_reviewed_commit", "external_ref",
 		"last_heartbeat_at", "created_at", "updated_at", "stage_dispatched_at",
@@ -154,8 +154,8 @@ func TestEndToEndSchemaVerification(t *testing.T) {
 
 	var migrationCount int
 	c.db.QueryRow(`SELECT COUNT(*) FROM "_schema_migrations"`).Scan(&migrationCount)
-	if migrationCount != 15 {
-		t.Errorf("expected 15 migration records, got %d", migrationCount)
+	if migrationCount != 16 {
+		t.Errorf("expected 16 migration records, got %d", migrationCount)
 	}
 }
 

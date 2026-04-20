@@ -43,8 +43,6 @@ type cisternInfo struct {
 type dropletInfo struct {
 	ID             string    `json:"id"`
 	Title          string    `json:"title"`
-	Complexity     int       `json:"complexity"`
-	ComplexityName string    `json:"complexity_name"`
 	Status         string    `json:"status"`
 	Stage          string    `json:"stage"`
 	Operator       string    `json:"operator"`
@@ -184,14 +182,12 @@ func buildInspectOutput(cfgPath, dbPath string) (inspectOutput, error) {
 			continue
 		}
 		di := dropletInfo{
-			ID:             item.ID,
-			Title:          item.Title,
-			Complexity:     item.Complexity,
-			ComplexityName: complexityName(item.Complexity),
-			Status:         item.Status,
-			Stage:          item.CurrentCataractae,
-			Operator:       item.Assignee,
-			UpdatedAt:      item.UpdatedAt,
+			ID:        item.ID,
+			Title:     item.Title,
+			Status:    item.Status,
+			Stage:     item.CurrentCataractae,
+			Operator:  item.Assignee,
+			UpdatedAt: item.UpdatedAt,
 		}
 		if item.Status == "open" {
 			if blockedBy, err := c.GetBlockedBy(item.ID); err == nil && len(blockedBy) > 0 {

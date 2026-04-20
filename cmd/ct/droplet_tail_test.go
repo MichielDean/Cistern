@@ -32,7 +32,7 @@ func runTailCapture(t *testing.T, id string) (string, error) {
 
 func TestDropletTail_TextFormat_ShowsNotesAndEvents(t *testing.T) {
 	c, _ := setupTailTestDB(t)
-	item, err := c.Add("myrepo", "Tail task", "", 1, 2)
+	item, err := c.Add("myrepo", "Tail task", "", 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -61,7 +61,7 @@ func TestDropletTail_TextFormat_ShowsNotesAndEvents(t *testing.T) {
 
 func TestDropletTail_JsonFormat_OutputsNDJson(t *testing.T) {
 	c, _ := setupTailTestDB(t)
-	item, err := c.Add("myrepo", "Json task", "", 1, 2)
+	item, err := c.Add("myrepo", "Json task", "", 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -95,7 +95,7 @@ func TestDropletTail_JsonFormat_OutputsNDJson(t *testing.T) {
 
 func TestDropletTail_LinesFlag_LimitsOutput(t *testing.T) {
 	c, _ := setupTailTestDB(t)
-	item, err := c.Add("myrepo", "Limited task", "", 1, 2)
+	item, err := c.Add("myrepo", "Limited task", "", 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -130,7 +130,7 @@ func TestDropletTail_LinesFlag_LimitsOutput(t *testing.T) {
 
 func TestDropletTail_PoolEvent(t *testing.T) {
 	c, _ := setupTailTestDB(t)
-	item, err := c.Add("myrepo", "Pooled task", "", 1, 2)
+	item, err := c.Add("myrepo", "Pooled task", "", 1)
 	if err != nil {
 		t.Fatal(err)
 	}

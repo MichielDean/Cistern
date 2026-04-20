@@ -1471,7 +1471,7 @@ func newTestDBWithDroplet(t *testing.T) (dbPath, dropletID string) {
 		t.Fatal(err)
 	}
 	defer c.Close()
-	d, err := c.Add("test-repo", "test droplet", "", 2, 2)
+	d, err := c.Add("test-repo", "test droplet", "", 2)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -3110,7 +3110,7 @@ func TestExecActionCmd_AddDependency_AddsDep(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	dep, err := c.Add("test-repo", "dep droplet", "", 1, 1)
+	dep, err := c.Add("test-repo", "dep droplet", "", 1)
 	c.Close()
 	if err != nil {
 		t.Fatal(err)
@@ -3155,7 +3155,7 @@ func TestExecActionCmd_RemoveDependency_RemovesDep(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	dep, err := c.Add("test-repo", "dep droplet", "", 1, 1)
+	dep, err := c.Add("test-repo", "dep droplet", "", 1)
 	if err != nil {
 		c.Close()
 		t.Fatal(err)
@@ -3267,9 +3267,6 @@ func TestExecMultiActionCmd_CreateDroplet_CreatesDroplet(t *testing.T) {
 	}
 	if items[0].Title != "my new task" {
 		t.Errorf("title = %q, want %q", items[0].Title, "my new task")
-	}
-	if items[0].Complexity != 2 {
-		t.Errorf("complexity = %d, want 2", items[0].Complexity)
 	}
 }
 
@@ -3440,8 +3437,8 @@ func TestTabApp_MultiOverlay_EditMeta_MultiFields(t *testing.T) {
 	updated, _ := m.Update(tuiPaletteActionMsg{dropletID: "ci-aaa", action: actionEditMeta})
 	um := updated.(tabAppModel)
 
-	if len(um.overlayMultiFields) != 4 {
-		t.Errorf("overlayMultiFields len = %d, want 4 for editMeta", len(um.overlayMultiFields))
+	if len(um.overlayMultiFields) != 3 {
+		t.Errorf("overlayMultiFields len = %d, want 3 for editMeta", len(um.overlayMultiFields))
 	}
 }
 

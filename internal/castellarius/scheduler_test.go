@@ -28,7 +28,7 @@ func newTestLogger(buf *bytes.Buffer) *slog.Logger {
 
 type filedDroplet struct {
 	Repo, Title, Description string
-	Priority, Complexity     int
+	Priority                 int
 }
 
 type mockClient struct {
@@ -210,7 +210,7 @@ func (m *mockClient) Cancel(id, reason string) error {
 	return nil
 }
 
-func (m *mockClient) FileDroplet(repo, title, description string, priority, complexity int) (*cistern.Droplet, error) {
+func (m *mockClient) FileDroplet(repo, title, description string, priority int) (*cistern.Droplet, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	d := &cistern.Droplet{
@@ -218,7 +218,7 @@ func (m *mockClient) FileDroplet(repo, title, description string, priority, comp
 		Repo:  repo,
 		Title: title,
 	}
-	m.filed = append(m.filed, filedDroplet{repo, title, description, priority, complexity})
+	m.filed = append(m.filed, filedDroplet{repo, title, description, priority})
 	return d, nil
 }
 
@@ -414,7 +414,7 @@ func TestRoute(t *testing.T) {
 		OnPass:        "review",
 		OnFail:        "pooled",
 		OnRecirculate: "implement",
-		OnPool:        "human",
+		OnPool:        "pooled",
 	}
 
 	tests := []struct {
@@ -424,7 +424,7 @@ func TestRoute(t *testing.T) {
 		{ResultPass, "review"},
 		{ResultFail, "pooled"},
 		{ResultRecirculate, "implement"},
-		{ResultPool, "human"},
+		{ResultPool, "pooled"},
 		{Result("unknown"), "pooled"},
 	}
 
@@ -437,7 +437,7 @@ func TestRoute(t *testing.T) {
 }
 
 func TestIsTerminal(t *testing.T) {
-	for _, name := range []string{"done", "pooled", "human", "pool", "Done", "POOLED"} {
+	for _, name := range []string{"done", "pooled", "pool", "Done", "POOLED"} {
 		if !isTerminal(name) {
 			t.Errorf("isTerminal(%q) = false, want true", name)
 		}
@@ -1585,133 +1585,6 @@ func TestLookupStep(t *testing.T) {
 	}
 	if s := lookupCataracta(wf, "nonexistent"); s != nil {
 		t.Error("expected nil for unknown step")
-	}
-}
-
-// --- complexity / human-gate tests ---
-
-// criticalWorkflow returns a workflow with RequireHuman for critical (level 3)
-// droplets and no skip rules on any step.
-func criticalWorkflow() *aqueduct.Workflow {
-	return &aqueduct.Workflow{
-		Name: "feature",
-		Cataractae: []aqueduct.WorkflowCataractae{
-			{Name: "implement", Type: aqueduct.CataractaeTypeAgent, OnPass: "adversarial-review", OnFail: "pooled"},
-			{Name: "adversarial-review", Type: aqueduct.CataractaeTypeAgent, OnPass: "qa", OnFail: "implement", OnRecirculate: "implement"},
-			{Name: "qa", Type: aqueduct.CataractaeTypeAgent, OnPass: "docs", OnFail: "implement"},
-			{Name: "docs", Type: aqueduct.CataractaeTypeAgent, OnPass: "delivery", OnFail: "implement", OnRecirculate: "implement", OnPool: "human"},
-			{Name: "delivery", Type: aqueduct.CataractaeTypeAgent, OnPass: "done", OnRecirculate: "implement", OnPool: "human"},
-		},
-		Complexity: aqueduct.ComplexityConfig{
-			Standard: aqueduct.ComplexityLevel{Level: 1},
-			Full:     aqueduct.ComplexityLevel{Level: 2},
-			Critical: aqueduct.ComplexityLevel{Level: 3, RequireHuman: true},
-		},
-	}
-}
-
-func TestComplexity_CriticalHumanGateBeforeMerge(t *testing.T) {
-	wf := criticalWorkflow()
-	client := newMockClient()
-	client.readyItems = []*cistern.Droplet{
-		{ID: "crit-1", CurrentCataractae: "docs", Complexity: 3},
-	}
-
-	runner := newMockRunner(client)
-	// default outcome "pass"; docs.OnPass = "delivery" → critical → "human" → pool
-
-	config := aqueduct.AqueductConfig{
-		Repos: []aqueduct.RepoConfig{
-			{Name: "test-repo", Cataractae: 1, Names: []string{"alpha"}, Prefix: "test"},
-		},
-		MaxCataractae: 4,
-	}
-	workflows := map[string]*aqueduct.Workflow{"test-repo": wf}
-	clients := map[string]CisternClient{"test-repo": client}
-	sched := NewFromParts(config, workflows, clients, runner)
-	sched.Tick(context.Background())
-
-	if !runner.waitCalls(1, time.Second) {
-		t.Fatal("timed out")
-	}
-	sched.Tick(context.Background())
-	time.Sleep(10 * time.Millisecond)
-
-	client.mu.Lock()
-	defer client.mu.Unlock()
-	// docs passes → next is delivery → critical requires human gate → should pool.
-	if _, ok := client.pooled["crit-1"]; !ok {
-		t.Errorf("expected critical droplet pooled to human before delivery, got step %q", client.steps["crit-1"])
-	}
-}
-
-func TestTick_StandardDrop_AdvancesToAdversarialReview(t *testing.T) {
-	wf := criticalWorkflow()
-	client := newMockClient()
-	client.readyItems = []*cistern.Droplet{
-		{ID: "std-1", Complexity: 1},
-	}
-
-	runner := newMockRunner(client)
-
-	config := aqueduct.AqueductConfig{
-		Repos: []aqueduct.RepoConfig{
-			{Name: "test-repo", Cataractae: 1, Names: []string{"alpha"}, Prefix: "test"},
-		},
-		MaxCataractae: 4,
-	}
-	workflows := map[string]*aqueduct.Workflow{"test-repo": wf}
-	clients := map[string]CisternClient{"test-repo": client}
-	sched := NewFromParts(config, workflows, clients, runner)
-	sched.Tick(context.Background())
-
-	if !runner.waitCalls(1, time.Second) {
-		t.Fatal("timed out")
-	}
-	// implement passed → advance to adversarial-review.
-	sched.Tick(context.Background())
-	time.Sleep(10 * time.Millisecond)
-
-	client.mu.Lock()
-	defer client.mu.Unlock()
-	if client.steps["std-1"] != "adversarial-review" {
-		t.Errorf("expected droplet at adversarial-review, got %q", client.steps["std-1"])
-	}
-}
-
-func TestComplexity_HumanGateSetsCurrentCataractae(t *testing.T) {
-	wf := criticalWorkflow()
-	client := newMockClient()
-	client.readyItems = []*cistern.Droplet{
-		{ID: "crit-2", CurrentCataractae: "docs", Complexity: 3},
-	}
-
-	runner := newMockRunner(client)
-	config := aqueduct.AqueductConfig{
-		Repos: []aqueduct.RepoConfig{
-			{Name: "test-repo", Cataractae: 1, Names: []string{"alpha"}, Prefix: "test"},
-		},
-		MaxCataractae: 4,
-	}
-	workflows := map[string]*aqueduct.Workflow{"test-repo": wf}
-	clients := map[string]CisternClient{"test-repo": client}
-	sched := NewFromParts(config, workflows, clients, runner)
-	sched.Tick(context.Background())
-
-	if !runner.waitCalls(1, time.Second) {
-		t.Fatal("timed out waiting for runner")
-	}
-	sched.Tick(context.Background())
-	time.Sleep(10 * time.Millisecond)
-
-	client.mu.Lock()
-	defer client.mu.Unlock()
-	// Human gate: pooled and current_cataractae must be set to "human".
-	if _, ok := client.pooled["crit-2"]; !ok {
-		t.Errorf("expected critical droplet pooled, not found in pooled map")
-	}
-	if client.steps["crit-2"] != "human" {
-		t.Errorf("expected current_cataractae='human', got %q", client.steps["crit-2"])
 	}
 }
 

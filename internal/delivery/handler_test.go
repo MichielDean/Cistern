@@ -16,7 +16,7 @@ type fakeAdder struct {
 	err error
 }
 
-func (f *fakeAdder) Add(title, repo, description, externalRef string, priority, complexity int) (string, error) {
+func (f *fakeAdder) Add(title, repo, description, externalRef string, priority int) (string, error) {
 	return f.id, f.err
 }
 
@@ -361,7 +361,7 @@ type captureAdder struct {
 	gotExternalRef string
 }
 
-func (a *captureAdder) Add(title, repo, description, externalRef string, priority, complexity int) (string, error) {
+func (a *captureAdder) Add(title, repo, description, externalRef string, priority int) (string, error) {
 	a.gotExternalRef = externalRef
 	return "ct-captured", nil
 }

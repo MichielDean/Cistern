@@ -10,7 +10,7 @@ import (
 
 // DropletAdder is the interface for persisting a new droplet.
 type DropletAdder interface {
-	Add(title, repo, description, externalRef string, priority, complexity int) (string, error)
+	Add(title, repo, description, externalRef string, priority int) (string, error)
 }
 
 // Handler is an http.Handler for the droplet ingestion endpoint (POST /droplets).
@@ -57,7 +57,6 @@ type addRequest struct {
 	Description string `json:"description,omitempty"`
 	ExternalRef string `json:"external_ref,omitempty"`
 	Priority    int    `json:"priority,omitempty"`
-	Complexity  int    `json:"complexity,omitempty"`
 }
 
 type addResponse struct {
@@ -104,7 +103,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	id, err := h.adder.Add(req.Title, req.Repo, req.Description, req.ExternalRef, req.Priority, req.Complexity)
+	id, err := h.adder.Add(req.Title, req.Repo, req.Description, req.ExternalRef, req.Priority)
 	if err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return

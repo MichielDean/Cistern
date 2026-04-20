@@ -63,7 +63,6 @@ func runCataractaeRender(cmd *cobra.Command, args []string) error {
 		ID:          "<droplet-id>",
 		Title:       "<droplet title>",
 		Description: "<droplet description>",
-		Complexity:  1,
 	}
 
 	if cataractaeRenderDroplet != "" {
@@ -81,7 +80,6 @@ func runCataractaeRender(cmd *cobra.Command, args []string) error {
 			ID:          item.ID,
 			Title:       item.Title,
 			Description: item.Description,
-			Complexity:  item.Complexity,
 		}
 	}
 

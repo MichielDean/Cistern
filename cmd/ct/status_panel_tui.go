@@ -130,24 +130,6 @@ func (p statusPanel) View() string {
 		tuiStyleDim.Render(fmt.Sprintf("%d", p.data.DoneCount)))
 	lines = append(lines, summary, "")
 
-	// ── Human-gated notice ───────────────────────────────────────────────────
-	var humanGated []*cistern.Droplet
-	for _, d := range p.data.PooledItems {
-		if d.CurrentCataractae == "human" {
-			humanGated = append(humanGated, d)
-		}
-	}
-	if len(humanGated) > 0 {
-		ids := make([]string, len(humanGated))
-		for i, d := range humanGated {
-			ids[i] = d.ID
-		}
-		lines = append(lines,
-			tuiStyleYellow.Render(fmt.Sprintf("  ⏸  %d droplet(s) awaiting human approval: %s",
-				len(humanGated), strings.Join(ids, ", "))),
-			"")
-	}
-
 	// ── Castellarius health ──────────────────────────────────────────────────
 	farmStatus := tuiStyleRed.Render("stopped")
 	if p.data.FarmRunning {
