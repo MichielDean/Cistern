@@ -21,6 +21,7 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -1070,6 +1071,7 @@ func newDashboardMuxInternalWith(cfgPath, dbPath string, tui *DashboardTUI, fetc
 
 	// Repos & Skills
 	apiMux.HandleFunc("GET /api/repos", handleGetRepos(cfgPath))
+	apiMux.HandleFunc("GET /api/repos/{name}/steps", handleGetRepoSteps(cfgPath))
 	apiMux.HandleFunc("GET /api/skills", handleGetSkills())
 
 	// SSE for droplet detail
@@ -1292,7 +1294,12 @@ func handleGetDroplets(dbPath string) http.HandlerFunc {
 			if items == nil {
 				items = []*cistern.Droplet{}
 			}
-			writeAPIJSON(w, http.StatusOK, items)
+			writeAPIJSON(w, http.StatusOK, map[string]any{
+				"droplets": items,
+				"total":    len(items),
+				"page":     1,
+				"per_page": len(items),
+			})
 			return nil
 		})
 	}
@@ -1311,7 +1318,10 @@ func handleSearchDroplets(dbPath string) http.HandlerFunc {
 			if items == nil {
 				items = []*cistern.Droplet{}
 			}
-			writeAPIJSON(w, http.StatusOK, items)
+			writeAPIJSON(w, http.StatusOK, map[string]any{
+				"droplets": items,
+				"total":    len(items),
+			})
 			return nil
 		})
 	}
@@ -1919,10 +1929,22 @@ func handleGetDependencies(dbPath string) http.HandlerFunc {
 			if err != nil {
 				return err
 			}
-			if deps == nil {
-				deps = []string{}
+			undelivered, err := c.GetBlockedBy(id)
+			if err != nil {
+				return err
 			}
-			writeAPIJSON(w, http.StatusOK, deps)
+			result := make([]map[string]string, 0, len(deps)+len(undelivered))
+			for _, d := range deps {
+				ty := "blocking"
+				for _, u := range undelivered {
+					if u == d {
+						ty = "blocked_by"
+						break
+					}
+				}
+				result = append(result, map[string]string{"depends_on": d, "type": ty})
+			}
+			writeAPIJSON(w, http.StatusOK, result)
 			return nil
 		})
 	}
@@ -1955,7 +1977,22 @@ func handleAddDependency(dbPath string) http.HandlerFunc {
 			if err != nil {
 				return err
 			}
-			writeAPIJSON(w, http.StatusCreated, deps)
+			undelivered, err := c.GetBlockedBy(id)
+			if err != nil {
+				return err
+			}
+			result := make([]map[string]string, 0, len(deps)+len(undelivered))
+			for _, d := range deps {
+				ty := "blocking"
+				for _, u := range undelivered {
+					if u == d {
+						ty = "blocked_by"
+						break
+					}
+				}
+				result = append(result, map[string]string{"depends_on": d, "type": ty})
+			}
+			writeAPIJSON(w, http.StatusCreated, result)
 			return nil
 		})
 	}
@@ -2127,6 +2164,37 @@ func handleGetRepos(cfgPath string) http.HandlerFunc {
 			repos = append(repos, repoInfo{Name: r.Name, URL: r.URL})
 		}
 		writeAPIJSON(w, http.StatusOK, repos)
+	}
+}
+
+func handleGetRepoSteps(cfgPath string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		repoName := r.PathValue("name")
+		cfg, err := aqueduct.ParseAqueductConfig(cfgPath)
+		if err != nil {
+			writeAPIError(w, http.StatusInternalServerError, "internal error")
+			return
+		}
+		for _, repo := range cfg.Repos {
+			if repo.Name == repoName {
+				wfPath := repo.WorkflowPath
+				if !filepath.IsAbs(wfPath) {
+					wfPath = filepath.Join(filepath.Dir(cfgPath), wfPath)
+				}
+				wf, wfErr := aqueduct.ParseWorkflow(wfPath)
+				if wfErr != nil || wf == nil {
+					writeAPIJSON(w, http.StatusOK, []string{})
+					return
+				}
+				steps := make([]string, len(wf.Cataractae))
+				for i, step := range wf.Cataractae {
+					steps[i] = step.Name
+				}
+				writeAPIJSON(w, http.StatusOK, steps)
+				return
+			}
+		}
+		writeAPIError(w, http.StatusNotFound, "repo not found")
 	}
 }
 

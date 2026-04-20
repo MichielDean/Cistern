@@ -4,6 +4,8 @@ import { createBrowserRouter, RouterProvider } from 'react-router-dom';
 import { AppLayout } from './App';
 import { Dashboard } from './pages/Dashboard';
 import { PlaceholderPage } from './pages/Placeholder';
+import { DropletsList } from './pages/DropletsList';
+import { DropletDetail } from './pages/DropletDetail';
 import './index.css';
 
 const router = createBrowserRouter([
@@ -12,7 +14,8 @@ const router = createBrowserRouter([
     element: <AppLayout />,
     children: [
       { index: true, element: <Dashboard /> },
-      { path: 'droplets', element: <PlaceholderPage title="Droplets" /> },
+      { path: 'droplets', element: <DropletsList /> },
+      { path: 'droplets/:id', element: <DropletDetail /> },
       { path: 'castellarius', element: <PlaceholderPage title="Castellarius" /> },
       { path: 'doctor', element: <PlaceholderPage title="Doctor" /> },
       { path: 'logs', element: <PlaceholderPage title="Logs" /> },

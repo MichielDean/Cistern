@@ -59,12 +59,20 @@ func TestAPI_GetDroplets_ReturnsJSON(t *testing.T) {
 	if !strings.Contains(ct, "application/json") {
 		t.Errorf("Content-Type = %q, want application/json", ct)
 	}
-	var droplets []*cistern.Droplet
-	if err := json.NewDecoder(w.Body).Decode(&droplets); err != nil {
+	var resp struct {
+		Droplets []*cistern.Droplet `json:"droplets"`
+		Total    int                `json:"total"`
+		Page     int                `json:"page"`
+		PerPage  int                `json:"per_page"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if len(droplets) != 1 {
-		t.Errorf("len(droplets) = %d, want 1", len(droplets))
+	if len(resp.Droplets) != 1 {
+		t.Errorf("len(droplets) = %d, want 1", len(resp.Droplets))
+	}
+	if resp.Total != 1 {
+		t.Errorf("total = %d, want 1", resp.Total)
 	}
 }
 
@@ -83,12 +91,14 @@ func TestAPI_GetDroplets_FiltersByRepo(t *testing.T) {
 	w := httptest.NewRecorder()
 	mux.ServeHTTP(w, req)
 
-	var droplets []*cistern.Droplet
-	if err := json.NewDecoder(w.Body).Decode(&droplets); err != nil {
+	var resp struct {
+		Droplets []*cistern.Droplet `json:"droplets"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if len(droplets) != 1 || droplets[0].Repo != "repo-a" {
-		t.Errorf("expected 1 droplet from repo-a, got %d", len(droplets))
+	if len(resp.Droplets) != 1 || resp.Droplets[0].Repo != "repo-a" {
+		t.Errorf("expected 1 droplet from repo-a, got %d", len(resp.Droplets))
 	}
 }
 
@@ -109,12 +119,14 @@ func TestAPI_GetDroplets_FiltersByStatus(t *testing.T) {
 	w := httptest.NewRecorder()
 	mux.ServeHTTP(w, req)
 
-	var droplets []*cistern.Droplet
-	if err := json.NewDecoder(w.Body).Decode(&droplets); err != nil {
+	var resp struct {
+		Droplets []*cistern.Droplet `json:"droplets"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if len(droplets) != 1 || droplets[0].Status != "in_progress" {
-		t.Errorf("expected 1 in_progress droplet, got %d", len(droplets))
+	if len(resp.Droplets) != 1 || resp.Droplets[0].Status != "in_progress" {
+		t.Errorf("expected 1 in_progress droplet, got %d", len(resp.Droplets))
 	}
 }
 
@@ -182,15 +194,21 @@ func TestAPI_GetDropletsSearch_ReturnsMatches(t *testing.T) {
 	w := httptest.NewRecorder()
 	mux.ServeHTTP(w, req)
 
-	var droplets []*cistern.Droplet
-	if err := json.NewDecoder(w.Body).Decode(&droplets); err != nil {
+	var resp struct {
+		Droplets []*cistern.Droplet `json:"droplets"`
+		Total    int                `json:"total"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if len(droplets) != 1 {
-		t.Errorf("expected 1 result, got %d", len(droplets))
+	if resp.Total != 1 {
+		t.Errorf("expected total=1, got %d", resp.Total)
 	}
-	if droplets[0].Title != "Feature Alpha" {
-		t.Errorf("Title = %q, want 'Feature Alpha'", droplets[0].Title)
+	if len(resp.Droplets) != 1 {
+		t.Errorf("expected 1 result, got %d", len(resp.Droplets))
+	}
+	if resp.Droplets[0].Title != "Feature Alpha" {
+		t.Errorf("Title = %q, want 'Feature Alpha'", resp.Droplets[0].Title)
 	}
 }
 
@@ -688,12 +706,21 @@ func TestAPI_GetDependencies_ReturnsDeps(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200", w.Code)
 	}
-	var deps []string
+	var deps []struct {
+		DependsOn string `json:"depends_on"`
+		Type      string `json:"type"`
+	}
 	if err := json.NewDecoder(w.Body).Decode(&deps); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if len(deps) != 1 || deps[0] != parent.ID {
-		t.Errorf("deps = %v, want [%s]", deps, parent.ID)
+	if len(deps) != 1 {
+		t.Fatalf("len(deps) = %d, want 1", len(deps))
+	}
+	if deps[0].DependsOn != parent.ID {
+		t.Errorf("depends_on = %q, want %q", deps[0].DependsOn, parent.ID)
+	}
+	if deps[0].Type != "blocked_by" {
+		t.Errorf("type = %q, want %q (parent is undelivered, so child is blocked by it)", deps[0].Type, "blocked_by")
 	}
 }
 
@@ -716,6 +743,19 @@ func TestAPI_AddDependency_Success(t *testing.T) {
 
 	if w.Code != http.StatusCreated {
 		t.Errorf("status = %d, want 201", w.Code)
+	}
+	var deps []struct {
+		DependsOn string `json:"depends_on"`
+		Type      string `json:"type"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&deps); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(deps) != 1 {
+		t.Fatalf("len(deps) = %d, want 1", len(deps))
+	}
+	if deps[0].DependsOn != parent.ID {
+		t.Errorf("depends_on = %q, want %q", deps[0].DependsOn, parent.ID)
 	}
 }
 
@@ -949,6 +989,41 @@ func TestAPI_GetRepos(t *testing.T) {
 
 	if w.Code != http.StatusOK {
 		t.Errorf("status = %d, want 200", w.Code)
+	}
+}
+
+func TestAPI_GetRepoSteps_ReturnsSteps(t *testing.T) {
+	mux := newDashboardMux(tempCfg(t), tempDB(t))
+	req := httptest.NewRequest(http.MethodGet, "/api/repos/myrepo/steps", nil)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body = %s", w.Code, w.Body.String())
+	}
+	var steps []string
+	if err := json.NewDecoder(w.Body).Decode(&steps); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	expected := []string{"implement", "review", "merge"}
+	if len(steps) != len(expected) {
+		t.Errorf("steps = %v, want %v", steps, expected)
+	}
+	for i, step := range steps {
+		if step != expected[i] {
+			t.Errorf("steps[%d] = %q, want %q", i, step, expected[i])
+		}
+	}
+}
+
+func TestAPI_GetRepoSteps_NotFoundRepo(t *testing.T) {
+	mux := newDashboardMux(tempCfg(t), tempDB(t))
+	req := httptest.NewRequest(http.MethodGet, "/api/repos/nonexistent/steps", nil)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusNotFound {
+		t.Errorf("status = %d, want 404", w.Code)
 	}
 }
 
