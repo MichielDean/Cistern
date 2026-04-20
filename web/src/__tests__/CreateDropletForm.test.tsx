@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, act } from '@testing-library/react';
+import { MemoryRouter } from 'react-router-dom';
 import { CreateDropletForm } from '../components/CreateDropletForm';
 import type { Droplet } from '../api/types';
 
@@ -18,6 +19,16 @@ const mockDroplet: Droplet = {
 };
 
 const defaultSteps = ['implement', 'review', 'qa', 'docs', 'delivery'];
+
+function renderForm(props: { onSuccess?: () => void; onCancel?: () => void } = {}, initialEntry = '/app/droplets/new') {
+  const onSuccess = props.onSuccess ?? vi.fn();
+  const onCancel = props.onCancel ?? vi.fn();
+  return render(
+    <MemoryRouter initialEntries={[initialEntry]}>
+      <CreateDropletForm onSuccess={onSuccess} onCancel={onCancel} />
+    </MemoryRouter>,
+  );
+}
 
 function mockFetch(urls: Record<string, unknown>) {
   vi.spyOn(window, 'fetch').mockImplementation(async (input: RequestInfo | URL) => {
@@ -56,7 +67,7 @@ describe('CreateDropletForm', () => {
 
   it('renders form fields', () => {
     mockFetch({ '/api/repos': [{ name: 'cistern', url: 'git@github.com:test/cistern' }] });
-    render(<CreateDropletForm onSuccess={vi.fn()} onCancel={vi.fn()} />);
+    renderForm();
     expect(screen.getByText('Title *')).toBeInTheDocument();
     expect(screen.getByText('Description')).toBeInTheDocument();
     expect(screen.getByText('Priority')).toBeInTheDocument();
@@ -68,14 +79,14 @@ describe('CreateDropletForm', () => {
 
   it('disables submit when title is empty', () => {
     mockFetch({ '/api/repos': [{ name: 'cistern', url: 'git@github.com:test/cistern' }] });
-    render(<CreateDropletForm onSuccess={vi.fn()} onCancel={vi.fn()} />);
+    renderForm();
     const submitBtn = screen.getByRole('button', { name: /create droplet/i });
     expect(submitBtn).toBeDisabled();
   });
 
   it('shows complexity levels', () => {
     mockFetch({ '/api/repos': [{ name: 'cistern', url: 'git@github.com:test/cistern' }] });
-    render(<CreateDropletForm onSuccess={vi.fn()} onCancel={vi.fn()} />);
+    renderForm();
     expect(screen.getByText('Standard (1)')).toBeInTheDocument();
     expect(screen.getByText('Full (2)')).toBeInTheDocument();
     expect(screen.getByText('Critical (3)')).toBeInTheDocument();
@@ -84,7 +95,7 @@ describe('CreateDropletForm', () => {
   it('calls onCancel when cancel is clicked', () => {
     mockFetch({ '/api/repos': [{ name: 'cistern', url: 'git@github.com:test/cistern' }] });
     const onCancel = vi.fn();
-    render(<CreateDropletForm onSuccess={vi.fn()} onCancel={onCancel} />);
+    renderForm({ onCancel });
     screen.getByRole('button', { name: /cancel/i }).click();
     expect(onCancel).toHaveBeenCalled();
   });
@@ -96,7 +107,7 @@ describe('CreateDropletForm', () => {
     });
     const onSuccess = vi.fn();
 
-    render(<CreateDropletForm onSuccess={onSuccess} onCancel={vi.fn()} />);
+    renderForm({ onSuccess });
 
     await act(async () => {
       await new Promise((r) => setTimeout(r, 0));
@@ -144,7 +155,7 @@ describe('CreateDropletForm', () => {
     });
     const onSuccess = vi.fn();
 
-    render(<CreateDropletForm onSuccess={onSuccess} onCancel={vi.fn()} />);
+    renderForm({ onSuccess });
 
     await act(async () => {
       await new Promise((r) => setTimeout(r, 0));
@@ -170,7 +181,7 @@ describe('CreateDropletForm', () => {
 
   it('shows validation error when title is empty and form is dirty', async () => {
     mockFetch({ '/api/repos': [{ name: 'cistern', url: 'git@github.com:test/cistern' }] });
-    render(<CreateDropletForm onSuccess={vi.fn()} onCancel={vi.fn()} />);
+    renderForm();
 
     const titleInput = screen.getAllByRole('textbox').find((el) => el.getAttribute('required') !== null)!;
     fireEvent.change(titleInput, { target: { value: 'A' } });
@@ -181,7 +192,7 @@ describe('CreateDropletForm', () => {
 
   it('shows validation error when repo is not selected and form is dirty', async () => {
     mockFetch({ '/api/repos': [{ name: 'cistern', url: 'git@github.com:test/cistern' }] });
-    render(<CreateDropletForm onSuccess={vi.fn()} onCancel={vi.fn()} />);
+    renderForm();
 
     const titleInput = screen.getAllByRole('textbox').find((el) => el.getAttribute('required') !== null)!;
     await act(() => { fireEvent.change(titleInput, { target: { value: 'Test' } }); });
@@ -199,7 +210,7 @@ describe('CreateDropletForm', () => {
       '/api/droplets/search': searchResults,
     });
 
-    render(<CreateDropletForm onSuccess={vi.fn()} onCancel={vi.fn()} />);
+    renderForm();
 
     await act(async () => {
       await new Promise((r) => setTimeout(r, 0));
@@ -240,8 +251,7 @@ describe('CreateDropletForm', () => {
       return { ok: true, status: 200, json: () => Promise.resolve([]), text: () => Promise.resolve('[]') } as Response;
     });
 
-    const onSuccess = vi.fn();
-    render(<CreateDropletForm onSuccess={onSuccess} onCancel={vi.fn()} />);
+    renderForm({ onSuccess: vi.fn() });
 
     await act(async () => {
       await new Promise((r) => setTimeout(r, 0));
@@ -268,5 +278,35 @@ describe('CreateDropletForm', () => {
     expect(capturedBody!.title).toBe('New Droplet');
     expect(capturedBody!.priority).toBe(5);
     expect(capturedBody!.complexity).toBe(1);
+  });
+
+  it('pre-fills title and description from URL query params', () => {
+    mockFetch({ '/api/repos': [{ name: 'cistern', url: 'git@github.com:test/cistern' }] });
+    renderForm({}, '/app/droplets/new?title=Refined%20Spec&description=Built%20from%20filter');
+
+    const textInputs = screen.getAllByRole('textbox');
+    const titleInput = textInputs.find((el) => el.getAttribute('required') !== null) ?? textInputs[0];
+    const descInput = textInputs.find((el) => el.tagName === 'TEXTAREA') ?? textInputs[1];
+
+    expect((titleInput as HTMLInputElement).value).toBe('Refined Spec');
+    expect((descInput as HTMLTextAreaElement).value).toBe('Built from filter');
+  });
+
+  it('has submit enabled when title comes from query params and repo is selected', async () => {
+    mockFetch({
+      '/api/repos': [{ name: 'cistern', url: 'git@github.com:test/cistern' }],
+      '/api/droplets': mockDroplet,
+    });
+    renderForm({}, '/app/droplets/new?title=From%20Filter');
+
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 0));
+    });
+
+    const repoSelect = screen.getByRole('combobox');
+    await act(() => { fireEvent.change(repoSelect, { target: { value: 'cistern' } }); });
+
+    const submitBtn = screen.getByRole('button', { name: /create droplet/i });
+    expect(submitBtn).not.toBeDisabled();
   });
 });

@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { useRepos, useSearchDroplets, createDroplet } from '../hooks/useApi';
 import { ComplexitySelector } from './ComplexitySelector';
 import type { Droplet } from '../api/types';
@@ -11,10 +12,11 @@ interface CreateDropletFormProps {
 export function CreateDropletForm({ onSuccess, onCancel }: CreateDropletFormProps) {
   const { repos, loading: reposLoading } = useRepos();
   const { mutate: searchDroplets } = useSearchDroplets();
+  const [searchParams] = useSearchParams();
 
   const [repo, setRepo] = useState('');
-  const [title, setTitle] = useState('');
-  const [description, setDescription] = useState('');
+  const [title, setTitle] = useState(() => searchParams.get('title') ?? '');
+  const [description, setDescription] = useState(() => searchParams.get('description') ?? '');
   const [priority, setPriority] = useState(2);
   const [complexity, setComplexity] = useState(1);
   const [dependencies, setDependencies] = useState<string[]>([]);

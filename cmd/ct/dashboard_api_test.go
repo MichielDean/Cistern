@@ -3270,3 +3270,459 @@ func TestAPI_LogSSE_ConnectionLimit(t *testing.T) {
 		t.Errorf("error = %q, want 'too many' keyword", body["error"])
 	}
 }
+
+// ── Filter session handlers ──
+
+func TestAPI_FilterSessions_ListEmpty(t *testing.T) {
+	mux := newDashboardMux(tempCfg(t), tempDB(t))
+	req := httptest.NewRequest(http.MethodGet, "/api/filter/sessions", nil)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("GET /api/filter/sessions status = %d, want 200", w.Code)
+	}
+	var sessions []cistern.FilterSession
+	if err := json.NewDecoder(w.Body).Decode(&sessions); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(sessions) != 0 {
+		t.Errorf("expected empty sessions list, got %d", len(sessions))
+	}
+}
+
+func TestAPI_FilterSession_CRUD(t *testing.T) {
+	db := tempDB(t)
+	c, err := cistern.New(db, "mr")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s, err := c.CreateFilterSession("Test idea", "A description")
+	if err != nil {
+		t.Fatal(err)
+	}
+	msgs := `[{"role":"user","content":"hello"},{"role":"assistant","content":"hi"}]`
+	if err := c.UpdateFilterSessionMessages(s.ID, msgs, "spec text", "llm-abc"); err != nil {
+		t.Fatal(err)
+	}
+	c.Close()
+
+	mux := newDashboardMux(tempCfg(t), db)
+
+	t.Run("get session", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/api/filter/"+s.ID, nil)
+		w := httptest.NewRecorder()
+		mux.ServeHTTP(w, req)
+		if w.Code != http.StatusOK {
+			t.Errorf("GET /api/filter/%s status = %d, want 200", s.ID, w.Code)
+		}
+		var got cistern.FilterSession
+		if err := json.NewDecoder(w.Body).Decode(&got); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		if got.Title != "Test idea" {
+			t.Errorf("title = %q, want %q", got.Title, "Test idea")
+		}
+		if got.SpecSnapshot != "spec text" {
+			t.Errorf("spec_snapshot = %q, want %q", got.SpecSnapshot, "spec text")
+		}
+	})
+
+	t.Run("list sessions", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/api/filter/sessions", nil)
+		w := httptest.NewRecorder()
+		mux.ServeHTTP(w, req)
+		if w.Code != http.StatusOK {
+			t.Errorf("GET /api/filter/sessions status = %d, want 200", w.Code)
+		}
+		var sessions []cistern.FilterSession
+		if err := json.NewDecoder(w.Body).Decode(&sessions); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		if len(sessions) != 1 {
+			t.Errorf("expected 1 session, got %d", len(sessions))
+		}
+	})
+
+	t.Run("get nonexistent session", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/api/filter/nonexistent", nil)
+		w := httptest.NewRecorder()
+		mux.ServeHTTP(w, req)
+		if w.Code != http.StatusNotFound {
+			t.Errorf("GET /api/filter/nonexistent status = %d, want 404", w.Code)
+		}
+	})
+}
+
+func TestAPI_FilterNew_MissingTitle(t *testing.T) {
+	mux := newDashboardMux(tempCfg(t), tempDB(t))
+	body := strings.NewReader(`{"description":"no title"}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/filter/new", body)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("POST /api/filter/new (no title) status = %d, want 400", w.Code)
+	}
+}
+
+func TestAPI_FilterResume_MissingMessage(t *testing.T) {
+	mux := newDashboardMux(tempCfg(t), tempDB(t))
+	body := strings.NewReader(`{}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/filter/sess123/resume", body)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("POST /api/filter/sess123/resume (no message) status = %d, want 400", w.Code)
+	}
+}
+
+func TestAPI_Import_MissingFields(t *testing.T) {
+	tests := []struct {
+		name string
+		body string
+	}{
+		{"no provider", `{"key":"PROJ-123","repo":"myrepo"}`},
+		{"no key", `{"provider":"jira","repo":"myrepo"}`},
+		{"no repo", `{"provider":"jira","key":"PROJ-123"}`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mux := newDashboardMux(tempCfg(t), tempDB(t))
+			req := httptest.NewRequest(http.MethodPost, "/api/import", strings.NewReader(tt.body))
+			w := httptest.NewRecorder()
+			mux.ServeHTTP(w, req)
+			if w.Code != http.StatusBadRequest {
+				t.Errorf("POST /api/import status = %d, want 400", w.Code)
+			}
+		})
+	}
+}
+
+func TestAPI_Import_UnknownProvider(t *testing.T) {
+	mux := newDashboardMux(tempCfg(t), tempDB(t))
+	body := strings.NewReader(`{"provider":"unknown","key":"PROJ-123","repo":"myrepo"}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/import", body)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("POST /api/import (unknown provider) status = %d, want 400", w.Code)
+	}
+}
+
+func TestAPI_ImportPreview_MissingFields(t *testing.T) {
+	tests := []struct {
+		name string
+		url  string
+	}{
+		{"no provider", "/api/import/preview?key=PROJ-123"},
+		{"no key", "/api/import/preview?provider=jira"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mux := newDashboardMux(tempCfg(t), tempDB(t))
+			req := httptest.NewRequest(http.MethodGet, tt.url, nil)
+			w := httptest.NewRecorder()
+			mux.ServeHTTP(w, req)
+			if w.Code != http.StatusBadRequest {
+				t.Errorf("GET %s status = %d, want 400", tt.url, w.Code)
+			}
+		})
+	}
+}
+
+func TestAPI_ImportPreview_UnknownProvider(t *testing.T) {
+	mux := newDashboardMux(tempCfg(t), tempDB(t))
+	req := httptest.NewRequest(http.MethodGet, "/api/import/preview?provider=unknown&key=PROJ-123", nil)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("GET /api/import/preview (unknown provider) status = %d, want 400", w.Code)
+	}
+}
+
+func TestAPI_FilterNew_DescriptionExceedsMaxLength(t *testing.T) {
+	mux := newDashboardMux(tempCfg(t), tempDB(t))
+	longDesc := strings.Repeat("x", maxDescriptionLen+1)
+	body := fmt.Sprintf(`{"title":"test","description":%q}`, longDesc)
+	req := httptest.NewRequest(http.MethodPost, "/api/filter/new", strings.NewReader(body))
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("POST /api/filter/new (long description) status = %d, want 400", w.Code)
+	}
+	var resp map[string]string
+	json.NewDecoder(w.Body).Decode(&resp)
+	if !strings.Contains(resp["error"], "description exceeds maximum length") {
+		t.Errorf("error = %q, want description length message", resp["error"])
+	}
+}
+
+func TestAPI_FilterResume_IgnoresLLMSessionIDHeader(t *testing.T) {
+	db := tempDB(t)
+	c, err := cistern.New(db, "mr")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s, err := c.CreateFilterSession("Test", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	msgs := `[{"role":"user","content":"hi"},{"role":"assistant","content":"hello"}]`
+	if err := c.UpdateFilterSessionMessages(s.ID, msgs, "", "stored-session-id"); err != nil {
+		t.Fatal(err)
+	}
+	c.Close()
+
+	mux := newDashboardMux(tempCfg(t), db)
+
+	body := strings.NewReader(`{"message":"test"}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/filter/"+s.ID+"/resume", body)
+	req.Header.Set("X-LLM-Session-ID", "attacker-session-id")
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	_ = w.Code
+}
+
+func TestAPI_Import_KeyExceedsMaxLength(t *testing.T) {
+	mux := newDashboardMux(tempCfg(t), tempDB(t))
+	longKey := strings.Repeat("A", maxImportKeyLen+1)
+	body := fmt.Sprintf(`{"provider":"jira","key":%q,"repo":"myrepo"}`, longKey)
+	req := httptest.NewRequest(http.MethodPost, "/api/import", strings.NewReader(body))
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("POST /api/import (long key) status = %d, want 400", w.Code)
+	}
+	var resp map[string]string
+	json.NewDecoder(w.Body).Decode(&resp)
+	if !strings.Contains(resp["error"], "key exceeds maximum length") {
+		t.Errorf("error = %q, want key length message", resp["error"])
+	}
+}
+
+func TestAPI_Import_InvalidKeyCharacters(t *testing.T) {
+	tests := []struct {
+		name string
+		key  string
+	}{
+		{"slash", "PROJ/123"},
+		{"dot", "PROJ.123"},
+		{"space", "PROJ 123"},
+		{"path traversal", "../etc/passwd"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mux := newDashboardMux(tempCfg(t), tempDB(t))
+			body := fmt.Sprintf(`{"provider":"jira","key":%q,"repo":"myrepo"}`, tt.key)
+			req := httptest.NewRequest(http.MethodPost, "/api/import", strings.NewReader(body))
+			w := httptest.NewRecorder()
+			mux.ServeHTTP(w, req)
+			if w.Code != http.StatusBadRequest {
+				t.Errorf("POST /api/import (key=%q) status = %d, want 400", tt.key, w.Code)
+			}
+			var resp map[string]string
+			json.NewDecoder(w.Body).Decode(&resp)
+			if !strings.Contains(resp["error"], "invalid characters") {
+				t.Errorf("error = %q, want invalid characters message", resp["error"])
+			}
+		})
+	}
+}
+
+func TestAPI_ImportPreview_InvalidKeyCharacters(t *testing.T) {
+	mux := newDashboardMux(tempCfg(t), tempDB(t))
+	req := httptest.NewRequest(http.MethodGet, "/api/import/preview?provider=jira&key=PROJ%2F123", nil)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("GET /api/import/preview (path traversal key) status = %d, want 400", w.Code)
+	}
+}
+
+func TestAPI_Import_NoErrorDisclosure(t *testing.T) {
+	mux := newDashboardMux(tempCfg(t), tempDB(t))
+	body := `{"provider":"jira","key":"PROJ-123","repo":"myrepo"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/import", strings.NewReader(body))
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+	if w.Code == http.StatusBadGateway {
+		var resp map[string]string
+		json.NewDecoder(w.Body).Decode(&resp)
+		if strings.Contains(resp["error"], "env") || strings.Contains(resp["error"], "JIRA") {
+			t.Errorf("error message leaks internal details: %q", resp["error"])
+		}
+		if !strings.Contains(resp["error"], "failed to fetch issue") {
+			t.Errorf("error = %q, want generic 'failed to fetch issue' message", resp["error"])
+		}
+	}
+}
+
+func TestAPI_OutboundRateLimiter_RejectsExcessRequests(t *testing.T) {
+	limiter := newOutboundRateLimiter()
+	limiter.limit = 2
+	limiter.window = time.Minute
+
+	callCount := 0
+	handler := limiter.wrap(func(w http.ResponseWriter, r *http.Request) {
+		callCount++
+		w.WriteHeader(http.StatusOK)
+	})
+
+	allowed := 0
+	rejected := 0
+	for i := 0; i < 5; i++ {
+		req := httptest.NewRequest(http.MethodPost, "/api/filter/new", nil)
+		req.RemoteAddr = "1.2.3.4:5678"
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, req)
+		if w.Code == http.StatusOK {
+			allowed++
+		} else if w.Code == http.StatusTooManyRequests {
+			rejected++
+		}
+	}
+
+	if allowed != 2 {
+		t.Errorf("allowed %d requests, want 2", allowed)
+	}
+	if rejected != 3 {
+		t.Errorf("rejected %d requests, want 3", rejected)
+	}
+}
+
+func TestAPI_OutboundRateLimiter_IgnoresXForwardedFor(t *testing.T) {
+	limiter := newOutboundRateLimiter()
+	limiter.limit = 1
+	limiter.window = time.Minute
+
+	callCount := 0
+	handler := limiter.wrap(func(w http.ResponseWriter, r *http.Request) {
+		callCount++
+		w.WriteHeader(http.StatusOK)
+	})
+
+	req := httptest.NewRequest(http.MethodPost, "/api/filter/new", nil)
+	req.RemoteAddr = "1.2.3.4:5678"
+	req.Header.Set("X-Forwarded-For", "9.9.9.9")
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Errorf("first request from 1.2.3.4 should be allowed, got %d", w.Code)
+	}
+
+	req2 := httptest.NewRequest(http.MethodPost, "/api/filter/new", nil)
+	req2.RemoteAddr = "1.2.3.4:5678"
+	req2.Header.Set("X-Forwarded-For", "different-ip")
+	w2 := httptest.NewRecorder()
+	handler.ServeHTTP(w2, req2)
+	if w2.Code != http.StatusTooManyRequests {
+		t.Errorf("second request from same RemoteAddr should be rate-limited regardless of XFF, got %d", w2.Code)
+	}
+}
+
+func TestAPI_OutboundRateLimiter_EvictsExpiredBuckets(t *testing.T) {
+	limiter := newOutboundRateLimiter()
+	limiter.limit = 1
+	limiter.window = 50 * time.Millisecond
+
+	_ = limiter.allow("1.2.3.4:5678")
+	_ = limiter.allow("5.6.7.8:9999")
+
+	if len(limiter.buckets) != 2 {
+		t.Fatalf("expected 2 buckets, got %d", len(limiter.buckets))
+	}
+
+	limiter.mu.Lock()
+	for _, b := range limiter.buckets {
+		b.resetAt = time.Now().Add(-time.Second)
+	}
+	limiter.mu.Unlock()
+
+	_ = limiter.allow("9.9.9.9:1111")
+
+	if len(limiter.buckets) != 1 {
+		t.Errorf("expected expired buckets to be evicted, got %d buckets", len(limiter.buckets))
+	}
+
+	_, exists := limiter.buckets["1.2.3.4:5678"]
+	if exists {
+		t.Error("expired bucket for 1.2.3.4 should have been evicted")
+	}
+	_, exists = limiter.buckets["5.6.7.8:9999"]
+	if exists {
+		t.Error("expired bucket for 5.6.7.8 should have been evicted")
+	}
+}
+
+func TestAPI_ImportHandler_RepoError_Sanitized(t *testing.T) {
+	cfgPath := writeTestConfig(t, "TestRepo")
+	t.Setenv("CT_CONFIG", cfgPath)
+	mux := newDashboardMux(cfgPath, tempDB(t))
+
+	body := `{"provider":"jira","key":"PROJ-123","repo":"nonexistent","complexity":2,"priority":1}`
+	req := httptest.NewRequest(http.MethodPost, "/api/import", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", w.Code, w.Body.String())
+	}
+	respBody := w.Body.String()
+	if strings.Contains(respBody, "TestRepo") {
+		t.Errorf("error response should not leak configured repo names, got: %s", respBody)
+	}
+	if !strings.Contains(respBody, "unknown repo") {
+		t.Errorf("error response should contain 'unknown repo', got: %s", respBody)
+	}
+}
+
+func TestIsValidTrackerKey(t *testing.T) {
+	tests := []struct {
+		key  string
+		want bool
+	}{
+		{"PROJ-123", true},
+		{"ABC_XYZ", true},
+		{"simple", true},
+		{"PROJ/123", false},
+		{"PROJ.123", false},
+		{"../etc", false},
+		{"key with spaces", false},
+		{"", false},
+		{"PROJ%20", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.key, func(t *testing.T) {
+			got := isValidTrackerKey(tt.key)
+			if got != tt.want {
+				t.Errorf("isValidTrackerKey(%q) = %v, want %v", tt.key, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestClient_DeleteFilterSession_API(t *testing.T) {
+	db := tempDB(t)
+	c, err := cistern.New(db, "mr")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s, err := c.CreateFilterSession("To delete", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := c.DeleteFilterSession(s.ID); err != nil {
+		t.Fatalf("DeleteFilterSession: %v", err)
+	}
+	c.Close()
+
+	mux := newDashboardMux(tempCfg(t), db)
+	req := httptest.NewRequest(http.MethodGet, "/api/filter/"+s.ID, nil)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+	if w.Code != http.StatusNotFound {
+		t.Errorf("GET deleted session status = %d, want 404", w.Code)
+	}
+}

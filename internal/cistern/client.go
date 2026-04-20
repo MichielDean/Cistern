@@ -1309,3 +1309,143 @@ func (c *Client) Restart(id, cataractaeName string) (*Droplet, error) {
 	droplet.LastHeartbeatAt = time.Time{}
 	return droplet, nil
 }
+
+// FilterSession represents a LLM filter/refine conversation session.
+type FilterSession struct {
+	ID           string    `json:"id"`
+	Title        string    `json:"title"`
+	Description  string    `json:"description"`
+	Messages     string    `json:"messages"`       // JSON array of {role,content} objects
+	SpecSnapshot string    `json:"spec_snapshot"`  // Current refined spec text
+	LLMSessionID string    `json:"llm_session_id"` // LLM provider conversation session ID
+	CreatedAt    time.Time `json:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at"`
+}
+
+// FilterMessage represents a single message in a filter session conversation.
+type FilterMessage struct {
+	Role    string `json:"role"` // "user" or "assistant"
+	Content string `json:"content"`
+}
+
+// CreateFilterSession creates a new filter session with the given title.
+func (c *Client) CreateFilterSession(title, description string) (*FilterSession, error) {
+	id, err := c.generateID()
+	if err != nil {
+		return nil, fmt.Errorf("cistern: generate id: %w", err)
+	}
+	now := time.Now().UTC()
+	messagesJSON := "[]"
+	_, err = c.db.Exec(
+		`INSERT INTO filter_sessions (id, title, description, messages, spec_snapshot, llm_session_id, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, '', '', ?, ?)`,
+		id, title, description, messagesJSON, now, now,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("cistern: create filter session: %w", err)
+	}
+	return &FilterSession{
+		ID:          id,
+		Title:       title,
+		Description: description,
+		Messages:    messagesJSON,
+		CreatedAt:   now,
+		UpdatedAt:   now,
+	}, nil
+}
+
+// GetFilterSession returns a filter session by ID.
+func (c *Client) GetFilterSession(id string) (*FilterSession, error) {
+	row := c.db.QueryRow(
+		`SELECT id, title, description, messages, COALESCE(spec_snapshot,''), COALESCE(llm_session_id,''), created_at, updated_at
+		 FROM filter_sessions WHERE id = ?`, id,
+	)
+	var s FilterSession
+	var createdAt, updatedAt string
+	if err := row.Scan(&s.ID, &s.Title, &s.Description, &s.Messages, &s.SpecSnapshot, &s.LLMSessionID, &createdAt, &updatedAt); err != nil {
+		if err == sql.ErrNoRows {
+			return nil, fmt.Errorf("cistern: filter session %s not found", id)
+		}
+		return nil, fmt.Errorf("cistern: get filter session %s: %w", id, err)
+	}
+	if t, err := time.Parse("2006-01-02T15:04:05Z", createdAt); err == nil {
+		s.CreatedAt = t
+	} else if t, err := time.Parse("2006-01-02 15:04:05", createdAt); err == nil {
+		s.CreatedAt = t
+	}
+	if t, err := time.Parse("2006-01-02T15:04:05Z", updatedAt); err == nil {
+		s.UpdatedAt = t
+	} else if t, err := time.Parse("2006-01-02 15:04:05", updatedAt); err == nil {
+		s.UpdatedAt = t
+	}
+	return &s, nil
+}
+
+// ListFilterSessions returns all filter sessions ordered by most recently updated first.
+func (c *Client) ListFilterSessions() ([]FilterSession, error) {
+	rows, err := c.db.Query(
+		`SELECT id, title, description, messages, COALESCE(spec_snapshot,''), COALESCE(llm_session_id,''), created_at, updated_at
+		 FROM filter_sessions ORDER BY updated_at DESC`,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("cistern: list filter sessions: %w", err)
+	}
+	defer rows.Close()
+
+	var sessions []FilterSession
+	for rows.Next() {
+		var s FilterSession
+		var createdAt, updatedAt string
+		if err := rows.Scan(&s.ID, &s.Title, &s.Description, &s.Messages, &s.SpecSnapshot, &s.LLMSessionID, &createdAt, &updatedAt); err != nil {
+			return nil, fmt.Errorf("cistern: scan filter session: %w", err)
+		}
+		if t, err := time.Parse("2006-01-02T15:04:05Z", createdAt); err == nil {
+			s.CreatedAt = t
+		} else if t, err := time.Parse("2006-01-02 15:04:05", createdAt); err == nil {
+			s.CreatedAt = t
+		}
+		if t, err := time.Parse("2006-01-02T15:04:05Z", updatedAt); err == nil {
+			s.UpdatedAt = t
+		} else if t, err := time.Parse("2006-01-02 15:04:05", updatedAt); err == nil {
+			s.UpdatedAt = t
+		}
+		sessions = append(sessions, s)
+	}
+	return sessions, rows.Err()
+}
+
+// UpdateFilterSessionMessages appends a message to the session and updates the spec snapshot and LLM session ID.
+func (c *Client) UpdateFilterSessionMessages(id string, messages string, specSnapshot string, llmSessionID string) error {
+	now := time.Now().UTC()
+	res, err := c.db.Exec(
+		`UPDATE filter_sessions SET messages = ?, spec_snapshot = ?, llm_session_id = ?, updated_at = ? WHERE id = ?`,
+		messages, specSnapshot, llmSessionID, now, id,
+	)
+	if err != nil {
+		return fmt.Errorf("cistern: update filter session %s: %w", id, err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("cistern: update filter session rows affected: %w", err)
+	}
+	if n == 0 {
+		return fmt.Errorf("cistern: filter session %s not found", id)
+	}
+	return nil
+}
+
+// DeleteFilterSession removes a filter session by ID.
+func (c *Client) DeleteFilterSession(id string) error {
+	res, err := c.db.Exec(`DELETE FROM filter_sessions WHERE id = ?`, id)
+	if err != nil {
+		return fmt.Errorf("cistern: delete filter session %s: %w", id, err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("cistern: delete filter session rows affected: %w", err)
+	}
+	if n == 0 {
+		return fmt.Errorf("cistern: filter session %s not found", id)
+	}
+	return nil
+}

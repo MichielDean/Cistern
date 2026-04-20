@@ -144,7 +144,7 @@ func TestEndToEndSchemaVerification(t *testing.T) {
 		}
 	}
 
-	for _, table := range []string{"cataractae_notes", "events", "droplet_dependencies", "droplet_issues"} {
+	for _, table := range []string{"cataractae_notes", "events", "droplet_dependencies", "droplet_issues", "filter_sessions"} {
 		var count int
 		c.db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?`, table).Scan(&count)
 		if count != 1 {
@@ -154,8 +154,8 @@ func TestEndToEndSchemaVerification(t *testing.T) {
 
 	var migrationCount int
 	c.db.QueryRow(`SELECT COUNT(*) FROM "_schema_migrations"`).Scan(&migrationCount)
-	if migrationCount != 15 {
-		t.Errorf("expected 15 migration records, got %d", migrationCount)
+	if migrationCount != 17 {
+		t.Errorf("expected 17 migration records, got %d", migrationCount)
 	}
 }
 

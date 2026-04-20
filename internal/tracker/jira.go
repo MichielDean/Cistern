@@ -6,9 +6,12 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"regexp"
 	"strings"
 	"time"
 )
+
+var validIssueKeyRe = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
 
 func init() {
 	Register("jira", newJiraProvider)
@@ -54,18 +57,24 @@ func (p *jiraProvider) Name() string {
 // jiraIssueResponse is a partial representation of the Jira REST API v3
 // issue response used for field extraction.
 type jiraIssueResponse struct {
+	Key    string `json:"key"`
 	Fields struct {
 		Summary     string `json:"summary"`
 		Description any    `json:"description"` // ADF object (REST v3) or plain string (REST v2)
 		Priority    struct {
 			Name string `json:"name"`
 		} `json:"priority"`
+		Labels []string `json:"labels"`
 	} `json:"fields"`
 }
 
 // FetchIssue retrieves an issue from Jira by key (e.g. "PROJ-123") and maps
 // it to an ExternalIssue.
 func (p *jiraProvider) FetchIssue(key string) (*ExternalIssue, error) {
+	if !validIssueKeyRe.MatchString(key) {
+		return nil, fmt.Errorf("tracker: invalid issue key %q: must contain only alphanumeric characters, hyphens, and underscores", key)
+	}
+
 	token := os.Getenv(p.cfg.TokenEnv)
 	if token == "" {
 		return nil, fmt.Errorf("tracker: env var %s is not set", p.cfg.TokenEnv)
@@ -109,9 +118,12 @@ func (p *jiraProvider) FetchIssue(key string) (*ExternalIssue, error) {
 	}
 
 	return &ExternalIssue{
+		Key:         issue.Key,
 		Title:       issue.Fields.Summary,
 		Description: extractJiraDescription(issue.Fields.Description),
 		Priority:    p.mapPriority(issue.Fields.Priority.Name),
+		Labels:      issue.Fields.Labels,
+		SourceURL:   strings.TrimRight(p.cfg.BaseURL, "/") + "/browse/" + issue.Key,
 	}, nil
 }
 

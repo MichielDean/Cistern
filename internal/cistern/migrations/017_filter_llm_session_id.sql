@@ -1,0 +1,1 @@
+ALTER TABLE filter_sessions ADD COLUMN llm_session_id TEXT DEFAULT '';

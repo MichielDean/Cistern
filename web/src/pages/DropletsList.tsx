@@ -2,6 +2,7 @@ import { useState, useCallback, useRef, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useDroplets, useRepos, useSearchDroplets } from '../hooks/useApi';
 import { DropletTable } from '../components/DropletTable';
+import { ExportButton } from '../components/ExportButton';
 import type { DropletSearchResponse } from '../api/types';
 
 const STATUS_TABS = [
@@ -83,13 +84,16 @@ export function DropletsList() {
     <div className="flex-1 overflow-y-auto p-4 md:p-6 space-y-4">
       <div className="flex items-center justify-between">
         <h1 className="text-xl font-mono font-bold text-cistern-fg">Droplets</h1>
-        <button
-          type="button"
-          onClick={() => navigate('/app/droplets/new')}
-          className="px-3 py-1.5 text-sm rounded bg-cistern-accent text-cistern-bg font-medium hover:bg-cistern-accent/90 transition-colors"
-        >
-          + New Droplet
-        </button>
+        <div className="flex items-center gap-2">
+          <ExportButton status={status || undefined} repo={repo || undefined} />
+          <button
+            type="button"
+            onClick={() => navigate('/app/droplets/new')}
+            className="px-3 py-1.5 text-sm rounded bg-cistern-accent text-cistern-bg font-medium hover:bg-cistern-accent/90 transition-colors"
+          >
+            + New Droplet
+          </button>
+        </div>
       </div>
 
       <div className="flex items-center gap-2 flex-wrap">

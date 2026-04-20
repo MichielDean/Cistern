@@ -191,3 +191,41 @@ export interface SkillInfo {
   source_url: string;
   installed_at: string;
 }
+
+export interface FilterSession {
+  id: string;
+  title: string;
+  description: string;
+  messages: string;
+  spec_snapshot: string;
+  llm_session_id: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface FilterMessage {
+  role: 'user' | 'assistant';
+  content: string;
+}
+
+export interface FilterNewResponse {
+  session_id: string;
+  llm_session_id: string;
+  session: FilterSession;
+  assistant_message: string;
+}
+
+export interface FilterResumeResponse {
+  session_id: string;
+  llm_session_id: string;
+  assistant_message: string;
+  spec_snapshot: string;
+}
+
+export interface ImportRequest {
+  provider: string;
+  key: string;
+  repo: string;
+  complexity?: number;
+  priority?: number;
+}

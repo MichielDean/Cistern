@@ -34,6 +34,7 @@ import (
 	"github.com/MichielDean/cistern/internal/aqueduct"
 	"github.com/MichielDean/cistern/internal/cistern"
 	"github.com/MichielDean/cistern/internal/skills"
+	"github.com/MichielDean/cistern/internal/tracker"
 	"github.com/creack/pty"
 )
 
@@ -73,6 +74,7 @@ const (
 	maxNotesLen       = 65536
 	maxReasonLen      = 65536
 	maxPerPage        = 500
+	maxImportKeyLen   = 128
 )
 
 // apiMaxBodyBytes is the maximum request body size accepted by API endpoints.
@@ -161,6 +163,23 @@ func isValidAqueductName(name string) bool {
 		return false
 	}
 	for _, ch := range name {
+		if !((ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9') || ch == '-' || ch == '_') {
+			return false
+		}
+	}
+	return true
+}
+
+// isValidTrackerKey validates that a tracker issue key contains only
+// alphanumeric characters, hyphens, and underscores — the format expected
+// by issue trackers (e.g., "PROJ-123"). Rejects keys containing slashes,
+// dots, or other characters that could enable path traversal when the key
+// is concatenated into a URL path segment.
+func isValidTrackerKey(key string) bool {
+	if key == "" {
+		return false
+	}
+	for _, ch := range key {
 		if !((ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9') || ch == '-' || ch == '_') {
 			return false
 		}
@@ -1091,6 +1110,17 @@ func newDashboardMuxInternalWith(cfgPath, dbPath string, tui *DashboardTUI, fetc
 	apiMux.HandleFunc("GET /api/logs/events", handleLogEvents(cfgPath))
 	apiMux.HandleFunc("GET /api/logs/sources", handleGetLogSources(cfgPath))
 
+	// Filter/refine sessions — rate-limited (expensive outbound LLM calls)
+	outboundLimiter := newOutboundRateLimiter()
+	apiMux.HandleFunc("POST /api/filter/new", outboundLimiter.wrap(handleFilterNew(cfgPath, dbPath)))
+	apiMux.HandleFunc("POST /api/filter/{session_id}/resume", outboundLimiter.wrap(handleFilterResume(cfgPath, dbPath)))
+	apiMux.HandleFunc("GET /api/filter/sessions", handleFilterSessions(dbPath))
+	apiMux.HandleFunc("GET /api/filter/{session_id}", handleFilterSession(dbPath))
+
+	// Import — rate-limited (expensive outbound tracker HTTP calls)
+	apiMux.HandleFunc("POST /api/import", outboundLimiter.wrap(handleImport(cfgPath, dbPath)))
+	apiMux.HandleFunc("GET /api/import/preview", outboundLimiter.wrap(handleImportPreview(cfgPath)))
+
 	// SSE for droplet detail
 	apiMux.HandleFunc("GET /api/droplets/{id}/events", handleDropletEvents(cfgPath, dbPath))
 
@@ -1231,6 +1261,59 @@ func apiBodyLimitMiddleware(next http.Handler) http.Handler {
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+type outboundRateLimiter struct {
+	mu      sync.Mutex
+	buckets map[string]*outboundBucket
+	limit   int
+	window  time.Duration
+}
+
+type outboundBucket struct {
+	count   int
+	resetAt time.Time
+}
+
+func newOutboundRateLimiter() *outboundRateLimiter {
+	return &outboundRateLimiter{
+		buckets: make(map[string]*outboundBucket),
+		limit:   10,
+		window:  time.Minute,
+	}
+}
+
+func (l *outboundRateLimiter) wrap(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		ip := r.RemoteAddr
+		if !l.allow(ip) {
+			w.Header().Set("Retry-After", strconv.Itoa(int(l.window.Seconds())))
+			writeAPIError(w, http.StatusTooManyRequests, "too many requests")
+			return
+		}
+		next.ServeHTTP(w, r)
+	}
+}
+
+func (l *outboundRateLimiter) allow(ip string) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	now := time.Now()
+	for k, b := range l.buckets {
+		if now.After(b.resetAt) {
+			delete(l.buckets, k)
+		}
+	}
+	b, ok := l.buckets[ip]
+	if !ok {
+		b = &outboundBucket{count: 0, resetAt: now.Add(l.window)}
+		l.buckets[ip] = b
+	}
+	if b.count >= l.limit {
+		return false
+	}
+	b.count++
+	return true
 }
 
 // corsMiddleware wraps an http.Handler with CORS headers.
@@ -2969,3 +3052,337 @@ connect();
 </script>
 </body>
 </html>`
+
+// ── Filter session handlers ──
+
+type filterNewRequest struct {
+	Title       string `json:"title"`
+	Description string `json:"description"`
+}
+
+type filterResumeRequest struct {
+	Message string `json:"message"`
+}
+
+func handleFilterNew(cfgPath, dbPath string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var req filterNewRequest
+		if !decodeJSON(w, r, &req) {
+			return
+		}
+		if req.Title == "" {
+			writeAPIError(w, http.StatusBadRequest, "title is required")
+			return
+		}
+		if len(req.Title) > maxTitleLen {
+			writeAPIError(w, http.StatusBadRequest, fmt.Sprintf("title exceeds maximum length (%d)", maxTitleLen))
+			return
+		}
+		if len(req.Description) > maxDescriptionLen {
+			writeAPIError(w, http.StatusBadRequest, fmt.Sprintf("description exceeds maximum length (%d)", maxDescriptionLen))
+			return
+		}
+
+		apiClient(dbPath, w, func(c *cistern.Client) error {
+			session, err := c.CreateFilterSession(req.Title, req.Description)
+			if err != nil {
+				return err
+			}
+
+			preset := resolveFilterPreset("")
+			contextBlock := gatherFilterContext(filterContextConfig{
+				DBPath: dbPath,
+				Title:  req.Title,
+				Desc:   req.Description,
+			})
+
+			userPrompt := "Title: " + req.Title
+			if req.Description != "" {
+				userPrompt += "\nDescription: " + req.Description
+			}
+
+			result, err := invokeFilterNew(preset, req.Title, req.Description, contextBlock)
+			if err != nil {
+				c.DeleteFilterSession(session.ID) //nolint:errcheck
+				return err
+			}
+
+			var messages []cistern.FilterMessage
+			messages = append(messages, cistern.FilterMessage{Role: "user", Content: userPrompt})
+			messages = append(messages, cistern.FilterMessage{Role: "assistant", Content: result.Text})
+
+			msgJSON, _ := json.Marshal(messages)
+			if err := c.UpdateFilterSessionMessages(session.ID, string(msgJSON), result.Text, result.SessionID); err != nil {
+				return err
+			}
+
+			session.Messages = string(msgJSON)
+			session.SpecSnapshot = result.Text
+			session.LLMSessionID = result.SessionID
+
+			w.Header().Set("Content-Type", "application/json")
+			writeAPIJSON(w, http.StatusCreated, map[string]any{
+				"session_id":        session.ID,
+				"llm_session_id":    result.SessionID,
+				"session":           session,
+				"assistant_message": result.Text,
+			})
+			return nil
+		})
+	}
+}
+
+func handleFilterResume(cfgPath, dbPath string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		sessionID := r.PathValue("session_id")
+		var req filterResumeRequest
+		if !decodeJSON(w, r, &req) {
+			return
+		}
+		if req.Message == "" {
+			writeAPIError(w, http.StatusBadRequest, "message is required")
+			return
+		}
+		if len(req.Message) > maxNotesLen {
+			writeAPIError(w, http.StatusBadRequest, fmt.Sprintf("message exceeds maximum length (%d)", maxNotesLen))
+			return
+		}
+
+		apiClient(dbPath, w, func(c *cistern.Client) error {
+			session, err := c.GetFilterSession(sessionID)
+			if err != nil {
+				return err
+			}
+
+			preset := resolveFilterPreset("")
+			var existingMessages []cistern.FilterMessage
+			if session.Messages != "" && session.Messages != "[]" {
+				json.Unmarshal([]byte(session.Messages), &existingMessages) //nolint:errcheck
+			}
+
+			llmSessionID := session.LLMSessionID
+
+			var result filterSessionResult
+			if llmSessionID != "" {
+				result, err = invokeFilterResume(preset, llmSessionID, req.Message)
+				if err != nil {
+					return err
+				}
+			} else {
+				contextBlock := gatherFilterContext(filterContextConfig{
+					DBPath: dbPath,
+					Title:  session.Title,
+					Desc:   session.Description,
+				})
+				fullPrompt := buildFilterPrompt(contextBlock, session.Title)
+				if session.Description != "" {
+					fullPrompt += "\nDescription: " + session.Description
+				}
+				for _, msg := range existingMessages {
+					if msg.Role == "user" {
+						fullPrompt += "\n\nUser: " + msg.Content
+					} else if msg.Role == "assistant" {
+						fullPrompt += "\n\nAssistant: " + msg.Content
+					}
+				}
+				fullPrompt += "\n\nUser: " + req.Message
+				result, err = callFilterAgent(preset, nil, fullPrompt)
+				if err != nil {
+					return err
+				}
+			}
+
+			existingMessages = append(existingMessages, cistern.FilterMessage{Role: "user", Content: req.Message})
+			existingMessages = append(existingMessages, cistern.FilterMessage{Role: "assistant", Content: result.Text})
+
+			msgJSON, _ := json.Marshal(existingMessages)
+			if err := c.UpdateFilterSessionMessages(sessionID, string(msgJSON), result.Text, result.SessionID); err != nil {
+				return err
+			}
+
+			w.Header().Set("Content-Type", "application/json")
+			writeAPIJSON(w, http.StatusOK, map[string]any{
+				"session_id":        sessionID,
+				"llm_session_id":    result.SessionID,
+				"assistant_message": result.Text,
+				"spec_snapshot":     result.Text,
+			})
+			return nil
+		})
+	}
+}
+
+func handleFilterSessions(dbPath string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		apiClient(dbPath, w, func(c *cistern.Client) error {
+			sessions, err := c.ListFilterSessions()
+			if err != nil {
+				return err
+			}
+			if sessions == nil {
+				sessions = []cistern.FilterSession{}
+			}
+			writeAPIJSON(w, http.StatusOK, sessions)
+			return nil
+		})
+	}
+}
+
+func handleFilterSession(dbPath string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		sessionID := r.PathValue("session_id")
+		apiClient(dbPath, w, func(c *cistern.Client) error {
+			session, err := c.GetFilterSession(sessionID)
+			if err != nil {
+				return err
+			}
+			writeAPIJSON(w, http.StatusOK, session)
+			return nil
+		})
+	}
+}
+
+// ── Import handler ──
+
+type importRequest struct {
+	Provider   string `json:"provider"`
+	Key        string `json:"key"`
+	Repo       string `json:"repo"`
+	Complexity int    `json:"complexity"`
+	Priority   int    `json:"priority"`
+}
+
+func handleImport(cfgPath, dbPath string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var req importRequest
+		if !decodeJSON(w, r, &req) {
+			return
+		}
+		if req.Provider == "" {
+			writeAPIError(w, http.StatusBadRequest, "provider is required")
+			return
+		}
+		if req.Key == "" {
+			writeAPIError(w, http.StatusBadRequest, "key is required")
+			return
+		}
+		if len(req.Key) > maxImportKeyLen {
+			writeAPIError(w, http.StatusBadRequest, fmt.Sprintf("key exceeds maximum length (%d)", maxImportKeyLen))
+			return
+		}
+		if !isValidTrackerKey(req.Key) {
+			writeAPIError(w, http.StatusBadRequest, "key contains invalid characters")
+			return
+		}
+		if req.Repo == "" {
+			writeAPIError(w, http.StatusBadRequest, "repo is required")
+			return
+		}
+
+		repo, err := resolveCanonicalRepo(req.Repo)
+		if err != nil {
+			writeAPIError(w, http.StatusBadRequest, "unknown repo")
+			return
+		}
+
+		trackerCfg, err := loadTrackerConfig(req.Provider)
+		if err != nil {
+			writeAPIError(w, http.StatusBadRequest, "tracker configuration error")
+			return
+		}
+
+		constructor, ok := tracker.Resolve(req.Provider)
+		if !ok {
+			writeAPIError(w, http.StatusBadRequest, fmt.Sprintf("unknown tracker provider %q", req.Provider))
+			return
+		}
+		tp, err := constructor(trackerCfg)
+		if err != nil {
+			writeAPIError(w, http.StatusBadRequest, "tracker initialization error")
+			return
+		}
+
+		issue, err := tp.FetchIssue(req.Key)
+		if err != nil {
+			writeAPIError(w, http.StatusBadGateway, "failed to fetch issue")
+			return
+		}
+
+		priority := issue.Priority
+		if req.Priority > 0 {
+			priority = req.Priority
+		}
+		complexity := req.Complexity
+		if complexity < 1 || complexity > 3 {
+			complexity = 2
+		}
+
+		externalRef := req.Provider + ":" + req.Key
+
+		apiClient(dbPath, w, func(c *cistern.Client) error {
+			d, err := c.AddDroplet(repo, issue.Title, issue.Description, externalRef, priority, complexity)
+			if err != nil {
+				return err
+			}
+			writeAPIJSON(w, http.StatusCreated, d)
+			return nil
+		})
+	}
+}
+
+func handleImportPreview(cfgPath string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		providerName := r.URL.Query().Get("provider")
+		key := r.URL.Query().Get("key")
+		if providerName == "" {
+			writeAPIError(w, http.StatusBadRequest, "provider is required")
+			return
+		}
+		if key == "" {
+			writeAPIError(w, http.StatusBadRequest, "key is required")
+			return
+		}
+		if len(key) > maxImportKeyLen {
+			writeAPIError(w, http.StatusBadRequest, fmt.Sprintf("key exceeds maximum length (%d)", maxImportKeyLen))
+			return
+		}
+		if !isValidTrackerKey(key) {
+			writeAPIError(w, http.StatusBadRequest, "key contains invalid characters")
+			return
+		}
+
+		trackerCfg, err := loadTrackerConfig(providerName)
+		if err != nil {
+			writeAPIError(w, http.StatusBadRequest, "tracker configuration error")
+			return
+		}
+
+		constructor, ok := tracker.Resolve(providerName)
+		if !ok {
+			writeAPIError(w, http.StatusBadRequest, fmt.Sprintf("unknown tracker provider %q", providerName))
+			return
+		}
+		tp, err := constructor(trackerCfg)
+		if err != nil {
+			writeAPIError(w, http.StatusBadRequest, "tracker initialization error")
+			return
+		}
+
+		issue, err := tp.FetchIssue(key)
+		if err != nil {
+			writeAPIError(w, http.StatusBadGateway, "failed to fetch issue")
+			return
+		}
+
+		writeAPIJSON(w, http.StatusOK, map[string]any{
+			"key":         issue.Key,
+			"title":       issue.Title,
+			"description": issue.Description,
+			"priority":    issue.Priority,
+			"labels":      issue.Labels,
+			"source_url":  issue.SourceURL,
+		})
+	}
+}
+
+// end of dashboard_web.go

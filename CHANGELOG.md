@@ -2,6 +2,50 @@
 
 ## Unreleased
 
+### Web UI: Filter/refine and import pages (ci-v18q6)
+
+Built the LLM-assisted filter/refine page for creating well-specified droplets, and the external tracker import page — the smart features that help operators write better droplet specs and bring in external work items.
+
+**Key features:**
+- **Filter/Refine page** (`/app/filter`): Interactive multi-turn chat with an LLM that helps refine a rough idea into a well-specified droplet; session management (new/resume past sessions); spec preview panel showing refined title, description, and snapshot; accept button files the droplet directly from the filter UI
+- **Import page** (`/app/import`): Import droplets from external issue trackers; Jira Cloud integration with auto-fill of title and description from the tracker issue; complexity and priority selection; credential setup note linking to Doctor page
+- **Export button** (on Droplets list): Download droplets as JSON or CSV with current filters applied; includes auth token in download URL when API key is configured
+- **Filter session CRUD**: `CreateFilterSession`, `GetFilterSession`, `ListFilterSessions`, `UpdateFilterSessionMessages`, `DeleteFilterSession` methods with `FilterSession` and `FilterMessage` types
+- **Rate limiting**: Outbound rate limiter (10 req/min per IP) on filter and import endpoints to protect against expensive LLM/HTTP calls; uses `RemoteAddr` only (ignores X-Forwarded-For to prevent bypass); expired bucket eviction on every check
+- **Security**: Tracker key validation (alphanumeric, hyphens, underscores only — prevents path traversal in Jira URLs); sanitized error messages on import/error paths (no env var names, repo names, or upstream responses leaked to client); max import key length (128 chars); max filter description length (4096 chars); DeleteFilterSession cleanup on LLM failure to prevent zombie sessions
+- **Jira FetchIssue enhancement**: Now populates `Key`, `Labels`, and `SourceURL` fields; validates key format before HTTP call
+
+**API endpoints:**
+- `POST /api/filter/new` — create a new filter session (JSON body: `title`, `description`); rate-limited
+- `POST /api/filter/{session_id}/resume` — send a message and get LLM response (JSON body: `message`); rate-limited
+- `GET /api/filter/sessions` — list past filter sessions
+- `GET /api/filter/{session_id}` — get session history and spec snapshot
+- `POST /api/import` — import a tracker issue as a droplet (JSON body: `provider`, `key`, `repo`, `complexity`, `priority`); rate-limited
+- `GET /api/import/preview` — preview tracker issue before importing (query params: `?provider=&key=`); rate-limited
+
+**Frontend:**
+- `web/src/pages/FilterPage.tsx` — Filter/Refine page with ChatWindow, SpecPreview, session management
+- `web/src/pages/ImportPage.tsx` — Import page with ImportForm, JiraSetupNote
+- `web/src/components/ChatWindow.tsx` — Multi-turn chat UI with message bubbles and typing indicator
+- `web/src/components/MessageBubble.tsx` — Individual message rendering (user/assistant roles)
+- `web/src/components/SpecPreview.tsx` — Side panel showing current refined spec
+- `web/src/components/ImportForm.tsx` — Jira import form with auto-fill preview
+- `web/src/components/JiraSetupNote.tsx` — Credential setup note linking to Doctor page
+- `web/src/components/ExportButton.tsx` — Download button for droplets list with format selector and auth token support
+- `web/src/api/filter.ts` — Filter session API client
+- `web/src/api/import.ts` — Import API client
+- `web/src/api/shared.ts` — Shared apiFetch utility (extracted from duplication)
+
+**Backend:**
+- `cmd/ct/dashboard_web.go` — Filter session handlers (new/resume/list/get), import handlers (import/preview), outbound rate limiter, `isValidTrackerKey` validation, `maxImportKeyLen`/`maxDescriptionLen` constants, sanitized error messages, `DeleteFilterSession` cleanup on LLM failure
+- `internal/cistern/client.go` — `FilterSession`, `FilterMessage` types; `CreateFilterSession`, `GetFilterSession`, `ListFilterSessions`, `UpdateFilterSessionMessages`, `DeleteFilterSession` methods
+- `internal/cistern/migrations/016_filter_sessions.sql` — filter_sessions table
+- `internal/cistern/migrations/017_filter_llm_session_id.sql` — llm_session_id column
+- `internal/cistern/schema.sql` — Updated schema with filter_sessions table
+- `internal/tracker/jira.go` — `FetchIssue` now populates Key, Labels, SourceURL; `validIssueKeyRe` validation
+
+**Tests:** 273 frontend tests pass, all Go tests pass. TypeScript compiles cleanly, go vet clean.
+
 ### Web UI: Droplet creation, edit, and issues (ci-e2qkd)
 
 Built the droplet creation form, metadata editing, and full issues management — completing the CRUD surface for droplets in the web UI.

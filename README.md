@@ -620,6 +620,9 @@ SSE stream and `/ws/aqueducts/{name}/peek` WebSocket used by the TUI.
 - **Castellarius control page** (`/app/castellarius`) — view running/stopped status, PID, uptime; start/stop/restart the daemon; aqueduct table with flow status, current droplet, step, and elapsed time; auto-refreshes every 5 seconds
 - **Doctor page** (`/app/doctor`) — run health checks with pass/fail/warn indicators; re-run or fix from the UI; grouped by category with summary card
 - **Logs page** (`/app/logs`) — real-time log viewer with SSE streaming; source selector (castellarius.log and other available logs); log level color coding (INFO=cyan, WARN=yellow, ERROR=red, DEBUG=dim); search/filter, auto-scroll toggle, line numbers; file size and last-modified metadata
+- **Filter/Refine page** (`/app/filter`) — interactive LLM-assisted droplet refinement; multi-turn chat with Cistern's filter model to turn rough ideas into well-specified droplets; session management (new/resume past sessions); spec preview panel showing refined title, description, and complexity; accept button files the droplet and redirects to detail page
+- **Import page** (`/app/import`) — import droplets from external issue trackers; Jira integration with provider/key/repo form fields, auto-fill title and description from the tracker issue, complexity and priority selection; credential setup note linking to Doctor page
+- **Export button** (on Droplets list) — download droplets as JSON or CSV; format selector; applies current filters (status, repo, priority); includes auth token in download URL when API key is configured
 - **Repos & Skills page** (`/app/repos`) — browse configured repositories with aqueduct chains; view installed skills with source URLs and install dates; display-only (install/uninstall remains CLI-only)
 - Issue management (on detail page) — file issues with description and flagged-by
   role dropdown, resolve/reject open issues with evidence, issue cards with status
@@ -718,6 +721,22 @@ The web dashboard exposes a REST API at `/api/` that mirrors all TUI operations.
 |--------|----------|-------------|
 | `GET` | `/api/droplets/{id}/events` | Real-time droplet updates (SSE stream, max 64 concurrent connections) |
 
+### Filter Sessions
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `POST` | `/api/filter/new` | Create a new filter session (JSON body: `title`, `description`). Rate-limited (10 req/min per IP) |
+| `POST` | `/api/filter/{session_id}/resume` | Send a message and get LLM response (JSON body: `message`). Rate-limited (10 req/min per IP) |
+| `GET` | `/api/filter/sessions` | List past filter sessions |
+| `GET` | `/api/filter/{session_id}` | Get session history and spec snapshot |
+
+### Import
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `POST` | `/api/import` | Import a tracker issue as a droplet (JSON body: `provider`, `key`, `repo`, `complexity`, `priority`). Rate-limited (10 req/min per IP) |
+| `GET` | `/api/import/preview` | Preview tracker issue before importing (query params: `?provider=&key=`). Rate-limited (10 req/min per IP) |
+
 ### Castellarius, Doctor, Repos & Skills
 
 | Method | Endpoint | Description |
@@ -751,6 +770,9 @@ All endpoints enforce field length limits:
 | `notes` / `reason` | 65536 |
 | `content` (issues/notes) | 65536 |
 | `depends_on` | 128 |
+| `key` (import) | 128 |
+
+Import keys are also validated to contain only alphanumeric characters, hyphens, and underscores (prevents path traversal). Filter/import endpoints are rate-limited at 10 requests per minute per IP.
 
 Request bodies are capped at 1 MiB. Aqueduct names in WebSocket/SSE endpoints are validated to prevent tmux injection. CSV export sanitizes cells to prevent formula injection.
 
