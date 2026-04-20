@@ -21,15 +21,10 @@ export async function createFilterSession(title: string, description?: string): 
   });
 }
 
-export async function resumeFilterSession(sessionId: string, message: string, llmSessionId?: string): Promise<FilterResumeResponse> {
-  const headers: Record<string, string> = {};
-  if (llmSessionId) {
-    headers['X-LLM-Session-ID'] = llmSessionId;
-  }
+export async function resumeFilterSession(sessionId: string, message: string): Promise<FilterResumeResponse> {
   return apiFetch<FilterResumeResponse>(`/api/filter/${encodeURIComponent(sessionId)}/resume`, {
     method: 'POST',
     body: JSON.stringify({ message }),
-    headers,
   });
 }
 

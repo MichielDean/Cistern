@@ -8,7 +8,6 @@ export function FilterPage() {
   const [sessions, setSessions] = useState<FilterSession[]>([]);
   const [currentSession, setCurrentSession] = useState<FilterSession | null>(null);
   const [messages, setMessages] = useState<FilterMessage[]>([]);
-  const [llmSessionId, setLlmSessionId] = useState<string>('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showNewSession, setShowNewSession] = useState(false);
@@ -30,7 +29,6 @@ export function FilterPage() {
       const result = await createFilterSession(newTitle.trim(), newDescription.trim());
       const session = result.session;
       setCurrentSession(session);
-      setLlmSessionId(result.llm_session_id);
       const initialMessages: FilterMessage[] = parseFilterMessages(session.messages);
       setMessages([
         ...initialMessages,
@@ -48,7 +46,6 @@ export function FilterPage() {
 
   const handleResumeSession = useCallback(async (session: FilterSession) => {
     setCurrentSession(session);
-    setLlmSessionId(session.llm_session_id || '');
     setMessages(parseFilterMessages(session.messages));
     setShowSessions(false);
   }, []);
@@ -59,10 +56,7 @@ export function FilterPage() {
     setLoading(true);
     setError(null);
     try {
-      const result = await resumeFilterSession(currentSession.id, message, llmSessionId || undefined);
-      if (result.llm_session_id) {
-        setLlmSessionId(result.llm_session_id);
-      }
+      const result = await resumeFilterSession(currentSession.id, message);
       setMessages((prev) => [...prev, { role: 'assistant', content: result.assistant_message }]);
       listFilterSessions().then((s) => setSessions(s || [])).catch(() => {});
     } catch (err) {
@@ -70,7 +64,7 @@ export function FilterPage() {
     } finally {
       setLoading(false);
     }
-  }, [currentSession, llmSessionId]);
+  }, [currentSession]);
 
   const handleAccept = useCallback(() => {
     if (!currentSession) return;

@@ -1286,9 +1286,6 @@ func newOutboundRateLimiter() *outboundRateLimiter {
 func (l *outboundRateLimiter) wrap(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		ip := r.RemoteAddr
-		if h := r.Header.Get("X-Forwarded-For"); h != "" {
-			ip = strings.SplitN(h, ",", 2)[0]
-		}
 		if !l.allow(ip) {
 			w.Header().Set("Retry-After", strconv.Itoa(int(l.window.Seconds())))
 			writeAPIError(w, http.StatusTooManyRequests, "too many requests")
@@ -1302,8 +1299,13 @@ func (l *outboundRateLimiter) allow(ip string) bool {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	now := time.Now()
+	for k, b := range l.buckets {
+		if now.After(b.resetAt) {
+			delete(l.buckets, k)
+		}
+	}
 	b, ok := l.buckets[ip]
-	if !ok || now.After(b.resetAt) {
+	if !ok {
 		b = &outboundBucket{count: 0, resetAt: now.Add(l.window)}
 		l.buckets[ip] = b
 	}
@@ -3276,7 +3278,7 @@ func handleImport(cfgPath, dbPath string) http.HandlerFunc {
 
 		repo, err := resolveCanonicalRepo(req.Repo)
 		if err != nil {
-			writeAPIError(w, http.StatusBadRequest, err.Error())
+			writeAPIError(w, http.StatusBadRequest, "unknown repo")
 			return
 		}
 

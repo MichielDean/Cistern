@@ -3591,6 +3591,93 @@ func TestAPI_OutboundRateLimiter_RejectsExcessRequests(t *testing.T) {
 	}
 }
 
+func TestAPI_OutboundRateLimiter_IgnoresXForwardedFor(t *testing.T) {
+	limiter := newOutboundRateLimiter()
+	limiter.limit = 1
+	limiter.window = time.Minute
+
+	callCount := 0
+	handler := limiter.wrap(func(w http.ResponseWriter, r *http.Request) {
+		callCount++
+		w.WriteHeader(http.StatusOK)
+	})
+
+	req := httptest.NewRequest(http.MethodPost, "/api/filter/new", nil)
+	req.RemoteAddr = "1.2.3.4:5678"
+	req.Header.Set("X-Forwarded-For", "9.9.9.9")
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Errorf("first request from 1.2.3.4 should be allowed, got %d", w.Code)
+	}
+
+	req2 := httptest.NewRequest(http.MethodPost, "/api/filter/new", nil)
+	req2.RemoteAddr = "1.2.3.4:5678"
+	req2.Header.Set("X-Forwarded-For", "different-ip")
+	w2 := httptest.NewRecorder()
+	handler.ServeHTTP(w2, req2)
+	if w2.Code != http.StatusTooManyRequests {
+		t.Errorf("second request from same RemoteAddr should be rate-limited regardless of XFF, got %d", w2.Code)
+	}
+}
+
+func TestAPI_OutboundRateLimiter_EvictsExpiredBuckets(t *testing.T) {
+	limiter := newOutboundRateLimiter()
+	limiter.limit = 1
+	limiter.window = 50 * time.Millisecond
+
+	_ = limiter.allow("1.2.3.4:5678")
+	_ = limiter.allow("5.6.7.8:9999")
+
+	if len(limiter.buckets) != 2 {
+		t.Fatalf("expected 2 buckets, got %d", len(limiter.buckets))
+	}
+
+	limiter.mu.Lock()
+	for _, b := range limiter.buckets {
+		b.resetAt = time.Now().Add(-time.Second)
+	}
+	limiter.mu.Unlock()
+
+	_ = limiter.allow("9.9.9.9:1111")
+
+	if len(limiter.buckets) != 1 {
+		t.Errorf("expected expired buckets to be evicted, got %d buckets", len(limiter.buckets))
+	}
+
+	_, exists := limiter.buckets["1.2.3.4:5678"]
+	if exists {
+		t.Error("expired bucket for 1.2.3.4 should have been evicted")
+	}
+	_, exists = limiter.buckets["5.6.7.8:9999"]
+	if exists {
+		t.Error("expired bucket for 5.6.7.8 should have been evicted")
+	}
+}
+
+func TestAPI_ImportHandler_RepoError_Sanitized(t *testing.T) {
+	cfgPath := writeTestConfig(t, "TestRepo")
+	t.Setenv("CT_CONFIG", cfgPath)
+	mux := newDashboardMux(cfgPath, tempDB(t))
+
+	body := `{"provider":"jira","key":"PROJ-123","repo":"nonexistent","complexity":2,"priority":1}`
+	req := httptest.NewRequest(http.MethodPost, "/api/import", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", w.Code, w.Body.String())
+	}
+	respBody := w.Body.String()
+	if strings.Contains(respBody, "TestRepo") {
+		t.Errorf("error response should not leak configured repo names, got: %s", respBody)
+	}
+	if !strings.Contains(respBody, "unknown repo") {
+		t.Errorf("error response should contain 'unknown repo', got: %s", respBody)
+	}
+}
+
 func TestIsValidTrackerKey(t *testing.T) {
 	tests := []struct {
 		key  string
