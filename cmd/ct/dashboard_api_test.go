@@ -3702,3 +3702,27 @@ func TestIsValidTrackerKey(t *testing.T) {
 		})
 	}
 }
+
+func TestClient_DeleteFilterSession_API(t *testing.T) {
+	db := tempDB(t)
+	c, err := cistern.New(db, "mr")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s, err := c.CreateFilterSession("To delete", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := c.DeleteFilterSession(s.ID); err != nil {
+		t.Fatalf("DeleteFilterSession: %v", err)
+	}
+	c.Close()
+
+	mux := newDashboardMux(tempCfg(t), db)
+	req := httptest.NewRequest(http.MethodGet, "/api/filter/"+s.ID, nil)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+	if w.Code != http.StatusNotFound {
+		t.Errorf("GET deleted session status = %d, want 404", w.Code)
+	}
+}

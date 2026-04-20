@@ -60,6 +60,7 @@ describe('filter API', () => {
         session_id: 'fs-1',
         llm_session_id: 'llm-456',
         assistant_message: 'Good point!',
+        spec_snapshot: 'Good point!',
       };
       mockFetch(mockResponse);
 

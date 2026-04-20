@@ -219,6 +219,7 @@ export interface FilterResumeResponse {
   session_id: string;
   llm_session_id: string;
   assistant_message: string;
+  spec_snapshot: string;
 }
 
 export interface ImportRequest {

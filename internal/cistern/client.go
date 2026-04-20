@@ -1433,3 +1433,19 @@ func (c *Client) UpdateFilterSessionMessages(id string, messages string, specSna
 	}
 	return nil
 }
+
+// DeleteFilterSession removes a filter session by ID.
+func (c *Client) DeleteFilterSession(id string) error {
+	res, err := c.db.Exec(`DELETE FROM filter_sessions WHERE id = ?`, id)
+	if err != nil {
+		return fmt.Errorf("cistern: delete filter session %s: %w", id, err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("cistern: delete filter session rows affected: %w", err)
+	}
+	if n == 0 {
+		return fmt.Errorf("cistern: filter session %s not found", id)
+	}
+	return nil
+}

@@ -58,6 +58,7 @@ export function FilterPage() {
     try {
       const result = await resumeFilterSession(currentSession.id, message);
       setMessages((prev) => [...prev, { role: 'assistant', content: result.assistant_message }]);
+      setCurrentSession((prev) => prev ? { ...prev, spec_snapshot: result.spec_snapshot, llm_session_id: result.llm_session_id } : prev);
       listFilterSessions().then((s) => setSessions(s || [])).catch(() => {});
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to send message');
@@ -68,7 +69,8 @@ export function FilterPage() {
 
   const handleAccept = useCallback(() => {
     if (!currentSession) return;
-    window.location.href = `/app/droplets/new?title=${encodeURIComponent(currentSession.title)}&description=${encodeURIComponent(currentSession.description)}`;
+    const desc = currentSession.spec_snapshot || currentSession.description;
+    window.location.href = `/app/droplets/new?title=${encodeURIComponent(currentSession.title)}&description=${encodeURIComponent(desc)}`;
   }, [currentSession]);
 
   return (

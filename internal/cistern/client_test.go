@@ -3047,3 +3047,26 @@ func TestClient_UpdateFilterSessionMessages_NotFound(t *testing.T) {
 		t.Fatal("expected error for nonexistent session")
 	}
 }
+
+func TestClient_DeleteFilterSession(t *testing.T) {
+	c := testClient(t)
+	s, err := c.CreateFilterSession("Delete me", "desc")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := c.DeleteFilterSession(s.ID); err != nil {
+		t.Fatalf("DeleteFilterSession: %v", err)
+	}
+	_, err = c.GetFilterSession(s.ID)
+	if err == nil {
+		t.Fatal("expected error getting deleted session")
+	}
+}
+
+func TestClient_DeleteFilterSession_NotFound(t *testing.T) {
+	c := testClient(t)
+	err := c.DeleteFilterSession("nonexistent")
+	if err == nil {
+		t.Fatal("expected error for nonexistent session")
+	}
+}

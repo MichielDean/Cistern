@@ -3103,6 +3103,7 @@ func handleFilterNew(cfgPath, dbPath string) http.HandlerFunc {
 
 			result, err := invokeFilterNew(preset, req.Title, req.Description, contextBlock)
 			if err != nil {
+				c.DeleteFilterSession(session.ID) //nolint:errcheck
 				return err
 			}
 
@@ -3111,11 +3112,12 @@ func handleFilterNew(cfgPath, dbPath string) http.HandlerFunc {
 			messages = append(messages, cistern.FilterMessage{Role: "assistant", Content: result.Text})
 
 			msgJSON, _ := json.Marshal(messages)
-			if err := c.UpdateFilterSessionMessages(session.ID, string(msgJSON), "", result.SessionID); err != nil {
+			if err := c.UpdateFilterSessionMessages(session.ID, string(msgJSON), result.Text, result.SessionID); err != nil {
 				return err
 			}
 
 			session.Messages = string(msgJSON)
+			session.SpecSnapshot = result.Text
 			session.LLMSessionID = result.SessionID
 
 			w.Header().Set("Content-Type", "application/json")
@@ -3194,7 +3196,7 @@ func handleFilterResume(cfgPath, dbPath string) http.HandlerFunc {
 			existingMessages = append(existingMessages, cistern.FilterMessage{Role: "assistant", Content: result.Text})
 
 			msgJSON, _ := json.Marshal(existingMessages)
-			if err := c.UpdateFilterSessionMessages(sessionID, string(msgJSON), session.SpecSnapshot, result.SessionID); err != nil {
+			if err := c.UpdateFilterSessionMessages(sessionID, string(msgJSON), result.Text, result.SessionID); err != nil {
 				return err
 			}
 
@@ -3203,6 +3205,7 @@ func handleFilterResume(cfgPath, dbPath string) http.HandlerFunc {
 				"session_id":        sessionID,
 				"llm_session_id":    result.SessionID,
 				"assistant_message": result.Text,
+				"spec_snapshot":     result.Text,
 			})
 			return nil
 		})

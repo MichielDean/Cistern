@@ -22,7 +22,7 @@ export function MessageBubble({ message }: MessageBubbleProps) {
         }`}
       >
         {isAssistant ? (
-          <div className="whitespace-pre-wrap break-words filter-markdown">
+          <div className="whitespace-pre-wrap break-words">
             {message.content}
           </div>
         ) : (
