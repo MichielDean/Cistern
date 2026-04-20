@@ -1294,7 +1294,12 @@ func handleGetDroplets(dbPath string) http.HandlerFunc {
 			if items == nil {
 				items = []*cistern.Droplet{}
 			}
-			writeAPIJSON(w, http.StatusOK, items)
+			writeAPIJSON(w, http.StatusOK, map[string]any{
+				"droplets": items,
+				"total":    len(items),
+				"page":     1,
+				"per_page": len(items),
+			})
 			return nil
 		})
 	}
@@ -1313,7 +1318,10 @@ func handleSearchDroplets(dbPath string) http.HandlerFunc {
 			if items == nil {
 				items = []*cistern.Droplet{}
 			}
-			writeAPIJSON(w, http.StatusOK, items)
+			writeAPIJSON(w, http.StatusOK, map[string]any{
+				"droplets": items,
+				"total":    len(items),
+			})
 			return nil
 		})
 	}
@@ -1921,10 +1929,22 @@ func handleGetDependencies(dbPath string) http.HandlerFunc {
 			if err != nil {
 				return err
 			}
-			if deps == nil {
-				deps = []string{}
+			undelivered, err := c.GetBlockedBy(id)
+			if err != nil {
+				return err
 			}
-			writeAPIJSON(w, http.StatusOK, deps)
+			result := make([]map[string]string, 0, len(deps)+len(undelivered))
+			for _, d := range deps {
+				ty := "blocking"
+				for _, u := range undelivered {
+					if u == d {
+						ty = "blocked_by"
+						break
+					}
+				}
+				result = append(result, map[string]string{"depends_on": d, "type": ty})
+			}
+			writeAPIJSON(w, http.StatusOK, result)
 			return nil
 		})
 	}
@@ -1957,7 +1977,22 @@ func handleAddDependency(dbPath string) http.HandlerFunc {
 			if err != nil {
 				return err
 			}
-			writeAPIJSON(w, http.StatusCreated, deps)
+			undelivered, err := c.GetBlockedBy(id)
+			if err != nil {
+				return err
+			}
+			result := make([]map[string]string, 0, len(deps)+len(undelivered))
+			for _, d := range deps {
+				ty := "blocking"
+				for _, u := range undelivered {
+					if u == d {
+						ty = "blocked_by"
+						break
+					}
+				}
+				result = append(result, map[string]string{"depends_on": d, "type": ty})
+			}
+			writeAPIJSON(w, http.StatusCreated, result)
 			return nil
 		})
 	}
