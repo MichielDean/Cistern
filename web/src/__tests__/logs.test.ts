@@ -76,7 +76,7 @@ describe('createLogEventSource', () => {
   it('encodes source parameter in SSE URL', async () => {
     const calls: string[] = [];
     const mockEventSource = { onmessage: null as (() => void) | null, onerror: null as (() => void) | null, close: vi.fn() };
-    vi.stubGlobal('EventSource', vi.fn().mockImplementation((url: string) => {
+    vi.stubGlobal('EventSource', vi.fn().mockImplementation(function(this: EventSource, url: string) {
       calls.push(url);
       return mockEventSource;
     }));
@@ -96,7 +96,7 @@ describe('createLogEventSource', () => {
   it('encodes special characters in SSE source', async () => {
     const calls: string[] = [];
     const mockEventSource = { onmessage: null as (() => void) | null, onerror: null as (() => void) | null, close: vi.fn() };
-    vi.stubGlobal('EventSource', vi.fn().mockImplementation((url: string) => {
+    vi.stubGlobal('EventSource', vi.fn().mockImplementation(function(this: EventSource, url: string) {
       calls.push(url);
       return mockEventSource;
     }));
@@ -121,7 +121,7 @@ describe('createLogEventSource', () => {
       onerror: null as (() => void) | null,
       close: vi.fn(),
     };
-    vi.stubGlobal('EventSource', vi.fn().mockImplementation((_url: string) => {
+    vi.stubGlobal('EventSource', vi.fn().mockImplementation(function(this: EventSource, _url: string) {
       return mockEventSource;
     }));
 
@@ -150,7 +150,7 @@ describe('createLogEventSource', () => {
       onerror: null as (() => void) | null,
       close: vi.fn(),
     };
-    vi.stubGlobal('EventSource', vi.fn().mockImplementation(() => mockEventSource));
+    vi.stubGlobal('EventSource', vi.fn().mockImplementation(function(this: EventSource) { return mockEventSource; }));
 
     vi.stubGlobal('localStorage', {
       getItem: () => null,

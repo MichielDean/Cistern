@@ -27,11 +27,13 @@ export function LogsPage() {
     setError(null);
     try {
       const lines = await fetchLogHistory(500, source);
+      if (sourceRef.current !== source) return;
       setEntries(parseLogLines(lines));
     } catch (err) {
+      if (sourceRef.current !== source) return;
       setError(err instanceof Error ? err : new Error(String(err)));
     } finally {
-      setLoading(false);
+      if (sourceRef.current === source) setLoading(false);
     }
   }, []);
 
