@@ -57,6 +57,58 @@ export interface CataractaeInfo {
   total_cataractae: number;
 }
 
+export interface DropletListResponse {
+  droplets: Droplet[];
+  total: number;
+  page: number;
+  per_page: number;
+}
+
+export interface DropletSearchResponse {
+  droplets: Droplet[];
+  total: number;
+}
+
+export interface DropletDependency {
+  depends_on: string;
+  type: 'blocking' | 'blocked_by';
+}
+
+export interface CreateDropletRequest {
+  repo: string;
+  title: string;
+  description?: string;
+  priority?: number;
+  complexity?: number;
+  depends_on?: string[];
+}
+
+export interface EditDropletRequest {
+  title?: string;
+  description?: string;
+  complexity?: number;
+  priority?: number;
+}
+
+export interface ActionRequest {
+  notes?: string;
+  to?: string;
+}
+
+export interface AddNoteRequest {
+  cataractae?: string;
+  content: string;
+}
+
+export interface AddIssueRequest {
+  flagged_by?: string;
+  description: string;
+}
+
+export interface ResolveIssueRequest {
+  evidence: string;
+}
+
 export interface DashboardData {
   cataractae_count: number;
   flowing_count: number;
