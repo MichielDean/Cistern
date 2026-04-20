@@ -130,7 +130,7 @@ func (p dropletsPanel) PaletteActions(droplet *cistern.Droplet) []PaletteAction 
 		dropletPaletteAction("pool", "move droplet to pool", id, actionPool),
 		dropletPaletteAction("restart", "restart this droplet", id, actionRestart),
 		dropletPaletteAction("add note", "add a note to this droplet", id, actionAddNote),
-		dropletPaletteAction("edit metadata", "edit title, priority, complexity, description", id, actionEditMeta),
+		dropletPaletteAction("edit metadata", "edit title, priority, description", id, actionEditMeta),
 		dropletPaletteAction("add dependency", "add a droplet dependency", id, actionAddDep),
 		dropletPaletteAction("remove dependency", "remove a droplet dependency", id, actionRemoveDep),
 		dropletPaletteAction("file issue", "file an issue against this droplet", id, actionFileIssue),

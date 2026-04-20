@@ -40,7 +40,7 @@ func TestDropletPeekNotFlowing(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	item, err := c.Add("myrepo", "Test item", "", 1, 3)
+	item, err := c.Add("myrepo", "Test item", "", 1)
 	c.Close()
 	if err != nil {
 		t.Fatal(err)
@@ -89,7 +89,7 @@ func TestDropletPeekLiveSession_AttachesReadOnly(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := c.Add("myrepo", "Test item", "", 1, 3); err != nil {
+	if _, err := c.Add("myrepo", "Test item", "", 1); err != nil {
 		t.Fatal(err)
 	}
 	item, err := c.GetReady("myrepo")
@@ -152,7 +152,7 @@ func TestDropletPeekNoSession(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := c.Add("myrepo", "Test item", "", 1, 3); err != nil {
+	if _, err := c.Add("myrepo", "Test item", "", 1); err != nil {
 		t.Fatal(err)
 	}
 	// Advance to in_progress, then assign a non-existent worker so tmux lookup fails.
@@ -211,7 +211,7 @@ func makeInProgressItem(t *testing.T) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := c.Add("myrepo", "Test item", "", 1, 3); err != nil {
+	if _, err := c.Add("myrepo", "Test item", "", 1); err != nil {
 		t.Fatal(err)
 	}
 	item, err := c.GetReady("myrepo")
@@ -379,7 +379,7 @@ func TestDropletPeek_FollowWithoutSnapshot_ReturnsError(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := c.Add("myrepo", "Test item", "", 1, 3); err != nil {
+	if _, err := c.Add("myrepo", "Test item", "", 1); err != nil {
 		t.Fatal(err)
 	}
 	item, err := c.GetReady("myrepo")
@@ -422,7 +422,7 @@ func TestDropletPeek_StageElapsedNonZero_ShowsStageAge(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	dr, err := c.Add("myrepo", "Stage peek test", "", 1, 3)
+	dr, err := c.Add("myrepo", "Stage peek test", "", 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -499,7 +499,7 @@ func TestDropletPeek_StageElapsedZero_OmitsStageAge(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	dr, err := c.Add("myrepo", "Zero dispatch test", "", 1, 3)
+	dr, err := c.Add("myrepo", "Zero dispatch test", "", 1)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -391,7 +391,7 @@ func TestFakeagent_SpawnOutcomeCycle(t *testing.T) {
 	defer c.Close()
 
 	// Add a test droplet so fakeagent has an ID to pass.
-	droplet, err := c.Add("testrepo", "fakeagent test", "desc", 1, 2)
+	droplet, err := c.Add("testrepo", "fakeagent test", "desc", 1)
 	if err != nil {
 		t.Fatalf("cistern.Add: %v", err)
 	}

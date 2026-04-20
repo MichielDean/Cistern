@@ -89,7 +89,7 @@ func TestCisternListOutputFlag(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		item, err := c.Add("github.com/test/repo", "Test item", "", 1, 3)
+		item, err := c.Add("github.com/test/repo", "Test item", "", 1)
 		c.Close()
 		if err != nil {
 			t.Fatal(err)
@@ -164,7 +164,7 @@ func TestCisternListTableOutput(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = c.Add("github.com/test/repo", "Test droplet", "", 1, 3)
+	_, err = c.Add("github.com/test/repo", "Test droplet", "", 1)
 	c.Close()
 	if err != nil {
 		t.Fatal(err)
@@ -213,8 +213,8 @@ func TestCisternList_PooledItems_NoFlowingMessage(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s1, _ := c.Add("repo", "Pooled one", "", 1, 3)
-	s2, _ := c.Add("repo", "Pooled two", "", 1, 3)
+	s1, _ := c.Add("repo", "Pooled one", "", 1)
+	s2, _ := c.Add("repo", "Pooled two", "", 1)
 	c.Pool(s1.ID, "timed out")
 	c.Pool(s2.ID, "timed out")
 	c.Close()
@@ -272,10 +272,10 @@ func TestCisternList_FlowingAndPooled_ShowsNoMessage(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Create one in_progress (flowing) droplet.
-	ip, _ := c.Add("repo", "In-progress work", "", 1, 3)
+	ip, _ := c.Add("repo", "In-progress work", "", 1)
 	c.UpdateStatus(ip.ID, "in_progress")
 	// Create one pooled droplet.
-	stuck, _ := c.Add("repo", "Stuck item", "", 1, 3)
+	stuck, _ := c.Add("repo", "Stuck item", "", 1)
 	c.Pool(stuck.ID, "timed out")
 	c.Close()
 
@@ -296,63 +296,6 @@ func TestCisternList_FlowingAndPooled_ShowsNoMessage(t *testing.T) {
 	got := strings.TrimSpace(out)
 	if got != "" {
 		t.Fatalf("expected no output when flowing droplets exist, got: %q", got)
-	}
-}
-
-func TestParseComplexity(t *testing.T) {
-	tests := []struct {
-		input   string
-		want    int
-		wantErr bool
-	}{
-		{"1", 1, false},
-		{"2", 2, false},
-		{"3", 3, false},
-		{"standard", 1, false},
-		{"full", 2, false},
-		{"critical", 3, false},
-		{"", 2, false},
-		{"trivial", 0, true},
-		{"4", 0, true},
-		{"5", 0, true},
-		{"foo", 0, true},
-	}
-
-	for _, tt := range tests {
-		got, err := parseComplexity(tt.input)
-		if tt.wantErr {
-			if err == nil {
-				t.Errorf("parseComplexity(%q) = %d, want error", tt.input, got)
-			}
-			continue
-		}
-		if err != nil {
-			t.Errorf("parseComplexity(%q) error: %v", tt.input, err)
-			continue
-		}
-		if got != tt.want {
-			t.Errorf("parseComplexity(%q) = %d, want %d", tt.input, got, tt.want)
-		}
-	}
-}
-
-func TestComplexityName(t *testing.T) {
-	tests := []struct {
-		level int
-		want  string
-	}{
-		{1, "standard"},
-		{2, "full"},
-		{3, "critical"},
-		{0, "full"},
-		{4, "full"},
-		{99, "full"},
-	}
-	for _, tt := range tests {
-		got := complexityName(tt.level)
-		if got != tt.want {
-			t.Errorf("complexityName(%d) = %q, want %q", tt.level, got, tt.want)
-		}
 	}
 }
 
@@ -479,14 +422,12 @@ func TestDropletAddCmd_NormalizesRepoCase(t *testing.T) {
 
 	addTitle = "Test droplet"
 	addRepo = "portfoliowebsite"
-	addComplexity = "1"
 	addDescription = ""
 	addPriority = 1
 	addDependsOn = nil
 	defer func() {
 		addTitle = ""
 		addRepo = ""
-		addComplexity = ""
 		addPriority = 0
 		addDependsOn = nil
 	}()
@@ -522,11 +463,9 @@ func TestDropletAddCmd_UnknownRepo_ReturnsError(t *testing.T) {
 
 	addTitle = "Test droplet"
 	addRepo = "nonexistent"
-	addComplexity = "1"
 	defer func() {
 		addTitle = ""
 		addRepo = ""
-		addComplexity = ""
 	}()
 
 	err := dropletAddCmd.RunE(dropletAddCmd, nil)
@@ -577,13 +516,13 @@ func TestDropletStats_WithData(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	c.Add("repo", "q1", "", 1, 3)
-	c.Add("repo", "q2", "", 1, 3)
-	ip, _ := c.Add("repo", "ip1", "", 1, 3)
-	d1, _ := c.Add("repo", "d1", "", 1, 3)
-	d2, _ := c.Add("repo", "d2", "", 1, 3)
-	d3, _ := c.Add("repo", "d3", "", 1, 3)
-	s1, _ := c.Add("repo", "s1", "", 1, 3)
+	c.Add("repo", "q1", "", 1)
+	c.Add("repo", "q2", "", 1)
+	ip, _ := c.Add("repo", "ip1", "", 1)
+	d1, _ := c.Add("repo", "d1", "", 1)
+	d2, _ := c.Add("repo", "d2", "", 1)
+	d3, _ := c.Add("repo", "d3", "", 1)
+	s1, _ := c.Add("repo", "s1", "", 1)
 	c.UpdateStatus(ip.ID, "in_progress")
 	c.CloseItem(d1.ID)
 	c.CloseItem(d2.ID)
@@ -638,7 +577,7 @@ func TestDropletCancel(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	item, err := c.Add("repo", "Old feature", "", 1, 3)
+	item, err := c.Add("repo", "Old feature", "", 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -675,7 +614,7 @@ func TestDropletCancel_WithReason(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	item, err := c.Add("repo", "Superseded feature", "", 1, 3)
+	item, err := c.Add("repo", "Superseded feature", "", 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -730,7 +669,7 @@ func TestDropletCancel_TerminalStatus(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	item, _ := c.Add("repo", "Done feature", "", 1, 3)
+	item, _ := c.Add("repo", "Done feature", "", 1)
 	c.CloseItem(item.ID)
 	c.Close()
 
@@ -768,7 +707,7 @@ func TestDropletCancel_NotesAliasBackwardCompat(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	item, err := c.Add("repo", "Old feature", "", 1, 3)
+	item, err := c.Add("repo", "Old feature", "", 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -802,8 +741,8 @@ func TestDropletList_HidesCancelledByDefault(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	active, _ := c.Add("repo", "Active feature", "", 1, 3)
-	cancelled, _ := c.Add("repo", "Old feature", "", 1, 3)
+	active, _ := c.Add("repo", "Active feature", "", 1)
+	cancelled, _ := c.Add("repo", "Old feature", "", 1)
 	c.Cancel(cancelled.ID, "not needed")
 	c.Close()
 
@@ -850,8 +789,8 @@ func TestDropletList_CancelledFlag(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	c.Add("repo", "Active feature", "", 1, 3)
-	cancelled, _ := c.Add("repo", "Old feature", "", 1, 3)
+	c.Add("repo", "Active feature", "", 1)
+	cancelled, _ := c.Add("repo", "Old feature", "", 1)
 	c.Cancel(cancelled.ID, "not needed")
 	c.Close()
 
@@ -880,107 +819,6 @@ func TestDropletList_CancelledFlag(t *testing.T) {
 	}
 }
 
-func TestDropletApprove(t *testing.T) {
-	dir := t.TempDir()
-	db := filepath.Join(dir, "test.db")
-	t.Setenv("CT_DB", db)
-
-	c, err := cistern.New(db, "ts")
-	if err != nil {
-		t.Fatal(err)
-	}
-	item, err := c.Add("repo", "Critical feature", "", 1, 4)
-	if err != nil {
-		t.Fatal(err)
-	}
-	// Simulate scheduler routing to human gate.
-	c.UpdateStatus(item.ID, "pooled")
-	c.SetCataractae(item.ID, "human")
-	c.Close()
-
-	t.Run("approve releases to delivery", func(t *testing.T) {
-		old := os.Stdout
-		r, w, _ := os.Pipe()
-		os.Stdout = w
-
-		err := dropletApproveCmd.RunE(dropletApproveCmd, []string{item.ID})
-
-		w.Close()
-		os.Stdout = old
-
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-
-		var buf bytes.Buffer
-		buf.ReadFrom(r)
-		out := buf.String()
-		if !strings.Contains(out, "approved for delivery") {
-			t.Errorf("expected 'approved for delivery' in output, got: %q", out)
-		}
-
-		// Verify DB state: status=open, current_cataractae=delivery.
-		c2, _ := cistern.New(db, "")
-		defer c2.Close()
-		got, err := c2.Get(item.ID)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if got.Status != "open" {
-			t.Errorf("expected status 'open', got %q", got.Status)
-		}
-		if got.CurrentCataractae != "delivery" {
-			t.Errorf("expected current_cataractae 'delivery', got %q", got.CurrentCataractae)
-		}
-	})
-}
-
-func TestDropletApprove_NotHumanGated(t *testing.T) {
-	dir := t.TempDir()
-	db := filepath.Join(dir, "test.db")
-	t.Setenv("CT_DB", db)
-
-	c, err := cistern.New(db, "ts")
-	if err != nil {
-		t.Fatal(err)
-	}
-	item, err := c.Add("repo", "Normal feature", "", 1, 3)
-	c.Close()
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	err = dropletApproveCmd.RunE(dropletApproveCmd, []string{item.ID})
-	if err == nil {
-		t.Fatal("expected error for non-human-gated droplet")
-	}
-	if !strings.Contains(err.Error(), "not awaiting human approval") {
-		t.Errorf("expected 'not awaiting human approval' in error, got: %v", err)
-	}
-}
-
-func TestDisplayStatusForDroplet_AwaitingApproval(t *testing.T) {
-	// Human-gated droplet should display as "awaiting".
-	d := &cistern.Droplet{Status: "pooled", CurrentCataractae: "human"}
-	got := displayStatusForDroplet(d)
-	if got != "awaiting" {
-		t.Errorf("expected 'awaiting', got %q", got)
-	}
-
-	// Non-human pooled droplet should display as "pooled".
-	d2 := &cistern.Droplet{Status: "pooled", CurrentCataractae: "implement"}
-	got2 := displayStatusForDroplet(d2)
-	if got2 != "pooled" {
-		t.Errorf("expected 'pooled', got %q", got2)
-	}
-
-	// Icon for awaiting should be present in statusIcon.
-	icon := statusIcon("awaiting")
-	if !strings.Contains(icon, "⏸") {
-		t.Errorf("expected ⏸ icon for 'awaiting', got %q", icon)
-	}
-}
-
 func TestDropletSearch(t *testing.T) {
 	dir := t.TempDir()
 	db := filepath.Join(dir, "test.db")
@@ -991,9 +829,9 @@ func TestDropletSearch(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	c.Add("repo", "Fix login bug", "", 1, 3)
-	c.Add("repo", "Add dashboard", "", 2, 3)
-	ip, _ := c.Add("repo", "Fix payments", "", 1, 3)
+	c.Add("repo", "Fix login bug", "", 1)
+	c.Add("repo", "Add dashboard", "", 2)
+	ip, _ := c.Add("repo", "Fix payments", "", 1)
 	c.UpdateStatus(ip.ID, "in_progress")
 	c.Close()
 
@@ -1138,7 +976,7 @@ func TestDropletSearch(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		stuck, _ := cs.Add("repo", "Stuck integration", "", 1, 3)
+		stuck, _ := cs.Add("repo", "Stuck integration", "", 1)
 		cs.Pool(stuck.ID, "timed out")
 		cs.Close()
 
@@ -1175,7 +1013,7 @@ func TestDropletExport(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	item, err := c.Add("repo", "Export test droplet", "", 1, 3)
+	item, err := c.Add("repo", "Export test droplet", "", 1)
 	c.Close()
 	if err != nil {
 		t.Fatal(err)
@@ -1326,7 +1164,7 @@ func TestDropletRename(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	item, err := c.Add("repo", "Original Title", "", 1, 3)
+	item, err := c.Add("repo", "Original Title", "", 1)
 	c.Close()
 	if err != nil {
 		t.Fatal(err)
@@ -1360,7 +1198,6 @@ func resetEditFlags() {
 	dropletEditCmd.ResetFlags()
 	dropletEditCmd.Flags().StringVarP(&editTitle, "title", "t", "", "")
 	dropletEditCmd.Flags().StringVar(&editDescription, "description", "", "")
-	dropletEditCmd.Flags().StringVarP(&editComplexity, "complexity", "x", "", "")
 	dropletEditCmd.Flags().IntVarP(&editPriority, "priority", "p", 0, "")
 }
 
@@ -1431,7 +1268,7 @@ func TestDropletEdit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	item, err := c.Add("repo", "Original title", "old description", 3, 3)
+	item, err := c.Add("repo", "Original title", "old description", 3)
 	c.Close()
 	if err != nil {
 		t.Fatal(err)
@@ -1466,10 +1303,6 @@ func TestDropletEdit(t *testing.T) {
 		if got.Title != "Original title" {
 			t.Errorf("title changed unexpectedly: %q", got.Title)
 		}
-		// Complexity unchanged.
-		if got.Complexity != 3 {
-			t.Errorf("complexity changed unexpectedly: %d", got.Complexity)
-		}
 	})
 
 	t.Run("description from stdin", func(t *testing.T) {
@@ -1502,28 +1335,6 @@ func TestDropletEdit(t *testing.T) {
 		}
 		if got.Description != "stdin description" {
 			t.Errorf("description = %q, want %q", got.Description, "stdin description")
-		}
-	})
-
-	t.Run("update complexity", func(t *testing.T) {
-		resetEditFlags()
-		dropletEditCmd.Flags().Set("complexity", "standard")
-
-		if err := dropletEditCmd.RunE(dropletEditCmd, []string{item.ID}); err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-
-		c2, err := cistern.New(db, "")
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer c2.Close()
-		got, err := c2.Get(item.ID)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if got.Complexity != 1 {
-			t.Errorf("complexity = %d, want 1", got.Complexity)
 		}
 	})
 
@@ -1569,7 +1380,7 @@ func TestDropletEdit(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		ip, err := c2.Add("repo", "Flowing droplet", "", 1, 3)
+		ip, err := c2.Add("repo", "Flowing droplet", "", 1)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -1596,7 +1407,7 @@ func TestDropletEdit(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		item2, err := c2.Add("repo", "Old Title", "desc", 2, 3)
+		item2, err := c2.Add("repo", "Old Title", "desc", 2)
 		c2.Close()
 		if err != nil {
 			t.Fatal(err)
@@ -1675,7 +1486,7 @@ func TestDropletHeartbeat(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	item, err := c.Add("repo", "Feature", "", 1, 3)
+	item, err := c.Add("repo", "Feature", "", 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1756,7 +1567,7 @@ func TestEditInteractive_LiteralBackslashN(t *testing.T) {
 		t.Fatal(err)
 	}
 	literalDesc := `Use \n for newlines`
-	item, err := c.Add("repo", "Test title", literalDesc, 1, 3)
+	item, err := c.Add("repo", "Test title", literalDesc, 1)
 	c.Close()
 	if err != nil {
 		t.Fatal(err)
@@ -1796,7 +1607,7 @@ func TestEditInteractive_TitleWithNewlines(t *testing.T) {
 		t.Fatal(err)
 	}
 	multilineTitle := "line1\nline2"
-	item, err := c.Add("repo", multilineTitle, "desc", 1, 3)
+	item, err := c.Add("repo", multilineTitle, "desc", 1)
 	c.Close()
 	if err != nil {
 		t.Fatal(err)

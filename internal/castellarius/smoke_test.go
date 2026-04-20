@@ -216,7 +216,7 @@ func (c *pipelineClient) Cancel(id, reason string) error {
 	return nil
 }
 
-func (c *pipelineClient) FileDroplet(repo, title, description string, priority, complexity int) (*cistern.Droplet, error) {
+func (c *pipelineClient) FileDroplet(repo, title, description string, priority int) (*cistern.Droplet, error) {
 	return &cistern.Droplet{ID: "smoke-filed", Repo: repo}, nil
 }
 

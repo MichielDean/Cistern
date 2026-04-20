@@ -27,7 +27,7 @@ func setupRestartTestDB(t *testing.T) (*cistern.Client, string) {
 
 func TestDropletRestart_WithCataractae(t *testing.T) {
 	c, _ := setupRestartTestDB(t)
-	item, err := c.Add("myrepo", "Stuck feature", "", 1, 3)
+	item, err := c.Add("myrepo", "Stuck feature", "", 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -67,7 +67,7 @@ func TestDropletRestart_WithCataractae(t *testing.T) {
 
 func TestDropletRestart_WithoutCataractae_UsesCurrentCataractae(t *testing.T) {
 	c, _ := setupRestartTestDB(t)
-	item, err := c.Add("myrepo", "Task", "", 1, 3)
+	item, err := c.Add("myrepo", "Task", "", 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -104,7 +104,7 @@ func TestDropletRestart_WithoutCataractae_UsesCurrentCataractae(t *testing.T) {
 
 func TestDropletRestart_NoCataractaeFlag_NoCurrentStage(t *testing.T) {
 	c, _ := setupRestartTestDB(t)
-	item, err := c.Add("myrepo", "New task", "", 1, 3)
+	item, err := c.Add("myrepo", "New task", "", 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -123,7 +123,7 @@ func TestDropletRestart_NoCataractaeFlag_NoCurrentStage(t *testing.T) {
 
 func TestDropletRestart_WithNotes(t *testing.T) {
 	c, _ := setupRestartTestDB(t)
-	item, err := c.Add("myrepo", "Task", "", 1, 3)
+	item, err := c.Add("myrepo", "Task", "", 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -161,7 +161,7 @@ func TestDropletRestart_WithNotes(t *testing.T) {
 
 func TestDropletRestart_WritesSchedulerNote(t *testing.T) {
 	c, _ := setupRestartTestDB(t)
-	item, err := c.Add("myrepo", "Task", "", 1, 3)
+	item, err := c.Add("myrepo", "Task", "", 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -190,7 +190,7 @@ func TestDropletRestart_WritesSchedulerNote(t *testing.T) {
 
 func TestDropletRestart_ClearsOutcomeAndAssignee(t *testing.T) {
 	c, _ := setupRestartTestDB(t)
-	item, err := c.Add("myrepo", "Task", "", 1, 3)
+	item, err := c.Add("myrepo", "Task", "", 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -231,7 +231,7 @@ func TestDropletRestart_NotFound(t *testing.T) {
 
 func TestDropletRestart_UpdatesTimestamp(t *testing.T) {
 	c, _ := setupRestartTestDB(t)
-	item, err := c.Add("myrepo", "Task", "", 1, 3)
+	item, err := c.Add("myrepo", "Task", "", 1)
 	if err != nil {
 		t.Fatal(err)
 	}

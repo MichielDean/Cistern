@@ -44,7 +44,6 @@ var (
 	addDescription string
 	addPriority    int
 	addRepo        string
-	addComplexity  string
 	addDependsOn   []string
 )
 
@@ -69,11 +68,7 @@ var dropletAddCmd = &cobra.Command{
 		}
 		defer c.Close()
 
-		cx, err := parseComplexity(addComplexity)
-		if err != nil {
-			return err
-		}
-		item, err := c.Add(repo, addTitle, addDescription, addPriority, cx, addDependsOn...)
+		item, err := c.Add(repo, addTitle, addDescription, addPriority, addDependsOn...)
 		if err != nil {
 			return err
 		}
@@ -210,7 +205,7 @@ var dropletListCmd = &cobra.Command{
 
 			// Non-terminal / piped output: plain tabwriter, no ANSI.
 			tw := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
-			fmt.Fprintln(tw, "ID\tCOMPLEXITY\tTITLE\tSTATUS\tELAPSED\tCATARACTA")
+			fmt.Fprintln(tw, "ID\tTITLE\tSTATUS\tELAPSED\tCATARACTA")
 			for _, item := range active {
 				ds := displayStatusForDroplet(item)
 				cataractae := item.CurrentCataractae
@@ -224,15 +219,12 @@ var dropletListCmd = &cobra.Command{
 						cataractae = "waiting: " + blockedBy[0]
 					}
 				}
-				if ds == "awaiting" {
-					ds = "\u23f8 awaiting approval"
-				}
 				elapsed := "\u2014"
 				if item.Status == "in_progress" {
 					elapsed = formatElapsed(time.Since(item.UpdatedAt))
 				}
-				fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\n",
-					item.ID, complexityName(item.Complexity), truncate(item.Title, titleMax),
+				fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n",
+					item.ID, truncate(item.Title, titleMax),
 					ds, elapsed, cataractae)
 			}
 			if listAll && len(dimmed) > 0 {
@@ -243,8 +235,8 @@ var dropletListCmd = &cobra.Command{
 					if cataractae == "" {
 						cataractae = "\u2014"
 					}
-					fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\n",
-						item.ID, complexityName(item.Complexity), truncate(item.Title, titleMax),
+					fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n",
+						item.ID, truncate(item.Title, titleMax),
 						"delivered", age, cataractae)
 				}
 			}
@@ -285,12 +277,11 @@ var dropletListCmd = &cobra.Command{
 func printDropletListTerminal(active, dimmed []*cistern.Droplet, showAll bool, titleMax int) {
 	const (
 		colID = 12
-		colCX = 10
 		colSt = 12 // STATUS cell visual width (icon + space + text)
 		colEl = 10 // ELAPSED
 	)
-	fmt.Printf("  %-*s  %-*s  %-*s  %-*s  %-*s  %s\n",
-		colID, "ID", colCX, "COMPLEXITY", titleMax, "TITLE", colSt, "STATUS", colEl, "ELAPSED", "CATARACTA")
+	fmt.Printf("  %-*s  %-*s  %-*s  %-*s  %s\n",
+		colID, "ID", titleMax, "TITLE", colSt, "STATUS", colEl, "ELAPSED", "CATARACTA")
 
 	for _, item := range active {
 		ds := displayStatusForDroplet(item)
@@ -304,18 +295,18 @@ func printDropletListTerminal(active, dimmed []*cistern.Droplet, showAll bool, t
 		}
 		title := padRight(truncate(item.Title, titleMax), titleMax)
 		sc := statusCell(ds, colSt)
-		fmt.Printf("  %-*s  %-*s  %s  %s  %-*s  %s\n",
-			colID, item.ID, colCX, complexityName(item.Complexity),
+		fmt.Printf("  %-*s  %s  %s  %-*s  %s\n",
+			colID, item.ID,
 			title, sc, colEl, elapsed, cataractae)
 	}
 
 	if showAll && len(dimmed) > 0 {
-		fmt.Println(colorDim + "  ── delivered " + strings.Repeat("─", titleMax+colID+colCX+6) + colorReset)
+		fmt.Println(colorDim + "  ── delivered " + strings.Repeat("─", titleMax+colID+6) + colorReset)
 		for _, item := range dimmed {
 			age := formatElapsed(time.Since(item.UpdatedAt))
 			title := padRight(truncate(item.Title, titleMax), titleMax)
-			line := fmt.Sprintf("  %-*s  %-*s  %s  ✓ %-*s  %-*s  —",
-				colID, item.ID, colCX, complexityName(item.Complexity),
+			line := fmt.Sprintf("  %-*s  %s  ✓ %-*s  %-*s  —",
+				colID, item.ID,
 				title, colSt-2, "delivered", colEl, age)
 			fmt.Println(colorDim + line + colorReset)
 		}
@@ -348,12 +339,8 @@ func formatPeekFollowSeparator(updatedAt, stageDispatchedAt time.Time) string {
 	return elapsed
 }
 
-// displayStatusForDroplet returns the display status for a droplet, overriding
-// for human-gated droplets to show "awaiting approval".
+// displayStatusForDroplet returns the display status for a droplet.
 func displayStatusForDroplet(item *cistern.Droplet) string {
-	if item.CurrentCataractae == "human" && item.Status == "pooled" {
-		return "awaiting"
-	}
 	return displayStatus(item.Status)
 }
 
@@ -444,15 +431,12 @@ var dropletSearchCmd = &cobra.Command{
 					cataractae = "waiting: " + blockedBy[0]
 				}
 			}
-			if ds == "awaiting" {
-				ds = "\u23f8 awaiting approval"
-			}
 			elapsed := "\u2014"
 			if item.Status == "in_progress" {
 				elapsed = formatElapsed(time.Since(item.UpdatedAt))
 			}
-			fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\n",
-				item.ID, complexityName(item.Complexity), truncate(item.Title, titleMax),
+			fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n",
+				item.ID, truncate(item.Title, titleMax),
 				ds, elapsed, cataractae)
 		}
 		return tw.Flush()
@@ -500,7 +484,7 @@ var dropletExportCmd = &cobra.Command{
 
 		// CSV output.
 		w := csv.NewWriter(os.Stdout)
-		_ = w.Write([]string{"id", "repo", "title", "description", "priority", "complexity", "status", "assignee", "current_cataractae", "outcome", "assigned_aqueduct", "last_reviewed_commit", "created_at", "updated_at"})
+		_ = w.Write([]string{"id", "repo", "title", "description", "priority", "status", "assignee", "current_cataractae", "outcome", "assigned_aqueduct", "last_reviewed_commit", "created_at", "updated_at"})
 		for _, item := range items {
 			_ = w.Write([]string{
 				item.ID,
@@ -508,7 +492,6 @@ var dropletExportCmd = &cobra.Command{
 				item.Title,
 				item.Description,
 				strconv.Itoa(item.Priority),
-				strconv.Itoa(item.Complexity),
 				item.Status,
 				item.Assignee,
 				item.CurrentCataractae,
@@ -569,7 +552,6 @@ var dropletShowCmd = &cobra.Command{
 		fmt.Printf("Repo:        %s\n", item.Repo)
 		fmt.Printf("Status:      %s\n", displayStatus(item.Status))
 		fmt.Printf("Priority:    %d\n", item.Priority)
-		fmt.Printf("Complexity:  %s (%d)\n", complexityName(item.Complexity), item.Complexity)
 		fmt.Printf("Cataracta:      %s\n", item.Assignee)
 		fmt.Printf("Stage:       %s\n", item.CurrentCataractae)
 
@@ -1084,35 +1066,6 @@ not be considered stalled regardless of how long it has been running.`,
 	},
 }
 
-// --- cistern approve ---
-
-var dropletApproveCmd = &cobra.Command{
-	Use:   "approve <id>",
-	Short: "Approve a human-gated droplet for delivery",
-	Args:  cobra.ExactArgs(1),
-	RunE: func(cmd *cobra.Command, args []string) error {
-		id := args[0]
-		c, err := cistern.New(resolveDBPath(), "")
-		if err != nil {
-			return err
-		}
-		defer c.Close()
-
-		item, err := c.Get(id)
-		if err != nil {
-			return err
-		}
-		if item.CurrentCataractae != "human" {
-			return fmt.Errorf("%s is not awaiting human approval (cataractae: %s)", id, item.CurrentCataractae)
-		}
-		if err := c.Assign(id, "", "delivery"); err != nil {
-			return err
-		}
-		fmt.Printf("Droplet %s approved for delivery\n", id)
-		return nil
-	},
-}
-
 // --- cistern peek ---
 
 var (
@@ -1297,20 +1250,19 @@ var dropletPeekCmd = &cobra.Command{
 var (
 	editTitle       string
 	editDescription string
-	editComplexity  string
 	editPriority    int
 )
 
 var dropletEditCmd = &cobra.Command{
 	Use:   "edit <id>",
-	Short: "Update title, description, complexity, or priority of a queued droplet",
+	Short: "Update title, description, or priority of a queued droplet",
 	Long: `Edit mutable fields on a droplet that has not yet been picked up.
 
 If no flags are provided, opens the droplet in your editor ($EDITOR, defaults to vi).
 Only the flags you pass are updated.
 
   ct droplet edit <id> -t "new title"
-  ct droplet edit <id> -x critical -p 1
+  ct droplet edit <id> -p 1
 
 To replace the description with multi-line text from stdin:
   echo 'new description' | ct droplet edit <id> --description -
@@ -1323,7 +1275,6 @@ droplet is in_progress or delivered.`,
 
 		titleChanged := cmd.Flags().Changed("title")
 		descChanged := cmd.Flags().Changed("description")
-		cxChanged := cmd.Flags().Changed("complexity")
 		prioChanged := cmd.Flags().Changed("priority")
 
 		c, err := cistern.New(resolveDBPath(), "")
@@ -1332,7 +1283,7 @@ droplet is in_progress or delivered.`,
 		}
 		defer c.Close()
 
-		if !titleChanged && !descChanged && !cxChanged && !prioChanged {
+		if !titleChanged && !descChanged && !prioChanged {
 			return editInteractive(c, id)
 		}
 
@@ -1355,14 +1306,6 @@ droplet is in_progress or delivered.`,
 				desc = strings.TrimSuffix(string(b), "\n")
 			}
 			fields.Description = &desc
-		}
-
-		if cxChanged {
-			cx, err := parseComplexity(editComplexity)
-			if err != nil {
-				return err
-			}
-			fields.Complexity = &cx
 		}
 
 		if prioChanged {
@@ -1438,9 +1381,8 @@ func editInteractive(c *cistern.Client, id string) error {
 			"# Lines starting with # are comments.\n"+
 			"title: %s\n"+
 			"description: %s\n"+
-			"complexity: %s\n"+
 			"priority: %d\n",
-		id, escapeNewlines(d.Title), escapeNewlines(d.Description), complexityName(d.Complexity), d.Priority)
+		id, escapeNewlines(d.Title), escapeNewlines(d.Description), d.Priority)
 
 	tmp, err := os.CreateTemp("", "ct-edit-*.txt")
 	if err != nil {
@@ -1493,14 +1435,6 @@ func editInteractive(c *cistern.Client, id string) error {
 			if unescaped != d.Description {
 				fields.Description = &unescaped
 			}
-		case "complexity":
-			cx, err := parseComplexity(val)
-			if err != nil {
-				return fmt.Errorf("invalid complexity %q: %w", val, err)
-			}
-			if cx != d.Complexity {
-				fields.Complexity = &cx
-			}
 		case "priority":
 			p, err := strconv.Atoi(val)
 			if err != nil {
@@ -1533,7 +1467,6 @@ func init() {
 	dropletAddCmd.Flags().StringVar(&addDescription, "description", "", "droplet description")
 	dropletAddCmd.Flags().IntVar(&addPriority, "priority", 2, "priority (1=highest)")
 	dropletAddCmd.Flags().StringVar(&addRepo, "repo", "", "target repository (required)")
-	dropletAddCmd.Flags().StringVarP(&addComplexity, "complexity", "x", "2", "droplet complexity: 1/standard, 2/full (default), 3/critical")
 	dropletAddCmd.Flags().StringArrayVar(&addDependsOn, "depends-on", nil, "dependency droplet ID (repeatable)")
 
 	dropletDepsCmd.Flags().StringVar(&depsAdd, "add", "", "add a dependency (dep ID)")
@@ -1580,7 +1513,6 @@ func init() {
 
 	dropletEditCmd.Flags().StringVarP(&editTitle, "title", "t", "", "new title")
 	dropletEditCmd.Flags().StringVar(&editDescription, "description", "", "new description (use - to read from stdin)")
-	dropletEditCmd.Flags().StringVarP(&editComplexity, "complexity", "x", "", "new complexity: standard|full|critical (or 1-3)")
 	dropletEditCmd.Flags().IntVarP(&editPriority, "priority", "p", 0, "new priority (positive integer)")
 
 	dropletTailCmd.Flags().StringVar(&tailFmt, "format", "text", "output format: text or json")
@@ -1593,37 +1525,12 @@ func init() {
 
 	dropletCmd.AddCommand(dropletAddCmd, dropletListCmd, dropletShowCmd, dropletNoteCmd,
 		dropletCloseCmd, dropletReopenCmd, dropletPurgeCmd,
-		dropletPassCmd, dropletRecirculateCmd, dropletPoolCmd, dropletCancelCmd, dropletApproveCmd,
+		dropletPassCmd, dropletRecirculateCmd, dropletPoolCmd, dropletCancelCmd,
 		dropletStatsCmd, dropletDepsCmd, dropletPeekCmd, dropletIssueCmd, dropletSearchCmd,
 		dropletExportCmd, dropletRenameCmd, dropletRestartCmd, dropletEditCmd,
 		dropletTailCmd, dropletHeartbeatCmd, dropletLogCmd, dropletHistoryCmd)
 	rootCmd.AddCommand(dropletCmd)
 	rootCmd.AddCommand(evaluateCmd)
-}
-
-// parseComplexity accepts "1"-"3" or names "standard","full","critical".
-func parseComplexity(s string) (int, error) {
-	switch s {
-	case "1", "standard":
-		return 1, nil
-	case "2", "full", "":
-		return 2, nil
-	case "3", "critical":
-		return 3, nil
-	}
-	return 0, fmt.Errorf("invalid complexity %q: use 1/standard, 2/full, 3/critical", s)
-}
-
-// complexityName returns the human name for a complexity level.
-func complexityName(cx int) string {
-	switch cx {
-	case 1:
-		return "standard"
-	case 3:
-		return "critical"
-	default:
-		return "full"
-	}
 }
 
 // inferPrefix extracts a short prefix from a repo path for ID generation.

@@ -1,13 +1,5 @@
 name: feature
 
-complexity:
-  standard:
-    level: 1
-  full:
-    level: 2
-  critical:
-    level: 3
-
 cataractae:
   - name: architect
     type: agent

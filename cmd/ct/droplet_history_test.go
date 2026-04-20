@@ -33,7 +33,7 @@ func runHistoryCapture(t *testing.T, id string) (string, error) {
 
 func TestDropletHistory_ShowsCreationAndNotes(t *testing.T) {
 	c := setupHistoryTestDB(t)
-	item, err := c.Add("myrepo", "History task", "do something", 1, 2)
+	item, err := c.Add("myrepo", "History task", "do something", 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -61,7 +61,7 @@ func TestDropletHistory_ShowsCreationAndNotes(t *testing.T) {
 
 func TestDropletHistory_ShowsPoolEvent(t *testing.T) {
 	c := setupHistoryTestDB(t)
-	item, err := c.Add("myrepo", "Pool history task", "", 1, 2)
+	item, err := c.Add("myrepo", "Pool history task", "", 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -79,7 +79,7 @@ func TestDropletHistory_ShowsPoolEvent(t *testing.T) {
 
 func TestDropletHistory_ShowsHeader(t *testing.T) {
 	c := setupHistoryTestDB(t)
-	item, err := c.Add("myrepo", "Header history task", "desc", 1, 2)
+	item, err := c.Add("myrepo", "Header history task", "desc", 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -99,7 +99,7 @@ func TestDropletHistory_ShowsHeader(t *testing.T) {
 
 func TestDropletHistory_ChronologicalOrder(t *testing.T) {
 	c := setupHistoryTestDB(t)
-	item, err := c.Add("myrepo", "Order history task", "", 1, 2)
+	item, err := c.Add("myrepo", "Order history task", "", 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -133,7 +133,7 @@ func TestDropletHistory_NonexistentDroplet(t *testing.T) {
 
 func TestDropletHistory_EmptyDroplet(t *testing.T) {
 	c := setupHistoryTestDB(t)
-	item, err := c.Add("myrepo", "Empty history task", "", 1, 2)
+	item, err := c.Add("myrepo", "Empty history task", "", 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -153,7 +153,7 @@ func TestDropletHistory_JsonFormat(t *testing.T) {
 	t.Cleanup(func() { historyFmt = "text" })
 
 	c := setupHistoryTestDB(t)
-	item, err := c.Add("myrepo", "Json history task", "", 1, 2)
+	item, err := c.Add("myrepo", "Json history task", "", 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -199,7 +199,7 @@ func TestDropletHistory_InvalidFormat(t *testing.T) {
 	t.Cleanup(func() { historyFmt = "text" })
 
 	c := setupHistoryTestDB(t)
-	item, err := c.Add("myrepo", "Format history task", "", 1, 2)
+	item, err := c.Add("myrepo", "Format history task", "", 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -215,7 +215,7 @@ func TestDropletHistory_InvalidFormat(t *testing.T) {
 
 func TestDropletHistory_ShowsHeartbeat(t *testing.T) {
 	c := setupHistoryTestDB(t)
-	item, err := c.Add("myrepo", "Heartbeat history task", "", 1, 2)
+	item, err := c.Add("myrepo", "Heartbeat history task", "", 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -243,7 +243,7 @@ func TestDropletHistory_ShowsHeartbeat(t *testing.T) {
 
 func TestDropletHistory_ProducesSameOutputAsLog(t *testing.T) {
 	c := setupHistoryTestDB(t)
-	item, err := c.Add("myrepo", "Comparison task", "compare log vs history", 1, 2)
+	item, err := c.Add("myrepo", "Comparison task", "compare log vs history", 1)
 	if err != nil {
 		t.Fatal(err)
 	}

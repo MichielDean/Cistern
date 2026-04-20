@@ -330,7 +330,7 @@ func TestIntegration_HappyPath_FakeAgentDeliversDroplet(t *testing.T) {
 
 	sched := newIntScheduler(client, runner, prefix)
 
-	droplet, err := client.Add(prefix+"-myrepo", "integration happy path", "desc", 1, 3)
+	droplet, err := client.Add(prefix+"-myrepo", "integration happy path", "desc", 1)
 	if err != nil {
 		t.Fatalf("client.Add: %v", err)
 	}
@@ -381,7 +381,7 @@ func TestIntegration_StartupRecovery_OrphanedDroplet_RedeliversDroplet(t *testin
 
 	// Add a droplet and put it into in_progress/no-outcome state — simulating a
 	// prior Castellarius run where the agent session died before signaling.
-	droplet, err := client.Add(prefix+"-myrepo", "recovery test", "desc", 1, 3)
+	droplet, err := client.Add(prefix+"-myrepo", "recovery test", "desc", 1)
 	if err != nil {
 		t.Fatalf("client.Add: %v", err)
 	}
@@ -459,7 +459,7 @@ func TestIntegration_HeartbeatRecovery_DeadSession_RedeliversDroplet(t *testing.
 
 	sched := newIntScheduler(client, runner, prefix)
 
-	droplet, err := client.Add(prefix+"-myrepo", "heartbeat recovery test", "desc", 1, 3)
+	droplet, err := client.Add(prefix+"-myrepo", "heartbeat recovery test", "desc", 1)
 	if err != nil {
 		t.Fatalf("client.Add: %v", err)
 	}
@@ -523,7 +523,7 @@ func TestIntegration_EnvHygiene_LeakedKeyNotForwardedToSession(t *testing.T) {
 
 	sched := newIntScheduler(client, runner, prefix)
 
-	droplet, err := client.Add(prefix+"-myrepo", "env hygiene test", "desc", 1, 3)
+	droplet, err := client.Add(prefix+"-myrepo", "env hygiene test", "desc", 1)
 	if err != nil {
 		t.Fatalf("client.Add: %v", err)
 	}

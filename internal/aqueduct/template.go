@@ -34,9 +34,6 @@ type StepTemplateContext struct {
 	// ValidOutcomes lists the ct droplet commands valid for this step.
 	// pass is always included; recirculate is included only when OnRecirculate != "".
 	ValidOutcomes []ValidOutcome
-	// SkippedFor lists complexity levels for which this step is skipped.
-	// Currently always empty — per-step complexity skipping is not yet modelled in aqueduct.yaml.
-	SkippedFor []string
 }
 
 // DropletTemplateContext holds the per-droplet variables available under {{.Droplet}} in templates.
@@ -44,7 +41,6 @@ type DropletTemplateContext struct {
 	ID          string
 	Title       string
 	Description string
-	Complexity  int
 }
 
 // TemplateContext is the top-level data passed to CLAUDE.md template rendering.

@@ -54,7 +54,6 @@ func TestImportCmd_AddsDropletDirectly(t *testing.T) {
 	out := captureStdout(t, func() {
 		importRepo = "cistern"
 		importPriority = 2
-		importComplexity = "1"
 		err = importCmd.RunE(importCmd, []string{"fake-tracker", "FAKE-42"})
 	})
 	if err != nil {
@@ -86,9 +85,6 @@ func TestImportCmd_AddsDropletDirectly(t *testing.T) {
 	if droplet.ExternalRef != "fake-tracker:FAKE-42" {
 		t.Errorf("ExternalRef = %q, want %q", droplet.ExternalRef, "fake-tracker:FAKE-42")
 	}
-	if droplet.Complexity != 1 {
-		t.Errorf("Complexity = %d, want 1 (standard)", droplet.Complexity)
-	}
 }
 
 func TestImportCmd_OverridesPriorityWhenFlagSet(t *testing.T) {
@@ -111,7 +107,6 @@ func TestImportCmd_OverridesPriorityWhenFlagSet(t *testing.T) {
 	out := captureStdout(t, func() {
 		importRepo = "cistern"
 		importPriority = 1
-		importComplexity = "1"
 		// Mark the priority flag as changed.
 		_ = importCmd.Flags().Set("priority", "1")
 		err = importCmd.RunE(importCmd, []string{"fake-tracker", "FAKE-99"})
@@ -137,7 +132,6 @@ func TestImportCmd_OverridesPriorityWhenFlagSet(t *testing.T) {
 
 func TestImportCmd_ErrorsOnUnknownProvider(t *testing.T) {
 	importRepo = "cistern"
-	importComplexity = "1"
 	err := importCmd.RunE(importCmd, []string{"no-such-provider-zzz", "ISSUE-1"})
 	if err == nil {
 		t.Fatal("expected error for unknown provider, got nil")
@@ -159,7 +153,6 @@ func TestImportCmd_ErrorsOnFetchFailure(t *testing.T) {
 	c.Close()
 
 	importRepo = "cistern"
-	importComplexity = "1"
 	err = importCmd.RunE(importCmd, []string{"fake-tracker", "FAIL-1"})
 	if err == nil {
 		t.Fatal("expected error when FetchIssue fails, got nil")
@@ -324,7 +317,6 @@ trackers:
 	out := captureStdout(t, func() {
 		importRepo = "myproject"
 		importPriority = 2
-		importComplexity = "1"
 		err = importCmd.RunE(importCmd, []string{"jira", "PROJ-1"})
 	})
 	if err != nil {

@@ -947,7 +947,7 @@ func TestCheckStalledDroplets_RecentDroplets_NoCrash(t *testing.T) {
 		t.Fatalf("create db: %v", err)
 	}
 	// Add a droplet and mark it in_progress (recent — should not be flagged).
-	item, err := c.Add("repo", "Test droplet", "desc", 2, 3)
+	item, err := c.Add("repo", "Test droplet", "desc", 2)
 	if err != nil {
 		t.Fatalf("add droplet: %v", err)
 	}

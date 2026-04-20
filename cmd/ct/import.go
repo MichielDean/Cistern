@@ -13,9 +13,9 @@ import (
 )
 
 var (
+	importProvider    string
 	importRepo       string
 	importPriority   int
-	importComplexity string
 )
 
 var importCmd = &cobra.Command{
@@ -32,7 +32,7 @@ ct droplet add.
 
 Examples:
   ct import jira PROJ-123 --repo myrepo
-  ct import jira PROJ-456 --repo myrepo --priority 1 --complexity full`,
+  ct import jira PROJ-456 --repo myrepo --priority 1`,
 	Args: cobra.ExactArgs(2),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		providerName := args[0]
@@ -70,11 +70,6 @@ Examples:
 			priority = importPriority
 		}
 
-		cx, err := parseComplexity(importComplexity)
-		if err != nil {
-			return err
-		}
-
 		externalRef := providerName + ":" + issueKey
 
 		c, err := cistern.New(resolveDBPath(), inferPrefix(repo))
@@ -83,7 +78,7 @@ Examples:
 		}
 		defer c.Close()
 
-		item, err := c.AddDroplet(repo, issue.Title, issue.Description, externalRef, priority, cx)
+		item, err := c.AddDroplet(repo, issue.Title, issue.Description, externalRef, priority)
 		if err != nil {
 			return fmt.Errorf("add droplet: %w", err)
 		}
@@ -120,7 +115,6 @@ func loadTrackerConfig(providerName string) (tracker.TrackerConfig, error) {
 func init() {
 	importCmd.Flags().StringVar(&importRepo, "repo", "", "target repository (required)")
 	importCmd.Flags().IntVar(&importPriority, "priority", 2, "override the priority mapped from the tracker")
-	importCmd.Flags().StringVarP(&importComplexity, "complexity", "x", "1", "droplet complexity: 1/standard (default), 2/full, 3/critical")
 	_ = importCmd.MarkFlagRequired("repo")
 	rootCmd.AddCommand(importCmd)
 }

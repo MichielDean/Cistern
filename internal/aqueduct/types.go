@@ -51,19 +51,6 @@ type WorkflowCataractae struct {
 	OnPool         string     `yaml:"on_pool,omitempty"`
 }
 
-// ComplexityLevel configures a single complexity tier.
-type ComplexityLevel struct {
-	Level        int  `yaml:"level"`
-	RequireHuman bool `yaml:"require_human,omitempty"`
-}
-
-// ComplexityConfig holds the three complexity tiers for a aqueduct.
-type ComplexityConfig struct {
-	Standard ComplexityLevel `yaml:"standard"`
-	Full     ComplexityLevel `yaml:"full"`
-	Critical ComplexityLevel `yaml:"critical"`
-}
-
 // UniqueIdentities returns the deduplicated, sorted list of agent identity
 // strings from the workflow's cataractae steps.
 func (wf *Workflow) UniqueIdentities() []string {
@@ -79,16 +66,10 @@ func (wf *Workflow) UniqueIdentities() []string {
 	return ids
 }
 
-// RequireHumanForLevel returns whether a human gate is required for a given complexity level.
-func (cc ComplexityConfig) RequireHumanForLevel(level int) bool {
-	return level == 3 && cc.Critical.RequireHuman
-}
-
 // Workflow is a named sequence of cataractae parsed from a YAML file.
 type Workflow struct {
 	Name       string               `yaml:"name"`
 	Cataractae []WorkflowCataractae `yaml:"cataractae"`
-	Complexity ComplexityConfig     `yaml:"complexity"`
 }
 
 // ProviderConfig holds the provider block that can appear at the top level of

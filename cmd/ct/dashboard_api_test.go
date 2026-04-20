@@ -44,7 +44,7 @@ func TestAPI_GetDroplets_ReturnsJSON(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	c.Add("myrepo", "Test droplet", "", 1, 2)
+	c.Add("myrepo", "Test droplet", "", 1)
 	c.Close()
 
 	mux := newDashboardMux(tempCfg(t), db)
@@ -74,8 +74,8 @@ func TestAPI_GetDroplets_FiltersByRepo(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	c.Add("repo-a", "Drop A", "", 1, 2)
-	c.Add("repo-b", "Drop B", "", 1, 2)
+	c.Add("repo-a", "Drop A", "", 1)
+	c.Add("repo-b", "Drop B", "", 1)
 	c.Close()
 
 	mux := newDashboardMux(tempCfg(t), db)
@@ -98,10 +98,10 @@ func TestAPI_GetDroplets_FiltersByStatus(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	d, _ := c.Add("myrepo", "Active", "", 1, 2)
+	d, _ := c.Add("myrepo", "Active", "", 1)
 	c.GetReady("myrepo")
 	c.Assign(d.ID, "virgo", "implement")
-	c.Add("myrepo", "Queued", "", 2, 2)
+	c.Add("myrepo", "Queued", "", 2)
 	c.Close()
 
 	mux := newDashboardMux(tempCfg(t), db)
@@ -134,7 +134,7 @@ func TestAPI_GetDropletByID_ReturnsDroplet(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	d, _ := c.Add("myrepo", "Specific", "a description", 1, 2)
+	d, _ := c.Add("myrepo", "Specific", "a description", 1)
 	c.Close()
 
 	mux := newDashboardMux(tempCfg(t), db)
@@ -173,8 +173,8 @@ func TestAPI_GetDropletsSearch_ReturnsMatches(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	c.Add("myrepo", "Feature Alpha", "", 1, 2)
-	c.Add("myrepo", "Bug Fix Beta", "", 2, 2)
+	c.Add("myrepo", "Feature Alpha", "", 1)
+	c.Add("myrepo", "Bug Fix Beta", "", 2)
 	c.Close()
 
 	mux := newDashboardMux(tempCfg(t), db)
@@ -250,7 +250,7 @@ func TestAPI_EditDroplet_Success(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	d, _ := c.Add("myrepo", "Original", "", 1, 2)
+	d, _ := c.Add("myrepo", "Original", "", 1)
 	c.Close()
 
 	mux := newDashboardMux(tempCfg(t), db)
@@ -278,7 +278,7 @@ func TestAPI_RenameDroplet_Success(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	d, _ := c.Add("myrepo", "Old Name", "", 1, 2)
+	d, _ := c.Add("myrepo", "Old Name", "", 1)
 	c.Close()
 
 	mux := newDashboardMux(tempCfg(t), db)
@@ -301,7 +301,7 @@ func TestAPI_PassDroplet_Success(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	d, _ := c.Add("myrepo", "Test", "", 1, 2)
+	d, _ := c.Add("myrepo", "Test", "", 1)
 	c.Close()
 
 	mux := newDashboardMux(tempCfg(t), db)
@@ -322,7 +322,7 @@ func TestAPI_RecirculateDroplet_Success(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	d, _ := c.Add("myrepo", "Test", "", 1, 2)
+	d, _ := c.Add("myrepo", "Test", "", 1)
 	c.Close()
 
 	mux := newDashboardMux(tempCfg(t), db)
@@ -343,7 +343,7 @@ func TestAPI_PoolDroplet_Success(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	d, _ := c.Add("myrepo", "Test", "", 1, 2)
+	d, _ := c.Add("myrepo", "Test", "", 1)
 	c.Close()
 
 	mux := newDashboardMux(tempCfg(t), db)
@@ -364,7 +364,7 @@ func TestAPI_CloseDroplet_Success(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	d, _ := c.Add("myrepo", "Test", "", 1, 2)
+	d, _ := c.Add("myrepo", "Test", "", 1)
 	c.Close()
 
 	mux := newDashboardMux(tempCfg(t), db)
@@ -383,7 +383,7 @@ func TestAPI_ReopenDroplet_Success(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	d, _ := c.Add("myrepo", "Test", "", 1, 2)
+	d, _ := c.Add("myrepo", "Test", "", 1)
 	c.CloseItem(d.ID)
 	c.Close()
 
@@ -403,7 +403,7 @@ func TestAPI_CancelDroplet_Success(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	d, _ := c.Add("myrepo", "Test", "", 1, 2)
+	d, _ := c.Add("myrepo", "Test", "", 1)
 	c.Close()
 
 	mux := newDashboardMux(tempCfg(t), db)
@@ -424,7 +424,7 @@ func TestAPI_RestartDroplet_Success(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	d, _ := c.Add("myrepo", "Test", "", 1, 2)
+	d, _ := c.Add("myrepo", "Test", "", 1)
 	c.Close()
 
 	mux := newDashboardMux(tempCfg(t), db)
@@ -445,7 +445,7 @@ func TestAPI_ApproveDroplet_Success(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	d, _ := c.Add("myrepo", "Test", "", 1, 2)
+	d, _ := c.Add("myrepo", "Test", "", 1)
 	c.Assign(d.ID, "", "human")
 	c.Close()
 
@@ -465,7 +465,7 @@ func TestAPI_Heartbeat_Success(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	d, _ := c.Add("myrepo", "Test", "", 1, 2)
+	d, _ := c.Add("myrepo", "Test", "", 1)
 	c.Close()
 
 	mux := newDashboardMux(tempCfg(t), db)
@@ -486,7 +486,7 @@ func TestAPI_GetNotes_ReturnsNotes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	d, _ := c.Add("myrepo", "Test", "", 1, 2)
+	d, _ := c.Add("myrepo", "Test", "", 1)
 	c.AddNote(d.ID, "implementer", "hello world")
 	c.AddNote(d.ID, "reviewer", "looks good")
 	c.Close()
@@ -514,7 +514,7 @@ func TestAPI_AddNote_Success(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	d, _ := c.Add("myrepo", "Test", "", 1, 2)
+	d, _ := c.Add("myrepo", "Test", "", 1)
 	c.Close()
 
 	mux := newDashboardMux(tempCfg(t), db)
@@ -535,7 +535,7 @@ func TestAPI_AddNote_MissingContent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	d, _ := c.Add("myrepo", "Test", "", 1, 2)
+	d, _ := c.Add("myrepo", "Test", "", 1)
 	c.Close()
 
 	mux := newDashboardMux(tempCfg(t), db)
@@ -557,7 +557,7 @@ func TestAPI_GetIssues_ReturnsIssues(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	d, _ := c.Add("myrepo", "Test", "", 1, 2)
+	d, _ := c.Add("myrepo", "Test", "", 1)
 	c.AddIssue(d.ID, "reviewer", "bug found")
 	c.Close()
 
@@ -584,7 +584,7 @@ func TestAPI_GetIssues_FilterOpen(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	d, _ := c.Add("myrepo", "Test", "", 1, 2)
+	d, _ := c.Add("myrepo", "Test", "", 1)
 	iss, _ := c.AddIssue(d.ID, "reviewer", "open bug")
 	c.ResolveIssue(iss.ID, "fixed")
 	c.Close()
@@ -609,7 +609,7 @@ func TestAPI_AddIssue_Success(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	d, _ := c.Add("myrepo", "Test", "", 1, 2)
+	d, _ := c.Add("myrepo", "Test", "", 1)
 	c.Close()
 
 	mux := newDashboardMux(tempCfg(t), db)
@@ -630,7 +630,7 @@ func TestAPI_ResolveIssue_Success(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	d, _ := c.Add("myrepo", "Test", "", 1, 2)
+	d, _ := c.Add("myrepo", "Test", "", 1)
 	iss, _ := c.AddIssue(d.ID, "reviewer", "to fix")
 	c.Close()
 
@@ -652,7 +652,7 @@ func TestAPI_RejectIssue_Success(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	d, _ := c.Add("myrepo", "Test", "", 1, 2)
+	d, _ := c.Add("myrepo", "Test", "", 1)
 	iss, _ := c.AddIssue(d.ID, "reviewer", "to reject")
 	c.Close()
 
@@ -676,8 +676,8 @@ func TestAPI_GetDependencies_ReturnsDeps(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	parent, _ := c.Add("myrepo", "Parent", "", 1, 2)
-	child, _ := c.Add("myrepo", "Child", "", 2, 2, parent.ID)
+	parent, _ := c.Add("myrepo", "Parent", "", 1)
+	child, _ := c.Add("myrepo", "Child", "", 2, parent.ID)
 	c.Close()
 
 	mux := newDashboardMux(tempCfg(t), db)
@@ -703,8 +703,8 @@ func TestAPI_AddDependency_Success(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	parent, _ := c.Add("myrepo", "Parent", "", 1, 2)
-	child, _ := c.Add("myrepo", "Child", "", 2, 2)
+	parent, _ := c.Add("myrepo", "Parent", "", 1)
+	child, _ := c.Add("myrepo", "Child", "", 2)
 	c.Close()
 
 	mux := newDashboardMux(tempCfg(t), db)
@@ -725,8 +725,8 @@ func TestAPI_RemoveDependency_Success(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	parent, _ := c.Add("myrepo", "Parent", "", 1, 2)
-	child, _ := c.Add("myrepo", "Child", "", 2, 2, parent.ID)
+	parent, _ := c.Add("myrepo", "Parent", "", 1)
+	child, _ := c.Add("myrepo", "Child", "", 2, parent.ID)
 	c.Close()
 
 	mux := newDashboardMux(tempCfg(t), db)
@@ -747,7 +747,7 @@ func TestAPI_GetDropletLog_ReturnsTimeline(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	d, _ := c.Add("myrepo", "Test", "", 1, 2)
+	d, _ := c.Add("myrepo", "Test", "", 1)
 	c.AddNote(d.ID, "implementer", "started")
 	c.Close()
 
@@ -774,7 +774,7 @@ func TestAPI_GetDropletChanges_ReturnsChanges(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	d, _ := c.Add("myrepo", "Test", "", 1, 2)
+	d, _ := c.Add("myrepo", "Test", "", 1)
 	c.AddNote(d.ID, "implementer", "half done")
 	c.Close()
 
@@ -796,7 +796,7 @@ func TestAPI_GetStats_ReturnsStats(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	c.Add("myrepo", "Test", "", 1, 2)
+	c.Add("myrepo", "Test", "", 1)
 	c.Close()
 
 	mux := newDashboardMux(tempCfg(t), db)
@@ -824,7 +824,7 @@ func TestAPI_ExportJSON(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	c.Add("myrepo", "Export Test", "", 1, 2)
+	c.Add("myrepo", "Export Test", "", 1)
 	c.Close()
 
 	mux := newDashboardMux(tempCfg(t), db)
@@ -847,7 +847,7 @@ func TestAPI_ExportCSV(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	c.Add("myrepo", "Export CSV", "a description", 1, 2)
+	c.Add("myrepo", "Export CSV", "a description", 1)
 	c.Close()
 
 	mux := newDashboardMux(tempCfg(t), db)
@@ -1058,7 +1058,7 @@ func TestAPI_ApproveDroplet_NotHumanGated(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	d, _ := c.Add("myrepo", "Test", "", 1, 2)
+	d, _ := c.Add("myrepo", "Test", "", 1)
 	// Not assigning to "human" — default is not human-gated
 	c.Close()
 
@@ -1089,8 +1089,8 @@ func TestAPI_ExportWithRepoFilter(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	c.Add("repo-a", "Drop A", "", 1, 2)
-	c.Add("repo-b", "Drop B", "", 1, 2)
+	c.Add("repo-a", "Drop A", "", 1)
+	c.Add("repo-b", "Drop B", "", 1)
 	c.Close()
 
 	mux := newDashboardMux(tempCfg(t), db)
@@ -1119,9 +1119,9 @@ func TestAPI_ExportWithRepoAndStatusFilter(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	c.Add("repo-a", "Drop A", "", 1, 2)
-	dropB, _ := c.Add("repo-a", "Drop B", "", 1, 2)
-	c.Add("repo-b", "Drop C", "", 1, 2)
+	c.Add("repo-a", "Drop A", "", 1)
+	dropB, _ := c.Add("repo-a", "Drop B", "", 1)
+	c.Add("repo-b", "Drop C", "", 1)
 	c.CloseItem(dropB.ID)
 	c.Close()
 
@@ -1156,9 +1156,9 @@ func TestAPI_ExportWithRepoAndStatusFilter_CSV(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	c.Add("repo-a", "Drop A", "", 1, 2)
-	dropB, _ := c.Add("repo-a", "Drop B", "", 1, 2)
-	c.Add("repo-b", "Drop C", "", 1, 2)
+	c.Add("repo-a", "Drop A", "", 1)
+	dropB, _ := c.Add("repo-a", "Drop B", "", 1)
+	c.Add("repo-b", "Drop C", "", 1)
 	c.CloseItem(dropB.ID)
 	c.Close()
 
@@ -1201,7 +1201,7 @@ func TestAPI_DropletEvents_SSE(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	d, _ := c.Add("myrepo", "Test", "", 1, 2)
+	d, _ := c.Add("myrepo", "Test", "", 1)
 	c.Close()
 
 	mux := newDashboardMux(tempCfg(t), db)
@@ -1250,7 +1250,7 @@ func TestAPI_DropletLog_FormatNotes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	d, _ := c.Add("myrepo", "Test", "", 1, 2)
+	d, _ := c.Add("myrepo", "Test", "", 1)
 	c.AddNote(d.ID, "implementer", "note one")
 	c.AddNote(d.ID, "reviewer", "note two")
 	c.Close()
@@ -1278,7 +1278,7 @@ func TestAPI_DropletLog_FormatDefault_ReturnsTimeline(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	d, _ := c.Add("myrepo", "Test", "", 1, 2)
+	d, _ := c.Add("myrepo", "Test", "", 1)
 	c.AddNote(d.ID, "implementer", "started")
 	c.Close()
 
@@ -1365,7 +1365,7 @@ func TestAPI_PassDroplet_InvalidJSON(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	d, _ := c.Add("myrepo", "Test", "", 1, 2)
+	d, _ := c.Add("myrepo", "Test", "", 1)
 	c.Close()
 
 	mux := newDashboardMux(tempCfg(t), db)
@@ -1384,7 +1384,7 @@ func TestAPI_RecirculateDroplet_InvalidJSON(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	d, _ := c.Add("myrepo", "Test", "", 1, 2)
+	d, _ := c.Add("myrepo", "Test", "", 1)
 	c.Close()
 
 	mux := newDashboardMux(tempCfg(t), db)
@@ -1403,7 +1403,7 @@ func TestAPI_PoolDroplet_InvalidJSON(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	d, _ := c.Add("myrepo", "Test", "", 1, 2)
+	d, _ := c.Add("myrepo", "Test", "", 1)
 	c.Close()
 
 	mux := newDashboardMux(tempCfg(t), db)
@@ -1422,7 +1422,7 @@ func TestAPI_CancelDroplet_InvalidJSON(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	d, _ := c.Add("myrepo", "Test", "", 1, 2)
+	d, _ := c.Add("myrepo", "Test", "", 1)
 	c.Close()
 
 	mux := newDashboardMux(tempCfg(t), db)
@@ -1443,7 +1443,7 @@ func TestAPI_PassDroplet_EmptyBody(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	d, _ := c.Add("myrepo", "Test", "", 1, 2)
+	d, _ := c.Add("myrepo", "Test", "", 1)
 	c.Close()
 
 	mux := newDashboardMux(tempCfg(t), db)
@@ -1461,7 +1461,7 @@ func TestAPI_CancelDroplet_EmptyBody(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	d, _ := c.Add("myrepo", "Test", "", 1, 2)
+	d, _ := c.Add("myrepo", "Test", "", 1)
 	c.Close()
 
 	mux := newDashboardMux(tempCfg(t), db)
@@ -1517,7 +1517,7 @@ func TestAPI_RestartDroplet_EmptyBody(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	d, _ := c.Add("myrepo", "Test", "", 1, 2)
+	d, _ := c.Add("myrepo", "Test", "", 1)
 	c.Close()
 
 	mux := newDashboardMux(tempCfg(t), db)
@@ -1582,7 +1582,7 @@ func TestAPI_Auth_ValidBearer(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	c.Add("myrepo", "Auth Test", "", 1, 2)
+	c.Add("myrepo", "Auth Test", "", 1)
 	c.Close()
 
 	mux := newDashboardMux(cfgPath, db)
@@ -1749,7 +1749,7 @@ func TestAPI_InputLimit_RenameTitleTooLong(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	d, _ := c.Add("myrepo", "Original", "", 1, 2)
+	d, _ := c.Add("myrepo", "Original", "", 1)
 	c.Close()
 
 	mux := newDashboardMux(tempCfg(t), db)
@@ -1770,7 +1770,7 @@ func TestAPI_InputLimit_AddNoteContentTooLong(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	d, _ := c.Add("myrepo", "Test", "", 1, 2)
+	d, _ := c.Add("myrepo", "Test", "", 1)
 	c.Close()
 
 	mux := newDashboardMux(tempCfg(t), db)
@@ -1791,7 +1791,7 @@ func TestAPI_InputLimit_AddIssueDescriptionTooLong(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	d, _ := c.Add("myrepo", "Test", "", 1, 2)
+	d, _ := c.Add("myrepo", "Test", "", 1)
 	c.Close()
 
 	mux := newDashboardMux(tempCfg(t), db)
@@ -1812,7 +1812,7 @@ func TestAPI_InputLimit_AddDependencyDepTooLong(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	d, _ := c.Add("myrepo", "Test", "", 1, 2)
+	d, _ := c.Add("myrepo", "Test", "", 1)
 	c.Close()
 
 	mux := newDashboardMux(tempCfg(t), db)
@@ -1833,7 +1833,7 @@ func TestAPI_SSALimit_ConnectionLimit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	d, _ := c.Add("myrepo", "Test", "", 1, 2)
+	d, _ := c.Add("myrepo", "Test", "", 1)
 	c.Close()
 
 	original := currentSSEConnections
@@ -1930,7 +1930,7 @@ func TestAPI_ApproveDroplet_NotHumanGated_NoLeak(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	d, _ := c.Add("myrepo", "Test", "", 1, 2)
+	d, _ := c.Add("myrepo", "Test", "", 1)
 	c.Close()
 
 	mux := newDashboardMux(tempCfg(t), db)
@@ -1957,7 +1957,7 @@ func TestAPI_DropletLog_LimitCapsAt1000(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	d, _ := c.Add("myrepo", "Test", "", 1, 2)
+	d, _ := c.Add("myrepo", "Test", "", 1)
 	c.Close()
 
 	mux := newDashboardMux(tempCfg(t), db)
@@ -1976,7 +1976,7 @@ func TestAPI_DropletChanges_LimitCapsAt1000(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	d, _ := c.Add("myrepo", "Test", "", 1, 2)
+	d, _ := c.Add("myrepo", "Test", "", 1)
 	c.Close()
 
 	mux := newDashboardMux(tempCfg(t), db)
@@ -1995,7 +1995,7 @@ func TestAPI_CSVEscape_FormulaInjection(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	c.Add("myrepo", "=SUM(A1:A10)", "starts with equals", 1, 2)
+	c.Add("myrepo", "=SUM(A1:A10)", "starts with equals", 1)
 	c.Close()
 
 	mux := newDashboardMux(tempCfg(t), db)
@@ -2129,7 +2129,7 @@ func TestAPI_InputLimit_EditDropletTitleTooLong(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	d, _ := c.Add("myrepo", "Original", "", 1, 2)
+	d, _ := c.Add("myrepo", "Original", "", 1)
 	c.Close()
 
 	mux := newDashboardMux(tempCfg(t), db)
@@ -2150,7 +2150,7 @@ func TestAPI_InputLimit_EditDropletDescriptionTooLong(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	d, _ := c.Add("myrepo", "Original", "", 1, 2)
+	d, _ := c.Add("myrepo", "Original", "", 1)
 	c.Close()
 
 	mux := newDashboardMux(tempCfg(t), db)
@@ -2171,7 +2171,7 @@ func TestAPI_InputLimit_PassDropletNotesTooLong(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	d, _ := c.Add("myrepo", "Test", "", 1, 2)
+	d, _ := c.Add("myrepo", "Test", "", 1)
 	c.GetReady("myrepo")
 	c.Close()
 
@@ -2193,7 +2193,7 @@ func TestAPI_InputLimit_CancelDropletReasonTooLong(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	d, _ := c.Add("myrepo", "Test", "", 1, 2)
+	d, _ := c.Add("myrepo", "Test", "", 1)
 	c.GetReady("myrepo")
 	c.Close()
 

@@ -302,7 +302,7 @@ func TestHeartbeat_DB_NotStalled_WhenRecentHeartbeat(t *testing.T) {
 	}
 	t.Cleanup(func() { c.Close() })
 
-	item, err := c.Add("test-repo", "DB integration task", "", 1, 2)
+	item, err := c.Add("test-repo", "DB integration task", "", 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -363,7 +363,7 @@ func TestHeartbeat_DB_Stalled_WhenNoHeartbeat(t *testing.T) {
 	}
 	t.Cleanup(func() { c.Close() })
 
-	item, err := c.Add("test-repo", "DB stall task", "", 1, 2)
+	item, err := c.Add("test-repo", "DB stall task", "", 1)
 	if err != nil {
 		t.Fatal(err)
 	}

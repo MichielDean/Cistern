@@ -35,7 +35,6 @@ type Droplet struct {
 	Title             string `json:"title"`
 	Description       string `json:"description"`
 	Priority          int    `json:"priority"`
-	Complexity        int    `json:"complexity"`
 	Status            string `json:"status"`
 	Assignee          string `json:"assignee"` // empty string when unassigned
 	CurrentCataractae string `json:"current_cataractae"`
@@ -134,10 +133,7 @@ func (c *Client) generateID() (string, error) {
 
 // Add creates a new droplet and returns it. Optional deps are dependency IDs
 // that must be delivered before this droplet can be dispatched.
-func (c *Client) Add(repo, title, description string, priority, complexity int, deps ...string) (*Droplet, error) {
-	if complexity < 1 || complexity > 3 {
-		complexity = 2
-	}
+func (c *Client) Add(repo, title, description string, priority int, deps ...string) (*Droplet, error) {
 	id, err := c.generateID()
 	if err != nil {
 		return nil, fmt.Errorf("cistern: generate id: %w", err)
@@ -162,9 +158,9 @@ func (c *Client) Add(repo, title, description string, priority, complexity int, 
 
 	now := time.Now().UTC()
 	if _, err = tx.Exec(
-		`INSERT INTO droplets (id, repo, title, description, priority, complexity, status, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?, 'open', ?, ?)`,
-		id, repo, title, description, priority, complexity, now, now,
+		`INSERT INTO droplets (id, repo, title, description, priority, status, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?, 'open', ?, ?)`,
+		id, repo, title, description, priority, now, now,
 	); err != nil {
 		return nil, fmt.Errorf("cistern: add: %w", err)
 	}
@@ -188,7 +184,6 @@ func (c *Client) Add(repo, title, description string, priority, complexity int, 
 		Title:       title,
 		Description: description,
 		Priority:    priority,
-		Complexity:  complexity,
 		Status:      "open",
 		CreatedAt:   now,
 		UpdatedAt:   now,
@@ -196,8 +191,8 @@ func (c *Client) Add(repo, title, description string, priority, complexity int, 
 }
 
 // AddDroplet is a convenience method that adds a droplet and sets its external reference.
-func (c *Client) AddDroplet(repo, title, description, externalRef string, priority, complexity int) (*Droplet, error) {
-	droplet, err := c.Add(repo, title, description, priority, complexity)
+func (c *Client) AddDroplet(repo, title, description, externalRef string, priority int) (*Droplet, error) {
+	droplet, err := c.Add(repo, title, description, priority)
 	if err != nil {
 		return nil, err
 	}
@@ -220,7 +215,7 @@ func (c *Client) GetReady(repo string) (*Droplet, error) {
 	defer tx.Rollback()
 
 	row := tx.QueryRow(
-		`SELECT id, repo, title, description, priority, complexity, status, assignee, current_cataractae, outcome, assigned_aqueduct, last_reviewed_commit, external_ref, last_heartbeat_at, created_at, updated_at, stage_dispatched_at
+		`SELECT id, repo, title, description, priority, status, assignee, current_cataractae, outcome, assigned_aqueduct, last_reviewed_commit, external_ref, last_heartbeat_at, created_at, updated_at, stage_dispatched_at
 		 FROM droplets d
 		 WHERE d.repo = ? COLLATE NOCASE AND d.status = 'open'
 		   AND NOT EXISTS (
@@ -238,7 +233,7 @@ func (c *Client) GetReady(repo string) (*Droplet, error) {
 	var lastHeartbeatAt, stageDispatchedAt sql.NullTime
 	err = row.Scan(
 		&droplet.ID, &droplet.Repo, &droplet.Title, &droplet.Description,
-		&droplet.Priority, &droplet.Complexity, &droplet.Status, &assignee, &currentCataracta, &outcome, &assignedAqueduct, &lastReviewedCommit, &externalRef,
+		&droplet.Priority, &droplet.Status, &assignee, &currentCataracta, &outcome, &assignedAqueduct, &lastReviewedCommit, &externalRef,
 		&lastHeartbeatAt, &droplet.CreatedAt, &droplet.UpdatedAt, &stageDispatchedAt,
 	)
 	if err == sql.ErrNoRows {
@@ -278,7 +273,7 @@ func (c *Client) GetReadyForAqueduct(repo, aqueductName string) (*Droplet, error
 	defer tx.Rollback()
 
 	row := tx.QueryRow(
-		`SELECT id, repo, title, description, priority, complexity, status, assignee, current_cataractae, outcome, assigned_aqueduct, last_reviewed_commit, external_ref, last_heartbeat_at, created_at, updated_at, stage_dispatched_at
+		`SELECT id, repo, title, description, priority, status, assignee, current_cataractae, outcome, assigned_aqueduct, last_reviewed_commit, external_ref, last_heartbeat_at, created_at, updated_at, stage_dispatched_at
 		 FROM droplets d
 		 WHERE d.repo = ? COLLATE NOCASE AND d.status = 'open'
 		   AND (d.assigned_aqueduct = '' OR d.assigned_aqueduct IS NULL OR d.assigned_aqueduct = ?)
@@ -298,7 +293,7 @@ func (c *Client) GetReadyForAqueduct(repo, aqueductName string) (*Droplet, error
 	now := time.Now().UTC()
 	err = row.Scan(
 		&droplet.ID, &droplet.Repo, &droplet.Title, &droplet.Description,
-		&droplet.Priority, &droplet.Complexity, &droplet.Status, &assignee, &currentCataracta, &outcome, &assignedAqueduct, &lastReviewedCommit, &externalRef,
+		&droplet.Priority, &droplet.Status, &assignee, &currentCataracta, &outcome, &assignedAqueduct, &lastReviewedCommit, &externalRef,
 		&lastHeartbeatAt, &droplet.CreatedAt, &droplet.UpdatedAt, &stageDispatchedAt,
 	)
 	if err == sql.ErrNoRows {
@@ -439,12 +434,11 @@ func (c *Client) Heartbeat(id string) error {
 type EditDropletFields struct {
 	Title       *string
 	Description *string
-	Complexity  *int
 	Priority    *int
 }
 
 func (f EditDropletFields) Empty() bool {
-	return f.Title == nil && f.Description == nil && f.Complexity == nil && f.Priority == nil
+	return f.Title == nil && f.Description == nil && f.Priority == nil
 }
 
 // EditDroplet updates mutable fields on a droplet that has not yet been picked
@@ -457,10 +451,6 @@ func (c *Client) EditDroplet(id string, fields EditDropletFields) error {
 
 	if fields.Title != nil && *fields.Title == "" {
 		return fmt.Errorf("cistern: title must not be empty")
-	}
-
-	if fields.Complexity != nil && (*fields.Complexity < 1 || *fields.Complexity > 3) {
-		return fmt.Errorf("cistern: complexity must be between 1 and 3, got %d", *fields.Complexity)
 	}
 
 	if fields.Priority != nil && *fields.Priority < 1 {
@@ -476,10 +466,6 @@ func (c *Client) EditDroplet(id string, fields EditDropletFields) error {
 	if fields.Description != nil {
 		setClauses = append(setClauses, "description = ?")
 		args = append(args, *fields.Description)
-	}
-	if fields.Complexity != nil {
-		setClauses = append(setClauses, "complexity = ?")
-		args = append(args, *fields.Complexity)
 	}
 	if fields.Priority != nil {
 		setClauses = append(setClauses, "priority = ?")
@@ -630,9 +616,9 @@ func (c *Client) Cancel(id, reason string) error {
 }
 
 // FileDroplet creates a new droplet in the given repo. It is a convenience
-// wrapper around Add used by the Architecti to file structural fix work items.
-func (c *Client) FileDroplet(repo, title, description string, priority, complexity int) (*Droplet, error) {
-	return c.Add(repo, title, description, priority, complexity)
+// wrapper around Add used by the Architect to file structural fix work items.
+func (c *Client) FileDroplet(repo, title, description string, priority int) (*Droplet, error) {
+	return c.Add(repo, title, description, priority)
 }
 
 // CloseItem marks a droplet as delivered.
@@ -687,7 +673,7 @@ func (c *Client) SetCataractae(id, cataractaeName string) error {
 // Get retrieves a single droplet by ID. Returns an error if not found.
 func (c *Client) Get(id string) (*Droplet, error) {
 	row := c.db.QueryRow(
-		`SELECT id, repo, title, description, priority, complexity, status, assignee, current_cataractae, outcome, assigned_aqueduct, last_reviewed_commit, external_ref, last_heartbeat_at, created_at, updated_at, stage_dispatched_at
+		`SELECT id, repo, title, description, priority, status, assignee, current_cataractae, outcome, assigned_aqueduct, last_reviewed_commit, external_ref, last_heartbeat_at, created_at, updated_at, stage_dispatched_at
 		 FROM droplets WHERE id = ?`,
 		id,
 	)
@@ -704,7 +690,7 @@ func (c *Client) Get(id string) (*Droplet, error) {
 // List returns droplets filtered by repo and/or status. Empty strings mean no filter.
 // Cancelled droplets are always excluded unless status is explicitly "cancelled".
 func (c *Client) List(repo, status string) ([]*Droplet, error) {
-	query := `SELECT id, repo, title, description, priority, complexity, status, assignee, current_cataractae, outcome, assigned_aqueduct, last_reviewed_commit, external_ref, last_heartbeat_at, created_at, updated_at, stage_dispatched_at
+	query := `SELECT id, repo, title, description, priority, status, assignee, current_cataractae, outcome, assigned_aqueduct, last_reviewed_commit, external_ref, last_heartbeat_at, created_at, updated_at, stage_dispatched_at
 		 FROM droplets WHERE 1=1`
 	var args []any
 	if repo != "" {
@@ -743,7 +729,7 @@ func (c *Client) List(repo, status string) ([]*Droplet, error) {
 // (empty means all). priority is an exact match on priority (0 means all).
 // Results are ordered by priority ASC, created_at ASC.
 func (c *Client) Search(query, status string, priority int) ([]*Droplet, error) {
-	qry := `SELECT id, repo, title, description, priority, complexity, status, assignee, current_cataractae, outcome, assigned_aqueduct, last_reviewed_commit, external_ref, last_heartbeat_at, created_at, updated_at, stage_dispatched_at
+	qry := `SELECT id, repo, title, description, priority, status, assignee, current_cataractae, outcome, assigned_aqueduct, last_reviewed_commit, external_ref, last_heartbeat_at, created_at, updated_at, stage_dispatched_at
 		 FROM droplets WHERE 1=1`
 	var args []any
 	if query != "" {
@@ -788,7 +774,7 @@ func scanDroplet(row *sql.Row) (*Droplet, error) {
 	var lastHeartbeatAt, stageDispatchedAt sql.NullTime
 	err := row.Scan(
 		&d.ID, &d.Repo, &d.Title, &d.Description,
-		&d.Priority, &d.Complexity, &d.Status, &assignee, &currentCataracta, &outcome, &assignedAqueduct, &lastReviewedCommit, &externalRef,
+		&d.Priority, &d.Status, &assignee, &currentCataracta, &outcome, &assignedAqueduct, &lastReviewedCommit, &externalRef,
 		&lastHeartbeatAt, &d.CreatedAt, &d.UpdatedAt, &stageDispatchedAt,
 	)
 	if err == sql.ErrNoRows {
@@ -808,7 +794,7 @@ func scanDropletFromRows(rows *sql.Rows) (*Droplet, error) {
 	var lastHeartbeatAt, stageDispatchedAt sql.NullTime
 	if err := rows.Scan(
 		&d.ID, &d.Repo, &d.Title, &d.Description,
-		&d.Priority, &d.Complexity, &d.Status, &assignee, &currentCataracta, &outcome, &assignedAqueduct, &lastReviewedCommit, &externalRef,
+		&d.Priority, &d.Status, &assignee, &currentCataracta, &outcome, &assignedAqueduct, &lastReviewedCommit, &externalRef,
 		&lastHeartbeatAt, &d.CreatedAt, &d.UpdatedAt, &stageDispatchedAt,
 	); err != nil {
 		return nil, err

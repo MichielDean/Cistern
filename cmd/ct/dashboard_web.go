@@ -1336,7 +1336,6 @@ type createDropletRequest struct {
 	Title       string   `json:"title"`
 	Description string   `json:"description"`
 	Priority    int      `json:"priority"`
-	Complexity  int      `json:"complexity"`
 	DependsOn   []string `json:"depends_on"`
 }
 
@@ -1366,14 +1365,11 @@ func handleCreateDroplet(dbPath string) http.HandlerFunc {
 			writeAPIError(w, http.StatusBadRequest, fmt.Sprintf("description exceeds maximum length (%d)", maxDescriptionLen))
 			return
 		}
-		if req.Complexity < 1 || req.Complexity > 3 {
-			req.Complexity = 2
-		}
 		if req.Priority < 1 {
 			req.Priority = 2
 		}
 		apiClient(dbPath, w, func(c *cistern.Client) error {
-			d, err := c.Add(req.Repo, req.Title, req.Description, req.Priority, req.Complexity, req.DependsOn...)
+			d, err := c.Add(req.Repo, req.Title, req.Description, req.Priority, req.DependsOn...)
 			if err != nil {
 				return err
 			}
@@ -1386,7 +1382,6 @@ func handleCreateDroplet(dbPath string) http.HandlerFunc {
 type editDropletRequest struct {
 	Title       *string `json:"title,omitempty"`
 	Description *string `json:"description,omitempty"`
-	Complexity  *int    `json:"complexity,omitempty"`
 	Priority    *int    `json:"priority,omitempty"`
 }
 
@@ -1409,7 +1404,6 @@ func handleEditDroplet(dbPath string) http.HandlerFunc {
 			if err := c.EditDroplet(id, cistern.EditDropletFields{
 				Title:       req.Title,
 				Description: req.Description,
-				Complexity:  req.Complexity,
 				Priority:    req.Priority,
 			}); err != nil {
 				return err
@@ -1497,13 +1491,13 @@ func handleExportDroplets(dbPath string) http.HandlerFunc {
 			case "csv":
 				w.Header().Set("Content-Type", "text/csv")
 				cw := csv.NewWriter(w)
-				if err := cw.Write([]string{"id", "repo", "title", "description", "priority", "complexity", "status", "assignee", "current_cataractae", "outcome", "created_at", "updated_at"}); err != nil {
+				if err := cw.Write([]string{"id", "repo", "title", "description", "priority", "status", "assignee", "current_cataractae", "outcome", "created_at", "updated_at"}); err != nil {
 					return err
 				}
 				for _, item := range items {
 					if err := cw.Write([]string{
 						csvSanitizeCell(item.ID), csvSanitizeCell(item.Repo), csvSanitizeCell(item.Title), csvSanitizeCell(item.Description),
-						strconv.Itoa(item.Priority), strconv.Itoa(item.Complexity),
+						strconv.Itoa(item.Priority),
 						csvSanitizeCell(item.Status), csvSanitizeCell(item.Assignee), csvSanitizeCell(item.CurrentCataractae), csvSanitizeCell(item.Outcome),
 						item.CreatedAt.Format(time.RFC3339), item.UpdatedAt.Format(time.RFC3339),
 					}); err != nil {

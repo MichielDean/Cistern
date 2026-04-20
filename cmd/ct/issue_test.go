@@ -24,7 +24,7 @@ func TestDropletIssueAdd_CreatesIssue(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	item, _ := c.Add("myrepo", "Task", "", 1, 3)
+	item, _ := c.Add("myrepo", "Task", "", 1)
 	c.Close()
 
 	if err := execCmd(t, "droplet", "issue", "add", item.ID, "missing error handling"); err != nil {
@@ -54,7 +54,7 @@ func TestDropletIssueResolve_UpdatesStatus(t *testing.T) {
 	t.Setenv("CT_CATARACTA_NAME", "reviewer")
 
 	c, _ := cistern.New(db, "ct")
-	item, _ := c.Add("myrepo", "Task", "", 1, 3)
+	item, _ := c.Add("myrepo", "Task", "", 1)
 	iss, _ := c.AddIssue(item.ID, "reviewer", "some issue")
 	c.Close()
 
@@ -76,7 +76,7 @@ func TestDropletIssueResolve_ImplementerForbidden(t *testing.T) {
 	t.Setenv("CT_CATARACTA_NAME", "implementer")
 
 	c, _ := cistern.New(db, "ct")
-	item, _ := c.Add("myrepo", "Task", "", 1, 3)
+	item, _ := c.Add("myrepo", "Task", "", 1)
 	iss, _ := c.AddIssue(item.ID, "reviewer", "some issue")
 	c.Close()
 
@@ -103,7 +103,7 @@ func TestDropletIssueResolve_ImplementShortName(t *testing.T) {
 	t.Setenv("CT_CATARACTA_NAME", "implement")
 
 	c, _ := cistern.New(db, "ct")
-	item, _ := c.Add("myrepo", "Task", "", 1, 3)
+	item, _ := c.Add("myrepo", "Task", "", 1)
 	iss, _ := c.AddIssue(item.ID, "reviewer", "some issue")
 	c.Close()
 
@@ -119,7 +119,7 @@ func TestDropletIssueReject_UpdatesStatus(t *testing.T) {
 	t.Setenv("CT_CATARACTA_NAME", "reviewer")
 
 	c, _ := cistern.New(db, "ct")
-	item, _ := c.Add("myrepo", "Task", "", 1, 3)
+	item, _ := c.Add("myrepo", "Task", "", 1)
 	iss, _ := c.AddIssue(item.ID, "reviewer", "unfixed issue")
 	c.Close()
 
@@ -144,7 +144,7 @@ func TestDropletIssueReject_ImplementerForbidden(t *testing.T) {
 	t.Setenv("CT_CATARACTA_NAME", "implementer")
 
 	c, _ := cistern.New(db, "ct")
-	item, _ := c.Add("myrepo", "Task", "", 1, 3)
+	item, _ := c.Add("myrepo", "Task", "", 1)
 	iss, _ := c.AddIssue(item.ID, "reviewer", "some issue")
 	c.Close()
 
@@ -171,7 +171,7 @@ func TestDropletIssueReject_ImplementShortName(t *testing.T) {
 	t.Setenv("CT_CATARACTA_NAME", "implement")
 
 	c, _ := cistern.New(db, "ct")
-	item, _ := c.Add("myrepo", "Task", "", 1, 3)
+	item, _ := c.Add("myrepo", "Task", "", 1)
 	iss, _ := c.AddIssue(item.ID, "reviewer", "some issue")
 	c.Close()
 
@@ -186,7 +186,7 @@ func TestDropletPass_SucceedsWithOpenIssues(t *testing.T) {
 	t.Setenv("CT_DB", db)
 
 	c, _ := cistern.New(db, "ct")
-	item, _ := c.Add("myrepo", "Task", "", 1, 3)
+	item, _ := c.Add("myrepo", "Task", "", 1)
 	c.AddIssue(item.ID, "reviewer", "open issue present")
 	c.Close()
 
@@ -209,7 +209,7 @@ func TestDropletPass_AllowedWhenIssuesResolved(t *testing.T) {
 	t.Setenv("CT_CATARACTA_NAME", "reviewer")
 
 	c, _ := cistern.New(db, "ct")
-	item, _ := c.Add("myrepo", "Task", "", 1, 3)
+	item, _ := c.Add("myrepo", "Task", "", 1)
 	iss, _ := c.AddIssue(item.ID, "reviewer", "a finding")
 	c.ResolveIssue(iss.ID, "fixed")
 	c.Close()
@@ -235,7 +235,7 @@ func TestDropletPass_NoIssues(t *testing.T) {
 	t.Setenv("CT_DB", db)
 
 	c, _ := cistern.New(db, "ct")
-	item, _ := c.Add("myrepo", "Task", "", 1, 3)
+	item, _ := c.Add("myrepo", "Task", "", 1)
 	c.Close()
 
 	if err := execCmd(t, "droplet", "pass", item.ID); err != nil {
@@ -262,7 +262,7 @@ func TestDropletPass_WhenPooled_SetsOutcome(t *testing.T) {
 	t.Setenv("CT_DB", db)
 
 	c, _ := cistern.New(db, "ct")
-	item, _ := c.Add("myrepo", "Task", "", 1, 3)
+	item, _ := c.Add("myrepo", "Task", "", 1)
 	c.Pool(item.ID, "timed out")
 	c.Close()
 
@@ -291,7 +291,7 @@ func TestDropletPass_WhenInProgress_BehaviorUnchanged(t *testing.T) {
 	t.Setenv("CT_DB", db)
 
 	c, _ := cistern.New(db, "ct")
-	item, _ := c.Add("myrepo", "Task", "", 1, 3)
+	item, _ := c.Add("myrepo", "Task", "", 1)
 	c.UpdateStatus(item.ID, "in_progress")
 	c.Close()
 
@@ -317,7 +317,7 @@ func TestDropletPass_WhenDelivered_ReturnsError(t *testing.T) {
 	t.Setenv("CT_DB", db)
 
 	c, _ := cistern.New(db, "ct")
-	item, _ := c.Add("myrepo", "Task", "", 1, 3)
+	item, _ := c.Add("myrepo", "Task", "", 1)
 	c.CloseItem(item.ID)
 	c.Close()
 
@@ -337,7 +337,7 @@ func TestDropletPass_WhenCancelled_ReturnsError(t *testing.T) {
 	t.Setenv("CT_DB", db)
 
 	c, _ := cistern.New(db, "ct")
-	item, _ := c.Add("myrepo", "Task", "", 1, 3)
+	item, _ := c.Add("myrepo", "Task", "", 1)
 	c.Cancel(item.ID, "no longer needed")
 	c.Close()
 
@@ -363,7 +363,7 @@ func TestDropletPool_WhenPooled_SetsOutcomeAndKeepsPooled(t *testing.T) {
 	t.Setenv("CT_DB", db)
 
 	c, _ := cistern.New(db, "ct")
-	item, _ := c.Add("myrepo", "Task", "", 1, 3)
+	item, _ := c.Add("myrepo", "Task", "", 1)
 	c.Pool(item.ID, "timed out")
 	c.Close()
 
@@ -393,7 +393,7 @@ func TestDropletPool_WhenPooled_ForwardsPoolNotes(t *testing.T) {
 	t.Setenv("CT_DB", db)
 
 	c, _ := cistern.New(db, "ct")
-	item, _ := c.Add("myrepo", "Task", "", 1, 3)
+	item, _ := c.Add("myrepo", "Task", "", 1)
 	c.Pool(item.ID, "timed out")
 	c.Close()
 
@@ -427,7 +427,7 @@ func TestDropletPool_WhenDelivered_ReturnsError(t *testing.T) {
 	t.Setenv("CT_DB", db)
 
 	c, _ := cistern.New(db, "ct")
-	item, _ := c.Add("myrepo", "Task", "", 1, 3)
+	item, _ := c.Add("myrepo", "Task", "", 1)
 	c.CloseItem(item.ID)
 	c.Close()
 
@@ -447,7 +447,7 @@ func TestDropletPool_WhenCancelled_ReturnsError(t *testing.T) {
 	t.Setenv("CT_DB", db)
 
 	c, _ := cistern.New(db, "ct")
-	item, _ := c.Add("myrepo", "Task", "", 1, 3)
+	item, _ := c.Add("myrepo", "Task", "", 1)
 	c.Cancel(item.ID, "no longer needed")
 	c.Close()
 
@@ -474,7 +474,7 @@ func TestDropletRecirculate_WhenPooled_SetsStatusOpen(t *testing.T) {
 	t.Setenv("CT_CATARACTA_NAME", "reviewer")
 
 	c, _ := cistern.New(db, "ct")
-	item, _ := c.Add("myrepo", "Task", "", 1, 3)
+	item, _ := c.Add("myrepo", "Task", "", 1)
 	c.SetCataractae(item.ID, "implement")
 	c.Pool(item.ID, "timed out")
 	c.Close()
@@ -506,7 +506,7 @@ func TestDropletRecirculate_WhenPooled_DefaultsToCurrentCataractae(t *testing.T)
 	t.Setenv("CT_CATARACTA_NAME", "reviewer")
 
 	c, _ := cistern.New(db, "ct")
-	item, _ := c.Add("myrepo", "Task", "", 1, 3)
+	item, _ := c.Add("myrepo", "Task", "", 1)
 	c.SetCataractae(item.ID, "implement")
 	c.Pool(item.ID, "timed out")
 	c.Close()
@@ -538,7 +538,7 @@ func TestDropletRecirculate_WhenPooled_WithTo_SetsCurrentCataractae(t *testing.T
 	t.Setenv("CT_CATARACTA_NAME", "reviewer")
 
 	c, _ := cistern.New(db, "ct")
-	item, _ := c.Add("myrepo", "Task", "", 1, 3)
+	item, _ := c.Add("myrepo", "Task", "", 1)
 	c.SetCataractae(item.ID, "review")
 	c.Pool(item.ID, "timed out")
 	c.Close()
@@ -570,7 +570,7 @@ func TestDropletRecirculate_WhenDelivered_ReturnsError(t *testing.T) {
 	t.Setenv("CT_CATARACTA_NAME", "reviewer")
 
 	c, _ := cistern.New(db, "ct")
-	item, _ := c.Add("myrepo", "Task", "", 1, 3)
+	item, _ := c.Add("myrepo", "Task", "", 1)
 	c.CloseItem(item.ID)
 	c.Close()
 
@@ -592,7 +592,7 @@ func TestDropletRecirculate_WhenCancelled_ReturnsError(t *testing.T) {
 	t.Setenv("CT_CATARACTA_NAME", "reviewer")
 
 	c, _ := cistern.New(db, "ct")
-	item, _ := c.Add("myrepo", "Task", "", 1, 3)
+	item, _ := c.Add("myrepo", "Task", "", 1)
 	c.Cancel(item.ID, "no longer needed")
 	c.Close()
 
@@ -617,7 +617,7 @@ func TestRecirculate_RejectedFromImplementer(t *testing.T) {
 	t.Setenv("CT_CATARACTA_NAME", "implementer")
 
 	c, _ := cistern.New(db, "ct")
-	item, _ := c.Add("myrepo", "Task", "", 1, 3)
+	item, _ := c.Add("myrepo", "Task", "", 1)
 	c.UpdateStatus(item.ID, "in_progress")
 	c.Close()
 
@@ -642,7 +642,7 @@ func TestRecirculate_AllowedFromReviewer(t *testing.T) {
 	t.Setenv("CT_CATARACTA_NAME", "reviewer")
 
 	c, _ := cistern.New(db, "ct")
-	item, _ := c.Add("myrepo", "Task", "", 1, 3)
+	item, _ := c.Add("myrepo", "Task", "", 1)
 	c.SetCataractae(item.ID, "implement")
 	c.Pool(item.ID, "timed out")
 	c.Close()
@@ -664,7 +664,7 @@ func TestRecirculate_RejectedFromImplementShortName(t *testing.T) {
 	t.Setenv("CT_CATARACTA_NAME", "implement")
 
 	c, _ := cistern.New(db, "ct")
-	item, _ := c.Add("myrepo", "Task", "", 1, 3)
+	item, _ := c.Add("myrepo", "Task", "", 1)
 	c.UpdateStatus(item.ID, "in_progress")
 	c.Close()
 
@@ -682,7 +682,7 @@ func TestDropletIssueList_NoIssues(t *testing.T) {
 	t.Setenv("CT_DB", db)
 
 	c, _ := cistern.New(db, "ct")
-	item, _ := c.Add("myrepo", "Task", "", 1, 3)
+	item, _ := c.Add("myrepo", "Task", "", 1)
 	c.Close()
 
 	out := captureStdout(t, func() {
@@ -700,7 +700,7 @@ func TestDropletIssueList_WithIssues(t *testing.T) {
 	t.Setenv("CT_DB", db)
 
 	c, _ := cistern.New(db, "ct")
-	item, _ := c.Add("myrepo", "Task", "", 1, 3)
+	item, _ := c.Add("myrepo", "Task", "", 1)
 	c.AddIssue(item.ID, "reviewer", "first issue description")
 	c.AddIssue(item.ID, "reviewer", "second issue description")
 	c.Close()
@@ -724,7 +724,7 @@ func TestDropletIssueList_OpenFilter(t *testing.T) {
 	t.Setenv("CT_DB", db)
 
 	c, _ := cistern.New(db, "ct")
-	item, _ := c.Add("myrepo", "Task", "", 1, 3)
+	item, _ := c.Add("myrepo", "Task", "", 1)
 	c.AddIssue(item.ID, "reviewer", "open issue stays")
 	iss2, _ := c.AddIssue(item.ID, "reviewer", "resolved issue hidden")
 	c.ResolveIssue(iss2.ID, "fixed it")
@@ -749,7 +749,7 @@ func TestDropletIssueResolve_EmptyEvidence(t *testing.T) {
 	t.Setenv("CT_CATARACTA_NAME", "reviewer")
 
 	c, _ := cistern.New(db, "ct")
-	item, _ := c.Add("myrepo", "Task", "", 1, 3)
+	item, _ := c.Add("myrepo", "Task", "", 1)
 	iss, _ := c.AddIssue(item.ID, "reviewer", "some issue")
 	c.Close()
 
@@ -765,7 +765,7 @@ func TestDropletIssueReject_EmptyEvidence(t *testing.T) {
 	t.Setenv("CT_CATARACTA_NAME", "reviewer")
 
 	c, _ := cistern.New(db, "ct")
-	item, _ := c.Add("myrepo", "Task", "", 1, 3)
+	item, _ := c.Add("myrepo", "Task", "", 1)
 	iss, _ := c.AddIssue(item.ID, "reviewer", "some issue")
 	c.Close()
 
@@ -782,7 +782,7 @@ func TestDropletIssueList_FlaggedByFilter(t *testing.T) {
 
 	// Given: issues filed by two different cataractae.
 	c, _ := cistern.New(db, "ct")
-	item, _ := c.Add("myrepo", "Task", "", 1, 3)
+	item, _ := c.Add("myrepo", "Task", "", 1)
 	c.AddIssue(item.ID, "reviewer", "reviewer filed this")
 	c.AddIssue(item.ID, "qa", "qa filed this")
 	c.Close()

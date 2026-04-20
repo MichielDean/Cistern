@@ -181,48 +181,6 @@ func TestStatusPanel_View_IdleAqueduct_ShowsIdleLabel(t *testing.T) {
 	}
 }
 
-// TestStatusPanel_View_HumanGated_ShowsApprovalNotice verifies that pooled droplets
-// awaiting human approval are surfaced in the view.
-//
-// Given: a statusPanel with one pooled droplet at CurrentCataractae="human"
-// When:  View() is called
-// Then:  output contains "human approval" and the droplet ID
-func TestStatusPanel_View_HumanGated_ShowsApprovalNotice(t *testing.T) {
-	p := newStatusPanel("", "")
-	p.data = &DashboardData{
-		PooledItems: []*cistern.Droplet{
-			{ID: "ci-human01", CurrentCataractae: "human"},
-		},
-		FetchedAt: time.Now(),
-	}
-	v := p.View()
-	for _, want := range []string{"human approval", "ci-human01"} {
-		if !strings.Contains(v, want) {
-			t.Errorf("View() does not contain %q; output:\n%s", want, v)
-		}
-	}
-}
-
-// TestStatusPanel_View_NonHumanGated_HidesApprovalNotice verifies that pooled droplets
-// waiting on a non-human cataractae do not trigger the human approval notice.
-//
-// Given: a statusPanel with one pooled droplet at CurrentCataractae="qa" (not "human")
-// When:  View() is called
-// Then:  output does NOT contain "human approval"
-func TestStatusPanel_View_NonHumanGated_HidesApprovalNotice(t *testing.T) {
-	p := newStatusPanel("", "")
-	p.data = &DashboardData{
-		PooledItems: []*cistern.Droplet{
-			{ID: "ci-qa01", CurrentCataractae: "qa"},
-		},
-		FetchedAt: time.Now(),
-	}
-	v := p.View()
-	if strings.Contains(v, "human approval") {
-		t.Errorf("View() contains %q for a non-human-gated droplet; output:\n%s", "human approval", v)
-	}
-}
-
 // TestStatusPanel_View_ProgressFraction_Shown verifies that cataractae progress
 // indices are shown when available.
 //
