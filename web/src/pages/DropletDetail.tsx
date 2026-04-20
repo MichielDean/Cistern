@@ -21,18 +21,23 @@ import { AddNoteModal } from '../components/AddNoteModal';
 import { EditMetadataModal } from '../components/EditMetadataModal';
 import { RestartModal } from '../components/RestartModal';
 import { formatAge } from '../utils/formatAge';
-import type { ActionRequest } from '../api/types';
+import type { ActionRequest, Droplet } from '../api/types';
 
 export function DropletDetail() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
-  const { droplet, loading, error } = useDroplet(id ?? null);
-  const { notes, loading: notesLoading } = useDropletNotes(id ?? null);
-  const { issues, loading: issuesLoading } = useDropletIssues(id ?? null, { open: true });
-  const { dependencies, loading: depsLoading } = useDropletDependencies(id ?? null);
+  const { droplet, loading, error, refetch: refetchDroplet } = useDroplet(id ?? null);
+  const { notes, loading: notesLoading, refetch: refetchNotes } = useDropletNotes(id ?? null, useCallback((d: Droplet) => {
+    setSseDroplet(d);
+  }, []));
+  const { issues, loading: issuesLoading, refetch: refetchIssues } = useDropletIssues(id ?? null, { open: true });
+  const { dependencies, loading: depsLoading, refetch: refetchDeps } = useDropletDependencies(id ?? null);
   const { mutate } = useDropletMutation();
 
-  const [refreshKey, setRefreshKey] = useState(0);
+  const [sseDroplet, setSseDroplet] = useState<Droplet | null>(null);
+  const currentDroplet = sseDroplet ?? droplet;
+  const { steps: pipelineSteps } = useRepoSteps(currentDroplet?.repo ?? null);
+
   const [actionDialog, setActionDialog] = useState<{
     open: boolean;
     title: string;
@@ -43,11 +48,12 @@ export function DropletDetail() {
   const [showRestartModal, setShowRestartModal] = useState(false);
   const [copied, setCopied] = useState(false);
 
-  const { droplet: freshDroplet } = useDroplet(
-    refreshKey > 0 ? id ?? null : null
-  );
-  const currentDroplet = freshDroplet ?? droplet;
-  const { steps: pipelineSteps } = useRepoSteps(currentDroplet?.repo ?? null);
+  const refetchAll = useCallback(() => {
+    refetchDroplet();
+    refetchNotes();
+    refetchIssues();
+    refetchDeps();
+  }, [refetchDroplet, refetchNotes, refetchIssues, refetchDeps]);
 
   const handleAction = useCallback(async (
     dropletId: string,
@@ -55,8 +61,8 @@ export function DropletDetail() {
     body?: ActionRequest
   ) => {
     await mutate(dropletId, action, body);
-    setRefreshKey((k) => k + 1);
-  }, [mutate]);
+    refetchAll();
+  }, [mutate, refetchAll]);
 
   const handleCopyId = useCallback(() => {
     if (currentDroplet?.id) {
@@ -179,18 +185,18 @@ export function DropletDetail() {
         <section className="bg-cistern-surface border border-cistern-border rounded-lg p-4">
           <div className="flex items-center justify-between mb-3">
             <h2 className="text-sm font-mono text-cistern-muted uppercase tracking-wider">Issues</h2>
-            <FileIssueButton dropletId={d.id} onFiled={() => setRefreshKey((k) => k + 1)} />
+            <FileIssueButton dropletId={d.id} onFiled={() => refetchAll()} />
           </div>
           <IssuesList
             issues={issues}
             loading={issuesLoading}
             onResolve={async (issueId, evidence) => {
               await resolveIssue(issueId, { evidence });
-              setRefreshKey((k) => k + 1);
+              refetchAll();
             }}
             onReject={async (issueId, evidence) => {
               await rejectIssue(issueId, { evidence });
-              setRefreshKey((k) => k + 1);
+              refetchAll();
             }}
           />
         </section>
@@ -204,7 +210,7 @@ export function DropletDetail() {
           dropletId={d.id}
           dependencies={dependencies}
           loading={depsLoading}
-          onChange={() => setRefreshKey((k) => k + 1)}
+          onChange={() => refetchAll()}
         />
       </section>
 
@@ -229,14 +235,14 @@ export function DropletDetail() {
         open={showNoteModal}
         onClose={() => setShowNoteModal(false)}
         dropletId={d.id}
-        onSaved={() => setRefreshKey((k) => k + 1)}
+        onSaved={() => refetchAll()}
       />
 
       <EditMetadataModal
         open={showEditModal}
         onClose={() => setShowEditModal(false)}
         droplet={d}
-        onSaved={() => setRefreshKey((k) => k + 1)}
+        onSaved={() => refetchAll()}
       />
 
       <RestartModal
@@ -244,7 +250,7 @@ export function DropletDetail() {
         onClose={() => setShowRestartModal(false)}
         dropletId={d.id}
         steps={steps}
-        onRestarted={() => setRefreshKey((k) => k + 1)}
+        onRestarted={() => refetchAll()}
       />
     </div>
   );

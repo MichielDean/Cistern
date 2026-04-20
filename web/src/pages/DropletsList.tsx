@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useRef, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useDroplets, useRepos, useSearchDroplets } from '../hooks/useApi';
 import { DropletTable } from '../components/DropletTable';
@@ -28,6 +28,7 @@ export function DropletsList() {
   const [page, setPage] = useState(1);
   const [searchQuery, setSearchQuery] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
+  const searchTimerRef = useRef<ReturnType<typeof setTimeout>>();
   const perPage = 50;
 
   const { repos } = useRepos();
@@ -36,6 +37,12 @@ export function DropletsList() {
   const [searchResults, setSearchResults] = useState<DropletSearchResponse | null>(null);
 
   const isSearching = debouncedSearch.length > 0;
+
+  useEffect(() => {
+    return () => {
+      if (searchTimerRef.current) clearTimeout(searchTimerRef.current);
+    };
+  }, []);
 
   const { data, error } = useDroplets({
     status: status || undefined,
@@ -47,12 +54,13 @@ export function DropletsList() {
 
   const handleSearchChange = useCallback((value: string) => {
     setSearchQuery(value);
+    if (searchTimerRef.current) clearTimeout(searchTimerRef.current);
     if (!value.trim()) {
       setDebouncedSearch('');
       setSearchResults(null);
       return;
     }
-    const timer = setTimeout(async () => {
+    searchTimerRef.current = setTimeout(async () => {
       setDebouncedSearch(value.trim());
       try {
         const res = await searchMutate(value.trim(), status || undefined);
@@ -61,7 +69,6 @@ export function DropletsList() {
         setSearchResults(null);
       }
     }, 300);
-    return () => clearTimeout(timer);
   }, [searchMutate, status]);
 
   const displayedDroplets = isSearching && searchResults
@@ -116,7 +123,7 @@ export function DropletsList() {
         >
           <option value="">All Repos</option>
           {repos.map((r) => (
-            <option key={r} value={r}>{r}</option>
+            <option key={r.name} value={r.name}>{r.name}</option>
           ))}
         </select>
         <select

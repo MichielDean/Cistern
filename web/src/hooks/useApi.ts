@@ -66,6 +66,19 @@ export function useDroplet(id: string | null) {
   const [droplet, setDroplet] = useState<Droplet | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<Error | null>(null);
+  const fetchCounter = useRef(0);
+
+  const refetch = useCallback(() => {
+    fetchCounter.current += 1;
+    const current = fetchCounter.current;
+    if (!id) return;
+    let cancelled = false;
+    setLoading(true);
+    apiFetch<Droplet>(`/api/droplets/${encodeURIComponent(id)}`)
+      .then((res) => { if (!cancelled && fetchCounter.current === current) { setDroplet(res); setError(null); } })
+      .catch((err) => { if (!cancelled && fetchCounter.current === current) { setError(err); } })
+      .finally(() => { if (!cancelled && fetchCounter.current === current) setLoading(false); });
+  }, [id]);
 
   useEffect(() => {
     if (!id) { setLoading(false); return; }
@@ -78,16 +91,31 @@ export function useDroplet(id: string | null) {
     return () => { cancelled = true; };
   }, [id]);
 
-  return { droplet, loading, error };
+  return { droplet, loading, error, refetch };
 }
 
-export function useDropletNotes(id: string | null) {
+export function useDropletNotes(id: string | null, onDropletUpdate?: (d: Droplet) => void) {
   const [notes, setNotes] = useState<CataractaeNote[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<Error | null>(null);
   const esRef = useRef<EventSource | null>(null);
   const reconnectTimer = useRef<ReturnType<typeof setTimeout>>();
   const mountedRef = useRef(true);
+  const callbackRef = useRef(onDropletUpdate);
+  callbackRef.current = onDropletUpdate;
+  const fetchCounter = useRef(0);
+
+  const refetch = useCallback(() => {
+    fetchCounter.current += 1;
+    const current = fetchCounter.current;
+    if (!id) return;
+    let cancelled = false;
+    setLoading(true);
+    apiFetch<CataractaeNote[]>(`/api/droplets/${encodeURIComponent(id)}/notes`)
+      .then((res) => { if (!cancelled && mountedRef.current && fetchCounter.current === current) { setNotes(res); setError(null); } })
+      .catch((err) => { if (!cancelled && mountedRef.current && fetchCounter.current === current) { setError(err); } })
+      .finally(() => { if (!cancelled && mountedRef.current && fetchCounter.current === current) setLoading(false); });
+  }, [id]);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -106,6 +134,7 @@ export function useDropletNotes(id: string | null) {
       : `/api/droplets/${encodeURIComponent(id)}/events`;
 
     let retryCount = 0;
+    let lastUpdatedAt: string | null = null;
     const connect = () => {
       if (esRef.current) esRef.current.close();
       const es = new EventSource(eventUrl);
@@ -113,10 +142,9 @@ export function useDropletNotes(id: string | null) {
         if (!mountedRef.current) return;
         try {
           const parsed = JSON.parse(e.data);
-          if (parsed.type === 'note' && parsed.note) {
-            setNotes((prev) => [parsed.note, ...prev]);
-          } else if (parsed.type === 'droplet_update' && parsed.droplet) {
-            // handled by detail page refetch
+          if (parsed.id && parsed.updated_at !== lastUpdatedAt) {
+            lastUpdatedAt = parsed.updated_at;
+            callbackRef.current?.(parsed as Droplet);
           }
         } catch { /* ignore parse errors */ }
       };
@@ -141,13 +169,31 @@ export function useDropletNotes(id: string | null) {
     };
   }, [id]);
 
-  return { notes, loading, error };
+  return { notes, loading, error, refetch };
 }
 
 export function useDropletIssues(id: string | null, filters?: { open?: boolean; flagged_by?: string }) {
   const [issues, setIssues] = useState<DropletIssue[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<Error | null>(null);
+  const fetchCounter = useRef(0);
+
+  const refetch = useCallback(() => {
+    fetchCounter.current += 1;
+    const current = fetchCounter.current;
+    if (!id) return;
+    const params = new URLSearchParams();
+    if (filters?.open !== undefined) params.set('open', String(filters.open));
+    if (filters?.flagged_by) params.set('flagged_by', filters.flagged_by);
+    const qs = params.toString();
+    const url = qs ? `/api/droplets/${encodeURIComponent(id)}/issues?${qs}` : `/api/droplets/${encodeURIComponent(id)}/issues`;
+    let cancelled = false;
+    setLoading(true);
+    apiFetch<DropletIssue[]>(url)
+      .then((res) => { if (!cancelled && fetchCounter.current === current) { setIssues(res); setError(null); } })
+      .catch((err) => { if (!cancelled && fetchCounter.current === current) { setError(err); } })
+      .finally(() => { if (!cancelled && fetchCounter.current === current) setLoading(false); });
+  }, [id, filters?.open, filters?.flagged_by]);
 
   useEffect(() => {
     if (!id) { setLoading(false); return; }
@@ -166,13 +212,26 @@ export function useDropletIssues(id: string | null, filters?: { open?: boolean; 
     return () => { cancelled = true; };
   }, [id, filters?.open, filters?.flagged_by]);
 
-  return { issues, loading, error };
+  return { issues, loading, error, refetch };
 }
 
 export function useDropletDependencies(id: string | null) {
   const [dependencies, setDependencies] = useState<DropletDependency[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<Error | null>(null);
+  const fetchCounter = useRef(0);
+
+  const refetch = useCallback(() => {
+    fetchCounter.current += 1;
+    const current = fetchCounter.current;
+    if (!id) return;
+    let cancelled = false;
+    setLoading(true);
+    apiFetch<DropletDependency[]>(`/api/droplets/${encodeURIComponent(id)}/dependencies`)
+      .then((res) => { if (!cancelled && fetchCounter.current === current) { setDependencies(res); setError(null); } })
+      .catch((err) => { if (!cancelled && fetchCounter.current === current) { setError(err); } })
+      .finally(() => { if (!cancelled && fetchCounter.current === current) setLoading(false); });
+  }, [id]);
 
   useEffect(() => {
     if (!id) { setLoading(false); return; }
@@ -185,7 +244,7 @@ export function useDropletDependencies(id: string | null) {
     return () => { cancelled = true; };
   }, [id]);
 
-  return { dependencies, loading, error };
+  return { dependencies, loading, error, refetch };
 }
 
 export function useDropletMutation() {
@@ -203,15 +262,20 @@ export function useDropletMutation() {
   return { mutate };
 }
 
+export interface RepoInfo {
+  name: string;
+  url: string;
+}
+
 export function useRepos() {
-  const [repos, setRepos] = useState<string[]>([]);
+  const [repos, setRepos] = useState<RepoInfo[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<Error | null>(null);
 
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
-    apiFetch<string[]>('/api/repos')
+    apiFetch<RepoInfo[]>('/api/repos')
       .then((res) => { if (!cancelled) { setRepos(res); setError(null); } })
       .catch((err) => { if (!cancelled) { setError(err); } })
       .finally(() => { if (!cancelled) setLoading(false); });

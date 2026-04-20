@@ -3,6 +3,7 @@ import { renderHook, waitFor } from '@testing-library/react';
 import {
   useDroplets,
   useDroplet,
+  useDropletNotes,
   useDropletIssues,
   useDropletDependencies,
   useRepoSteps,
@@ -260,9 +261,9 @@ describe('useRepoSteps', () => {
 
 describe('useRepos', () => {
   beforeEach(() => { localStorage.clear(); });
-  afterEach(() => { vi.restoreAllMocks(); });
+  afterEach(() => vi.restoreAllMocks());
 
-  it('fetches repos list', async () => {
+  it('fetches repos list as RepoInfo objects', async () => {
     const mockRepos = [
       { name: 'cistern', url: 'https://github.com/example/cistern' },
       { name: 'other', url: 'https://github.com/example/other' },
@@ -276,6 +277,8 @@ describe('useRepos', () => {
     });
 
     expect(result.current.repos).toEqual(mockRepos);
+    expect(result.current.repos[0].name).toBe('cistern');
+    expect(result.current.repos[0].url).toBe('https://github.com/example/cistern');
   });
 });
 
@@ -393,5 +396,83 @@ describe('Mutation functions', () => {
     const [url, options] = getLastFetchCall();
     expect(url).toContain('/ct-abc123/dependencies/ct-dep1');
     expect(options?.method).toBe('DELETE');
+  });
+});
+
+describe('useDroplet refetch', () => {
+  beforeEach(() => { localStorage.clear(); });
+  afterEach(() => vi.restoreAllMocks());
+
+  it('exposes a refetch function that re-fetches the droplet', async () => {
+    const mockDroplet: Droplet = {
+      id: 'ct-abc123', repo: 'cistern', title: 'Test', description: '',
+      priority: 1, complexity: 2, status: 'in_progress', assignee: 'implement',
+      current_cataractae: 'implement', created_at: '2026-04-19T00:00:00Z', updated_at: '2026-04-19T00:00:00Z',
+    };
+    mockFetch(mockDroplet);
+
+    const { result } = renderHook(() => useDroplet('ct-abc123'));
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    expect(result.current.droplet).toEqual(mockDroplet);
+    expect(typeof result.current.refetch).toBe('function');
+
+    const updated: Droplet = { ...mockDroplet, status: 'done', updated_at: '2026-04-19T01:00:00Z' };
+    mockFetch(updated);
+    await result.current.refetch();
+    await waitFor(() => expect(result.current.droplet?.status).toBe('done'));
+  });
+});
+
+describe('useDropletNotes refetch', () => {
+  beforeEach(() => { localStorage.clear(); });
+  afterEach(() => vi.restoreAllMocks());
+
+  it('exposes a refetch function that re-fetches notes', async () => {
+    const mockES = { onmessage: null, onerror: null, close: vi.fn() };
+    vi.stubGlobal('EventSource', vi.fn(() => mockES));
+
+    const mockNotes = [
+      { id: 1, droplet_id: 'ct-abc123', cataractae_name: 'implement', content: 'note', created_at: '2026-04-19T00:00:00Z' },
+    ];
+    mockFetch(mockNotes);
+
+    const { result } = renderHook(() => useDropletNotes('ct-abc123'));
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    expect(result.current.notes).toEqual(mockNotes);
+    expect(typeof result.current.refetch).toBe('function');
+
+    vi.unstubAllGlobals();
+  });
+});
+
+describe('useDropletIssues refetch', () => {
+  beforeEach(() => { localStorage.clear(); });
+  afterEach(() => vi.restoreAllMocks());
+
+  it('exposes a refetch function', async () => {
+    const mockIssues: DropletIssue[] = [
+      { id: 'issue-1', droplet_id: 'ct-abc123', flagged_by: 'reviewer', flagged_at: '2026-04-19T00:00:00Z', description: 'Bug', status: 'open' },
+    ];
+    mockFetch(mockIssues);
+
+    const { result } = renderHook(() => useDropletIssues('ct-abc123', { open: true }));
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    expect(typeof result.current.refetch).toBe('function');
+  });
+});
+
+describe('useDropletDependencies refetch', () => {
+  beforeEach(() => { localStorage.clear(); });
+  afterEach(() => vi.restoreAllMocks());
+
+  it('exposes a refetch function', async () => {
+    const mockDeps = [
+      { depends_on: 'ct-dep1', type: 'blocking' as const },
+    ];
+    mockFetch(mockDeps);
+
+    const { result } = renderHook(() => useDropletDependencies('ct-abc123'));
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    expect(typeof result.current.refetch).toBe('function');
   });
 });
