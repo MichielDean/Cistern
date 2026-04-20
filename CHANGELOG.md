@@ -36,6 +36,33 @@ Built the Droplets pages — the core interaction surface for monitoring and man
 - `internal/cistern/client.go` — `GetDependents` method for reverse dependency direction
 - `web/src/main.tsx` — routes for `/app/droplets` and `/app/droplets/:id`
 
+### Web UI: Infrastructure pages (ci-3pou0)
+
+Added four operator-facing infrastructure pages to the web dashboard: Castellarius control, Doctor health checks, log viewer, and repos/skills browser. Also adds Go-side SSE log streaming and log history endpoints.
+
+**Key features:**
+- **Castellarius page** (`/app/castellarius`): running/stopped status with pulse animation, PID and uptime display, aqueduct table (status, current droplet, step, elapsed), farm status badge, start/stop/restart action buttons (restart requires confirmation), toast notifications, auto-refresh every 5 seconds
+- **Doctor page** (`/app/doctor`): health check display with pass/fail/warn indicators grouped by category, summary card (X/Y passed), re-run and fix buttons, timestamp of last check
+- **Logs page** (`/app/logs`): real-time SSE log streaming with source selector, log level color coding (INFO=cyan, WARN=yellow, ERROR=red, DEBUG=dim), search/filter, auto-scroll toggle, line numbers, clear button, file size and last-modified metadata; monospace dark theme
+- **Repos & Skills page** (`/app/repos`): repository cards with aqueduct chains and step visualization, skills table with name/source/installed date; display-only (no install/uninstall from UI)
+- **Go log streaming**: `GET /api/logs` (last N lines with line numbers), `GET /api/logs/events` (SSE stream with connection pool limit), `GET /api/logs/sources` (available log files with metadata)
+- **Security**: path traversal protection via whitelist validation, URL parameter encoding, generic error messages, SSE line sanitization via json.Marshal, rate-limited lines (max 5000), 1MB scanner buffer, log rotation detection with offset reset, separate connection pools for droplet SSE (64) and log SSE (32), 20-retry limit for missing log files
+- **Shared components**: `StatusIndicator` (running/stopped/error with pulse animation), `ActionButton` (loading states, confirmation dialogs, variants), `LogViewer` (terminal-style display with search, auto-scroll, color coding), `HealthCheckCard` (pass/fail/warn indicators)
+- **Frontend**: 94 tests, all passing; TypeScript type check clean; graceful degradation for stub backend responses
+
+**Files added:**
+- `web/src/pages/CastellariusPage.tsx`, `DoctorPage.tsx`, `LogsPage.tsx`, `ReposSkillsPage.tsx`
+- `web/src/api/castellarius.ts`, `doctor.ts`, `logs.ts`, `repos.ts`
+- `web/src/api/types.ts` (extended with CastellariusStatus, AqueductStatus, DoctorCheck/Result, LogEntry, LogSourceInfo, RepoInfo, SkillInfo)
+- `web/src/components/StatusIndicator.tsx`, `ActionButton.tsx`, `LogViewer.tsx`, `HealthCheckCard.tsx`
+- `web/src/__tests__/castellarius.test.ts`, `doctor.test.ts`, `logs.test.ts`, `repos.test.ts`, `LogViewer.test.ts`, `infraTypes.test.ts`
+
+**Files changed:**
+- `cmd/ct/dashboard_web.go` — log history/SSE/sources handlers, connection pool management, path traversal validation, log rotation detection, scanner error handling
+- `cmd/ct/dashboard_api_test.go` — integration tests for log endpoints (history, SSE, sources, path traversal, rotation, connection limits)
+- `web/src/main.tsx` — route definitions for the four new pages
+- `web/src/components/index.ts` — exports for new shared components
+
 ### Web UI: Front-end foundation and dashboard (ci-jecbi)
 
 Added a React SPA dashboard at `/app/` with live aqueduct visualization, real-time SSE updates, authentication, and live terminal peek — the visual centerpiece of the web UI.

@@ -610,6 +610,10 @@ SSE stream and `/ws/aqueducts/{name}/peek` WebSocket used by the TUI.
   indicator with progress bar, real-time notes timeline (SSE), signal action dialogs
   (pass/recirculate/pool), dependencies with add/remove (resolves/blocked_by/blocks),
   issue tracker with file/resolve/reject, modals for notes/metadata/restart
+- **Castellarius control page** (`/app/castellarius`) — view running/stopped status, PID, uptime; start/stop/restart the daemon; aqueduct table with flow status, current droplet, step, and elapsed time; auto-refreshes every 5 seconds
+- **Doctor page** (`/app/doctor`) — run health checks with pass/fail/warn indicators; re-run or fix from the UI; grouped by category with summary card
+- **Logs page** (`/app/logs`) — real-time log viewer with SSE streaming; source selector (castellarius.log and other available logs); log level color coding (INFO=cyan, WARN=yellow, ERROR=red, DEBUG=dim); search/filter, auto-scroll toggle, line numbers; file size and last-modified metadata
+- **Repos & Skills page** (`/app/repos`) — browse configured repositories with aqueduct chains; view installed skills with source URLs and install dates; display-only (install/uninstall remains CLI-only)
 - Dark theme matching the Cistern color palette
 - Responsive sidebar navigation that collapses on mobile
 - Authentication — when `CISTERN_DASHBOARD_API_KEY` is configured, a login page
@@ -707,14 +711,22 @@ The web dashboard exposes a REST API at `/api/` that mirrors all TUI operations.
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| `GET` | `/api/castellarius/status` | Current Castellarius status |
+| `GET` | `/api/castellarius/status` | Current Castellarius status (running, PID, uptime, aqueducts, farm status) |
 | `POST` | `/api/castellarius/start` | Start the daemon (requires auth) |
 | `POST` | `/api/castellarius/stop` | Stop the daemon (requires auth) |
 | `POST` | `/api/castellarius/restart` | Restart the daemon (requires auth) |
 | `GET` | `/api/doctor` | Run health check (query param: `?fix=true`) |
-| `GET` | `/api/repos` | List configured repos |
+| `GET` | `/api/repos` | List configured repos with aqueduct chains |
 | `GET` | `/api/repos/{name}/steps` | List pipeline step names for a repo |
 | `GET` | `/api/skills` | List installed skills |
+
+### Logs
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/api/logs` | Get recent log lines (query params: `?lines=500&source=castellarius`) |
+| `GET` | `/api/logs/events` | SSE stream of new log lines (query param: `?source=castellarius`) |
+| `GET` | `/api/logs/sources` | List available log sources with file size and last-modified time |
 
 ### Input validation
 

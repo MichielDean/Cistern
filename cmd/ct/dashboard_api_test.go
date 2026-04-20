@@ -7,6 +7,9 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -2189,9 +2192,9 @@ func TestAPI_SSALimit_ConnectionLimit(t *testing.T) {
 	d, _ := c.Add("myrepo", "Test", "", 1, 2)
 	c.Close()
 
-	original := currentSSEConnections
-	defer func() { currentSSEConnections = original }()
-	atomic.StoreInt64(&currentSSEConnections, maxSSEConnections)
+	original := currentDropletSSEConnections
+	defer func() { currentDropletSSEConnections = original }()
+	atomic.StoreInt64(&currentDropletSSEConnections, maxDropletSSEConnections)
 
 	mux := newDashboardMux(tempCfg(t), db)
 	req := httptest.NewRequest(http.MethodGet, "/api/droplets/"+d.ID+"/events", nil)
@@ -2540,6 +2543,164 @@ func TestAPI_InputLimit_PassDropletNotesTooLong(t *testing.T) {
 	}
 }
 
+func TestAPI_Logs_PathTraversal_SourceParam(t *testing.T) {
+	mux := newDashboardMux(tempCfg(t), tempDB(t))
+	traversalCases := []string{
+		"../etc/passwd",
+		"..%2Fetc%2Fpasswd",
+		"....//etc/passwd",
+		"/etc/passwd",
+		"castellarius/../../etc/passwd",
+	}
+	for _, src := range traversalCases {
+		t.Run(src, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, "/api/logs?source="+url.QueryEscape(src), nil)
+			w := httptest.NewRecorder()
+			mux.ServeHTTP(w, req)
+			if w.Code != http.StatusBadRequest {
+				t.Errorf("path traversal source=%q: status = %d, want 400", src, w.Code)
+			}
+		})
+	}
+}
+
+func TestAPI_Logs_PathTraversal_DirectSlashInSource(t *testing.T) {
+	mux := newDashboardMux(tempCfg(t), tempDB(t))
+	req := httptest.NewRequest(http.MethodGet, "/api/logs?source=/etc/passwd", nil)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("absolute path source: status = %d, want 400", w.Code)
+	}
+}
+
+func TestAPI_Logs_LinesUpperBound(t *testing.T) {
+	mux := newDashboardMux(tempCfg(t), tempDB(t))
+	req := httptest.NewRequest(http.MethodGet, "/api/logs?lines=999999", nil)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Errorf("large lines param: status = %d, want 200 (capped internally)", w.Code)
+	}
+}
+
+func TestAPI_Logs_NegativeLinesParam(t *testing.T) {
+	mux := newDashboardMux(tempCfg(t), tempDB(t))
+	req := httptest.NewRequest(http.MethodGet, "/api/logs?lines=-1", nil)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Errorf("negative lines param: status = %d, want 200 (uses default)", w.Code)
+	}
+}
+
+func TestAPI_Logs_ZeroLinesParam(t *testing.T) {
+	mux := newDashboardMux(tempCfg(t), tempDB(t))
+	req := httptest.NewRequest(http.MethodGet, "/api/logs?lines=0", nil)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Errorf("zero lines param: status = %d, want 200 (uses default)", w.Code)
+	}
+}
+
+func TestAPI_Logs_NotFoundReturnsEmpty(t *testing.T) {
+	mux := newDashboardMux(tempCfg(t), tempDB(t))
+	req := httptest.NewRequest(http.MethodGet, "/api/logs?source=nonexistent_log_that_does_not_exist", nil)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Errorf("missing log file: status = %d, want 200", w.Code)
+	}
+	var result []struct {
+		Line int64  `json:"line"`
+		Text string `json:"text"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&result); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(result) != 0 {
+		t.Errorf("missing log file: got %d lines, want 0", len(result))
+	}
+}
+
+func TestAPI_LogSources_ReturnsAvailableLogs(t *testing.T) {
+	home, _ := os.UserHomeDir()
+	logDir := filepath.Join(home, ".cistern")
+	origLog, _ := os.Stat(filepath.Join(logDir, "castellarius.log"))
+
+	mux := newDashboardMux(tempCfg(t), tempDB(t))
+	req := httptest.NewRequest(http.MethodGet, "/api/logs/sources", nil)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("log sources: status = %d, want 200", w.Code)
+	}
+	var sources []struct {
+		Name string `json:"name"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&sources); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+
+	if origLog != nil {
+		found := false
+		for _, s := range sources {
+			if s.Name == "castellarius" {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Error("castellarius log source not found in response")
+		}
+	}
+}
+
+func TestAPI_LogSSE_PathTraversalInSource(t *testing.T) {
+	orig := currentLogSSEConnections
+	defer func() { currentLogSSEConnections = orig }()
+	atomic.StoreInt64(&currentLogSSEConnections, 0)
+
+	mux := newDashboardMux(tempCfg(t), tempDB(t))
+	req := httptest.NewRequest(http.MethodGet, "/api/logs/events?source=..%2Fetc%2Fpasswd", nil)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("SSE path traversal: status = %d, want 400", w.Code)
+	}
+}
+
+func TestAPI_LogFilePath_ValidSource(t *testing.T) {
+	tests := []struct {
+		source string
+		valid  bool
+	}{
+		{"castellarius", true},
+		{"", true},
+		{"my-app", true},
+		{"app_123", true},
+		{"../etc/passwd", false},
+		{"/etc/passwd", false},
+		{"..", false},
+		{"a/b", false},
+		{"a\\b", false},
+		{"a b", false},
+		{"a:b", false},
+		{"a;b", false},
+		{".hidden", false},
+		{"castellarius.log", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.source, func(t *testing.T) {
+			got := isValidLogSource(tt.source)
+			if got != tt.valid {
+				t.Errorf("isValidLogSource(%q) = %v, want %v", tt.source, got, tt.valid)
+			}
+		})
+	}
+}
+
 func TestAPI_InputLimit_CancelDropletReasonTooLong(t *testing.T) {
 	db := tempDB(t)
 	c, err := cistern.New(db, "mr")
@@ -2559,5 +2720,553 @@ func TestAPI_InputLimit_CancelDropletReasonTooLong(t *testing.T) {
 	mux.ServeHTTP(w, req)
 	if w.Code != http.StatusBadRequest {
 		t.Errorf("cancel with long reason: status = %d, want 400", w.Code)
+	}
+}
+
+func TestAPI_Logs_InvalidSource_NoUserInputInError(t *testing.T) {
+	mux := newDashboardMux(tempCfg(t), tempDB(t))
+	req := httptest.NewRequest(http.MethodGet, "/api/logs?source=../../../etc/passwd", nil)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("invalid source: status = %d, want 400", w.Code)
+	}
+	body := w.Body.String()
+	if strings.Contains(body, "../../../etc/passwd") {
+		t.Errorf("error message reflects user input: %q", body)
+	}
+}
+
+func TestAPI_LogSSE_InitialContext(t *testing.T) {
+	orig := currentLogSSEConnections
+	defer func() { currentLogSSEConnections = orig }()
+	atomic.StoreInt64(&currentLogSSEConnections, 0)
+
+	origHome := os.Getenv("HOME")
+	defer os.Setenv("HOME", origHome)
+
+	tmpDir := t.TempDir()
+	os.Setenv("HOME", tmpDir)
+	cisternDir := filepath.Join(tmpDir, ".cistern")
+	if err := os.MkdirAll(cisternDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	lines := make([]string, 200)
+	for i := range lines {
+		lines[i] = fmt.Sprintf("existing-line-%04d", i)
+	}
+	content := strings.Join(lines, "\n") + "\n"
+	logPath := filepath.Join(cisternDir, "castellarius.log")
+	if err := os.WriteFile(logPath, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := tempCfg(t)
+	mux := newDashboardMux(cfg, tempDB(t))
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, server.URL+"/api/logs/events", nil)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	var allData string
+	readCh := make(chan struct{})
+	go func() {
+		defer close(readCh)
+		buf := make([]byte, 32768)
+		for {
+			n, readErr := resp.Body.Read(buf)
+			if n > 0 {
+				allData += string(buf[:n])
+			}
+			if strings.Contains(allData, "existing-line-0199") {
+				return
+			}
+			if readErr != nil {
+				return
+			}
+		}
+	}()
+
+	select {
+	case <-readCh:
+		if !strings.Contains(allData, "existing-line-0199") {
+			t.Errorf("SSE stream did not send existing log data on connect; got: %q", allData)
+		}
+	case <-time.After(4 * time.Second):
+		t.Fatalf("timed out; SSE should have sent recent context on connect; data so far (len=%d): %q", len(allData), allData[:min(len(allData), 500)])
+	}
+}
+
+func TestAPI_LogSSE_StreamResumesAfterRotation(t *testing.T) {
+	orig := currentLogSSEConnections
+	defer func() { currentLogSSEConnections = orig }()
+	atomic.StoreInt64(&currentLogSSEConnections, 0)
+
+	origHome := os.Getenv("HOME")
+	defer os.Setenv("HOME", origHome)
+
+	tmpDir := t.TempDir()
+	os.Setenv("HOME", tmpDir)
+	cisternDir := filepath.Join(tmpDir, ".cistern")
+	if err := os.MkdirAll(cisternDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	logPath := filepath.Join(cisternDir, "castellarius.log")
+
+	initialContent := "aaaaaaaaaa line-before-rotation aaaaaaaaaa\n"
+	if err := os.WriteFile(logPath, []byte(initialContent), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := tempCfg(t)
+	mux := newDashboardMux(cfg, tempDB(t))
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+	defer cancel()
+
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, server.URL+"/api/logs/events", nil)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	time.Sleep(800 * time.Millisecond)
+
+	f, err := os.OpenFile(logPath, os.O_WRONLY|os.O_TRUNC, 0o644)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.WriteString("line-after-rotation\n")
+	f.Close()
+
+	var allData string
+	readCh := make(chan struct{})
+	go func() {
+		defer close(readCh)
+		buf := make([]byte, 8192)
+		for {
+			n, err := resp.Body.Read(buf)
+			if n > 0 {
+				allData += string(buf[:n])
+			}
+			if allData != "" && strings.Contains(allData, "line-after-rotation") {
+				return
+			}
+			if err != nil {
+				return
+			}
+		}
+	}()
+
+	select {
+	case <-readCh:
+		if !strings.Contains(allData, "line-after-rotation") {
+			t.Errorf("SSE stream did not emit data after log rotation; got: %q", allData)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatalf("timed out; data so far: %q", allData)
+	}
+}
+
+func TestAPI_Logs_LongLine_Handled(t *testing.T) {
+	origHome := os.Getenv("HOME")
+	defer os.Setenv("HOME", origHome)
+
+	tmpDir := t.TempDir()
+	os.Setenv("HOME", tmpDir)
+	cisternDir := filepath.Join(tmpDir, ".cistern")
+	if err := os.MkdirAll(cisternDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	longLine := strings.Repeat("x", 100*1024) + " readable-after\nshort-line\n"
+	logPath := filepath.Join(cisternDir, "castellarius.log")
+	if err := os.WriteFile(logPath, []byte(longLine), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	mux := newDashboardMux(tempCfg(t), tempDB(t))
+	req := httptest.NewRequest(http.MethodGet, "/api/logs?lines=100", nil)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("long line logs: status = %d, want 200", w.Code)
+	}
+	var result []struct {
+		Line int64  `json:"line"`
+		Text string `json:"text"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&result); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(result) < 2 {
+		t.Fatalf("expected at least 2 lines from log with long line, got %d", len(result))
+	}
+	if result[len(result)-1].Text != "short-line" {
+		t.Errorf("last line = %q, want %q", result[len(result)-1].Text, "short-line")
+	}
+}
+
+func TestAPI_Logs_ReturnsAbsoluteLineNumbers(t *testing.T) {
+	origHome := os.Getenv("HOME")
+	defer os.Setenv("HOME", origHome)
+
+	tmpDir := t.TempDir()
+	os.Setenv("HOME", tmpDir)
+	cisternDir := filepath.Join(tmpDir, ".cistern")
+	if err := os.MkdirAll(cisternDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	var content strings.Builder
+	for i := 1; i <= 1000; i++ {
+		fmt.Fprintf(&content, "line-%d\n", i)
+	}
+	logPath := filepath.Join(cisternDir, "castellarius.log")
+	if err := os.WriteFile(logPath, []byte(content.String()), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	mux := newDashboardMux(tempCfg(t), tempDB(t))
+	req := httptest.NewRequest(http.MethodGet, "/api/logs?lines=5", nil)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("absolute line numbers: status = %d, want 200", w.Code)
+	}
+	var result []struct {
+		Line int64  `json:"line"`
+		Text string `json:"text"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&result); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(result) != 5 {
+		t.Fatalf("expected 5 lines, got %d", len(result))
+	}
+	if result[0].Line != 996 {
+		t.Errorf("first line number = %d, want 996", result[0].Line)
+	}
+	if result[0].Text != "line-996" {
+		t.Errorf("first line text = %q, want %q", result[0].Text, "line-996")
+	}
+	if result[4].Line != 1000 {
+		t.Errorf("last line number = %d, want 1000", result[4].Line)
+	}
+	if result[4].Text != "line-1000" {
+		t.Errorf("last line text = %q, want %q", result[4].Text, "line-1000")
+	}
+}
+
+func TestAPI_LogSSE_ScannerError_DoesNotStall(t *testing.T) {
+	orig := currentLogSSEConnections
+	defer func() { currentLogSSEConnections = orig }()
+	atomic.StoreInt64(&currentLogSSEConnections, 0)
+
+	origHome := os.Getenv("HOME")
+	defer os.Setenv("HOME", origHome)
+
+	tmpDir := t.TempDir()
+	os.Setenv("HOME", tmpDir)
+	cisternDir := filepath.Join(tmpDir, ".cistern")
+	if err := os.MkdirAll(cisternDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	logPath := filepath.Join(cisternDir, "castellarius.log")
+
+	shortContent := "first-line\n"
+	if err := os.WriteFile(logPath, []byte(shortContent), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := tempCfg(t)
+	mux := newDashboardMux(cfg, tempDB(t))
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+	defer cancel()
+
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, server.URL+"/api/logs/events", nil)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	time.Sleep(800 * time.Millisecond)
+
+	f, err := os.OpenFile(logPath, os.O_WRONLY|os.O_APPEND, 0o644)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.WriteString("second-line\n")
+	f.Close()
+
+	var allData string
+	readCh := make(chan struct{})
+	go func() {
+		defer close(readCh)
+		buf := make([]byte, 8192)
+		for {
+			n, err := resp.Body.Read(buf)
+			if n > 0 {
+				allData += string(buf[:n])
+			}
+			if allData != "" && strings.Contains(allData, "second-line") {
+				return
+			}
+			if err != nil {
+				return
+			}
+		}
+	}()
+
+	select {
+	case <-readCh:
+		if !strings.Contains(allData, "second-line") {
+			t.Errorf("SSE stream did not emit second-line after append; got: %q", allData)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatalf("timed out waiting for SSE stream to emit appended line; data: %q", allData)
+	}
+}
+
+func TestCountLinesUpTo(t *testing.T) {
+	tmpDir := t.TempDir()
+	path := filepath.Join(tmpDir, "test.log")
+	content := "line1\nline2\nline3\nline4\nline5\n"
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	tests := []struct {
+		offset  int64
+		wantLns int64
+	}{
+		{0, 0},
+		{6, 1},
+		{12, 2},
+		{30, 5},
+	}
+	for _, tt := range tests {
+		t.Run(fmt.Sprintf("offset_%d", tt.offset), func(t *testing.T) {
+			got := countLinesUpTo(path, tt.offset)
+			if got != tt.wantLns {
+				t.Errorf("countLinesUpTo(%d) = %d, want %d", tt.offset, got, tt.wantLns)
+			}
+		})
+	}
+}
+
+func TestAPI_LogSSE_LineNumbersInJSON(t *testing.T) {
+	orig := currentLogSSEConnections
+	defer func() { currentLogSSEConnections = orig }()
+	atomic.StoreInt64(&currentLogSSEConnections, 0)
+
+	origHome := os.Getenv("HOME")
+	defer os.Setenv("HOME", origHome)
+
+	tmpDir := t.TempDir()
+	os.Setenv("HOME", tmpDir)
+	cisternDir := filepath.Join(tmpDir, ".cistern")
+	if err := os.MkdirAll(cisternDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	content := "first-line\nsecond-line\nthird-line\n"
+	logPath := filepath.Join(cisternDir, "castellarius.log")
+	if err := os.WriteFile(logPath, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := tempCfg(t)
+	mux := newDashboardMux(cfg, tempDB(t))
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, server.URL+"/api/logs/events", nil)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	var allData string
+	readCh := make(chan struct{})
+	go func() {
+		defer close(readCh)
+		buf := make([]byte, 8192)
+		for {
+			n, readErr := resp.Body.Read(buf)
+			if n > 0 {
+				allData += string(buf[:n])
+			}
+			if strings.Contains(allData, "third-line") {
+				return
+			}
+			if readErr != nil {
+				return
+			}
+		}
+	}()
+
+	select {
+	case <-readCh:
+		events := strings.Split(allData, "data: ")
+		var lineNums []int
+		for _, ev := range events {
+			ev = strings.TrimSpace(ev)
+			if ev == "" {
+				continue
+			}
+			var payload struct {
+				Line int    `json:"line"`
+				Text string `json:"text"`
+			}
+			if err := json.Unmarshal([]byte(ev), &payload); err != nil {
+				continue
+			}
+			lineNums = append(lineNums, payload.Line)
+		}
+		if len(lineNums) < 3 {
+			t.Fatalf("expected at least 3 SSE events, got %d; data: %q", len(lineNums), allData[:min(len(allData), 500)])
+		}
+		if lineNums[0] != 1 || lineNums[1] != 2 || lineNums[2] != 3 {
+			t.Errorf("line numbers not sequential: got %v, want [1 2 3]", lineNums[:3])
+		}
+	case <-time.After(4 * time.Second):
+		t.Fatalf("timed out; data so far: %q", allData[:min(len(allData), 500)])
+	}
+}
+
+func TestAPI_LogSSE_TerminatesOnMissingFile(t *testing.T) {
+	orig := currentLogSSEConnections
+	defer func() { currentLogSSEConnections = orig }()
+	atomic.StoreInt64(&currentLogSSEConnections, 0)
+
+	origHome := os.Getenv("HOME")
+	defer os.Setenv("HOME", origHome)
+
+	tmpDir := t.TempDir()
+	os.Setenv("HOME", tmpDir)
+	cisternDir := filepath.Join(tmpDir, ".cistern")
+	if err := os.MkdirAll(cisternDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := tempCfg(t)
+	mux := newDashboardMux(cfg, tempDB(t))
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, server.URL+"/api/logs/events", nil)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	buf := make([]byte, 1024)
+	_, readErr := resp.Body.Read(buf)
+	if readErr == nil {
+		_, readErr = resp.Body.Read(buf)
+	}
+
+	if readErr == nil {
+		t.Error("expected SSE stream to terminate when log file is missing, but it continued indefinitely")
+	}
+}
+
+func TestAPI_SSE_SeparateConnectionPools(t *testing.T) {
+	origDroplet := currentDropletSSEConnections
+	defer func() { currentDropletSSEConnections = origDroplet }()
+
+	origLog := currentLogSSEConnections
+	defer func() { currentLogSSEConnections = origLog }()
+
+	atomic.StoreInt64(&currentDropletSSEConnections, maxDropletSSEConnections)
+	atomic.StoreInt64(&currentLogSSEConnections, 0)
+
+	db := tempDB(t)
+	c, err := cistern.New(db, "mr")
+	if err != nil {
+		t.Fatal(err)
+	}
+	d, _ := c.Add("myrepo", "Test", "", 1, 2)
+	c.Close()
+
+	mux := newDashboardMux(tempCfg(t), db)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/droplets/"+d.ID+"/events", nil)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+	if w.Code != http.StatusServiceUnavailable {
+		t.Errorf("droplet SSE at connection limit: status = %d, want 503", w.Code)
+	}
+
+	origHome := os.Getenv("HOME")
+	defer os.Setenv("HOME", origHome)
+	tmpDir := t.TempDir()
+	os.Setenv("HOME", tmpDir)
+	cisternDir := filepath.Join(tmpDir, ".cistern")
+	if err := os.MkdirAll(cisternDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	logPath := filepath.Join(cisternDir, "castellarius.log")
+	if err := os.WriteFile(logPath, []byte("test log line\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	logReq := httptest.NewRequest(http.MethodGet, "/api/logs", nil)
+	logW := httptest.NewRecorder()
+	mux.ServeHTTP(logW, logReq)
+	if logW.Code != http.StatusOK {
+		t.Errorf("log API should still work even when droplet SSE pool is full: status = %d", logW.Code)
+	}
+}
+
+func TestAPI_LogSSE_ConnectionLimit(t *testing.T) {
+	orig := currentLogSSEConnections
+	defer func() { currentLogSSEConnections = orig }()
+	atomic.StoreInt64(&currentLogSSEConnections, maxLogSSEConnections)
+
+	origHome := os.Getenv("HOME")
+	defer os.Setenv("HOME", origHome)
+	tmpDir := t.TempDir()
+	os.Setenv("HOME", tmpDir)
+
+	cfg := tempCfg(t)
+	mux := newDashboardMux(cfg, tempDB(t))
+	req := httptest.NewRequest(http.MethodGet, "/api/logs/events", nil)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+	if w.Code != http.StatusServiceUnavailable {
+		t.Errorf("log SSE at connection limit: status = %d, want 503", w.Code)
+	}
+	var body map[string]string
+	json.Unmarshal(w.Body.Bytes(), &body)
+	if !strings.Contains(body["error"], "too many") {
+		t.Errorf("error = %q, want 'too many' keyword", body["error"])
 	}
 }

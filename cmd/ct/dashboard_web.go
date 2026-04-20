@@ -79,12 +79,21 @@ const (
 // Prevents unbounded memory consumption from large payloads.
 const apiMaxBodyBytes = 1 << 20 // 1 MiB
 
-// maxSSEConnections limits the number of simultaneous SSE client connections
-// per server to prevent resource exhaustion.
-const maxSSEConnections = 64
+// maxDropletSSEConnections limits the number of simultaneous SSE connections
+// for droplet detail streams, preventing resource exhaustion independent of
+// log viewer connections.
+const maxDropletSSEConnections = 64
 
-// currentSSEConnections tracks the number of active SSE connections.
-var currentSSEConnections int64
+// maxLogSSEConnections limits the number of simultaneous SSE connections
+// for log viewer streams. Separate from droplet connections so log viewers
+// cannot starve dashboard detail views.
+const maxLogSSEConnections = 32
+
+// currentDropletSSEConnections tracks the number of active droplet SSE connections.
+var currentDropletSSEConnections int64
+
+// currentLogSSEConnections tracks the number of active log SSE connections.
+var currentLogSSEConnections int64
 
 // dashboardDefaultFontFamily is the CSS font-family fallback used when
 // dashboard_font_family is not set in cistern.yaml.
@@ -1076,6 +1085,11 @@ func newDashboardMuxInternalWith(cfgPath, dbPath string, tui *DashboardTUI, fetc
 	apiMux.HandleFunc("GET /api/repos", handleGetRepos(cfgPath))
 	apiMux.HandleFunc("GET /api/repos/{name}/steps", handleGetRepoSteps(cfgPath))
 	apiMux.HandleFunc("GET /api/skills", handleGetSkills())
+
+	// Logs
+	apiMux.HandleFunc("GET /api/logs", handleGetLogs(cfgPath))
+	apiMux.HandleFunc("GET /api/logs/events", handleLogEvents(cfgPath))
+	apiMux.HandleFunc("GET /api/logs/sources", handleGetLogSources(cfgPath))
 
 	// SSE for droplet detail
 	apiMux.HandleFunc("GET /api/droplets/{id}/events", handleDropletEvents(cfgPath, dbPath))
@@ -2290,6 +2304,323 @@ func handleGetSkills() http.HandlerFunc {
 	}
 }
 
+// ── Log handlers ──
+
+const maxLogLines = 5000
+
+const sseInitialTail int64 = 32 * 1024 // Send last ~32KB of existing log on connect
+
+const maxScanTokenSize = 1024 * 1024 // 1MB — accommodate long log lines
+
+// isValidLogSource checks that source is a safe, non-traversal log file name.
+// Only alphanumeric, hyphens, and underscores are allowed. No dots, slashes,
+// or other characters that could enable path traversal.
+func isValidLogSource(source string) bool {
+	if source == "" || source == "castellarius" {
+		return true
+	}
+	if len(source) > 64 {
+		return false
+	}
+	for _, ch := range source {
+		if !((ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9') || ch == '-' || ch == '_') {
+			return false
+		}
+	}
+	return true
+}
+
+func logFilePath(cfgPath, source string) (string, error) {
+	if !isValidLogSource(source) {
+		return "", fmt.Errorf("invalid log source name")
+	}
+	home, _ := os.UserHomeDir()
+	if source == "" || source == "castellarius" {
+		return filepath.Join(home, ".cistern", "castellarius.log"), nil
+	}
+	return filepath.Join(home, ".cistern", source+".log"), nil
+}
+
+// sanitizeSSEData escapes newlines in data for safe SSE transmission.
+// Per the SSE spec, data fields must not contain raw newlines.
+func sanitizeSSEData(s string) string {
+	s = strings.ReplaceAll(s, "\r\n", "\n")
+	s = strings.ReplaceAll(s, "\r", "\n")
+	return strings.ReplaceAll(s, "\n", "\\n")
+}
+
+// countLinesUpTo counts newlines in the file up to (but not including) the
+// given byte offset. Used by the SSE handler to compute line numbers when
+// starting mid-file.
+func countLinesUpTo(path string, offset int64) int64 {
+	f, err := os.Open(path)
+	if err != nil {
+		return 0
+	}
+	defer f.Close()
+	var count int64
+	buf := make([]byte, 32*1024)
+	remaining := offset
+	for remaining > 0 {
+		chunk := int64(len(buf))
+		if remaining < chunk {
+			chunk = remaining
+		}
+		n, err := f.Read(buf[:chunk])
+		if err != nil || n == 0 {
+			break
+		}
+		for i := 0; i < n; i++ {
+			if buf[i] == '\n' {
+				count++
+			}
+		}
+		remaining -= int64(n)
+	}
+	return count
+}
+
+// handleGetLogs returns the last N lines of the log file with absolute line numbers.
+// Query params: ?lines=500&source=castellarius
+// Returns: [{line: <int>, text: "<string>"}] with line numbers matching the file position.
+func handleGetLogs(cfgPath string) http.HandlerFunc {
+	type logLine struct {
+		Line int64  `json:"line"`
+		Text string `json:"text"`
+	}
+
+	return func(w http.ResponseWriter, r *http.Request) {
+		linesStr := r.URL.Query().Get("lines")
+		lines := 500
+		if n, err := strconv.Atoi(linesStr); err == nil && n > 0 {
+			lines = n
+		}
+		if lines > maxLogLines {
+			lines = maxLogLines
+		}
+
+		source := r.URL.Query().Get("source")
+		if source == "" {
+			source = "castellarius"
+		}
+
+		path, err := logFilePath(cfgPath, source)
+		if err != nil {
+			writeAPIError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+
+		f, err := os.Open(path)
+		if err != nil {
+			if os.IsNotExist(err) {
+				writeAPIJSON(w, http.StatusOK, []logLine{})
+				return
+			}
+			writeAPIError(w, http.StatusInternalServerError, "internal error")
+			return
+		}
+		defer f.Close()
+
+		// Ring buffer approach: only keep the last `lines` entries in memory,
+		// tracking absolute line numbers.
+		type ringEntry struct {
+			Line int64
+			Text string
+		}
+		ring := make([]ringEntry, 0, lines)
+		scanner := bufio.NewScanner(f)
+		scanner.Buffer(make([]byte, 0, maxScanTokenSize), maxScanTokenSize)
+		lineNum := int64(0)
+		for scanner.Scan() {
+			lineNum++
+			entry := ringEntry{Line: lineNum, Text: scanner.Text()}
+			if len(ring) < lines {
+				ring = append(ring, entry)
+			} else {
+				ring[int((lineNum-1)%int64(lines))] = entry
+			}
+		}
+		if err := scanner.Err(); err != nil {
+			writeAPIError(w, http.StatusInternalServerError, "internal error")
+			return
+		}
+
+		var result []logLine
+		if lineNum <= int64(lines) {
+			result = make([]logLine, lineNum)
+			for i, e := range ring {
+				result[i] = logLine{Line: e.Line, Text: e.Text}
+			}
+		} else {
+			// Ring buffer: elements need to be reordered from oldest to newest.
+			start := int(lineNum % int64(lines))
+			result = make([]logLine, lines)
+			for i := 0; i < lines; i++ {
+				e := ring[(start+i)%lines]
+				result[i] = logLine{Line: e.Line, Text: e.Text}
+			}
+		}
+		writeAPIJSON(w, http.StatusOK, result)
+	}
+}
+
+// maxLogSSERetries is the maximum number of consecutive poll cycles where the
+// log file is missing before the SSE handler terminates the connection.
+const maxLogSSERetries = 20 // 20 × 500ms = 10 seconds
+
+// handleLogEvents streams new log lines via SSE.
+func handleLogEvents(cfgPath string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if atomic.AddInt64(&currentLogSSEConnections, 1) > maxLogSSEConnections {
+			atomic.AddInt64(&currentLogSSEConnections, -1)
+			writeAPIError(w, http.StatusServiceUnavailable, "too many log SSE connections")
+			return
+		}
+		defer atomic.AddInt64(&currentLogSSEConnections, -1)
+
+		flusher, ok := w.(http.Flusher)
+		if !ok {
+			writeAPIError(w, http.StatusInternalServerError, "streaming unsupported")
+			return
+		}
+
+		source := r.URL.Query().Get("source")
+		if source == "" {
+			source = "castellarius"
+		}
+		path, err := logFilePath(cfgPath, source)
+		if err != nil {
+			writeAPIError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.Header().Set("Cache-Control", "no-cache")
+		w.Header().Set("Connection", "keep-alive")
+		w.Header().Set("X-Accel-Buffering", "no")
+		flusher.Flush()
+
+		ticker := time.NewTicker(500 * time.Millisecond)
+		defer ticker.Stop()
+
+		var offset int64
+		lineNum := int64(1)
+		if info, err := os.Stat(path); err == nil {
+			if info.Size() > sseInitialTail {
+				offset = info.Size() - sseInitialTail
+				lineNum = countLinesUpTo(path, offset) + 1
+			}
+		}
+
+		missCount := 0
+		for {
+			select {
+			case <-r.Context().Done():
+				return
+			case <-ticker.C:
+				info, err := os.Stat(path)
+				if err != nil {
+					missCount++
+					if missCount >= maxLogSSERetries {
+						return
+					}
+					continue
+				}
+				missCount = 0
+				if info.Size() < offset {
+					offset = 0
+					lineNum = 1
+				} else if info.Size() == offset {
+					continue
+				}
+
+				f, err := os.Open(path)
+				if err != nil {
+					continue
+				}
+				func() {
+					defer f.Close()
+					seekOffset, seekErr := f.Seek(offset, io.SeekStart)
+					if seekErr != nil {
+						return
+					}
+					_ = seekOffset
+					scanner := bufio.NewScanner(f)
+					scanner.Buffer(make([]byte, 0, maxScanTokenSize), maxScanTokenSize)
+					var newOffset int64
+					for scanner.Scan() {
+						line := scanner.Text()
+						type sseLine struct {
+							Line int64  `json:"line"`
+							Text string `json:"text"`
+						}
+						payload, _ := json.Marshal(sseLine{Line: lineNum, Text: line})
+						_, err := fmt.Fprintf(w, "data: %s\n\n", payload)
+						if err != nil {
+							return
+						}
+						lineNum++
+						newOffset, _ = f.Seek(0, io.SeekCurrent)
+					}
+					if err := scanner.Err(); err != nil {
+						if newOffset > offset {
+							offset = newOffset
+						}
+						flusher.Flush()
+						return
+					}
+					if newOffset > offset {
+						offset = newOffset
+					} else {
+						offset, _ = f.Seek(0, io.SeekCurrent)
+					}
+					flusher.Flush()
+				}()
+			}
+		}
+	}
+}
+
+// handleGetLogSources returns metadata about available log files.
+func handleGetLogSources(cfgPath string) http.HandlerFunc {
+	type logSourceInfo struct {
+		Name         string `json:"name"`
+		SizeBytes    int64  `json:"size_bytes"`
+		LastModified string `json:"last_modified"`
+	}
+
+	return func(w http.ResponseWriter, r *http.Request) {
+		home, _ := os.UserHomeDir()
+		logDir := filepath.Join(home, ".cistern")
+		var sources []logSourceInfo
+
+		entries, err := os.ReadDir(logDir)
+		if err != nil {
+			writeAPIJSON(w, http.StatusOK, sources)
+			return
+		}
+		for _, entry := range entries {
+			if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".log") {
+				continue
+			}
+			name := strings.TrimSuffix(entry.Name(), ".log")
+			if !isValidLogSource(name) {
+				continue
+			}
+			info, err := entry.Info()
+			if err != nil {
+				continue
+			}
+			sources = append(sources, logSourceInfo{
+				Name:         name,
+				SizeBytes:    info.Size(),
+				LastModified: info.ModTime().UTC().Format(time.RFC3339),
+			})
+		}
+		writeAPIJSON(w, http.StatusOK, sources)
+	}
+}
+
 // ── Droplet events SSE handler ──
 
 func handleDropletEvents(cfgPath, dbPath string) http.HandlerFunc {
@@ -2297,12 +2628,12 @@ func handleDropletEvents(cfgPath, dbPath string) http.HandlerFunc {
 		id := r.PathValue("id")
 
 		// Limit concurrent SSE connections to prevent resource exhaustion.
-		if atomic.AddInt64(&currentSSEConnections, 1) > maxSSEConnections {
-			atomic.AddInt64(&currentSSEConnections, -1)
+		if atomic.AddInt64(&currentDropletSSEConnections, 1) > maxDropletSSEConnections {
+			atomic.AddInt64(&currentDropletSSEConnections, -1)
 			writeAPIError(w, http.StatusServiceUnavailable, "too many SSE connections")
 			return
 		}
-		defer atomic.AddInt64(&currentSSEConnections, -1)
+		defer atomic.AddInt64(&currentDropletSSEConnections, -1)
 
 		// Validate droplet existence and flusher support before setting SSE headers,
 		// so error responses use clean Content-Type instead of text/event-stream.

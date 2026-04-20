@@ -3,9 +3,12 @@ import ReactDOM from 'react-dom/client';
 import { createBrowserRouter, RouterProvider } from 'react-router-dom';
 import { AppLayout } from './App';
 import { Dashboard } from './pages/Dashboard';
-import { PlaceholderPage } from './pages/Placeholder';
 import { DropletsList } from './pages/DropletsList';
 import { DropletDetail } from './pages/DropletDetail';
+import { CastellariusPage } from './pages/CastellariusPage';
+import { DoctorPage } from './pages/DoctorPage';
+import { LogsPage } from './pages/LogsPage';
+import { ReposSkillsPage } from './pages/ReposSkillsPage';
 import './index.css';
 
 const router = createBrowserRouter([
@@ -16,10 +19,10 @@ const router = createBrowserRouter([
       { index: true, element: <Dashboard /> },
       { path: 'droplets', element: <DropletsList /> },
       { path: 'droplets/:id', element: <DropletDetail /> },
-      { path: 'castellarius', element: <PlaceholderPage title="Castellarius" /> },
-      { path: 'doctor', element: <PlaceholderPage title="Doctor" /> },
-      { path: 'logs', element: <PlaceholderPage title="Logs" /> },
-      { path: 'repos', element: <PlaceholderPage title="Repos / Skills" /> },
+      { path: 'castellarius', element: <CastellariusPage /> },
+      { path: 'doctor', element: <DoctorPage /> },
+      { path: 'logs', element: <LogsPage /> },
+      { path: 'repos', element: <ReposSkillsPage /> },
     ],
   },
 ]);

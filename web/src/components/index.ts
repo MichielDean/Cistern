@@ -14,3 +14,7 @@ export { ActionDialog } from './ActionDialog';
 export { AddNoteModal } from './AddNoteModal';
 export { EditMetadataModal } from './EditMetadataModal';
 export { RestartModal } from './RestartModal';
+export { StatusIndicator } from './StatusIndicator';
+export { ActionButton } from './ActionButton';
+export { LogViewer } from './LogViewer';
+export { HealthCheckCard } from './HealthCheckCard';

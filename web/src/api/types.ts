@@ -127,3 +127,67 @@ export interface DashboardData {
   farm_running: boolean;
   fetched_at: string;
 }
+
+export interface AqueductBrief {
+  name: string;
+  steps: string[];
+}
+
+export interface AqueductStatus {
+  name: string;
+  status: 'idle' | 'flowing';
+  droplet_id: string | null;
+  droplet_title: string | null;
+  current_step: string | null;
+  elapsed: number;
+}
+
+export interface CastellariusStatus {
+  running: boolean;
+  pid: number | null;
+  uptime_seconds: number | null;
+  aqueducts: AqueductStatus[];
+  farm_running: boolean;
+}
+
+export type DoctorCheckStatus = 'pass' | 'fail' | 'warn';
+
+export interface DoctorCheck {
+  name: string;
+  status: DoctorCheckStatus;
+  message: string;
+  category: string;
+}
+
+export interface DoctorResult {
+  checks: DoctorCheck[];
+  summary: { total: number; passed: number };
+  timestamp: string;
+}
+
+export interface LogEntry {
+  line: number;
+  level: 'INFO' | 'WARN' | 'ERROR' | 'DEBUG' | '';
+  text: string;
+  raw: string;
+}
+
+export interface LogSourceInfo {
+  name: string;
+  size_bytes: number;
+  last_modified: string;
+}
+
+export interface RepoInfo {
+  name: string;
+  prefix: string;
+  url: string;
+  aqueduct_config: string | null;
+  aqueducts: AqueductBrief[];
+}
+
+export interface SkillInfo {
+  name: string;
+  source_url: string;
+  installed_at: string;
+}
