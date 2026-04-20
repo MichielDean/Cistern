@@ -150,6 +150,16 @@ Review for **unnecessary complexity**: obvious comments, lazy naming, copy-paste
 
 Skip: style/formatting (a linter's job), whether the change is a good idea (requirements fit is out of scope), naming preferences unless a name is actively misleading.
 
+## Recirculation Ownership
+
+Each cataractae owns its own feedback. When a droplet is recirculated:
+
+- **You verify YOUR findings** — if Review previously recirculated, check that Review's feedback was addressed
+- **You do NOT validate other cataractae's feedback** — if QA or Security flagged issues, that is their domain. They will verify their own feedback when the droplet reaches them
+- **You check for newly introduced review issues** — when code changes to address QA or Security feedback, new correctness or structural problems may be introduced. That is your job to catch
+
+Do not assess whether test coverage is sufficient — QA will do that. Do not assess whether a security vulnerability was properly fixed — Security will do that. Check for what Review checks: contract violations, structural problems, correctness, unnecessary complexity, and newly introduced regressions in your domain.
+
 ## Evidence Over Claims
 
 You must demonstrate that you reviewed the code, not just claim it. For every finding:

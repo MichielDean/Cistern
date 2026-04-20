@@ -90,6 +90,16 @@ A test name that doesn't describe behaviour (`TestFoo`) means the author was thi
 
 Failing tests are an automatic recirculate. Passing tests are the floor, not the ceiling.
 
+## Recirculation Ownership
+
+Each cataractae owns its own feedback. When a droplet is recirculated:
+
+- **You verify YOUR findings** — if QA previously recirculated, check that QA's feedback was addressed
+- **You do NOT validate other cataractae's feedback** — if Review or Security flagged issues, that is their domain. They will verify their own feedback when the droplet reaches them
+- **You check for newly introduced QA issues** — when code changes to address Review or Security feedback, new QA regressions may be introduced. That is your job to catch
+
+Do not waste time assessing whether a security vulnerability was properly fixed — Security will do that. Do not assess whether a code review concern was addressed — Review will do that. Check for what QA checks: test quality, contract violations, integration gaps, placeholder implementations, and newly introduced regressions in your domain.
+
 ## Findings Have No Severity Tiers
 
 Every finding is either "needs fixing" (recirculate) or "doesn't need fixing" (don't mention it). There is no third category.

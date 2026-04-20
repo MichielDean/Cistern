@@ -427,13 +427,14 @@ func TestWriteContextFile_Phase1OnlyContainsOwnIssues(t *testing.T) {
 		t.Error("qa issue must NOT appear in Phase 1 of security's context (cross-contamination: ci-0y5ha)")
 	}
 
-	// qa issue must appear in a read-only background section, not silently dropped.
-	if !strings.Contains(got, "Missing unit tests for auth module") {
-		t.Error("qa issue must appear in a read-only background section")
+	// qa issue must appear as a summary in the background section (who + count, not full description).
+	if !strings.Contains(got, "**qa**: 1 open issue(s)") {
+		t.Error("qa issue must appear as a summary line in the background section")
 	}
-	// The background section must include the qa issue ID.
-	if !strings.Contains(got, "qa-abc02") {
-		t.Error("qa issue ID must appear in the background section")
+	// The background section must NOT include the full issue description —
+	// that would let non-expert cataractae try to validate domain-specific feedback.
+	if strings.Contains(got, "Missing unit tests for auth module") {
+		t.Error("qa issue description must NOT appear in the background section (summary only)")
 	}
 }
 
@@ -582,9 +583,17 @@ func TestWriteContextFile_NoTwoPhaseWhenOnlyForeignIssues(t *testing.T) {
 		t.Error("security must NOT be instructed to reject qa's issues")
 	}
 
-	// qa issue must still be visible as background context.
-	if !strings.Contains(got, "Test coverage below threshold") {
-		t.Error("qa issue must appear in read-only background section even when security has no own issues")
+	// qa issue must appear as a summary in the background section (who + count, not full description).
+	if !strings.Contains(got, "**qa**: 1 open issue(s)") {
+		t.Error("qa issue must appear as a summary line in the background section even when security has no own issues")
+	}
+	// The full description must NOT appear — summary only prevents cross-domain validation.
+	if strings.Contains(got, "Test coverage below threshold") {
+		t.Error("qa issue description must NOT appear in the background section (summary only)")
+	}
+	// The recirculation context header must appear since security has no own issues but other cataractae recirculated.
+	if !strings.Contains(got, "Recirculation Context") {
+		t.Error("security must get recirculation context when it has no own issues but other cataractae recirculated")
 	}
 }
 

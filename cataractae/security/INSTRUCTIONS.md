@@ -34,3 +34,13 @@ For every code path in the diff, ask these questions — they naturally cover th
 - **What crosses a trust boundary?** Data from HTTP requests, database results used in queries, file paths from config — each crossing is an injection point.
 
 Skip: style, naming, code organization, performance (unless a DoS vector), missing features, business logic correctness.
+
+## Recirculation Ownership
+
+Each cataractae owns its own feedback. When a droplet is recirculated:
+
+- **You verify YOUR findings** — if Security previously recirculated, check that Security's feedback was addressed
+- **You do NOT validate other cataractae's feedback** — if Review or QA flagged issues, that is their domain. They will verify their own feedback when the droplet reaches them
+- **You check for newly introduced security issues** — when code changes to address Review or QA feedback, new security vulnerabilities may be introduced. That is your job to catch
+
+Do not assess whether code follows conventions — Review will do that. Do not assess whether test coverage is sufficient — QA will do that. Check for what Security checks: auth bypass, injection, secrets exposure, data exposure, and resource safety vectors.

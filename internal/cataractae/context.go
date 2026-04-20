@@ -225,10 +225,11 @@ func writeContextFile(path string, p ContextParams) error {
 	if isReviewer && len(ownIssues) > 0 {
 		// Reviewer with own DB-tracked open issues: two-phase structure.
 		// Phase 1 is evidence-based verification — no opinions, just grep/test results.
-		// Phase 2 is a clean fresh review of the diff for new issues.
+		// Phase 2 is a clean fresh review of the diff for new issues IN YOUR DOMAIN ONLY.
 		b.WriteString("## ⚠️ TWO-PHASE REVIEW — Read carefully before doing anything\n\n")
-		b.WriteString("This droplet was recirculated after a prior review. You have TWO distinct jobs:\n\n")
-		b.WriteString("### Phase 1 — Verify prior issues are resolved\n\n")
+		b.WriteString("This droplet was recirculated. You have TWO distinct jobs:\n\n")
+		b.WriteString("### Phase 1 — Verify YOUR prior issues are resolved\n\n")
+		b.WriteString("These are issues YOU flagged previously. Verify each one with evidence.\n")
 		b.WriteString("For EACH issue below, run the exact check (grep, test, cat) and call:\n")
 		b.WriteString("- `ct droplet issue resolve <id> --evidence \"<command + output>\"` — if fixed\n")
 		b.WriteString("- `ct droplet issue reject <id> --evidence \"<command + output>\"` — if still present\n\n")
@@ -239,17 +240,20 @@ func writeContextFile(path string, p ContextParams) error {
 			b.WriteString(iss.Description)
 			b.WriteString("\n\n")
 		}
-		b.WriteString("### Phase 2 — Fresh review of new changes\n\n")
-		b.WriteString("After completing Phase 1, do a full adversarial review of the diff for NEW issues.\n")
+		b.WriteString("### Phase 2 — Fresh review of new changes in YOUR domain\n\n")
+		b.WriteString("After completing Phase 1, do a full review of the diff — but ONLY for issues\n")
+		b.WriteString("that fall within YOUR area of expertise. Do NOT attempt to validate feedback\n")
+		b.WriteString("from other cataractae — each cataractae verifies its own feedback when the\n")
+		b.WriteString("droplet reaches it.\n")
 		b.WriteString("Do NOT re-examine issues from Phase 1 — they are already handled.\n")
-		b.WriteString("For each new finding: `ct droplet issue add " + p.Item.ID + " \"<description>\"`\n")
-		b.WriteString("Treat this as a clean review of a fresh diff.\n\n")
+		b.WriteString("For each new finding: `ct droplet issue add " + p.Item.ID + " \"<description>\"`\n\n")
 		b.WriteString("---\n\n")
 	} else if isReviewer && len(revisionNotes) > 0 {
 		// Fallback: reviewer with free-text notes but no DB issues (legacy path).
 		b.WriteString("## ⚠️ TWO-PHASE REVIEW — Read carefully before doing anything\n\n")
-		b.WriteString("This droplet was recirculated after a prior review. You have TWO distinct jobs:\n\n")
-		b.WriteString("### Phase 1 — Verify prior issues are resolved\n\n")
+		b.WriteString("This droplet was recirculated. You have TWO distinct jobs:\n\n")
+		b.WriteString("### Phase 1 — Verify YOUR prior issues are resolved\n\n")
+		b.WriteString("These are issues YOU flagged previously. Verify each one with evidence.\n")
 		b.WriteString("For EACH issue below, run the exact check (grep, test, cat) and output:\n")
 		b.WriteString("- `RESOLVED: <evidence>` — paste the command and output proving it is fixed\n")
 		b.WriteString("- `UNRESOLVED: <evidence>` — paste the command and output proving it is still present\n\n")
@@ -260,13 +264,23 @@ func writeContextFile(path string, p ContextParams) error {
 			b.WriteString(n.Content)
 			b.WriteString("\n\n")
 		}
-		b.WriteString("### Phase 2 — Fresh review of new changes\n\n")
-		b.WriteString("After completing Phase 1, do a full adversarial review of the diff for NEW issues.\n")
-		b.WriteString("Do NOT re-examine issues from Phase 1 — they are already handled.\n")
-		b.WriteString("Treat this as a clean review of a fresh diff.\n\n")
+		b.WriteString("### Phase 2 — Fresh review of new changes in YOUR domain\n\n")
+		b.WriteString("After completing Phase 1, do a full review of the diff — but ONLY for issues\n")
+		b.WriteString("that fall within YOUR area of expertise. Do NOT attempt to validate feedback\n")
+		b.WriteString("from other cataractae — each cataractae verifies its own feedback when the\n")
+		b.WriteString("droplet reaches it.\n")
+		b.WriteString("Do NOT re-examine issues from Phase 1 — they are already handled.\n\n")
+		b.WriteString("---\n\n")
+	} else if isReviewer && len(otherIssues) > 0 {
+		// Reviewer with no own issues but other cataractae recirculated the droplet.
+		// Tell them what happened so they know to do a fresh domain-specific review.
+		b.WriteString("## Recirculation Context\n\n")
+		b.WriteString("This droplet was recirculated by another cataractae (not you). Your job is to do a\n")
+		b.WriteString("fresh review in YOUR domain only. Do NOT try to validate the other cataractae's\n")
+		b.WriteString("feedback — they will verify their own feedback when the droplet reaches them.\n\n")
 		b.WriteString("---\n\n")
 	} else if !isReviewer && len(revisionNotes) > 0 {
-		// Implementer/QA with prior issues: surface fixes at the top.
+		// Implementer with prior reviewer feedback: surface fixes at the top.
 		// Filter out non-actionable "no findings" notes to reduce noise.
 		actionableNotes := filterActionableRevisionNotes(revisionNotes)
 		if len(actionableNotes) > 0 {
@@ -283,18 +297,25 @@ func writeContextFile(path string, p ContextParams) error {
 	}
 
 	// Background section: open issues from other cataractae — for reviewer steps only.
-	// These are shown for context; the current reviewer must NOT resolve or reject them.
 	// Fix ci-0y5ha: foreign issues are never mixed into Phase 1.
+	// Show only a summary (who + count), not full descriptions. Full descriptions
+	// let non-expert cataractae try to validate domain-specific feedback they
+	// are not qualified to assess (e.g., QA trying to validate security findings).
+	// The originating cataractae will verify its own feedback when the droplet
+	// reaches it again.
 	if isReviewer && len(otherIssues) > 0 {
-		b.WriteString("## Background — Open Issues from Other Cataractae (read-only)\n\n")
-		b.WriteString("These issues were flagged by other cataractae. Do NOT resolve or reject them —\n")
-		b.WriteString("they are provided for context only. Only the cataractae that flagged them can verify them.\n\n")
-		for i, iss := range otherIssues {
-			b.WriteString(fmt.Sprintf("### [Background] Issue %d — %s (flagged by: %s)\n\n", i+1, iss.ID, iss.FlaggedBy))
-			b.WriteString(iss.Description)
-			b.WriteString("\n\n")
+		bySource := make(map[string]int)
+		for _, iss := range otherIssues {
+			bySource[iss.FlaggedBy]++
 		}
-		b.WriteString("---\n\n")
+		b.WriteString("## Background — Open Issues from Other Cataractae\n\n")
+		b.WriteString("Other cataractae have unresolved issues with this droplet. You must NOT try to\n")
+		b.WriteString("validate or assess these — each cataractae verifies its own feedback when the\n")
+		b.WriteString("droplet reaches it. Your job is to check for issues in YOUR domain only.\n\n")
+		for source, count := range bySource {
+			b.WriteString(fmt.Sprintf("- **%s**: %d open issue(s)\n", source, count))
+		}
+		b.WriteString("\n---\n\n")
 	}
 
 	// Partition notes in one pass:

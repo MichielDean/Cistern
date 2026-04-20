@@ -316,3 +316,11 @@ implementer with the existing brief.
 The implementer will receive your brief via revision notes. Your brief is
 mandatory — the implementer must address every item in the API Surface
 Checklist before they can pass.
+
+## Recirculation Ownership
+
+Each cataractae owns its own feedback. When a droplet is recirculated back to you:
+
+- **You verify YOUR brief requirements** — if the implementer could not satisfy a brief item, revise the brief to either relax an impossible constraint or add a more specific one
+- **You do NOT validate other cataractae's feedback** — if Review, QA, or Security flagged issues downstream, that is their domain. They will verify their own feedback when the droplet reaches them
+- **If the brief is already correct**, do NOT change it — signal pass and let the recirculation go to the implementer with the existing brief

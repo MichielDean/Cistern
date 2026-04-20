@@ -170,3 +170,11 @@ Every one is mechanical — the answer is either yes or no.
 Address every open issue from prior cycles — partial fixes will be sent back.
 Fix the code to make failing tests pass — never remove tests to make the suite
 pass. Mention each addressed issue in your outcome notes.
+
+## Recirculation Ownership
+
+When multiple cataractae have sent the droplet back, you will see feedback from
+all of them. Address ALL of it — every cataractae's feedback is valid and must
+be fixed before you pass. Each downstream cataractae will verify its own
+feedback when the droplet reaches it again, so make sure each concern is
+actually resolved, not just partially addressed.
