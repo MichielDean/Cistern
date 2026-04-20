@@ -1,16 +1,7 @@
 import { describe, it, expect } from 'vitest';
+import { truncateBuffer, MAX_BUFFER_SIZE, isAuthCloseCode } from '../utils/buffer';
 
-const MAX_BUFFER_SIZE = 50 * 1024;
-
-function truncateBuffer(prev: string, chunk: string): string {
-  const next = prev + chunk;
-  if (next.length > MAX_BUFFER_SIZE) {
-    return next.slice(next.length - MAX_BUFFER_SIZE);
-  }
-  return next;
-}
-
-describe('PeekPanel buffer truncation', () => {
+describe('truncateBuffer', () => {
   it('appends small chunks without truncation', () => {
     const result = truncateBuffer('abc', 'def');
     expect(result).toBe('abcdef');
@@ -33,19 +24,21 @@ describe('PeekPanel buffer truncation', () => {
   });
 });
 
-describe('PeekPanel error state', () => {
+describe('isAuthCloseCode', () => {
   it('classifies close code 1008 as auth failure', () => {
-    const closeEvent = { code: 1008, reason: '', wasClean: false };
-    expect(closeEvent.code === 1008).toBe(true);
+    expect(isAuthCloseCode(1008)).toBe(true);
   });
 
   it('classifies close code 4001 as auth failure', () => {
-    const closeEvent = { code: 4001, reason: '', wasClean: false };
-    expect(closeEvent.code === 4001).toBe(true);
+    expect(isAuthCloseCode(4001)).toBe(true);
   });
 
   it('does not classify normal close as auth failure', () => {
-    const closeEvent = { code: 1000, reason: '', wasClean: true };
-    expect(closeEvent.code === 1008 || closeEvent.code === 4001).toBe(false);
+    expect(isAuthCloseCode(1000)).toBe(false);
+  });
+
+  it('does not classify other close codes as auth failure', () => {
+    expect(isAuthCloseCode(1006)).toBe(false);
+    expect(isAuthCloseCode(1011)).toBe(false);
   });
 });

@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { getAuthParams } from '../hooks/useAuth';
-
-const MAX_BUFFER_SIZE = 50 * 1024;
+import { truncateBuffer, isAuthCloseCode } from '../utils/buffer';
 
 interface PeekPanelProps {
   aqueductName: string;
@@ -18,13 +17,7 @@ export function PeekPanel({ aqueductName, onClose }: PeekPanelProps) {
   const mountedRef = useRef(true);
 
   const appendOutput = useCallback((chunk: string) => {
-    setOutput((prev) => {
-      const next = prev + chunk;
-      if (next.length > MAX_BUFFER_SIZE) {
-        return next.slice(next.length - MAX_BUFFER_SIZE);
-      }
-      return next;
-    });
+    setOutput((prev) => truncateBuffer(prev, chunk));
   }, []);
 
   useEffect(() => {
@@ -45,7 +38,7 @@ export function PeekPanel({ aqueductName, onClose }: PeekPanelProps) {
     ws.onclose = (e) => {
       if (!mountedRef.current) return;
       setConnected(false);
-      if (e.code === 1008 || e.code === 4001) {
+      if (isAuthCloseCode(e.code)) {
         setError('Authentication failed. Please check your API key and try again.');
       }
     };
