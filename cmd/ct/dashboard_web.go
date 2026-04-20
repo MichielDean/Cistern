@@ -2340,6 +2340,37 @@ func sanitizeSSEData(s string) string {
 	return strings.ReplaceAll(s, "\n", "\\n")
 }
 
+// countLinesUpTo counts newlines in the file up to (but not including) the
+// given byte offset. Used by the SSE handler to compute line numbers when
+// starting mid-file.
+func countLinesUpTo(path string, offset int64) int64 {
+	f, err := os.Open(path)
+	if err != nil {
+		return 0
+	}
+	defer f.Close()
+	var count int64
+	buf := make([]byte, 32*1024)
+	remaining := offset
+	for remaining > 0 {
+		chunk := int64(len(buf))
+		if remaining < chunk {
+			chunk = remaining
+		}
+		n, err := f.Read(buf[:chunk])
+		if err != nil || n == 0 {
+			break
+		}
+		for i := 0; i < n; i++ {
+			if buf[i] == '\n' {
+				count++
+			}
+		}
+		remaining -= int64(n)
+	}
+	return count
+}
+
 // handleGetLogs returns the last N lines of the log file.
 // Query params: ?lines=500&source=castellarius
 func handleGetLogs(cfgPath string) http.HandlerFunc {
@@ -2443,9 +2474,11 @@ func handleLogEvents(cfgPath string) http.HandlerFunc {
 		defer ticker.Stop()
 
 		var offset int64
+		lineNum := int64(1)
 		if info, err := os.Stat(path); err == nil {
 			if info.Size() > sseInitialTail {
 				offset = info.Size() - sseInitialTail
+				lineNum = countLinesUpTo(path, offset) + 1
 			}
 		}
 
@@ -2460,6 +2493,7 @@ func handleLogEvents(cfgPath string) http.HandlerFunc {
 				}
 				if info.Size() < offset {
 					offset = 0
+					lineNum = 1
 				} else if info.Size() == offset {
 					continue
 				}
@@ -2468,25 +2502,40 @@ func handleLogEvents(cfgPath string) http.HandlerFunc {
 				if err != nil {
 					continue
 				}
-				f.Seek(offset, io.SeekStart)
-				scanner := bufio.NewScanner(f)
-				scanner.Buffer(make([]byte, 0, maxScanTokenSize), maxScanTokenSize)
-				for scanner.Scan() {
-					line := scanner.Text()
-					fmt.Fprintf(w, "data: %s\n\n", sanitizeSSEData(line))
-				}
-				if err := scanner.Err(); err != nil {
-					newOffset, _ := f.Seek(0, io.SeekCurrent)
+				func() {
+					defer f.Close()
+					f.Seek(offset, io.SeekStart)
+					scanner := bufio.NewScanner(f)
+					scanner.Buffer(make([]byte, 0, maxScanTokenSize), maxScanTokenSize)
+					var newOffset int64
+					for scanner.Scan() {
+						line := scanner.Text()
+						type sseLine struct {
+							Line int64  `json:"line"`
+							Text string `json:"text"`
+						}
+						payload, _ := json.Marshal(sseLine{Line: lineNum, Text: line})
+						_, err := fmt.Fprintf(w, "data: %s\n\n", payload)
+						if err != nil {
+							return
+						}
+						lineNum++
+						newOffset, _ = f.Seek(0, io.SeekCurrent)
+					}
+					if err := scanner.Err(); err != nil {
+						if newOffset > offset {
+							offset = newOffset
+						}
+						flusher.Flush()
+						return
+					}
 					if newOffset > offset {
 						offset = newOffset
+					} else {
+						offset, _ = f.Seek(0, io.SeekCurrent)
 					}
-					f.Close()
 					flusher.Flush()
-					continue
-				}
-				offset, _ = f.Seek(0, io.SeekCurrent)
-				f.Close()
-				flusher.Flush()
+				}()
 			}
 		}
 	}

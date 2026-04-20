@@ -1,5 +1,10 @@
 import { getAuthHeaders, getAuthParams } from '../hooks/useAuth';
-import type { LogSourceInfo } from './types';
+import type { LogSourceInfo, LogEntry } from './types';
+
+interface SSELogEvent {
+  line: number;
+  text: string;
+}
 
 export async function fetchLogHistory(
   lines = 500,
@@ -17,7 +22,7 @@ export async function fetchLogHistory(
 
 export function createLogEventSource(
   source: string,
-  onLine: (line: string) => void,
+  onEntry: (entry: LogEntry) => void,
   onError: (err: Error) => void,
 ): EventSource {
   const auth = getAuthParams();
@@ -26,12 +31,34 @@ export function createLogEventSource(
     ? `/api/logs/events?source=${encodedSource}&${auth}`
     : `/api/logs/events?source=${encodedSource}`;
   const es = new EventSource(url);
-  es.onmessage = (e) => onLine(e.data);
+  es.onmessage = (e) => {
+    try {
+      const event: SSELogEvent = JSON.parse(e.data);
+      const level = parseLevel(event.text);
+      onEntry({
+        line: event.line,
+        level,
+        text: event.text,
+        raw: event.text,
+      });
+    } catch {
+      const text = e.data;
+      onEntry({ line: 1, level: '', text, raw: text });
+    }
+  };
   es.onerror = () => {
     onError(new Error('log stream error'));
     es.close();
   };
   return es;
+}
+
+const levelPattern = /\b(INFO|WARN|ERROR|DEBUG)\b/;
+
+function parseLevel(raw: string): LogEntry['level'] {
+  const m = raw.match(levelPattern);
+  if (m) return m[1] as LogEntry['level'];
+  return '';
 }
 
 export async function fetchLogSources(): Promise<LogSourceInfo[]> {

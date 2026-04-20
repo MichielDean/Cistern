@@ -2585,7 +2585,7 @@ func TestAPI_Logs_LinesUpperBound(t *testing.T) {
 }
 
 func TestAPI_Logs_NegativeLinesParam(t *testing.T) {
-	mux := newDashboardMux(tempCfg(t), tempCfg(t))
+	mux := newDashboardMux(tempCfg(t), tempDB(t))
 	req := httptest.NewRequest(http.MethodGet, "/api/logs?lines=-1", nil)
 	w := httptest.NewRecorder()
 	mux.ServeHTTP(w, req)
@@ -2985,5 +2985,116 @@ func TestAPI_LogSSE_ScannerError_DoesNotStall(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatalf("timed out waiting for SSE stream to emit appended line; data: %q", allData)
+	}
+}
+
+func TestCountLinesUpTo(t *testing.T) {
+	tmpDir := t.TempDir()
+	path := filepath.Join(tmpDir, "test.log")
+	content := "line1\nline2\nline3\nline4\nline5\n"
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	tests := []struct {
+		offset  int64
+		wantLns int64
+	}{
+		{0, 0},
+		{6, 1},
+		{12, 2},
+		{30, 5},
+	}
+	for _, tt := range tests {
+		t.Run(fmt.Sprintf("offset_%d", tt.offset), func(t *testing.T) {
+			got := countLinesUpTo(path, tt.offset)
+			if got != tt.wantLns {
+				t.Errorf("countLinesUpTo(%d) = %d, want %d", tt.offset, got, tt.wantLns)
+			}
+		})
+	}
+}
+
+func TestAPI_LogSSE_LineNumbersInJSON(t *testing.T) {
+	orig := currentSSEConnections
+	defer func() { currentSSEConnections = orig }()
+	atomic.StoreInt64(&currentSSEConnections, 0)
+
+	origHome := os.Getenv("HOME")
+	defer os.Setenv("HOME", origHome)
+
+	tmpDir := t.TempDir()
+	os.Setenv("HOME", tmpDir)
+	cisternDir := filepath.Join(tmpDir, ".cistern")
+	if err := os.MkdirAll(cisternDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	content := "first-line\nsecond-line\nthird-line\n"
+	logPath := filepath.Join(cisternDir, "castellarius.log")
+	if err := os.WriteFile(logPath, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := tempCfg(t)
+	mux := newDashboardMux(cfg, tempDB(t))
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, server.URL+"/api/logs/events", nil)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	var allData string
+	readCh := make(chan struct{})
+	go func() {
+		defer close(readCh)
+		buf := make([]byte, 8192)
+		for {
+			n, readErr := resp.Body.Read(buf)
+			if n > 0 {
+				allData += string(buf[:n])
+			}
+			if strings.Contains(allData, "third-line") {
+				return
+			}
+			if readErr != nil {
+				return
+			}
+		}
+	}()
+
+	select {
+	case <-readCh:
+		events := strings.Split(allData, "data: ")
+		var lineNums []int
+		for _, ev := range events {
+			ev = strings.TrimSpace(ev)
+			if ev == "" {
+				continue
+			}
+			var payload struct {
+				Line int    `json:"line"`
+				Text string `json:"text"`
+			}
+			if err := json.Unmarshal([]byte(ev), &payload); err != nil {
+				continue
+			}
+			lineNums = append(lineNums, payload.Line)
+		}
+		if len(lineNums) < 3 {
+			t.Fatalf("expected at least 3 SSE events, got %d; data: %q", len(lineNums), allData[:min(len(allData), 500)])
+		}
+		if lineNums[0] != 1 || lineNums[1] != 2 || lineNums[2] != 3 {
+			t.Errorf("line numbers not sequential: got %v, want [1 2 3]", lineNums[:3])
+		}
+	case <-time.After(4 * time.Second):
+		t.Fatalf("timed out; data so far: %q", allData[:min(len(allData), 500)])
 	}
 }

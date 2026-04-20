@@ -12,6 +12,11 @@ export function LogsPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<Error | null>(null);
   const esRef = useRef<EventSource | null>(null);
+  const sourceRef = useRef(activeSource);
+
+  useEffect(() => {
+    sourceRef.current = activeSource;
+  }, [activeSource]);
 
   useEffect(() => {
     fetchLogSources().then(setSources).catch(() => {});
@@ -31,18 +36,22 @@ export function LogsPage() {
   }, []);
 
   useEffect(() => {
-    loadHistory(activeSource);
+    const source = activeSource;
+    loadHistory(source);
 
     if (esRef.current) {
       esRef.current.close();
+      esRef.current = null;
     }
+
     esRef.current = createLogEventSource(
-      activeSource,
-      (line) => {
-        const parsed = parseLogLines([line]);
-        setEntries(prev => [...prev, ...parsed]);
+      source,
+      (entry) => {
+        if (sourceRef.current !== source) return;
+        setEntries(prev => [...prev, entry]);
       },
       (err) => {
+        if (sourceRef.current !== source) return;
         setError(err);
       },
     );

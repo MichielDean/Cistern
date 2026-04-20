@@ -1,17 +1,16 @@
 import { describe, it, expect } from 'vitest';
+import { parseLogLines } from '../components/LogViewer';
 import type {
   CastellariusStatus,
-  AqueductStatus,
   DoctorResult,
   LogEntry,
   LogSourceInfo,
   RepoInfo,
-  AqueductBrief,
   SkillInfo,
 } from '../api/types';
 
-describe('CastellariusStatus type', () => {
-  it('accepts full status', () => {
+describe('CastellariusStatus shape validation', () => {
+  it('running status has all required fields for rendering', () => {
     const status: CastellariusStatus = {
       running: true,
       pid: 12345,
@@ -19,12 +18,14 @@ describe('CastellariusStatus type', () => {
       aqueducts: [],
       farm_running: true,
     };
-    expect(status.running).toBe(true);
-    expect(status.pid).toBe(12345);
-    expect(status.uptime_seconds).toBe(8100);
+    expect(typeof status.running).toBe('boolean');
+    expect(typeof status.pid === 'number' || status.pid === null).toBe(true);
+    expect(typeof status.uptime_seconds === 'number' || status.uptime_seconds === null).toBe(true);
+    expect(Array.isArray(status.aqueducts)).toBe(true);
+    expect(typeof status.farm_running).toBe('boolean');
   });
 
-  it('accepts status with null optional fields', () => {
+  it('stopped status renders correctly with null optionals', () => {
     const status: CastellariusStatus = {
       running: false,
       pid: null,
@@ -32,100 +33,96 @@ describe('CastellariusStatus type', () => {
       aqueducts: [],
       farm_running: false,
     };
-    expect(status.running).toBe(false);
-    expect(status.pid).toBeNull();
+    const label = status.running ? 'Running' : 'Stopped';
+    expect(label).toBe('Stopped');
   });
 
-  it('accepts aqueducts with flowing status', () => {
-    const aq: AqueductStatus = {
-      name: 'default',
-      status: 'flowing',
-      droplet_id: 'ci-abc1',
-      droplet_title: 'Test droplet',
-      current_step: 'implement',
-      elapsed: 300000000000,
+  it('aqueduct with flowing status has droplet metadata', () => {
+    const status: CastellariusStatus = {
+      running: true,
+      pid: 1,
+      uptime_seconds: 0,
+      aqueducts: [{
+        name: 'default',
+        status: 'flowing',
+        droplet_id: 'ci-abc1',
+        droplet_title: 'Test droplet',
+        current_step: 'implement',
+        elapsed: 300_000_000_000,
+      }],
+      farm_running: false,
     };
-    expect(aq.status).toBe('flowing');
-    expect(aq.droplet_id).toBe('ci-abc1');
-  });
-
-  it('accepts aqueducts with idle status', () => {
-    const aq: AqueductStatus = {
-      name: 'docs',
-      status: 'idle',
-      droplet_id: null,
-      droplet_title: null,
-      current_step: null,
-      elapsed: 0,
-    };
-    expect(aq.status).toBe('idle');
-    expect(aq.droplet_id).toBeNull();
+    const flowing = status.aqueducts.filter(a => a.status === 'flowing');
+    expect(flowing).toHaveLength(1);
+    expect(flowing[0].droplet_id).toBeTruthy();
   });
 });
 
-describe('DoctorResult type', () => {
-  it('accepts check result with categories', () => {
+describe('DoctorResult rendering logic', () => {
+  it('computes pass/fail/warn counts from checks', () => {
     const result: DoctorResult = {
       checks: [
-        { name: 'Daemon running', status: 'pass' as const, message: 'Running (pid 123)', category: 'Daemon' },
-        { name: 'Config valid', status: 'fail' as const, message: 'Missing field X', category: 'Config' },
-        { name: 'Disk space', status: 'warn' as const, message: 'Low disk space', category: 'System' },
+        { name: 'Daemon running', status: 'pass', message: 'Running', category: 'Daemon' },
+        { name: 'Config valid', status: 'fail', message: 'Missing field', category: 'Config' },
+        { name: 'Disk space', status: 'warn', message: 'Low', category: 'System' },
       ],
       summary: { total: 3, passed: 1 },
       timestamp: '2026-04-19T00:00:00Z',
     };
-    expect(result.checks).toHaveLength(3);
-    expect(result.summary.passed).toBe(1);
-    expect(result.checks[1].status).toBe('fail');
+    const passes = result.checks.filter(c => c.status === 'pass').length;
+    const fails = result.checks.filter(c => c.status === 'fail').length;
+    const warns = result.checks.filter(c => c.status === 'warn').length;
+    expect(passes).toBe(1);
+    expect(fails).toBe(1);
+    expect(warns).toBe(1);
   });
 
-  it('accepts empty check result', () => {
+  it('groups checks by category', () => {
     const result: DoctorResult = {
-      checks: [],
-      summary: { total: 0, passed: 0 },
+      checks: [
+        { name: 'A', status: 'pass', message: '', category: 'Daemon' },
+        { name: 'B', status: 'pass', message: '', category: 'Daemon' },
+        { name: 'C', status: 'fail', message: '', category: 'Config' },
+      ],
+      summary: { total: 3, passed: 2 },
       timestamp: '',
     };
-    expect(result.checks).toHaveLength(0);
+    const groups = new Map<string, typeof result.checks>();
+    for (const c of result.checks) {
+      const list = groups.get(c.category) ?? [];
+      list.push(c);
+      groups.set(c.category, list);
+    }
+    expect(groups.get('Daemon')).toHaveLength(2);
+    expect(groups.get('Config')).toHaveLength(1);
   });
 });
 
-describe('LogEntry type', () => {
-  it('accepts log entry with level', () => {
-    const entry: LogEntry = {
-      line: 1,
-      level: 'INFO',
-      text: '2026-04-19 12:00:01 INFO server started',
-      raw: '2026-04-19 12:00:01 INFO server started',
-    };
-    expect(entry.level).toBe('INFO');
-    expect(entry.line).toBe(1);
+describe('LogEntry and parseLogLines integration', () => {
+  it('parseLogLines produces valid LogEntry objects', () => {
+    const entries: LogEntry[] = parseLogLines([
+      '2026-04-19 12:00:01 INFO server started',
+      'stack trace',
+    ]);
+    expect(entries).toHaveLength(2);
+    expect(entries[0]).toMatchObject({ line: 1, level: 'INFO' });
+    expect(entries[1]).toMatchObject({ line: 2, level: '' });
   });
 
-  it('accepts log entry with empty level', () => {
-    const entry: LogEntry = {
-      line: 5,
-      level: '',
-      text: 'stack trace line',
-      raw: 'stack trace line',
-    };
-    expect(entry.level).toBe('');
-  });
-});
-
-describe('LogSourceInfo type', () => {
-  it('accepts source info', () => {
+  it('LogSourceInfo has required display fields', () => {
     const info: LogSourceInfo = {
       name: 'castellarius',
       size_bytes: 2048576,
       last_modified: '2026-04-19T12:00:00Z',
     };
-    expect(info.name).toBe('castellarius');
-    expect(info.size_bytes).toBeGreaterThan(0);
+    expect(info.name).toBeTruthy();
+    expect(info.size_bytes).toBeGreaterThanOrEqual(0);
+    expect(new Date(info.last_modified).toString()).not.toBe('Invalid Date');
   });
 });
 
-describe('RepoInfo type', () => {
-  it('accepts repo with aqueducts', () => {
+describe('RepoInfo aqueduct rendering', () => {
+  it('renders step chain from aqueducts', () => {
     const repo: RepoInfo = {
       name: 'my-app',
       prefix: 'myapp',
@@ -136,11 +133,11 @@ describe('RepoInfo type', () => {
         { name: 'docs', steps: ['docs-writer'] },
       ],
     };
-    expect(repo.aqueducts).toHaveLength(2);
-    expect(repo.aqueducts[0].steps).toHaveLength(4);
+    const stepCount = repo.aqueducts.reduce((sum, aq) => sum + aq.steps.length, 0);
+    expect(stepCount).toBe(5);
   });
 
-  it('accepts repo with no aqueducts', () => {
+  it('handles repo with no aqueduct config', () => {
     const repo: RepoInfo = {
       name: 'simple',
       prefix: 'simple',
@@ -149,26 +146,19 @@ describe('RepoInfo type', () => {
       aqueducts: [],
     };
     expect(repo.aqueduct_config).toBeNull();
+    expect(repo.aqueducts).toHaveLength(0);
   });
 });
 
-describe('AqueductBrief type', () => {
-  it('accepts brief with steps', () => {
-    const brief: AqueductBrief = {
-      name: 'default',
-      steps: ['flag', 'implement', 'review', 'qa'],
-    };
-    expect(brief.steps).toHaveLength(4);
-  });
-});
-
-describe('SkillInfo type', () => {
-  it('accepts skill info', () => {
+describe('SkillInfo display fields', () => {
+  it('has name and URL for rendering', () => {
     const skill: SkillInfo = {
       name: 'cistern-git',
       source_url: '/skills/cistern-git/SKILL.md',
       installed_at: '2026-01-10T00:00:00Z',
     };
-    expect(skill.name).toBe('cistern-git');
+    expect(skill.name).toBeTruthy();
+    expect(skill.source_url).toBeTruthy();
+    expect(new Date(skill.installed_at).toString()).not.toBe('Invalid Date');
   });
 });
