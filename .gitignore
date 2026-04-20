@@ -13,3 +13,8 @@ CONTEXT.md
 .DS_Store
 /ct
 install
+
+# Web front-end
+web/node_modules/
+web/dist/
+*.tsbuildinfo

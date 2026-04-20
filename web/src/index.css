@@ -1,0 +1,53 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  body {
+    @apply bg-cistern-bg text-cistern-fg antialiased;
+  }
+
+  ::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+
+  ::-webkit-scrollbar-track {
+    @apply bg-cistern-surface;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    @apply bg-cistern-border rounded;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    @apply bg-cistern-muted;
+  }
+}
+
+@keyframes water-flow {
+  0% { background-position: 0% 50%; }
+  100% { background-position: 200% 50%; }
+}
+
+.water-flow-active {
+  background: linear-gradient(
+    90deg,
+    #58a6ff 0%,
+    #3fb950 25%,
+    #58a6ff 50%,
+    #3fb950 75%,
+    #58a6ff 100%
+  );
+  background-size: 200% 100%;
+  animation: water-flow 2s linear infinite;
+}
+
+@keyframes pulse-glow {
+  0%, 100% { box-shadow: 0 0 4px rgba(88, 166, 255, 0.3); }
+  50% { box-shadow: 0 0 12px rgba(88, 166, 255, 0.6); }
+}
+
+.pulse-glow {
+  animation: pulse-glow 2s ease-in-out infinite;
+}

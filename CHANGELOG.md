@@ -2,6 +2,29 @@
 
 ## Unreleased
 
+### Web UI: Front-end foundation and dashboard (ci-jecbi)
+
+Added a React SPA dashboard at `/app/` with live aqueduct visualization, real-time SSE updates, authentication, and live terminal peek — the visual centerpiece of the web UI.
+
+**Key features:**
+- **React 18 + TypeScript + Vite**: Front-end project in `web/` with Tailwind CSS dark theme matching Cistern colors
+- **SPA routing**: `/app/` serves the React app; `/app/assets/` serves static assets; existing `/` route (xterm.js) unchanged
+- **Live aqueduct arch**: CSS-based pipeline diagram showing cataractae stages, flowing droplet position, elapsed timers, and animated water-flow effect
+- **Real-time updates**: SSE connection to `/api/dashboard/events` with adaptive polling (2s active, 5s idle), managed through React context to prevent duplicate connections
+- **Dashboard sections**: Cistern counts (flowing/queued/delivered/pooled), Castellarius status, queue with blocked-by indicators, pooled droplets, orphaned warnings, recent flow
+- **Live terminal peek**: Click an aqueduct to open a slideover viewing the agent's tmux session via WebSocket (`/ws/aqueducts/{name}/peek`)
+- **Authentication**: When `CISTERN_DASHBOARD_API_KEY` is configured, the SPA shows a login page; API key stored in localStorage and sent via Bearer header (REST) and `token` query param (SSE/WebSocket)
+- **Security headers**: `X-Content-Type-Options`, `X-Frame-Options: DENY`, `Referrer-Policy`, `Content-Security-Policy` on all `/app/` routes
+- **Responsive**: Dark sidebar navigation collapses to hamburger on mobile
+- **Build integration**: `cd web && npm run build` outputs to `cmd/ct/assets/web/`, embedded in Go binary via `//go:embed`
+
+**Files added:**
+- `web/` — React front-end (package.json, vite.config.ts, tsconfig.json, tailwind.config.ts, postcss.config.js, vitest.config.ts)
+- `web/src/` — App, Dashboard, Sidebar, Header, AqueductArch, DropletRow, PeekPanel, LoginPage, StatusBadge, DashboardContext, useAuth, useDashboardEvents, formatAge, formatElapsed, buffer utils, TypeScript types
+- `web/src/__tests__/` — 55 frontend tests (components, hooks, utils, types)
+- `cmd/ct/dashboard_web_spa.go` — SPA handler with security headers and auth meta tag injection
+- `cmd/ct/dashboard_web_spa_test.go` — 7 Go tests for SPA routing and auth
+
 ### Web UI: REST API layer (ci-stus4)
 
 Added a comprehensive REST API layer to the Cistern web dashboard that exposes all TUI operations as HTTP endpoints. This is the backend foundation for the web UI — every operation available via `ct` CLI is now also accessible via API.

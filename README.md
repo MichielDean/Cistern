@@ -581,14 +581,43 @@ ct castellarius status         Show aqueduct flow — which are flowing, which a
 
 # Dashboard
 ct dashboard                   Live TUI aqueduct arch diagram with cistern and recent flow
-ct dashboard --web             HTTP web dashboard on 127.0.0.1:5737 — renders the real TUI via xterm.js
-                               Full ANSI color, box-drawing chars, animations. Pinch-to-zoom on
-                               mobile (or Ctrl+scroll on desktop). Single-finger pan after zooming.
-                               Resize protocol: browser sends {resize:{cols,rows}} on viewport change
-                               so Bubble Tea renders at the correct terminal size.
-                               Programmatic endpoints preserved: /api/dashboard/events (SSE),
-                               /ws/aqueducts/{name}/peek (WebSocket)
+ct dashboard --web             HTTP web dashboard on 127.0.0.1:5737 — two modes:
+                               • / — renders the real TUI via xterm.js (full ANSI, box-drawing,
+                                 animations, pinch-to-zoom on mobile)
+                               • /app/ — React SPA dashboard with live SSE updates, aqueduct
+                                 arch visualization, droplet queue, pool, recent flow, and
+                                 live terminal peek via WebSocket
 ct dashboard --web --addr 127.0.0.1:8080  Custom listen address (must include hostname or IP)
+
+## Web UI (React SPA)
+
+The `/app/` route serves a React single-page application providing an alternative
+to the xterm.js terminal dashboard. It connects to the same `/api/dashboard/events`
+SSE stream and `/ws/aqueducts/{name}/peek` WebSocket used by the TUI.
+
+**Features:**
+- Live aqueduct visualization — CSS-based pipeline arch showing cataractae stages,
+  flowing droplet position, and animated water-flow effect for active droplets
+- Real-time updating via SSE with adaptive polling (2s active, 5s idle)
+- Cistern counts (flowing, queued, delivered, pooled), Castellarius status
+- Queue view with blocked-by indicators, pooled droplets, orphaned warnings
+- Recent flow — last 5 delivered/pooled droplets
+- Live terminal peek — click an aqueduct to open a slideover viewing the agent's
+  tmux session via WebSocket
+- Dark theme matching the Cistern color palette
+- Responsive sidebar navigation that collapses on mobile
+- Authentication — when `CISTERN_DASHBOARD_API_KEY` is configured, a login page
+  is shown; the API key is stored in localStorage and sent via Bearer header
+  on REST calls and as a `token` query parameter on SSE/WebSocket connections
+
+**Build integration:**
+```bash
+cd web && npm run build    # Outputs to cmd/ct/assets/web/ (embedded in Go binary)
+cd web && npm run dev      # Vite dev server (proxies API calls to Go server)
+```
+
+The SPA assets are embedded via `//go:embed` and served at `/app/`. The existing
+`/` route (xterm.js TUI) is unchanged.
 
 ## REST API
 
