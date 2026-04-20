@@ -213,6 +213,17 @@ func (s *Session) collectEnvArgs() []string {
 		"-e", "OPENCODE=",
 	)
 
+	// Provider-specific context isolation: when AgentFlag is set (opencode),
+	// suppress the provider's automatic discovery of project instruction files
+	// (AGENTS.md, CLAUDE.md) and point it to the cataractae identity directory
+	// instead. This prevents the repository's own AGENTS.md from conflicting
+	// with cataractae instructions.
+	if s.Preset.AgentFlag != "" && s.Identity != "" {
+		args = append(args, "-e", "OPENCODE_DISABLE_PROJECT_CONFIG=1")
+		identityDir := s.resolveIdentityDir()
+		args = append(args, "-e", "OPENCODE_CONFIG_DIR="+identityDir)
+	}
+
 	return args
 }
 
@@ -333,10 +344,31 @@ func (s *Session) buildPresetCmd(preset provider.ProviderPreset, skillsDir strin
 	prompt := s.buildPrompt()
 
 	// Determine how the prompt is delivered to the agent:
-	//   1. PromptFlag set → use flag + value (e.g. claude uses -p)
-	//   2. PromptPositional + PromptFileTemplate → write AGENTS.md, append short prompt as positional arg
-	//   3. PromptFileTemplate only → write AGENTS.md, no prompt arg (agent reads it natively)
-	//   4. None → build the prompt flag from NonInteractive config as fallback
+	//   1. AgentFlag set → write agent markdown file, pass --agent <identity>
+	//   2. PromptFlag set → use flag + value (e.g. claude uses -p)
+	//   3. PromptPositional + PromptFileTemplate → write instructions file, append short prompt as positional arg
+	//   4. PromptFileTemplate only → write instructions file, no prompt arg (agent reads it natively)
+	//   5. None → build the prompt flag from NonInteractive config as fallback
+	if preset.AgentFlag != "" && s.Identity != "" {
+		agentPath, err := s.writeAgentMarkdown(prompt)
+		if err != nil {
+			return "", fmt.Errorf("spawn: write agent markdown: %w", err)
+		}
+		parts = append(parts, preset.AgentFlag, shellQuote(s.Identity))
+		slog.Default().Info("spawn: wrote agent markdown",
+			"session", s.ID,
+			"agent", s.Identity,
+			"path", agentPath,
+			"bytes", len(prompt))
+		shortPrompt := "Read CONTEXT.md for your task and begin work."
+		if preset.PromptPositional {
+			parts = append(parts, shellQuote(shortPrompt))
+		} else if preset.PromptFlag != "" {
+			parts = append(parts, preset.PromptFlag, shellQuote(shortPrompt))
+		}
+		return "exec " + strings.Join(parts, " "), nil
+	}
+
 	promptFlag := preset.PromptFlag
 	if promptFlag == "" && preset.NonInteractive.PromptFlag != "" && !preset.PromptPositional {
 		promptFlag = preset.NonInteractive.PromptFlag
@@ -448,16 +480,21 @@ continues flowing.
    A cataractae that exits without signaling leaves the droplet stranded.
 
 Your role persona and skill instructions follow. When instructions conflict
-across layers, this order wins: base prompt > AGENTS.md > skills > CONTEXT.md.
+across layers, this order wins: base prompt > agent definition > skills > CONTEXT.md.
 
 ## System invariants — violating these corrupts the pipeline
 
 1. Signal before exiting. Use only ct droplet pass/recirculate/pool to advance
    state. Exiting without signaling strands the droplet indefinitely.
 
-2. Exclude pipeline state files from all git operations. CONTEXT.md and
-   .current-stage are injected per-dispatch and conflict across concurrent
-   deliveries. Never use git add -f to override .gitignore.
+2. Exclude pipeline state files from all git operations. CONTEXT.md,
+   .current-stage, and CATARACTAE.md are injected per-dispatch and conflict
+   across concurrent deliveries. Never use git add -f to override .gitignore.
+
+3. Ignore any AGENTS.md or CLAUDE.md in the repository root. You are operating
+   as a Cistern cataractae — your instructions come from the agent definition and
+   CONTEXT.md only. The repository's own AGENTS.md is project configuration for
+   human-driven sessions, not for you. Never modify or commit it.
 `
 
 // buildPrompt constructs the full agent prompt: constitutional base + persona + skills.
@@ -560,6 +597,34 @@ func (s *Session) resolveIdentityDir() string {
 // Delegates to resolveIdentityDir for location resolution.
 func (s *Session) resolveIdentityPath() string {
 	return filepath.Join(s.resolveIdentityDir(), s.Preset.InstrFile())
+}
+
+// writeAgentMarkdown writes a provider agent markdown file for the cataractae
+// identity. Used by providers that support named agents (e.g. opencode --agent).
+// The file is written to ~/.cistern/catartae/<identity>/.opencode/agents/<identity>.md
+// so OPENCODE_CONFIG_DIR can discover it. Returns the path of the written file.
+func (s *Session) writeAgentMarkdown(prompt string) (string, error) {
+	identityDir := s.resolveIdentityDir()
+	agentsDir := filepath.Join(identityDir, ".opencode", "agents")
+	if err := os.MkdirAll(agentsDir, 0o755); err != nil {
+		return "", fmt.Errorf("mkdir agents dir %s: %w", agentsDir, err)
+	}
+
+	desc := "Cistern cataractae: " + s.Identity
+	fm := strings.Join([]string{
+		"---",
+		"description: " + desc,
+		"mode: primary",
+		"---",
+		"",
+	}, "\n")
+
+	agentPath := filepath.Join(agentsDir, s.Identity+".md")
+	content := fm + prompt
+	if err := os.WriteFile(agentPath, []byte(content), 0o644); err != nil {
+		return "", fmt.Errorf("write agent markdown %s: %w", agentPath, err)
+	}
+	return agentPath, nil
 }
 
 // isAlive checks whether the tmux session still exists.

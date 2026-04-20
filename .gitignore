@@ -3,7 +3,7 @@ CONTEXT.md
 .current-stage
 .claude/
 .prompt
-AGENTS.md
+CATARACTAE.md
 
 # Cataractae generated artifacts — deployed to ~/.cistern/cataractae/ at runtime
 # PERSONA.md and INSTRUCTIONS.md are source-of-truth and stay tracked.

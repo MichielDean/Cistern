@@ -53,7 +53,7 @@ func TestProviderCommandStrings(t *testing.T) {
 			wantCommand:          "codex",
 			wantArgs:             []string{"--dangerously-bypass-approvals-and-sandbox"},
 			wantEnvPassthrough:   []string{"OPENAI_API_KEY"},
-			wantInstructionsFile: "AGENTS.md",
+			wantInstructionsFile: "CATARACTAE.md",
 			wantAddDir:           false,
 			wantModelFlag:        "", // codex has no ModelFlag
 		},
@@ -73,7 +73,7 @@ func TestProviderCommandStrings(t *testing.T) {
 			wantCommand:          "copilot",
 			wantArgs:             []string{"--yolo"},
 			wantEnvPassthrough:   []string{"GH_TOKEN"},
-			wantInstructionsFile: "AGENTS.md",
+			wantInstructionsFile: "CATARACTAE.md",
 			wantAddDir:           false,
 			wantModelFlag:        "", // copilot has no ModelFlag
 		},

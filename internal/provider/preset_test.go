@@ -47,7 +47,8 @@ func TestBuiltins_CodexPreset(t *testing.T) {
 	assertStr(t, "Command", "codex", got.Command)
 	assertStrs(t, "Args", []string{"--dangerously-bypass-approvals-and-sandbox"}, got.Args)
 	assertStrs(t, "EnvPassthrough", []string{"OPENAI_API_KEY"}, got.EnvPassthrough)
-	assertStr(t, "InstructionsFile", "AGENTS.md", got.InstructionsFile)
+	assertStr(t, "InstructionsFile", "CATARACTAE.md", got.InstructionsFile)
+	assertStr(t, "PromptFileTemplate", "CATARACTAE.md", got.PromptFileTemplate)
 	assertStr(t, "ResumeStyle", string(ResumeStyleSubcommand), string(got.ResumeStyle))
 }
 
@@ -70,7 +71,8 @@ func TestBuiltins_CopilotPreset(t *testing.T) {
 	assertStrs(t, "Args", []string{"--yolo"}, got.Args)
 	assertStr(t, "PromptFlag", "-p", got.PromptFlag)
 	assertStrs(t, "EnvPassthrough", []string{"GH_TOKEN"}, got.EnvPassthrough)
-	assertStr(t, "InstructionsFile", "AGENTS.md", got.InstructionsFile)
+	assertStr(t, "InstructionsFile", "CATARACTAE.md", got.InstructionsFile)
+	assertStr(t, "PromptFileTemplate", "CATARACTAE.md", got.PromptFileTemplate)
 }
 
 // TestBuiltins_OpencodePreset validates each field of the opencode built-in.
@@ -79,6 +81,8 @@ func TestBuiltins_OpencodePreset(t *testing.T) {
 
 	assertStr(t, "Command", "opencode", got.Command)
 	assertStr(t, "InstructionsFile", "AGENTS.md", got.InstructionsFile)
+	assertStr(t, "AgentFlag", "--agent", got.AgentFlag)
+	assertStr(t, "PromptFileTemplate", "", got.PromptFileTemplate)
 }
 
 // TestBuiltins_NonInteractiveConfig verifies the NonInteractive fields for each built-in preset.

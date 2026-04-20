@@ -96,11 +96,19 @@ type ProviderPreset struct {
 	// command-line length limits for providers with very long prompts.
 	// The template may contain "{identity}" as a placeholder for the resolved
 	// identity file path.
+	// For providers that support AgentFlag, this is typically empty — the prompt
+	// is delivered via the agent markdown file instead.
 	PromptFileTemplate string `json:"prompt_file_template,omitempty"`
 	// SupportsAddDir indicates whether this provider supports the AddDirFlag for
 	// filesystem-based context injection (e.g. SKILL.md, instructions files).
 	// When false, context must be injected as text in the prompt preamble.
 	SupportsAddDir bool `json:"supports_add_dir,omitempty"`
+	// AgentFlag is the CLI flag used to select a named agent (e.g. "--agent").
+	// When set, Cistern writes the cataractae prompt as an agent markdown file
+	// under OPENCODE_CONFIG_DIR and passes the identity name via this flag.
+	// This avoids writing any instructions file to the worktree root, preventing
+	// contamination of the repository's own AGENTS.md/CLAUDE.md.
+	AgentFlag string `json:"agent_flag,omitempty"`
 }
 
 // InstrFile returns InstructionsFile, defaulting to "CLAUDE.md" when empty.
@@ -145,7 +153,8 @@ var builtins = []ProviderPreset{
 		Command:          "codex",
 		Args:             []string{"--dangerously-bypass-approvals-and-sandbox"},
 		EnvPassthrough:   []string{"OPENAI_API_KEY"},
-		InstructionsFile: "AGENTS.md",
+		InstructionsFile:   "CATARACTAE.md",
+		PromptFileTemplate: "CATARACTAE.md",
 		ResumeStyle:      ResumeStyleSubcommand,
 		NonInteractive:   NonInteractiveConfig{Subcommand: "exec", PromptFlag: "-p"},
 	},
@@ -159,16 +168,17 @@ var builtins = []ProviderPreset{
 		NonInteractive:   NonInteractiveConfig{PromptFlag: "-p"},
 	},
 	{
-		Name:             "copilot",
-		Command:          "copilot",
-		Args:             []string{"--yolo"},
-		PromptFlag:       "-p",
-		EnvPassthrough:   []string{"GH_TOKEN"},
-		InstructionsFile: "AGENTS.md",
-		NonInteractive:   NonInteractiveConfig{PromptFlag: "-p"},
+		Name:               "copilot",
+		Command:            "copilot",
+		Args:               []string{"--yolo"},
+		PromptFlag:         "-p",
+		EnvPassthrough:     []string{"GH_TOKEN"},
+		InstructionsFile:   "CATARACTAE.md",
+		PromptFileTemplate: "CATARACTAE.md",
+		NonInteractive:     NonInteractiveConfig{PromptFlag: "-p"},
 	},
 	{
-		Name:                "opencode",
+		Name:               "opencode",
 		Command:            "opencode",
 		Subcommand:          "run",
 		Args:               []string{"--dangerously-skip-permissions"},
@@ -176,7 +186,7 @@ var builtins = []ProviderPreset{
 		DefaultModel:       "ollama/glm-5.1:cloud",
 		PromptPositional:   true,
 		InstructionsFile:   "AGENTS.md",
-		PromptFileTemplate: "AGENTS.md",
+		AgentFlag:          "--agent",
 		NonInteractive:     NonInteractiveConfig{Subcommand: "run"},
 	},
 }
