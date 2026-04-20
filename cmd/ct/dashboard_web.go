@@ -1077,6 +1077,11 @@ func newDashboardMuxInternalWith(cfgPath, dbPath string, tui *DashboardTUI, fetc
 	apiMux.HandleFunc("GET /api/repos/{name}/steps", handleGetRepoSteps(cfgPath))
 	apiMux.HandleFunc("GET /api/skills", handleGetSkills())
 
+	// Logs
+	apiMux.HandleFunc("GET /api/logs", handleGetLogs(cfgPath))
+	apiMux.HandleFunc("GET /api/logs/events", handleLogEvents(cfgPath))
+	apiMux.HandleFunc("GET /api/logs/sources", handleGetLogSources(cfgPath))
+
 	// SSE for droplet detail
 	apiMux.HandleFunc("GET /api/droplets/{id}/events", handleDropletEvents(cfgPath, dbPath))
 
@@ -2287,6 +2292,152 @@ func handleGetSkills() http.HandlerFunc {
 			return
 		}
 		writeAPIJSON(w, http.StatusOK, entries)
+	}
+}
+
+// ── Log handlers ──
+
+func logFilePath(cfgPath, source string) string {
+	home, _ := os.UserHomeDir()
+	if source == "" || source == "castellarius" {
+		return filepath.Join(home, ".cistern", "castellarius.log")
+	}
+	return filepath.Join(home, ".cistern", source+".log")
+}
+
+// handleGetLogs returns the last N lines of the log file.
+// Query params: ?lines=500&source=castellarius
+func handleGetLogs(cfgPath string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		linesStr := r.URL.Query().Get("lines")
+		lines := 500
+		if n, err := strconv.Atoi(linesStr); err == nil && n > 0 {
+			lines = n
+		}
+		source := r.URL.Query().Get("source")
+		if source == "" {
+			source = "castellarius"
+		}
+
+		path := logFilePath(cfgPath, source)
+		f, err := os.Open(path)
+		if err != nil {
+			if os.IsNotExist(err) {
+				writeAPIJSON(w, http.StatusOK, []string{})
+				return
+			}
+			writeAPIError(w, http.StatusInternalServerError, "internal error")
+			return
+		}
+		defer f.Close()
+
+		scanner := bufio.NewScanner(f)
+		var allLines []string
+		for scanner.Scan() {
+			allLines = append(allLines, scanner.Text())
+		}
+
+		start := len(allLines) - lines
+		if start < 0 {
+			start = 0
+		}
+		result := allLines[start:]
+		writeAPIJSON(w, http.StatusOK, result)
+	}
+}
+
+// handleLogEvents streams new log lines via SSE.
+func handleLogEvents(cfgPath string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if atomic.AddInt64(&currentSSEConnections, 1) > maxSSEConnections {
+			atomic.AddInt64(&currentSSEConnections, -1)
+			writeAPIError(w, http.StatusServiceUnavailable, "too many SSE connections")
+			return
+		}
+		defer atomic.AddInt64(&currentSSEConnections, -1)
+
+		flusher, ok := w.(http.Flusher)
+		if !ok {
+			writeAPIError(w, http.StatusInternalServerError, "streaming unsupported")
+			return
+		}
+
+		source := r.URL.Query().Get("source")
+		if source == "" {
+			source = "castellarius"
+		}
+		path := logFilePath(cfgPath, source)
+
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.Header().Set("Cache-Control", "no-cache")
+		w.Header().Set("Connection", "keep-alive")
+		w.Header().Set("X-Accel-Buffering", "no")
+		flusher.Flush()
+
+		ticker := time.NewTicker(500 * time.Millisecond)
+		defer ticker.Stop()
+
+		var offset int64
+		if info, err := os.Stat(path); err == nil {
+			offset = info.Size()
+		}
+
+		for {
+			select {
+			case <-r.Context().Done():
+				return
+			case <-ticker.C:
+				info, err := os.Stat(path)
+				if err != nil {
+					continue
+				}
+				if info.Size() <= offset {
+					continue
+				}
+
+				f, err := os.Open(path)
+				if err != nil {
+					continue
+				}
+				f.Seek(offset, io.SeekStart)
+				scanner := bufio.NewScanner(f)
+				for scanner.Scan() {
+					line := scanner.Text()
+					fmt.Fprintf(w, "data: %s\n\n", line)
+				}
+				offset, _ = f.Seek(0, io.SeekCurrent)
+				f.Close()
+				flusher.Flush()
+			}
+		}
+	}
+}
+
+// handleGetLogSources returns metadata about available log files.
+func handleGetLogSources(cfgPath string) http.HandlerFunc {
+	type logSourceInfo struct {
+		Name         string `json:"name"`
+		Path         string `json:"path"`
+		SizeBytes    int64  `json:"size_bytes"`
+		LastModified string `json:"last_modified"`
+	}
+
+	return func(w http.ResponseWriter, r *http.Request) {
+		home, _ := os.UserHomeDir()
+		path := filepath.Join(home, ".cistern", "castellarius.log")
+		var sources []logSourceInfo
+
+		info, err := os.Stat(path)
+		if err == nil {
+			sources = append(sources, logSourceInfo{
+				Name:         "castellarius",
+				Path:         path,
+				SizeBytes:    info.Size(),
+				LastModified: info.ModTime().UTC().Format(time.RFC3339),
+			})
+		}
+
+		writeAPIJSON(w, http.StatusOK, sources)
 	}
 }
 
