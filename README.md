@@ -606,14 +606,25 @@ SSE stream and `/ws/aqueducts/{name}/peek` WebSocket used by the TUI.
   tmux session via WebSocket
 - Droplets list (`/app/droplets`) — filterable, sortable, paginated table of all
   droplets with status badges, search, and repo filter; click any row for detail
+- Create droplet (`/app/droplets/new`) — multi-field form with repo dropdown
+  (populated from /api/repos), title (required), description, priority,
+  complexity radio group (standard/full/critical) with pipeline stage visualization
+  showing which cataractae each level runs through, dependency type-ahead search,
+  form validation, and cancel/submit actions
 - Droplet detail (`/app/droplets/:id`) — copyable ID, status badge, pipeline position
   indicator with progress bar, real-time notes timeline (SSE), signal action dialogs
   (pass/recirculate/pool), dependencies with add/remove (resolves/blocked_by/blocks),
-  issue tracker with file/resolve/reject, modals for notes/metadata/restart
+  issue tracker with file/resolve/reject, modals for notes/metadata/restart,
+  inline rename on title click (save on Enter/blur, cancel on Escape), close/reopen
+  confirmation dialogs
 - **Castellarius control page** (`/app/castellarius`) — view running/stopped status, PID, uptime; start/stop/restart the daemon; aqueduct table with flow status, current droplet, step, and elapsed time; auto-refreshes every 5 seconds
 - **Doctor page** (`/app/doctor`) — run health checks with pass/fail/warn indicators; re-run or fix from the UI; grouped by category with summary card
 - **Logs page** (`/app/logs`) — real-time log viewer with SSE streaming; source selector (castellarius.log and other available logs); log level color coding (INFO=cyan, WARN=yellow, ERROR=red, DEBUG=dim); search/filter, auto-scroll toggle, line numbers; file size and last-modified metadata
 - **Repos & Skills page** (`/app/repos`) — browse configured repositories with aqueduct chains; view installed skills with source URLs and install dates; display-only (install/uninstall remains CLI-only)
+- Issue management (on detail page) — file issues with description and flagged-by
+  role dropdown, resolve/reject open issues with evidence, issue cards with status
+  badges (open=yellow, resolved=green, rejected=red), filters by status and
+  flagged-by role, sort by newest/oldest
 - Dark theme matching the Cistern color palette
 - Responsive sidebar navigation that collapses on mobile
 - Authentication — when `CISTERN_DASHBOARD_API_KEY` is configured, a login page

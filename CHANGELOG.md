@@ -2,6 +2,32 @@
 
 ## Unreleased
 
+### Web UI: Droplet creation, edit, and issues (ci-e2qkd)
+
+Built the droplet creation form, metadata editing, and full issues management — completing the CRUD surface for droplets in the web UI.
+
+**Key features:**
+- **Create droplet page** (`/app/droplets/new`): Multi-field form with repo dropdown (populated from API), title (required), description, priority, complexity radio group with pipeline stage visualization (shows which cataractae each level runs through), dependency type-ahead search, form validation, submit redirects to detail page, cancel returns to list
+- **Edit metadata modal** (enhanced): Replaced raw number input for complexity with shared ComplexitySelector radio group showing pipeline stages; added diff confirmation before saving changes
+- **Inline rename**: Click the droplet title to edit inline; saves on Enter/blur, cancels on Escape
+- **Issue management**: File issues with description and flagged-by role dropdown (implement/review/qa/security-review/docs/delivery); issue cards with status badges (open=yellow, resolved=green, rejected=red), flagged-by color-coded badges, resolve/reject modals requiring evidence; filters for open/all status and flagged-by role; sort by newest/oldest
+- **Close and reopen actions**: Confirmation dialogs for closing (marking as delivered) and reopening droplets
+- **Shared ModalOverlay component**: Extracted reusable modal overlay with focus management, Escape key handler, ARIA attributes, and click-outside dismiss; migrated ActionDialog, AddNoteModal, and RestartModal
+
+**Files added:**
+- `web/src/pages/CreateDroplet.tsx`
+- `web/src/components/CreateDropletForm.tsx`, `ComplexitySelector.tsx`, `RenameInput.tsx`, `FileIssueModal.tsx`, `IssueCard.tsx`, `IssueFilters.tsx`, `CloseModal.tsx`, `ReopenModal.tsx`, `ModalOverlay.tsx`
+- `web/src/__tests__/` — 85 new tests (CreateDropletForm, ComplexitySelector, RenameInput, FileIssueModal, IssueCard, IssueFilters, CloseModal, ReopenModal, ModalOverlay)
+
+**Files changed:**
+- `web/src/components/EditMetadataModal.tsx` — enhanced with diff confirmation and ComplexitySelector
+- `web/src/components/IssuesList.tsx` — refactored to use IssueCard, IssueFilters, FileIssueModal; status display maps 'unresolved' to 'Rejected' label
+- `web/src/components/ActionDialog.tsx`, `AddNoteModal.tsx`, `RestartModal.tsx` — migrated to ModalOverlay
+- `web/src/components/index.ts` — added barrel exports for all new components
+- `web/src/pages/DropletDetail.tsx` — added RenameInput, CloseModal, ReopenModal, FileIssueModal integration; useRepoSteps for ComplexitySelector
+- `web/src/hooks/useApi.ts` — added renameDroplet, closeDroplet, reopenDroplet mutation functions
+- `web/src/main.tsx` — added `/app/droplets/new` route
+
 ### Web UI: Droplets list and detail view (ci-zalz9)
 
 Built the Droplets pages — the core interaction surface for monitoring and managing droplets in the web UI.
