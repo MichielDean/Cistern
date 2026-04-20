@@ -6,9 +6,10 @@ export async function fetchLogHistory(
   source = 'castellarius',
 ): Promise<string[]> {
   const auth = getAuthParams();
+  const encodedSource = encodeURIComponent(source);
   const url = auth
-    ? `/api/logs?lines=${lines}&source=${source}&${auth}`
-    : `/api/logs?lines=${lines}&source=${source}`;
+    ? `/api/logs?lines=${lines}&source=${encodedSource}&${auth}`
+    : `/api/logs?lines=${lines}&source=${encodedSource}`;
   const resp = await fetch(url, { headers: getAuthHeaders() });
   if (!resp.ok) throw new Error(`logs: ${resp.status}`);
   return resp.json();
@@ -20,9 +21,10 @@ export function createLogEventSource(
   onError: (err: Error) => void,
 ): EventSource {
   const auth = getAuthParams();
+  const encodedSource = encodeURIComponent(source);
   const url = auth
-    ? `/api/logs/events?source=${source}&${auth}`
-    : `/api/logs/events?source=${source}`;
+    ? `/api/logs/events?source=${encodedSource}&${auth}`
+    : `/api/logs/events?source=${encodedSource}`;
   const es = new EventSource(url);
   es.onmessage = (e) => onLine(e.data);
   es.onerror = () => {

@@ -2720,6 +2720,89 @@ func TestAPI_InputLimit_CancelDropletReasonTooLong(t *testing.T) {
 	}
 }
 
+func TestAPI_Logs_InvalidSource_NoUserInputInError(t *testing.T) {
+	mux := newDashboardMux(tempCfg(t), tempDB(t))
+	req := httptest.NewRequest(http.MethodGet, "/api/logs?source=../../../etc/passwd", nil)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("invalid source: status = %d, want 400", w.Code)
+	}
+	body := w.Body.String()
+	if strings.Contains(body, "../../../etc/passwd") {
+		t.Errorf("error message reflects user input: %q", body)
+	}
+}
+
+func TestAPI_LogSSE_InitialContext(t *testing.T) {
+	orig := currentSSEConnections
+	defer func() { currentSSEConnections = orig }()
+	atomic.StoreInt64(&currentSSEConnections, 0)
+
+	origHome := os.Getenv("HOME")
+	defer os.Setenv("HOME", origHome)
+
+	tmpDir := t.TempDir()
+	os.Setenv("HOME", tmpDir)
+	cisternDir := filepath.Join(tmpDir, ".cistern")
+	if err := os.MkdirAll(cisternDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	lines := make([]string, 200)
+	for i := range lines {
+		lines[i] = fmt.Sprintf("existing-line-%04d", i)
+	}
+	content := strings.Join(lines, "\n") + "\n"
+	logPath := filepath.Join(cisternDir, "castellarius.log")
+	if err := os.WriteFile(logPath, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := tempCfg(t)
+	mux := newDashboardMux(cfg, tempDB(t))
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, server.URL+"/api/logs/events", nil)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	var allData string
+	readCh := make(chan struct{})
+	go func() {
+		defer close(readCh)
+		buf := make([]byte, 32768)
+		for {
+			n, readErr := resp.Body.Read(buf)
+			if n > 0 {
+				allData += string(buf[:n])
+			}
+			if strings.Contains(allData, "existing-line-0199") {
+				return
+			}
+			if readErr != nil {
+				return
+			}
+		}
+	}()
+
+	select {
+	case <-readCh:
+		if !strings.Contains(allData, "existing-line-0199") {
+			t.Errorf("SSE stream did not send existing log data on connect; got: %q", allData)
+		}
+	case <-time.After(4 * time.Second):
+		t.Fatalf("timed out; SSE should have sent recent context on connect; data so far (len=%d): %q", len(allData), allData[:min(len(allData), 500)])
+	}
+}
+
 func TestAPI_LogSSE_StreamResumesAfterRotation(t *testing.T) {
 	orig := currentSSEConnections
 	defer func() { currentSSEConnections = orig }()

@@ -2299,6 +2299,8 @@ func handleGetSkills() http.HandlerFunc {
 
 const maxLogLines = 5000
 
+const sseInitialTail int64 = 32 * 1024 // Send last ~32KB of existing log on connect
+
 const maxScanTokenSize = 1024 * 1024 // 1MB — accommodate long log lines
 
 // isValidLogSource checks that source is a safe, non-traversal log file name.
@@ -2321,7 +2323,7 @@ func isValidLogSource(source string) bool {
 
 func logFilePath(cfgPath, source string) (string, error) {
 	if !isValidLogSource(source) {
-		return "", fmt.Errorf("invalid log source: %q", source)
+		return "", fmt.Errorf("invalid log source name")
 	}
 	home, _ := os.UserHomeDir()
 	if source == "" || source == "castellarius" {
@@ -2442,7 +2444,9 @@ func handleLogEvents(cfgPath string) http.HandlerFunc {
 
 		var offset int64
 		if info, err := os.Stat(path); err == nil {
-			offset = info.Size()
+			if info.Size() > sseInitialTail {
+				offset = info.Size() - sseInitialTail
+			}
 		}
 
 		for {
