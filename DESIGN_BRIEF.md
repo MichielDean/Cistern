@@ -1,278 +1,240 @@
-# Design Brief: Web UI — Integration, routing, and peek
+# Design Brief: Remove all non-opencode providers from core
 
 ## Requirements Summary
 
-Wire the React SPA into the Go server (verify the existing integration is complete and add missing pieces), establish all routing with proper 404 and error boundaries, add the live session peek viewer with search and auto-scroll toggle, finalize navigation links between old and new UI, add polish components (ErrorBoundary, LoadingSkeleton, Toast system, network status indicator), add keyboard navigation (focus management, Escape to close, command palette stretch goal), make the layout responsive for mobile, and add missing test coverage. The Go server integration and SPA handler already exist — this brief covers completion, polish, and testing.
+Remove claude, ollama-claude, codex, gemini, and copilot provider presets from preset.go. Make opencode the only and default provider (replace claude as fallback). Remove legacy buildClaudeCmd and claudePath from session.go. Remove SupportsAddDir/--add-dir path (--add-dir is Claude-specific). Remove --resume and --continue flags from preset (Claude-specific). Simplify InstrFile() to always return AGENTS.md instead of defaulting to CLAUDE.md. Remove ollama-claude preset. Remove PromptFileTemplate CATARACTAE.md references for codex/copilot. Update proc.go to remove claude/codex agent detection (keep opencode). Update scheduler.go to remove hardcoded CLAUDE.md references. Update drought_hooks.go CLAUDE.md fallback. Update context.go to remove provider-specific instruction file logic (always AGENTS.md). Update aqueduct/provider.go to default to opencode and simplify provider resolution. Remove NonInteractive.PrintFlag and AllowedToolsFlag (Claude-specific). Goal: reduce surface area so only opencode is supported as a provider.
 
 ## Existing Patterns to Follow
 
-### ORM / Query
-
-Not applicable — no database changes in this feature.
-
 ### Naming Conventions
 
-- **Go files:** `snake_case.go` matching the command or feature — `dashboard_web.go`, `dashboard_web_spa.go`, `dashboard_web_test.go`.
-- **Go test functions:** `TestXxx_YyyScenario` — see `TestDashboardWebMux_RootServesHTML` at `dashboard_web_test.go:24`, `TestSPAHandler_ServesIndexHTML` at `dashboard_web_spa_test.go:9`, `TestSPAHandler_InjectsAuthMetaTag` at `dashboard_web_spa_test.go:86`.
-- **Go test helpers:** `tempCfg(t)`, `tempDB(t)` at `dashboard_test.go:21-31`. Use `t.Helper()` — see `dashboard_test.go:22`.
-- **React component files:** `PascalCase.tsx` matching the component name — see `PeekPanel.tsx`, `Header.tsx`, `Sidebar.tsx`, `ModalOverlay.tsx`.
-- **React component names:** Named export `export function ComponentName` — see `DropletDetail.tsx:30`, `PeekPanel.tsx:10`, `Header.tsx:9`.
-- **React hooks:** `useXxx` prefix — see `useDashboardEvents.ts:11`, `useAuth.ts:34`, `useApi.ts:19`.
-- **Unexported Go structs:** Unexported fields only. See `aqueductSessionInfo` at `dashboard_web.go:113-118` (`sessionID`, `dropletID`, `title`, `elapsed` — all unexported). See `spaHandler` at `dashboard_web_spa.go:15-18` (`indexHTML`, `assetsFileServer` — unexported).
-- **Do not shadow Go builtins:** `min`, `max`, `any`.
+- Exported functions use PascalCase; unexported structs use lowercase field names. See `internal/provider/preset.go:42-104` (`ProviderPreset` exported, all fields PascalCase because the struct is exported).
+- Error wrapping uses `fmt.Errorf("pkg: context: %w", err)`. See `internal/provider/preset.go:256` (`fmt.Errorf("provider: read %s: %w", path, err)`) and `internal/aqueduct/provider.go:50` (`fmt.Errorf("aqueduct: unknown provider %q", name)`).
+- Variables for test injection use `Fn` suffix (e.g., `resolveCommandFn`). See `internal/cataractae/session.go:238`.
 
 ### Error Handling
 
-- **Go:** `fmt.Errorf("pkg: context: %w", err)` for wrapping. `slog.Error`/`slog.Warn` for operational errors. See `dashboard_web.go:388` (Origin validation wraps errors), `dashboard_web.go:823` (log.Println for missing API key). For 500 responses, sanitize to "internal error" — see `writeAPIError` at `dashboard_web.go:1196-1203`.
-- **React:** `apiFetch<T>` throws `Error('API error ${status}: ${body}')` — see `shared.ts:9`. Components catch and display as `text-sm text-cistern-red font-mono` — see `DropletDetail.tsx:96`.
+- Errors are wrapped with domain context using `fmt.Errorf("pkg: context: %w", err)`. See `internal/provider/preset.go:256`, `internal/aqueduct/parse.go:16`.
+- Operational errors use `slog.Error`/`slog.Warn`. See `internal/cataractae/session.go:351-354` (`slog.Default().Error("spawn: failed to write prompt file", ...)`).
+- No `fmt.Fprintf(os.Stderr)` outside of CLI command files (`cmd/ct/`).
 
-### Collection Types
+### Logging
 
-- **Go:** Slices throughout — `[]CataractaeInfo`, `[]FlowActivity`, `[]*cistern.Droplet`. Maps for lookups — `map[string]string` for `blockedByMap` at `dashboard.go:69`.
-- **React:** Arrays — `Droplet[]`, `DropletIssue[]`, `string[]`. No `Set` or `Map` in frontend code — see `Dashboard.tsx:39` uses `new Set()` only for lookup purposes within a render.
-
-### Migrations
-
-Not applicable — no database schema changes.
-
-### Idiom Fit
-
-- **SPA handler:** The existing `spaHandler` at `dashboard_web_spa.go:15` uses constructor injection via `newSPAHandler(apiKey)` — no package-level mutable state. All new Go code must follow this pattern.
-- **Embedded FS:** `embed.FS` pattern already established — `//go:embed assets/static` at `dashboard_web.go:42` and `//go:embed assets/web` at `dashboard_web_spa.go:11`. Build output goes to `cmd/ct/assets/web/`.
-- **Vite config:** `base: '/app/'` at `vite.config.ts:6`, `outDir: '../cmd/ct/assets/web'` at `vite.config.ts:8`. No changes needed to these — the build pipeline is already correct.
-- **Tests:** Use `httptest.NewServer` and `httptest.NewRecorder` — see `dashboard_web_spa_test.go:11`, `dashboard_web_test.go:27`. `t.Helper()` in test helpers — see `dashboard_test.go:22`.
-- **React state:** All state lives in component `useState` or hooks. No shared mutable package-level state — see `DashboardContext.tsx:17` (provider wraps hook, no module-level state).
-- **Constructor pattern:** `newSPAHandler(apiKey string) *spaHandler` at `dashboard_web_spa.go:20` — eager initialization, fully usable after construction. All new Go structs must follow this. No `SetXxx` mutation methods, no `initClient()` pattern.
+- Uses `slog.Default().Info/Warn/Error` with structured key-value pairs. See `internal/cataractae/session.go:102-109`, `internal/castellarius/scheduler.go:1763-1775`.
+- CLI commands in `cmd/ct/` use `fmt.Fprintf(os.Stderr, ...)` for user-facing output. See `cmd/ct/evaluate.go:193-196`.
 
 ### Testing
 
-- **Go tests:** `dashboard_web_spa_test.go` uses `httptest.NewServer(handler)` then `http.Get(server.URL + "/app/")` — see line 11-14. Table-driven tests — see `dashboard_web_test.go:565-587` (cross-origin test cases). Test helpers `tempCfg`, `tempDB` at `dashboard_test.go:21-31`.
-- **React tests:** Vitest with `@testing-library/react` and `jsdom` environment — `vitest.config.ts:10`. `describe('ComponentName', () => { it('description') })` — see `PeekPanel.test.ts:4`. Mock fetch pattern — see `useApi.test.ts`. `beforeEach/afterEach` with `localStorage.clear()` + `vi.restoreAllMocks()` — universal pattern.
-- **React test location:** `web/src/__tests__/ComponentName.test.tsx` — see existing 39 test files in `web/src/__tests__/`.
+- Table-driven tests using `t.Run(name, func(t *testing.T) {...})`. See `internal/cataractae/smoke_test.go:30-108`, `internal/provider/preset_test.go:82-106`.
+- Test helpers use `t.Helper()`. See `internal/cataractae/smoke_test.go:208-216` (`builtinPreset`).
+- Variable overrides for test isolation: see `internal/cataractae/session.go:238` (`resolveCommandFn`), `session.go:574` (`claudePathFn`), `session.go:243` (`execTmuxNewSession`).
+- `t.Setenv` for environment variable tests. See `internal/cataractae/smoke_test.go:21` (`t.Setenv("CLAUDE_PATH", "claude")`).
+
+### Idiom Fit
+
+- Constructor-style initialization via `NewXxx` functions. See `internal/evaluate/evaluate.go:101` (`NewLLMCaller`).
+- Package-level function variables for test injectability. See `internal/cataractae/session.go:238,243,250,574`.
+- `slices.IndexFunc` for finding items in slices. See `internal/aqueduct/provider.go:33,46`.
 
 ## Reusability Requirements
 
-### New components and their reusability
-
-| Component | Reusable? | Reason |
-|-----------|-----------|--------|
-| `ErrorBoundary.tsx` | Yes — wraps the entire app | Catches render errors anywhere in the component tree |
-| `LoadingSkeleton.tsx` | Yes — used by every page on initial load | Multiple card/row variants reuse the same animation |
-| `Toast.tsx` | Yes — replaces inline `showToast` per page | Currently duplicated in `CastellariusPage.tsx:6-9` |
-| `NetworkStatusBar.tsx` | Yes — shows in `Header` | Already partially exists as the green/red dot in `Header.tsx:33-37` |
-| `TerminalView.tsx` | Specific to `PeekPanel` | Monospace renderer is peek-specific but could be reused if a log viewer needed it |
-| `NotFoundPage.tsx` | Yes — React Router catch-all | Generic 404 for all unknown `/app/*` routes |
-| `CommandPalette.tsx` | Yes — global keyboard shortcut | Stretch goal; would be invoked from `AppLayout` |
-
-### Toast — must be extracted
-
-The `showToast` pattern with timer-based auto-dismiss appears in `CastellariusPage.tsx:6-25` (inline `Toast` interface + `showToast` callback + `toastTimerRef`). The requirements specify toast notifications for all API errors, which means every page will need this. Extract to a shared component and context:
-
-```tsx
-// web/src/context/ToastContext.tsx
-// Wraps the app, provides useToast() hook
-```
-
-See the inline pattern at `CastellariusPage.tsx:6-24` for the exact behavior (3-second auto-dismiss, replaces previous toast, timer cleanup on unmount).
-
-### LoadingSkeleton — must be parameterized
-
-The requirements specify "skeleton screens for initial page loads (matching the dark theme)". The existing loading pattern is `text-center py-4 text-cistern-muted font-mono text-sm` with "Loading..." — see `DropletDetail.tsx:104-107`, `IssuesList.tsx:29`. The skeleton must accept a `variant` prop (`card`, `row`, `table`) to match different page sections.
+- `NonInteractiveConfig` fields `PrintFlag` and `AllowedToolsFlag` are **Claude-specific** and will be removed from the struct. After removal, only `Subcommand` and `PromptFlag` remain — both are generic and used by opencode's `NonInteractive` config.
+- `ResumeStyle` type and `ResumeStyleSubcommand` constant are **codex-specific**. Remove the type and both constants (`ResumeStyleFlag`, `ResumeStyleSubcommand`).
+- `ContinueFlag` field on `ProviderPreset` is **Claude-specific**. Remove the field.
+- `AddDirFlag` and `SupportsAddDir` fields on `ProviderPreset` are **Claude-specific** (only claude/ollama-claude presets set `AddDirFlag` and `SupportsAddDir: true`). Remove both fields. Context injection for opencode uses `PromptFileTemplate` instead — see `internal/cataractae/session.go:372-408`.
+- `ResumeFlag` field on `ProviderPreset` is used by `cmd/ct/filter.go:102` for the filter feature's resume path. Opencode does not set ResumeFlag. **Keep the field** — custom user presets may still need it, and the filter code depends on it with a fallback to `"--resume"` at `filter.go:103-104`.
+- `LLMCaller` in `internal/evaluate/evaluate.go:90-99` uses `PrintFlag` and `AllowedToolsFlag` via its constructor `NewLLMCaller`. These fields must be removed from `LLMCaller` too, along with the corresponding constructor parameter and usage at `evaluate.go:139-144`.
 
 ## Coupling Requirements
 
-- No shared mutable package-level state in Go or React.
-- `ToastContext` must be a React context wrapping `AppLayout`, not a module-level singleton. Toast state lives in `useState` inside the provider — see `DashboardContext.tsx:17-25` for the established context pattern.
-- `ErrorBoundary` must be a class component (React requirement — `componentDidCatch`), wrapping `<RouterProvider>` in `main.tsx`. It does not depend on any context.
-- `LoadingSkeleton` accepts `variant` and optional `count` props — no dependency on data shapes.
-- `NetworkStatusBar` reads `connected` from `DashboardContext` — already available in `AppLayoutInner` at `App.tsx:26`.
-- `CommandPalette` (stretch goal) accepts `onSelect` callback — no dependency on specific routes or actions.
+No new shared mutable package-level state is introduced. Current package-level vars that are being **removed**:
+
+- `internal/cataractae/session.go:574` — `claudePathFn` variable. **Delete**.
+- `internal/cataractae/session.go:584-593` — `claudePath` function. **Delete**.
+
+Package-level vars that are **kept** (they support test injectability for remaining functionality):
+
+- `resolveCommandFn` — `session.go:238` — used by `buildPresetCmd` for path resolution.
+- `execTmuxNewSession` — `session.go:243` — used by `spawn` for tmux interaction.
+- `execTmuxKillServer` — `session.go:250` — used by dead-server recovery.
+- `execTmuxPipePaneCmd` — `session.go:261` — used by session logging.
+- `protocolSkillPathFn` — `parse.go:119` — used by skill injection.
+
+The `builtins` var at `preset.go:115` is a package-level `[]ProviderPreset` slice. It is read-only after initialization. No mutation occurs. **Keep** — it is an immutable table, not shared mutable state.
 
 ## DRY Requirements
 
-### Toast pattern (1 explicit occurrence, N pending)
+No new repeated patterns are introduced. The removal is simplification — eliminating code paths rather than adding them.
 
-The `showToast` + auto-dismiss timer pattern appears in:
-1. `web/src/pages/CastellariusPage.tsx:6-25` (inline `Toast` interface, `showToast` callback, `toastTimerRef`)
+The following patterns become unnecessary and are removed entirely:
 
-With the requirement that "toast notifications for all API errors" appear everywhere, every page would duplicate this pattern without extraction. Extract:
-- `web/src/context/ToastContext.tsx` — provider + `useToast()` hook
-- `web/src/components/Toast.tsx` — render component (fixed at bottom-right, auto-dismiss)
-- Replace the inline pattern in `CastellariusPage.tsx:6-25`
-
-### Loading/empty state pattern (5+ occurrences)
-
-The "Loading..." text pattern appears in:
-1. `web/src/pages/DropletDetail.tsx:104-107`
-2. `web/src/components/IssuesList.tsx:29`
-3. `web/src/components/DependenciesList.tsx:43-44`
-4. `web/src/pages/Dashboard.tsx:33-35`
-5. `web/src/components/DropletTable.tsx` (spinner pattern)
-
-Each currently renders a plain "Loading..." string. The `LoadingSkeleton` component replaces these with animated placeholder rectangles matching the dark theme. The component does NOT replace the `useApi` hook loading states — it's purely a presentational component that receives `loading: boolean` and renders skeleton or children.
-
-### PeekPanel auto-scroll + search (new feature, no existing duplication)
-
-The current `PeekPanel.tsx:59-63` auto-scrolls unconditionally via `scrollTop = scrollHeight`. The requirements add:
-- Toggle auto-scroll (pin/unpin button)
-- Search within peek output
-
-These are additions to the existing component, not a new component, because the peek viewer is entity-specific to aqueduct monitoring.
-
-### Header network status (partial duplication)
-
-The `Header.tsx:33-37` already shows a green/red connection dot with "Live"/"Disconnected" text. The requirements add "Network status indicator in the header" with auto-reconnect display. Enhance the existing `Header` component rather than creating a separate `NetworkStatusBar`. The current `connected` prop from `DashboardContext` already drives this.
+1. **buildClaudeCmd** at `session.go:219-233` — single use, deleted.
+2. **claudePath** at `session.go:584-593` — single use, deleted.
+3. **CLAUDE.md backward compat** in `parse.go:61-63` — removed along with the guard logic.
+4. **SupportsAddDir branching** in `session.go:470-491` and `session.go:496` — simplified: opencode always uses the prompt-injection path (no AddDir).
 
 ## Migration Requirements
 
-Not applicable — no database changes.
+This change has no database migrations. It is purely Go code restructuring — removing code, not adding tables or columns.
+
+However, there is a **file system migration concern**: existing deployments may have `CLAUDE.md` files in `~/.cistern/cataractae/<identity>/`. The `GenerateCataractaeFiles` function will now write `AGENTS.md` instead. The brief prescribes:
+
+1. The default `instructionsFile` changes from `"CLAUDE.md"` to `"AGENTS.md"` at `parse.go:66`.
+2. Remove the CLAUDE.md backward-compatibility guard at `parse.go:61-63` (since claude provider no longer exists, there is no reason to preserve stale CLAUDE.md files).
+3. The `ensureCataractaeIntegrity` function at `scheduler.go:1743-1777` must check for `AGENTS.md` instead of `CLAUDE.md`.
+4. The `drought_hooks.go:399` must stat `AGENTS.md` instead of `CLAUDE.md`.
 
 ## Test Requirements
 
-### New test files
+All test files must be updated to reflect the removal. The following test files require changes (see API Surface Checklist for specific test function names):
 
-| Test file | What it covers |
-|-----------|----------------|
-| `web/src/__tests__/ErrorBoundary.test.tsx` | Catches render errors, displays fallback UI, does not crash app |
-| `web/src/__tests__/LoadingSkeleton.test.tsx` | Renders card/row/table variants, applies pulse animation, hides when loading=false |
-| `web/src/__tests__/Toast.test.tsx` | Renders toast message, auto-dismisses after 3s, replaces previous toast |
-| `web/src/__tests__/NotFoundPage.test.tsx` | Renders 404 message, shows link back to dashboard |
-| `web/src/__tests__/TerminalView.test.tsx` | Renders monospace text lines, handles empty input, respects max buffer size |
-| `cmd/ct/dashboard_web_integration_test.go` | Verifies /app/ serves index.html, /app/assets/ serves assets, / redirects to xterm, /api/ endpoints still work, /app/unknown serves index.html for client routing |
+### Test naming convention
+Tests use `TestXxx_YyyZzz` format. See `internal/proc/proc_test.go:96` (`TestClaudeAliveUnderPIDIn_EmptyPID_ReturnsFalse`), `internal/provider/preset_test.go:11` (`TestBuiltins_ReturnsExpectedPresetNames`).
 
-### Updated test files
+### Specific test updates required
 
-| Test file | What changes |
-|-----------|-------------|
-| `web/src/__tests__/PeekPanel.test.ts` | Add tests for auto-scroll toggle, search within output |
-| `web/src/__tests__/DashboardContext.test.ts` | Add test for network status propagation to Header |
-| `web/src/__tests__/useAuth.test.ts` | Add test for 401 redirect interceptor pattern |
-| `cmd/ct/dashboard_web_spa_test.go` | Add test for CSP header on index.html (already partially tested), add test for /app/unknown falling back to index.html |
+| File | Change |
+|------|--------|
+| `internal/provider/preset_test.go` | Delete `TestBuiltins_ClaudePreset` (line 30), `TestBuiltins_CodexPreset` (line 43), `TestBuiltins_GeminiPreset` (line 54), `TestBuiltins_CopilotPreset` (line 65). Update `TestBuiltins_ReturnsExpectedPresetNames` line 12: `want` becomes `[]string{"opencode"}`. Remove claude/codex/gemini/copilot rows from NonInteractive table (lines 93-96), SupportsAddDir table (lines 117-120). Rename `TestResolvePreset_DefaultsToClaudeWhenEmpty` (line 426) to `TestResolvePreset_DefaultsToOpencodeWhenEmpty`. Update default assertion from `"claude"` to `"opencode"`. Rename `TestResolvePreset_UnknownNameFallsBackToClaude` (line 446) similarly. Update all test tables that reference removed preset names. |
+| `internal/proc/proc_test.go` | Remove claude/codex entries from `IsAgentCmdline` table (lines 75-80). Remove "claude" and "codex" from agent name loops in `TestClaudeAliveUnderPIDIn_*` tests (lines 115-118, 134, 152). Rename all `TestClaudeAliveUnderPIDIn_*` functions to `TestAgentAliveUnderPIDIn_*`. |
+| `internal/cataractae/smoke_test.go` | Remove `t.Setenv("CLAUDE_PATH", "claude")` at line 21. Delete test cases for "claude" (line 41), "codex" (line 50), "gemini" (line 60), "copilot" (line 70). Keep "opencode" and "custom user preset". |
+| `internal/cataractae/session_test.go` | Remove buildClaudeCmd tests (lines 56-76, 84-92). Update all `CLAUDE.md` references to `AGENTS.md`. Remove `CLAUDE_PATH` env var usage (lines 189, 197, 406-407, 926). Remove codex-specific test cases (lines 554, 564, 600). |
+| `internal/cataractae/context_test.go` | Update GEMINI.md/CLAUDE.md exclusion test at line 768 to use AGENTS.md only. |
+| `internal/aqueduct/provider_test.go` | Update `TestResolveProvider_DefaultsToClaudeWhenNoProvider` (line 13) to expect "opencode" as default. Update codex/gemini test cases. |
+| `internal/aqueduct/workflow_test.go` | Update CLAUDE.md references to AGENTS.md. Remove backward-compat tests at lines 558-602. Update default instructionsFile test at line 607 to expect AGENTS.md. |
+| `cmd/ct/doctor_test.go` | Remove claude/codex/gemini/copilot install hint rows from `TestProviderInstallHint_KnownPreset_ReturnsHint`. Remove codex-specific env/CLAUDE.md tests. Update `checkClaudeMdIntegrity` calls to use renamed function and AGENTS.md. |
+| `cmd/ct/castellarius_test.go` | Remove `usesClaude` tests (lines 520-573). |
+| `cmd/ct/init_test.go` | Update CLAUDE.md references to AGENTS.md (lines 102-109). Remove claude OAuth references (lines 495-503). |
+| `internal/castellarius/drought_hooks_test.go` | Update CLAUDE.md references to AGENTS.md (lines 183-247). |
 
-### Specific test cases
+### Delete entire test file
 
-- `ErrorBoundary.test.tsx`: `it('catches render error and displays fallback')`, `it('does not crash sibling components')`, `it('provides retry button in fallback')`
-- `LoadingSkeleton.test.tsx`: `it('renders card skeleton with pulse animation')`, `it('renders row skeleton')`, `it('renders table skeleton with multiple rows')`, `it('renders nothing when loading is false')`
-- `Toast.test.tsx`: `it('displays toast message')`, `it('auto-dismisses after timeout')`, `it('replaces previous toast on new call')`, `it('cleans up timer on unmount')`
-- `NotFoundPage.test.tsx`: `it('renders 404 heading')`, `it('renders link back to /app/')`
-- `TerminalView.test.tsx`: `it('renders lines in monospace')`, `it('renders "Connecting" when no output')`, `it('handles empty lines array')`
-- `PeekPanel.test.ts` (enhanced): `it('defaults to auto-scroll on')`, `it('toggles auto-scroll off when user scrolls up')`, `it('resumes auto-scroll when toggled back on')`, `it('renders search input when search is toggled')`, `it('highlights matching text in search results')`, `it('clears search on Escape')`
-- Go integration tests:
-  - `TestWebMux_AppServesIndexHTML` — verify /app/ returns 200 with text/html and CSP headers (partially covered by existing `TestSPAHandler_ServesIndexHTML`)
-  - `TestWebMux_AppSubRouteServesIndexHTML` — verify /app/droplets, /app/castellarius return index.html (covered by `TestSPAHandler_ServesSubRoutes`)
-  - `TestWebMux_AppAssetsServedWithNosniff` — verify /app/assets/*.js has X-Content-Type-Options: nosniff (covered by `TestSPAHandler_SecurityHeadersOnAssets`)
-  - `TestWebMux_RootServesXtermDashboard` — verify / serves xterm.js HTML (covered by `TestDashboardWebMux_RootServesHTML`)
-  - `TestWebMux_AppRedirectRoot` — verify /app redirects 301 to /app/ (covered by `TestSPAHandler_RedirectsAppRoot`)
-  - `TestWebMux_APIEndpointsStillWork` — verify /api/droplets returns JSON (covered by existing API tests)
-  - `TestWebMux_ClassicDashboardLink` — NEW: verify the root HTML contains a link to /app/
-  - `TestWebMux_AppIndexHTMLContainsClassicLink` — NEW: verify /app/ HTML contains "Classic Dashboard" link to /
+- `internal/testutil/fakeclaude/main.go` — entire file. This binary exists solely to produce a `/proc/<pid>/cmdline` whose argv[0] is "claude" for testing `ClaudeAliveUnderPIDIn`. No longer needed.
 
 ## Forbidden Patterns
 
-- **Package-level mutable vars for config.** The existing `currentDropletSSEConnections` and `currentLogSSEConnections` at `dashboard_web.go:95-98` are `int64` atomics used as global counters — this is acceptable for atomic counters but FORBIDDEN for new config-like mutable state. All new config must be struct fields with constructor injection.
-- **SetXxx mutation methods.** FORBIDDEN — use constructor injection. See `newSPAHandler(apiKey string)` at `dashboard_web_spa.go:20`.
-- **Lazy initialization (initClient pattern).** FORBIDDEN — eager constructor initialization. `newSPAHandler` reads all files and builds the handler in one call.
-- **Shared mutable package-level state (maps, vars).** FORBIDDEN — must be struct fields with defensive copies. The `outboundRateLimiter` at `dashboard_web.go:1266-1271` is a struct with constructor `newOutboundRateLimiter()` — correct pattern.
-- **PascalCase fields on unexported Go structs.** FORBIDDEN — see `aqueductSessionInfo` at `dashboard_web.go:113-118` for the correct pattern (all unexported fields).
-- **fmt.Fprintf(os.Stderr) for errors.** FORBIDDEN in new code — the existing `fmt.Fprintf(os.Stderr, "ct dashboard: spawn error: %v\n", err)` at `dashboard_web.go:517` is legacy; new code must use `slog.Error`.
-- **Silently swallowing errors.** FORBIDDEN — at minimum `slog.Debug`.
-- **Shadowing Go builtins** (`min`, `max`, `any`).** FORBIDDEN.
-- **Inline modal JSX in parent components.** FORBIDDEN — see previous brief. All modals must be separate component files.
-- **`any` type usage in TypeScript.** FORBIDDEN — all API responses and form state must use typed interfaces from `api/types.ts`.
-- **Third-party component libraries (xterm.js, ansi-to-html, etc.).** The peek viewer must NOT import xterm.js — it already exists for the classic dashboard and is 300KB+. The `TerminalView.tsx` must be a simple `<pre>`-based renderer. The server already strips ANSI on the peek endpoint (`dashboard_web.go:898,957`). See existing `PeekPanel.tsx:94-99` which already uses `<pre>` + `font-mono text-xs text-cistern-green`.
+- Inline string constants for instruction filenames in scheduler/drought_hooks code — must use `preset.InstrFile()` or the constant `"AGENTS.md"` consistently. Currently `scheduler.go:1760` and `drought_hooks.go:399` hardcode `"CLAUDE.md"` — must not repeat this pattern with a different hardcoded string. Use `providerPreset.InstrFile()` where a preset is available, or the constant where it is not.
+- Package-level mutable vars for config — existing `claudePathFn` at `session.go:574` is being removed, not replicated.
+- Silently swallowing errors — existing pattern at `drought_hooks.go:428-431` logs a warning and falls back. This is acceptable. Do not remove the warning.
+- Mixed CLAUDE.md/AGENTS.md references in the same code path — after this change, only AGENTS.md should appear.
 
 ## API Surface Checklist
 
-### Go server — existing endpoints (verify no regressions)
+### Provider Preset (`internal/provider/preset.go`)
 
-- [ ] **`GET /app/` serves index.html** — Contract: returns 200 with `Content-Type: text/html; charset=utf-8`, CSP header `default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self' ws: wss:; img-src 'self'; font-src 'self'`, X-Content-Type-Options: nosniff, X-Frame-Options: DENY, Referrer-Policy: strict-origin-when-cross-origin. Already implemented at `dashboard_web_spa.go:68-74`. Already tested at `dashboard_web_spa_test.go:9-28`.
+- [ ] `builtins` var (line 115) contains exactly one entry: the opencode preset. All other entries (claude, ollama-claude, codex, gemini, copilot) are removed.
+- [ ] `InstrFile()` (line 107) returns `"AGENTS.md"` when `InstructionsFile` is empty, not `"CLAUDE.md"`.
+- [ ] `ResolvePreset("")` (line 229) falls back to `"opencode"` instead of `"claude"`.
+- [ ] `NonInteractiveConfig.PrintFlag` field is removed from the struct. No preset uses it after claude removal.
+- [ ] `NonInteractiveConfig.AllowedToolsFlag` field is removed from the struct. No preset uses it after claude removal.
+- [ ] `ResumeStyle` type, `ResumeStyleFlag` constant, and `ResumeStyleSubcommand` constant (lines 32-40) are removed. Only codex used `ResumeStyleSubcommand`.
+- [ ] `ContinueFlag` field (line 83) is removed from `ProviderPreset`. Only claude/ollama-claude set it.
+- [ ] `AddDirFlag` field (line 58) is removed from `ProviderPreset`. Only claude/ollama-claude set it.
+- [ ] `SupportsAddDir` field (line 103) is removed from `ProviderPreset`. Only claude/ollama-claude set it to true.
+- [ ] `ResumeFlag` field (line 76) is **kept** — used by `cmd/ct/filter.go:102` for the filter resume feature, with fallback to `"--resume"` at line 103-104.
+- [ ] `Builtins()` returns a slice with exactly one entry. Contract: `len(Builtins()) == 1 && Builtins()[0].Name == "opencode"`.
+- [ ] `MergePresets(base, overrides)` still works — overridden entries matching by Name, unknown names appended.
+- [ ] `LoadUserPresets(path)` still works — reads JSON, merges onto builtins. Preserves the extension point for custom user presets.
+- [ ] `ResolvePreset("opencode")` returns the opencode preset. `ResolvePreset("unknown")` falls back to opencode (not claude). `ResolvePreset("")` returns opencode.
 
-- [ ] **`GET /app` redirects to /app/** — Contract: returns 301 Moved Permanently with Location: /app/. Already implemented at `dashboard_web.go:848-850`. Already tested at `dashboard_web_spa_test.go:53-84`.
+### Session (`internal/cataractae/session.go`)
 
-- [ ] **`GET /app/assets/*` serves static assets** — Contract: serves embedded JS/CSS with X-Content-Type-Options: nosniff, correct MIME types via `http.FileServer`. Already implemented at `dashboard_web_spa.go:61-64`. Already tested at `dashboard_web_spa_test.go:155-169`.
+- [ ] `buildClaudeCmd` method (lines 219-233) is deleted.
+- [ ] `claudePathFn` variable (line 574) is deleted.
+- [ ] `claudePath` function (lines 584-593) is deleted.
+- [ ] The `else` branch at lines 91-93 in `spawn()` (`s.buildClaudeCmd(skillsDir)`) is removed. `s.Preset.Name` is always non-empty after provider resolution defaults to opencode.
+- [ ] The `cmdPath := claudePathFn()` call at line 97 is removed. Only `resolveCommandFn(s.Preset.Command)` remains.
+- [ ] `presetBaseParts` (line 305) no longer appends `AddDirFlag` — remove the `if preset.AddDirFlag != ""` block at lines 313-315.
+- [ ] `buildPrompt` (line 464) removes the `SupportsAddDir` branching. The `if !s.Preset.SupportsAddDir` block at lines 470-480 becomes the only path. Remove the `else` branch at lines 482-491.
+- [ ] `buildPrompt` removes the `SupportsAddDir` guard at line 496. Skills are always injected as text (opencode has no AddDirFlag).
+- [ ] `Session.Identity` comment at line 29 is updated: "Used to locate cataractae/<identity>/AGENTS.md" instead of "CLAUDE.md".
+- [ ] `Session.TemplateCtx` comment at line 45 is updated: "render AGENTS.md as a Go template" instead of "CLAUDE.md".
+- [ ] `Session.Preset` comment at line 37 is updated: remove "When Name is empty, spawn falls back to the legacy claude hard-coded path."
+- [ ] `buildPresetCmd` comment at line 336 is updated: remove "e.g. claude uses -p" reference.
 
-- [ ] **`GET /app/*` (non-asset) serves index.html** — Contract: all non-asset routes under /app/ return index.html for client-side routing. Already implemented at `dashboard_web_spa.go:67-74`. Already tested at `dashboard_web_spa_test.go:30-51`.
+### Process Detection (`internal/proc/proc.go`)
 
-- [ ] **`GET /` serves xterm.js classic dashboard** — Contract: returns 200 with text/html containing xterm.js references, backward compatible. Already implemented at `dashboard_web.go:852-859`. Already tested at `dashboard_web_test.go:24-45`.
+- [ ] `ClaudeAliveUnderPIDIn` function (line 16) is renamed to `AgentAliveUnderPIDIn`. Parameter signature unchanged.
+- [ ] `IsAgentCmdline` (line 94) removes "claude", "codex" from the switch and removes the `strings.HasPrefix(base, "claude-")` default case (line 107). Only `"opencode"` remains.
+- [ ] `IsClaudeCmdline` function (line 113) is deleted entirely — backward-compat wrapper no longer needed.
+- [ ] `AgentAliveUnderPIDIn` returns true only when an opencode process descendant is found.
 
-### Go server — new additions
+### Cataractae Integrity (`internal/castellarius/scheduler.go`)
 
-- [ ] **Classic Dashboard link in /app/ index.html** — Contract: the SPA's `Header` component renders a "Classic Dashboard" link pointing to `/`. The link is visible in the header bar next to the connection status. Implementation goes in the React `Header.tsx` component, NOT in Go. The Go server does not inject links into the SPA HTML — it only injects the auth meta tag.
+- [ ] `ensureCataractaeIntegrity` (line 1743) reads `AGENTS.md` instead of `CLAUDE.md`. Variable renamed from `claudePath` to `agentsPath` (line 1760). Path: `filepath.Join(cataractaeDir, identity, "AGENTS.md")`.
+- [ ] Log messages at lines 1763, 1771, 1773, 1775 reference `AGENTS.md` instead of `CLAUDE.md`.
+- [ ] Comment at line 379 references `AGENTS.md` instead of `CLAUDE.md`.
 
-- [ ] **New UI link in / xterm.js dashboard** — Contract: the root HTML (the xterm.js page at `/`) contains a link or badge "New UI →" that navigates to `/app/`. This is implemented in Go by adding an HTML element to `dashboardHTML` (the template string). The link must be unobtrusive — a small fixed-position badge in the top-right corner, not in the terminal viewport.
+### Drought Hooks (`internal/castellarius/drought_hooks.go`)
 
-- [ ] **`/app/unknown-route` still serves index.html** — Contract: client-side routing means any `/app/*` route that isn't an asset request serves index.html. The React Router handles 404 display. Already implemented at `dashboard_web_spa.go:67-74`. Add a React-side 404 catch-all route.
+- [ ] Line 399: variable renamed from `claudePath` to `agentsPath`, path uses `"AGENTS.md"` instead of `"CLAUDE.md"`.
+- [ ] Line 430: log message references `AGENTS.md` instead of `CLAUDE.md`.
+- [ ] Lines 77, 251: comments reference `AGENTS.md` instead of `CLAUDE.md`.
 
-### React — routing additions
+### Cataractae Context (`internal/cataractae/context.go`)
 
-- [ ] **404 catch-all route in `main.tsx`** — Contract: a `path: '*'` route as the last child of the `/app` layout renders `<NotFoundPage />`. The `NotFoundPage` displays "404 — Page Not Found" heading in `font-mono text-cistern-muted`, and a link back to `/app/` styled as `text-cistern-accent hover:underline`. Route must come after all other children in the `createBrowserRouter` array — see `main.tsx:21-32` for the existing route structure.
+- [ ] Line 54: `InstructionsFile` comment simplified to `"e.g. "AGENTS.md" for opencode"`. Remove `"CLAUDE.md" for claude, "GEMINI.md" for gemini` references.
 
-- [ ] **React Router `ErrorBoundary` class component** — Contract: wraps `<RouterProvider>` in `main.tsx:36-39`. Catches render errors from any route component. Renders a fallback UI: `flex items-center justify-center h-screen bg-cistern-bg` with `text-cistern-red font-mono text-lg` heading "Something went wrong" and a "Reload" button that calls `window.location.reload()`. Must be a class component (React's `componentDidCatch` API requirement). Does NOT replace per-page error states (like `DropletDetail.tsx:92-99`) — those handle data-loading errors, not render crashes.
+### Provider Resolution (`internal/aqueduct/provider.go`)
 
-### React — PeekPanel enhancements
+- [ ] Line 27: default name changes from `"claude"` to `"opencode"`.
+- [ ] Line 17: comment updated — `"opencode"` instead of `"claude"` as the default.
+- [ ] Lines 58-59: comments updated — remove gemini/codex examples, use generic language.
 
-- [ ] **`PeekPanel` auto-scroll toggle** — Contract: adds a `autoScroll` boolean state defaulting to `true`. When `autoScroll` is true, the existing `useEffect` at `PeekPanel.tsx:59-63` scrolls to bottom on every output change. When `autoScroll` is false, the panel does NOT auto-scroll. A toggle button in the header bar (next to "Peek" label) shows "↓ Auto" when on and "↓ Manual" when off. The button uses `text-xs px-2 py-0.5 rounded border border-cistern-border text-cistern-muted hover:text-cistern-fg` — matching the existing button style at `PeekPanel.tsx:84`.
+### Cataractae File Generation (`internal/aqueduct/parse.go`)
 
-- [ ] **`PeekPanel` auto-scroll pause on manual scroll** — Contract: detects when the user manually scrolls the `<pre>` element. If the user scrolls more than 30px from the bottom, `autoScroll` is set to `false`. If the user scrolls to the bottom (within 30px), `autoScroll` is set to `true`. Uses `onScroll` handler on the `<pre>` element at `PeekPanel.tsx:94`.
+- [ ] Line 66: default `instructionsFile` changes from `"CLAUDE.md"` to `"AGENTS.md"`.
+- [ ] Lines 54-55: doc comment updated — `"AGENTS.md"`, not `"CLAUDE.md"`.
+- [ ] Lines 61-63: CLAUDE.md backward-compatibility doc comment removed entirely.
 
-- [ ] **`PeekPanel` search within output** — Contract: adds a search toggle button (magnifying glass icon) in the header bar. When active, shows a search input field below the header. Input uses existing `bg-cistern-bg border border-cistern-border rounded px-2 py-1.5 text-sm text-cistern-fg` style (see `AddNoteModal.tsx:49-50`). As the user types, matching lines are highlighted with `bg-cistern-yellow/30`. Pressing Enter jumps to the next match. Pressing Escape clears the search and hides the input. The search operates on the existing `output` state string (not a separate data structure) — filter lines containing the query text and render matches. When no search is active, all lines render as before.
+### Aqueduct Types (`internal/aqueduct/types.go`)
 
-### React — polish components
+- [ ] Line 98: `Name` comment updated — `"e.g. "opencode"` instead of `"claude", "opencode"`. Default reference changed from `"claude"` to `"opencode"`.
 
-- [ ] **`ErrorBoundary` component** — Contract: class component `ErrorBoundary` in `web/src/components/ErrorBoundary.tsx`. Implements `componentDidCatch(error, errorInfo)`. State: `{ hasError: boolean, error: Error | null }`. When `hasError` is true, renders fallback UI instead of children. Fallback: centered card `bg-cistern-surface border border-cistern-border rounded-lg p-6 max-w-md w-full mx-4` containing error message and "Reload" button. When `hasError` is false, renders `children` unchanged. Props: `{ children: React.ReactNode, fallback?: React.ReactNode }`. If `fallback` is provided, render it instead of the default error UI.
+### Doctor Command (`cmd/ct/doctor.go`)
 
-- [ ] **`LoadingSkeleton` component** — Contract: functional component in `web/src/components/LoadingSkeleton.tsx`. Props: `{ variant: 'card' | 'row' | 'table', count?: number, loading: boolean, children: React.ReactNode }`. When `loading` is true, renders animated skeleton placeholders. When `loading` is false, renders `children`. Animation: Tailwind `animate-pulse` on each skeleton element. Card variant: `bg-cistern-surface border border-cistern-border rounded-lg p-4` with 3 horizontal bars inside (heading: `h-4 w-24 bg-cistern-border rounded`, body: `h-3 w-full bg-cistern-border rounded`, body2: `h-3 w-3/4 bg-cistern-border rounded`). Row variant: single row `h-6 w-full bg-cistern-border rounded`. Table variant: `count` rows of `h-8 w-full bg-cistern-border rounded` with header row. Must be added to barrel `web/src/components/index.ts`.
+- [ ] `providerInstallHint` (line 429): remove "claude", "codex", "gemini" cases (lines 431-436). Keep "opencode" case (lines 437-438).
+- [ ] `inferLLMProviderFromPreset` (line 446): remove "claude", "codex", "gemini", "copilot" cases (lines 448-457). Keep "opencode" → "ollama" case (lines 454-455).
+- [ ] `checkClaudeMdIntegrity` (line 462) is renamed to `checkInstructionsFileIntegrity`. Parameter unchanged (`path string`). Error messages reference "instructions file" instead of "CLAUDE.md". Function body unchanged (reads file, checks for sentinel).
 
-- [ ] **`Toast` component and `ToastContext`** — Contract: `web/src/components/Toast.tsx` renders a single toast notification at `fixed bottom-4 right-4 z-50`. Props: `{ message: string, type: 'success' | 'error', visible: boolean }`. Success: `bg-cistern-green/20 border border-cistern-green/40 text-cistern-green`. Error: `bg-cistern-red/20 border border-cistern-red/40 text-cistern-red`. Uses `font-mono text-sm`. Auto-dismisses after 3000ms (matches existing pattern at `CastellariusPage.tsx:21-24`). `web/src/context/ToastContext.tsx` provides `useToast()` hook returning `{ showToast: (message: string, type: 'success' | 'error') => void }`. Must wrap `AppLayout` children in `App.tsx:16-20`. Replace inline pattern in `CastellariusPage.tsx:6-25`. Must be added to barrel `web/src/components/index.ts`.
+### Castellarius Startup (`cmd/ct/castellarius.go`)
 
-- [ ] **Network status indicator in `Header`** — Contract: enhances the existing connection dot at `Header.tsx:33-37`. When `connected` is false, shows "Reconnecting..." text in addition to the red dot. When `connected` transitions from false to true, briefly shows "Connected" in `text-cistern-green` for 2 seconds before reverting to "Live". No new component — modify `Header.tsx` directly. Uses `useEffect` with a timer to handle the "Connected" flash.
+- [ ] `startupRequiredEnvVars` (line 675): remove `usesClaude` return value and concept. Function signature changes to `func startupRequiredEnvVars(cfgPath string) []string`. Remove `usesClaude` variable (line 691). When no repos resolved, return `nil` instead of `nil, true` (line 701-703). All callers must be updated.
 
-- [ ] **API 401 interceptor** — Contract: in `web/src/api/shared.ts`, after `apiFetch` receives a 401 response, check if the app requires auth (via `isAuthRequired()` at `useAuth.ts:5-8`). If auth is required and the key is present, the 401 means the key is invalid — clear the stored key and update auth state. If auth is required and there's no key, this should not happen (SPA routes are auth-exempt). Implementation: in `apiFetch` at `shared.ts:3-13`, add a check after `!resp.ok`: if `resp.status === 401` and auth is required, call `clearStoredKey()` from `useAuth.ts:26-32` and dispatch a custom event `'cistern:auth-expired'`. The `AppLayout` component listens for this event and triggers `logout()` from `useAuth`.
+### Evaluate Package (`internal/evaluate/evaluate.go`)
 
-### React — mobile responsive
+- [ ] `LLMCaller` struct (line 90): remove `PrintFlag` and `AllowedToolsFlag` fields.
+- [ ] `NewLLMCaller` constructor (line 101): remove `printFlag` and `allowedToolsFlag` parameters.
+- [ ] `Call` method (lines 116+): remove the `c.PrintFlag` and `c.AllowedToolsFlag` usage at lines 139-144.
 
-- [ ] **Sidebar collapses on mobile** — Already implemented at `Sidebar.tsx:20-21` (overlay + `md:hidden`). Verify the hamburger menu button at `Header.tsx:13-19` works correctly on small screens. No changes needed — this pattern is already in place.
+### Fake Agent (`internal/testutil/fakeagent/main.go`)
 
-- [ ] **Table-to-card switch on mobile** — Contract: `DropletTable.tsx` (if it exists) or the droplets list page must use responsive breakpoints. On screens `< md` (640px), render droplets as vertical cards instead of table rows. Card pattern: `bg-cistern-surface border border-cistern-border rounded-lg p-3 space-y-1`. Table pattern (existing): standard `<table>`. Implementation: use Tailwind `hidden md:table` / `md:hidden` pattern for switching between card and table views.
+- [ ] Comments updated: remove claude-specific flag references (lines 4, 110, 112).
+- [ ] Line 124: remove `"claude auth status"` handling or adapt for opencode.
 
-- [ ] **Touch-friendly tap targets** — Contract: all interactive elements (buttons, links, inputs) must have minimum 44px tap target area. Use `min-h-[44px] min-w-[44px]` on icon-only buttons. Existing button styles at `PeekPanel.tsx:74` and `Header.tsx:14` may fail this bar on mobile — add `min-h-[44px]` or `p-2` to ensure adequate tap area.
+### Non-Go Files
 
-### React — keyboard navigation
+- [ ] `.gitignore` (line 4): remove `.claude/` entry.
+- [ ] `docker-entrypoint.sh` (lines 9-13): remove `~/.claude` symlink setup.
+- [ ] `README.md`: remove CLAUDE.md, GEMINI.md, claude/codex/gemini/copilot provider references. Simplify provider documentation to show only opencode.
+- [ ] `cataractae/delivery/INSTRUCTIONS.md` (line 194): update "CLAUDE.md for claude, GEMINI.md for gemini" to just "AGENTS.md".
+- [ ] `skills/cistern/references/commands.md` (lines 292, 298, 534): update CLAUDE.md/GEMINI.md references.
+- [ ] `skills/cistern/SKILL.md` (line 176): remove `~/.claude/.credentials.json` reference.
+- [ ] `internal/skills/cistern-git/SKILL.md` (lines 16-17, 43): simplify "AGENTS.md for opencode/codex, CLAUDE.md for claude" to just "AGENTS.md".
 
-- [ ] **Focus management for modals** — Contract: when a `ModalOverlay` opens (see `ModalOverlay.tsx`), focus moves to the first focusable element inside the modal. When the modal closes, focus returns to the element that triggered it. Implementation: in `ModalOverlay.tsx`, add `useEffect` that focuses the first `[tabindex], button, input, select, textarea, a[href]` inside the modal when `open` becomes true. Use `autoFocus` or `ref.current.focus()`. Store the previously focused element via `document.activeElement` and restore it in the cleanup. Existing modal components (`AddNoteModal`, `EditMetadataModal`, etc.) inherit this behavior automatically since they use `ModalOverlay`.
+### CLAUDE.md Backward Compatibility in parse.go
 
-- [ ] **Escape closes modals** — Contract: pressing Escape when a modal is open calls `onClose`. Implementation: in `ModalOverlay.tsx`, add a `keydown` event listener on `document` that calls `onClose` when `e.key === 'Escape'`. Use `useEffect` with `open` dependency — add listener when modal opens, remove when it closes. Must check that the event target is not an `<input>` or `<textarea>` where Escape might have a different meaning (e.g., clearing search in PeekPanel). For modals, Escape always closes.
+- [ ] Remove the CLAUDE.md preservation logic. After removing claude provider, there is no scenario where a user switches back to claude. The current code at `parse.go:61-63` says "when instructionsFile differs from CLAUDE.md, any pre-existing CLAUDE.md is left untouched". This guard is now dead code since `instructionsFile` will always be `"AGENTS.md"`. **Delete** this conditional and any corresponding test code (`workflow_test.go:558-602`).
 
-- [ ] **Tab navigation through sidebar** — Contract: sidebar links are focusable and navigable via Tab. Already implemented — `NavLink` at `Sidebar.tsx:49` renders `<a>` tags which are natively focusable. Add `focus:ring-2 focus:ring-cistern-accent focus:outline-none` to the NavLink className to show focus indicator.
+### Spawn Path: Remove Legacy Fallback
 
-- [ ] **Command palette (stretch goal — nice-to-have)** — Contract: `Ctrl+K` opens a command palette overlay. The palette shows a search input and a list of navigable actions (Go to Dashboard, Go to Droplets, etc.). Uses `useNavigate` from React Router. Component: `web/src/components/CommandPalette.tsx`. Accepts `{ open: boolean, onClose: () => void }`. Uses `ModalOverlay` for the backdrop. If not implemented, the `Ctrl+K` key binding should not be registered (no empty stub).
+- [ ] In `session.go:spawn()`, after the removal of `buildClaudeCmd`, the `if s.Preset.Name != ""` / `else` branching at lines 86-93 simplifies. Since `Preset` is always populated (via `ResolvePreset` which defaults to opencode), the else branch is unreachable. **Remove** the else branch and the conditional guard — `buildPresetCmd` is always called.
 
-### React — loading states and optimistic updates
+### SupportsAddDir Removal: Prompt Building Simplification
 
-- [ ] **`LoadingSkeleton` replaces "Loading..." text** — Contract: every page component that currently renders a "Loading..." message (see DRY Requirements) must be updated to render `<LoadingSkeleton variant="..." loading={loading}>...</LoadingSkeleton>` instead. The `children` prop receives the loaded content.
+- [ ] In `session.go:buildPrompt()`, remove the `if !s.Preset.SupportsAddDir` conditional at line 470 and its `else` branch at lines 481-491. Since opencode does not support AddDir, the prompt-preamble path (lines 473-480) is the only code path.
+- [ ] Remove the `if !s.Preset.SupportsAddDir && len(s.Skills) > 0` guard at line 496. Simplify to `if len(s.Skills) > 0` — skills are always injected as text.
 
-- [ ] **Spinner for async actions** — Contract: buttons that trigger API mutations (Pass, Recirculate, Pool, Create, Signal, Restart) must show a spinner during the request. Use the existing `submitting` state pattern — see `EditMetadataModal.tsx` (disables button during submit). Add `disabled:opacity-50` and a small inline spinner `<span className="animate-spin">⟳</span>` replacing the button text. Matches existing `disabled:opacity-50` pattern at `AddNoteModal.tsx:55`.
+### Files to Delete
 
-- [ ] **Optimistic UI updates for status changes** — Contract: when a user signals a droplet (pass, recirculate, pool, close, reopen), update the droplet status in the UI immediately before the API response arrives. If the API call fails, revert to the original status and show an error toast. Implementation: in `DropletDetail.tsx`, wrap `handleAction` to set `sseDroplet` with the expected status optimistically, then revert on error. Uses the existing `useDropletMutation.mutate()` at `useApi.ts:238-251`.
-
-### React — cross-UI links
-
-- [ ] **Header "Classic Dashboard" link** — Contract: the React `Header.tsx` component renders a small link "Classic Dashboard" pointing to `/`. Position: after the connection indicator at `Header.tsx:33-37`. Style: `text-xs text-cistern-muted hover:text-cistern-fg font-mono border border-cistern-border rounded px-2 py-0.5`. This link allows users on the SPA to reach the xterm.js TUI dashboard.
-
-- [ ] **Root HTML "New UI" link** — Contract: the Go `dashboardHTML` string (serving the xterm.js classic dashboard at `/`) contains a small fixed-position badge in the top-right corner with text "New UI →" linking to `/app/`. Style: `position:fixed;top:8px;right:8px;background:rgba(0,0,0,0.7);color:#60a5fa;padding:4px 8px;border-radius:4px;font-size:11px;font-family:monospace;z-index:100;text-decoration:none;`. Must be added AFTER the opening `<body>` tag in `dashboardHTML` so it does not interfere with xterm.js terminal layout. The link opens `/app/` in the same tab (no `target="_blank"`).
-
-### Build integration
-
-- [ ] **`make web-build` Makefile target** — Contract: a Makefile target `web-build` runs `cd web && npm install && npm run build`. The Vite config (`vite.config.ts:8`) already outputs to `../cmd/ct/assets/web/`. The Go `//go:embed assets/web` directive (`dashboard_web_spa.go:11`) automatically picks up the built assets. No other build changes needed. The existing `go:build` pipeline does not need modification — embedding happens at compile time.
-
-- [ ] **Build process documentation** — Contract: add a "Web UI Development" section to `CONTRIBUTING.md` explaining: 1) `make web-build` to build the SPA, 2) `cd web && npm run dev` for development with Vite proxy, 3) the SPA is always available at `/app/` when running `ct dashboard --web`, 4) the classic xterm.js dashboard remains at `/`. Keep the section under 15 lines.
-
-### Go server — dashboard command flag
-
-- [ ] **`ct dashboard --web` works as before** — Contract: the `--web` flag starts the HTTP server. Already implemented at `dashboard.go:814-815`. No changes needed.
-
-- [ ] **`ct dashboard --web --addr 0.0.0.0:5737`** — Contract: the `--addr` flag sets the listen address. Already implemented at `dashboard.go:824`. No changes needed.
-
-- [ ] **SPA available at /app/ in --web mode** — Contract: already true. The `newDashboardMuxInternalWith` function at `dashboard_web.go:846-847` mounts the SPA handler at `/app/`. No changes needed.
-
-- [ ] **`ct dashboard --web --new-ui` flag** — Contract: OPTIONAL. If implemented, this flag makes `/` redirect to `/app/` instead of serving the xterm.js dashboard. When NOT set, `/` continues to serve xterm.js (backward compatible). If NOT implemented, add a comment in `dashboard.go` noting this as a future option.
+- [ ] `internal/testutil/fakeclaude/main.go` — entire file. Produced a fake "claude" binary for proc tests. No longer needed.
