@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { fetchRepos, fetchSkills } from '../api/repos';
 import type { RepoInfo, SkillInfo } from '../api/types';
 
@@ -7,16 +7,24 @@ export function ReposSkillsPage() {
   const [skills, setSkills] = useState<SkillInfo[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<Error | null>(null);
+  const mountedRef = useRef(true);
 
   useEffect(() => {
     setLoading(true);
     Promise.all([fetchRepos(), fetchSkills()])
       .then(([r, s]) => {
+        if (!mountedRef.current) return;
         setRepos(r);
         setSkills(s);
       })
-      .catch(err => setError(err instanceof Error ? err : new Error(String(err))))
-      .finally(() => setLoading(false));
+      .catch(err => {
+        if (!mountedRef.current) return;
+        setError(err instanceof Error ? err : new Error(String(err)));
+      })
+      .finally(() => {
+        if (mountedRef.current) setLoading(false);
+      });
+    return () => { mountedRef.current = false; };
   }, []);
 
   if (error && repos.length === 0 && skills.length === 0) {

@@ -13,6 +13,7 @@ export function LogsPage() {
   const [error, setError] = useState<Error | null>(null);
   const esRef = useRef<EventSource | null>(null);
   const sourceRef = useRef(activeSource);
+  const lastHistoryLine = useRef(0);
 
   useEffect(() => {
     sourceRef.current = activeSource;
@@ -28,7 +29,9 @@ export function LogsPage() {
     try {
       const lines = await fetchLogHistory(500, source);
       if (sourceRef.current !== source) return;
-      setEntries(parseLogLines(lines));
+      const parsed = parseLogLines(lines);
+      lastHistoryLine.current = parsed.length > 0 ? parsed[parsed.length - 1].line : 0;
+      setEntries(parsed);
     } catch (err) {
       if (sourceRef.current !== source) return;
       setError(err instanceof Error ? err : new Error(String(err)));
@@ -39,6 +42,8 @@ export function LogsPage() {
 
   useEffect(() => {
     const source = activeSource;
+    lastHistoryLine.current = 0;
+    setEntries([]);
     loadHistory(source);
 
     if (esRef.current) {
@@ -50,6 +55,7 @@ export function LogsPage() {
       source,
       (entry) => {
         if (sourceRef.current !== source) return;
+        if (entry.line <= lastHistoryLine.current) return;
         setEntries(prev => [...prev, entry]);
       },
       (err) => {

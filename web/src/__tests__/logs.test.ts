@@ -167,4 +167,35 @@ describe('createLogEventSource', () => {
     expect(receivedEntries).toHaveLength(1);
     expect(receivedEntries[0].text).toBe('not-json');
   });
+
+  it('SSE onEntry callback filters entries by lastHistoryLine', async () => {
+    const receivedEntries: Array<{ line: number; text: string }> = [];
+    const mockEventSource = {
+      onmessage: null as ((e: { data: string }) => void) | null,
+      onerror: null as (() => void) | null,
+      close: vi.fn(),
+    };
+    vi.stubGlobal('EventSource', vi.fn().mockImplementation(function(this: EventSource) { return mockEventSource; }));
+
+    vi.stubGlobal('localStorage', {
+      getItem: () => null,
+      setItem: () => {},
+      removeItem: () => {},
+    });
+
+    const { createLogEventSource } = await import('../api/logs');
+    const lastHistoryLine = 10;
+    createLogEventSource('castellarius', (entry) => {
+      if (entry.line <= lastHistoryLine) return;
+      receivedEntries.push({ line: entry.line, text: entry.text });
+    }, () => {});
+
+    mockEventSource.onmessage!({ data: '{"line":5,"text":"old line"}' });
+    mockEventSource.onmessage!({ data: '{"line":10,"text":"boundary line"}' });
+    mockEventSource.onmessage!({ data: '{"line":11,"text":"new line"}' });
+    mockEventSource.onmessage!({ data: '{"line":42,"text":"future line"}' });
+    expect(receivedEntries).toHaveLength(2);
+    expect(receivedEntries[0].line).toBe(11);
+    expect(receivedEntries[1].line).toBe(42);
+  });
 });
