@@ -2371,9 +2371,15 @@ func countLinesUpTo(path string, offset int64) int64 {
 	return count
 }
 
-// handleGetLogs returns the last N lines of the log file.
+// handleGetLogs returns the last N lines of the log file with absolute line numbers.
 // Query params: ?lines=500&source=castellarius
+// Returns: [{line: <int>, text: "<string>"}] with line numbers matching the file position.
 func handleGetLogs(cfgPath string) http.HandlerFunc {
+	type logLine struct {
+		Line int64  `json:"line"`
+		Text string `json:"text"`
+	}
+
 	return func(w http.ResponseWriter, r *http.Request) {
 		linesStr := r.URL.Query().Get("lines")
 		lines := 500
@@ -2398,7 +2404,7 @@ func handleGetLogs(cfgPath string) http.HandlerFunc {
 		f, err := os.Open(path)
 		if err != nil {
 			if os.IsNotExist(err) {
-				writeAPIJSON(w, http.StatusOK, []string{})
+				writeAPIJSON(w, http.StatusOK, []logLine{})
 				return
 			}
 			writeAPIError(w, http.StatusInternalServerError, "internal error")
@@ -2406,33 +2412,44 @@ func handleGetLogs(cfgPath string) http.HandlerFunc {
 		}
 		defer f.Close()
 
-		// Ring buffer approach: only keep the last `lines` entries in memory.
-		ring := make([]string, 0, lines)
+		// Ring buffer approach: only keep the last `lines` entries in memory,
+		// tracking absolute line numbers.
+		type ringEntry struct {
+			Line int64
+			Text string
+		}
+		ring := make([]ringEntry, 0, lines)
 		scanner := bufio.NewScanner(f)
 		scanner.Buffer(make([]byte, 0, maxScanTokenSize), maxScanTokenSize)
-		count := 0
+		lineNum := int64(0)
 		for scanner.Scan() {
+			lineNum++
+			entry := ringEntry{Line: lineNum, Text: scanner.Text()}
 			if len(ring) < lines {
-				ring = append(ring, scanner.Text())
+				ring = append(ring, entry)
 			} else {
-				ring[count%lines] = scanner.Text()
+				ring[int((lineNum-1)%int64(lines))] = entry
 			}
-			count++
 		}
 		if err := scanner.Err(); err != nil {
 			writeAPIError(w, http.StatusInternalServerError, "internal error")
 			return
 		}
 
-		var result []string
-		if count <= lines {
-			result = ring[:count]
+		var result []logLine
+		if lineNum <= int64(lines) {
+			result = make([]logLine, lineNum)
+			for i, e := range ring {
+				result[i] = logLine{Line: e.Line, Text: e.Text}
+			}
 		} else {
 			// Ring buffer: elements need to be reordered from oldest to newest.
-			start := count % lines
-			result = make([]string, lines)
-			copy(result, ring[start:])
-			copy(result[lines-start:], ring[:start])
+			start := int(lineNum % int64(lines))
+			result = make([]logLine, lines)
+			for i := 0; i < lines; i++ {
+				e := ring[(start+i)%lines]
+				result[i] = logLine{Line: e.Line, Text: e.Text}
+			}
 		}
 		writeAPIJSON(w, http.StatusOK, result)
 	}

@@ -51,6 +51,34 @@ describe('fetchLogHistory', () => {
     expect(calls[0]).not.toContain('source=app&evil');
   });
 
+  it('maps server line-numbered response to LogEntry objects', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve([
+        { line: 996, text: '2026 INFO old' },
+        { line: 997, text: '2026 WARN mid' },
+        { line: 998, text: '2026 ERROR err' },
+        { line: 999, text: '2026 DEBUG dbg' },
+        { line: 1000, text: '2026 plain end' },
+      ]),
+    }));
+
+    vi.stubGlobal('localStorage', {
+      getItem: () => null,
+      setItem: () => {},
+      removeItem: () => {},
+    });
+
+    const { fetchLogHistory } = await import('../api/logs');
+    const entries = await fetchLogHistory(500, 'castellarius');
+    expect(entries).toHaveLength(5);
+    expect(entries[0]).toEqual({ line: 996, level: 'INFO', text: '2026 INFO old', raw: '2026 INFO old' });
+    expect(entries[1]).toEqual({ line: 997, level: 'WARN', text: '2026 WARN mid', raw: '2026 WARN mid' });
+    expect(entries[2]).toEqual({ line: 998, level: 'ERROR', text: '2026 ERROR err', raw: '2026 ERROR err' });
+    expect(entries[3]).toEqual({ line: 999, level: 'DEBUG', text: '2026 DEBUG dbg', raw: '2026 DEBUG dbg' });
+    expect(entries[4]).toEqual({ line: 1000, level: '', text: '2026 plain end', raw: '2026 plain end' });
+  });
+
   it('throws on non-ok response', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
       ok: false,
@@ -197,5 +225,37 @@ describe('createLogEventSource', () => {
     expect(receivedEntries).toHaveLength(2);
     expect(receivedEntries[0].line).toBe(11);
     expect(receivedEntries[1].line).toBe(42);
+  });
+
+  it('SSE overlap dedup works with absolute line numbers from history', async () => {
+    const receivedEntries: Array<{ line: number; text: string }> = [];
+    const mockEventSource = {
+      onmessage: null as ((e: { data: string }) => void) | null,
+      onerror: null as (() => void) | null,
+      close: vi.fn(),
+    };
+    vi.stubGlobal('EventSource', vi.fn().mockImplementation(function(this: EventSource) { return mockEventSource; }));
+
+    vi.stubGlobal('localStorage', {
+      getItem: () => null,
+      setItem: () => {},
+      removeItem: () => {},
+    });
+
+    const { createLogEventSource } = await import('../api/logs');
+    const lastHistoryLine = 500;
+    createLogEventSource('castellarius', (entry) => {
+      if (entry.line <= lastHistoryLine) return;
+      receivedEntries.push({ line: entry.line, text: entry.text });
+    }, () => {});
+
+    mockEventSource.onmessage!({ data: '{"line":498,"text":"overlap-1"}' });
+    mockEventSource.onmessage!({ data: '{"line":499,"text":"overlap-2"}' });
+    mockEventSource.onmessage!({ data: '{"line":500,"text":"overlap-3"}' });
+    mockEventSource.onmessage!({ data: '{"line":501,"text":"new-1"}' });
+    mockEventSource.onmessage!({ data: '{"line":502,"text":"new-2"}' });
+    expect(receivedEntries).toHaveLength(2);
+    expect(receivedEntries[0].line).toBe(501);
+    expect(receivedEntries[1].line).toBe(502);
   });
 });

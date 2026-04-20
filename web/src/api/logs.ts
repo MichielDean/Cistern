@@ -1,6 +1,11 @@
 import { getAuthHeaders, getAuthParams } from '../hooks/useAuth';
 import type { LogSourceInfo, LogEntry } from './types';
 
+interface LogHistoryItem {
+  line: number;
+  text: string;
+}
+
 interface SSELogEvent {
   line: number;
   text: string;
@@ -9,7 +14,7 @@ interface SSELogEvent {
 export async function fetchLogHistory(
   lines = 500,
   source = 'castellarius',
-): Promise<string[]> {
+): Promise<LogEntry[]> {
   const auth = getAuthParams();
   const encodedSource = encodeURIComponent(source);
   const url = auth
@@ -17,7 +22,13 @@ export async function fetchLogHistory(
     : `/api/logs?lines=${lines}&source=${encodedSource}`;
   const resp = await fetch(url, { headers: getAuthHeaders() });
   if (!resp.ok) throw new Error(`logs: ${resp.status}`);
-  return resp.json();
+  const items: LogHistoryItem[] = await resp.json();
+  return items.map(item => ({
+    line: item.line,
+    level: parseLevel(item.text),
+    text: item.text,
+    raw: item.text,
+  }));
 }
 
 export function createLogEventSource(

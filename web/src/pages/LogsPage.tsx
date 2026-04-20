@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { LogViewer, parseLogLines } from '../components/LogViewer';
+import { LogViewer } from '../components/LogViewer';
 import { fetchLogHistory, createLogEventSource, fetchLogSources } from '../api/logs';
 import type { LogEntry, LogSourceInfo } from '../api/types';
 
@@ -27,11 +27,10 @@ export function LogsPage() {
     setLoading(true);
     setError(null);
     try {
-      const lines = await fetchLogHistory(500, source);
+      const logEntries = await fetchLogHistory(500, source);
       if (sourceRef.current !== source) return;
-      const parsed = parseLogLines(lines);
-      lastHistoryLine.current = parsed.length > 0 ? parsed[parsed.length - 1].line : 0;
-      setEntries(parsed);
+      lastHistoryLine.current = logEntries.length > 0 ? logEntries[logEntries.length - 1].line : 0;
+      setEntries(logEntries);
     } catch (err) {
       if (sourceRef.current !== source) return;
       setError(err instanceof Error ? err : new Error(String(err)));

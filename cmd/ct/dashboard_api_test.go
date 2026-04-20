@@ -2612,7 +2612,10 @@ func TestAPI_Logs_NotFoundReturnsEmpty(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Errorf("missing log file: status = %d, want 200", w.Code)
 	}
-	var result []string
+	var result []struct {
+		Line int64  `json:"line"`
+		Text string `json:"text"`
+	}
 	if err := json.NewDecoder(w.Body).Decode(&result); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
@@ -2902,15 +2905,70 @@ func TestAPI_Logs_LongLine_Handled(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("long line logs: status = %d, want 200", w.Code)
 	}
-	var result []string
+	var result []struct {
+		Line int64  `json:"line"`
+		Text string `json:"text"`
+	}
 	if err := json.NewDecoder(w.Body).Decode(&result); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
 	if len(result) < 2 {
 		t.Fatalf("expected at least 2 lines from log with long line, got %d", len(result))
 	}
-	if result[len(result)-1] != "short-line" {
-		t.Errorf("last line = %q, want %q", result[len(result)-1], "short-line")
+	if result[len(result)-1].Text != "short-line" {
+		t.Errorf("last line = %q, want %q", result[len(result)-1].Text, "short-line")
+	}
+}
+
+func TestAPI_Logs_ReturnsAbsoluteLineNumbers(t *testing.T) {
+	origHome := os.Getenv("HOME")
+	defer os.Setenv("HOME", origHome)
+
+	tmpDir := t.TempDir()
+	os.Setenv("HOME", tmpDir)
+	cisternDir := filepath.Join(tmpDir, ".cistern")
+	if err := os.MkdirAll(cisternDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	var content strings.Builder
+	for i := 1; i <= 1000; i++ {
+		fmt.Fprintf(&content, "line-%d\n", i)
+	}
+	logPath := filepath.Join(cisternDir, "castellarius.log")
+	if err := os.WriteFile(logPath, []byte(content.String()), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	mux := newDashboardMux(tempCfg(t), tempDB(t))
+	req := httptest.NewRequest(http.MethodGet, "/api/logs?lines=5", nil)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("absolute line numbers: status = %d, want 200", w.Code)
+	}
+	var result []struct {
+		Line int64  `json:"line"`
+		Text string `json:"text"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&result); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(result) != 5 {
+		t.Fatalf("expected 5 lines, got %d", len(result))
+	}
+	if result[0].Line != 996 {
+		t.Errorf("first line number = %d, want 996", result[0].Line)
+	}
+	if result[0].Text != "line-996" {
+		t.Errorf("first line text = %q, want %q", result[0].Text, "line-996")
+	}
+	if result[4].Line != 1000 {
+		t.Errorf("last line number = %d, want 1000", result[4].Line)
+	}
+	if result[4].Text != "line-1000" {
+		t.Errorf("last line text = %q, want %q", result[4].Text, "line-1000")
 	}
 }
 
