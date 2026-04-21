@@ -18,46 +18,6 @@ import (
 	_ "github.com/mattn/go-sqlite3"
 )
 
-const (
-	EventCreate         = "create"
-	EventDispatch       = "dispatch"
-	EventPass           = "pass"
-	EventRecirculate    = "recirculate"
-	EventDelivered      = "delivered"
-	EventRestart        = "restart"
-	EventApprove        = "approve"
-	EventEdit           = "edit"
-	EventPool           = "pool"
-	EventCancel         = "cancel"
-	EventExitNoOutcome  = "exit_no_outcome"
-	EventStall          = "stall"
-	EventRecovery       = "recovery"
-	EventCircuitBreaker = "circuit_breaker"
-	EventLoopRecovery   = "loop_recovery"
-	EventAutoPromote    = "auto_promote"
-	EventNoRoute        = "no_route"
-)
-
-var validEventTypes = map[string]bool{
-	EventCreate:         true,
-	EventDispatch:       true,
-	EventPass:           true,
-	EventRecirculate:    true,
-	EventDelivered:      true,
-	EventRestart:        true,
-	EventApprove:        true,
-	EventEdit:           true,
-	EventPool:           true,
-	EventCancel:         true,
-	EventExitNoOutcome:  true,
-	EventStall:          true,
-	EventRecovery:       true,
-	EventCircuitBreaker: true,
-	EventLoopRecovery:   true,
-	EventAutoPromote:    true,
-	EventNoRoute:        true,
-}
-
 type executor interface {
 	Exec(query string, args ...any) (sql.Result, error)
 }
@@ -642,7 +602,7 @@ func (c *Client) RecordEvent(id, eventType, payload string) error {
 }
 
 func (c *Client) recordEvent(exec executor, id, eventType, payload string) error {
-	if !validEventTypes[eventType] {
+	if !ValidEventTypes[eventType] {
 		return fmt.Errorf("cistern: unknown event type %q", eventType)
 	}
 	if !json.Valid([]byte(payload)) {
@@ -1219,20 +1179,19 @@ func (c *Client) Purge(olderThan time.Duration, dryRun bool) (int, error) {
 	return int(n), nil
 }
 
-// RecentEvent is a summary entry from the events or step_notes table.
+// RecentEvent is a summary entry from the events table.
 type RecentEvent struct {
 	Time    time.Time `json:"time"`
 	Droplet string    `json:"droplet"`
 	Event   string    `json:"event"`
 }
 
-// ListRecentEvents returns up to limit recent entries from the events and
-// cataractae_notes tables, ordered newest-first.
+// ListRecentEvents returns up to limit recent events from the events table,
+// ordered newest-first.
 func (c *Client) ListRecentEvents(limit int) ([]RecentEvent, error) {
 	rows, err := c.db.Query(`
-		SELECT droplet_id, event_type, created_at FROM events
-		UNION ALL
-		SELECT droplet_id, cataractae_name, created_at FROM cataractae_notes
+		SELECT droplet_id, event_type, created_at
+		FROM events
 		ORDER BY created_at DESC
 		LIMIT ?`, limit)
 	if err != nil {
@@ -1265,29 +1224,74 @@ func (c *Client) CountEventsByType(id, eventType string, since time.Time) (int, 
 	return count, nil
 }
 
-// DropletChange represents a note or event change for a single droplet.
+// TimelineEntry is a single row from the events table, returned by
+// GetDropletTimeline. It provides structured event data for the log display.
+type TimelineEntry struct {
+	Time      time.Time `json:"time"`
+	EventType string    `json:"event_type"`
+	Payload   string    `json:"payload"`
+}
+
+// DropletChange represents an event change for a single droplet.
 // It is used by the tail command to stream events to stdout.
 type DropletChange struct {
 	Time  time.Time `json:"time"`
-	Kind  string    `json:"kind"`  // "note" or "event"
-	Value string    `json:"value"` // note content or event payload
+	Kind  string    `json:"kind"`  // always "event"
+	Value string    `json:"value"` // "event_type: payload" or "event_type"
 }
 
-// GetDropletChanges returns up to limit most recent changes for a specific droplet,
-// ordered oldest-first. Changes come from two sources:
-//   - cataractae notes (content and cataractae_name)
-//   - events table (event_type + payload)
+// GetDropletTimeline returns the event timeline for a droplet, ordered
+// oldest-first. A limit > 0 caps the result to the most recent limit events;
+// limit <= 0 returns all events. This replaces the UNION query in
+// GetDropletChanges for log display.
+func (c *Client) GetDropletTimeline(id string, limit int) ([]TimelineEntry, error) {
+	query := `
+		SELECT created_at, event_type, payload
+		FROM events
+		WHERE droplet_id = ?
+		ORDER BY created_at ASC`
+	var args []any
+	args = append(args, id)
+	if limit > 0 {
+		query = `
+			SELECT created_at, event_type, payload FROM (
+				SELECT created_at, event_type, payload
+				FROM events
+				WHERE droplet_id = ?
+				ORDER BY created_at DESC
+				LIMIT ?
+			) ORDER BY created_at ASC`
+		args = append(args, limit)
+	}
+	rows, err := c.db.Query(query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("cistern: get droplet timeline %s: %w", id, err)
+	}
+	defer rows.Close()
+
+	var entries []TimelineEntry
+	for rows.Next() {
+		var te TimelineEntry
+		if err := rows.Scan(&te.Time, &te.EventType, &te.Payload); err != nil {
+			return nil, fmt.Errorf("cistern: scan timeline entry: %w", err)
+		}
+		entries = append(entries, te)
+	}
+	return entries, rows.Err()
+}
+
+// GetDropletChanges returns up to limit most recent events for a droplet,
+// ordered oldest-first. Each entry has Kind="event" and Value="event_type: payload".
+// Used by ct droplet tail and the dashboard API.
 func (c *Client) GetDropletChanges(id string, limit int) ([]DropletChange, error) {
 	rows, err := c.db.Query(`
-		SELECT created_at, kind, value FROM (
-			SELECT created_at, 'note' AS kind, cataractae_name || ': ' || content AS value
-			FROM cataractae_notes WHERE droplet_id = ?
-			UNION ALL
-			SELECT created_at, 'event' AS kind, event_type || ': ' || COALESCE(payload, '') AS value
-			FROM events WHERE droplet_id = ?
+		SELECT created_at, event_type, COALESCE(payload, '') FROM (
+			SELECT created_at, event_type, payload
+			FROM events
+			WHERE droplet_id = ?
 			ORDER BY created_at DESC
 			LIMIT ?
-		) ORDER BY created_at ASC`, id, id, limit)
+		) ORDER BY created_at ASC`, id, limit)
 	if err != nil {
 		return nil, fmt.Errorf("cistern: get droplet changes %s: %w", id, err)
 	}
@@ -1295,11 +1299,20 @@ func (c *Client) GetDropletChanges(id string, limit int) ([]DropletChange, error
 
 	var changes []DropletChange
 	for rows.Next() {
-		var ch DropletChange
-		if err := rows.Scan(&ch.Time, &ch.Kind, &ch.Value); err != nil {
+		var t time.Time
+		var eventType, payload string
+		if err := rows.Scan(&t, &eventType, &payload); err != nil {
 			return nil, fmt.Errorf("cistern: scan droplet change: %w", err)
 		}
-		changes = append(changes, ch)
+		value := eventType
+		if payload != "" && payload != "{}" {
+			value = eventType + ": " + payload
+		}
+		changes = append(changes, DropletChange{
+			Time:  t,
+			Kind:  "event",
+			Value: value,
+		})
 	}
 	return changes, rows.Err()
 }

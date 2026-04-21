@@ -45,12 +45,17 @@ func runHistory(out io.Writer, id string) error {
 		return err
 	}
 
-	changes, err := c.GetDropletChanges(id, 10000)
+	timeline, err := c.GetDropletTimeline(id, 0)
 	if err != nil {
 		return err
 	}
 
-	entries := buildLogEntries(item, changes)
+	notes, err := c.GetNotes(id)
+	if err != nil {
+		return err
+	}
+
+	entries := buildLogEntries(timeline, notes)
 
 	if historyFmt == "json" {
 		return printLogJSON(out, entries)

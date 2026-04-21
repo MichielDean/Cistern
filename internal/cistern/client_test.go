@@ -2,6 +2,7 @@ package cistern
 
 import (
 	"database/sql"
+	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -1109,7 +1110,6 @@ func TestListRecentEvents_WithEvents(t *testing.T) {
 	c := testClient(t)
 	item, _ := c.Add("myrepo", "Task", "", 1, 3)
 
-	// AddNote writes to cataractae_notes; Pool writes to events; Add also creates a create event.
 	c.AddNote(item.ID, "implement", "wrote the code")
 	c.Pool(item.ID, "needs human review")
 
@@ -1117,9 +1117,9 @@ func TestListRecentEvents_WithEvents(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// create event from Add, note from AddNote, pool event from Pool = 3
-	if len(events) != 3 {
-		t.Fatalf("got %d events, want 3", len(events))
+	// create event from Add, pool event from Pool = 2 (notes excluded)
+	if len(events) != 2 {
+		t.Fatalf("got %d events, want 2", len(events))
 	}
 	for _, e := range events {
 		if e.Droplet != item.ID {
@@ -1132,10 +1132,11 @@ func TestListRecentEvents_Limit(t *testing.T) {
 	c := testClient(t)
 	item, _ := c.Add("myrepo", "Task", "", 1, 3)
 
-	for range 5 {
-		c.AddNote(item.ID, "step", "note")
+	for i := range 5 {
+		c.RecordEvent(item.ID, "pass", fmt.Sprintf(`{"cataractae":"step-%d"}`, i))
 	}
 
+	// create + 5 pass = 6 events; limit 3 returns 3 newest
 	events, err := c.ListRecentEvents(3)
 	if err != nil {
 		t.Fatal(err)
@@ -2577,7 +2578,7 @@ func TestGetDropletChanges_Empty(t *testing.T) {
 	}
 }
 
-func TestGetDropletChanges_ReturnsNotes(t *testing.T) {
+func TestGetDropletChanges_ReturnsOnlyEvents(t *testing.T) {
 	c := testClient(t)
 	item, err := c.Add("myrepo", "Task", "", 1, 2)
 	if err != nil {
@@ -2592,19 +2593,13 @@ func TestGetDropletChanges_ReturnsNotes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// create event + 1 note = 2
-	if len(changes) != 2 {
-		t.Fatalf("got %d changes, want 2", len(changes))
+	if len(changes) != 1 {
+		t.Fatalf("got %d changes, want 1 (create event only; notes excluded)", len(changes))
 	}
-	noteFound := false
 	for _, ch := range changes {
-		if ch.Kind == "note" && strings.Contains(ch.Value, "implement") && strings.Contains(ch.Value, "wrote the code") {
-			noteFound = true
-			break
+		if ch.Kind != "event" {
+			t.Errorf("Kind = %q, want 'event' for all changes", ch.Kind)
 		}
-	}
-	if !noteFound {
-		t.Errorf("implement note not found in changes: %v", changes)
 	}
 }
 
@@ -2652,19 +2647,14 @@ func TestGetDropletChanges_MixedNotesAndEvents(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// create event + 2 notes + pool event = 4
-	if len(changes) != 4 {
-		t.Fatalf("got %d changes, want 4", len(changes))
+	// create event + pool event = 2 (notes excluded)
+	if len(changes) != 2 {
+		t.Fatalf("got %d changes, want 2 (events only)", len(changes))
 	}
-	kinds := map[string]int{}
 	for _, ch := range changes {
-		kinds[ch.Kind]++
-	}
-	if kinds["note"] != 2 {
-		t.Errorf("expected 2 note changes, got %d", kinds["note"])
-	}
-	if kinds["event"] != 2 {
-		t.Errorf("expected 2 event changes, got %d", kinds["event"])
+		if ch.Kind != "event" {
+			t.Errorf("Kind = %q, want 'event' for all changes", ch.Kind)
+		}
 	}
 }
 
@@ -2675,12 +2665,11 @@ func TestGetDropletChanges_RespectsLimit_ReturnsNewest(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	notes := []string{"alpha", "beta", "gamma", "delta", "epsilon"}
-	for _, n := range notes {
-		c.AddNote(item.ID, "step", n)
+	for i := range 5 {
+		c.RecordEvent(item.ID, "pass", fmt.Sprintf(`{"cataractae":"step-%d"}`, i))
 	}
 
-	// create event + 5 notes = 6 total; limit 3 returns 3 newest
+	// create event + 5 pass events = 6 total; limit 3 returns the 3 newest, ordered oldest-first
 	changes, err := c.GetDropletChanges(item.ID, 3)
 	if err != nil {
 		t.Fatal(err)
@@ -2688,11 +2677,17 @@ func TestGetDropletChanges_RespectsLimit_ReturnsNewest(t *testing.T) {
 	if len(changes) != 3 {
 		t.Fatalf("got %d changes, want 3 (limit applied)", len(changes))
 	}
-	want := []string{"gamma", "delta", "epsilon"}
-	for i, ch := range changes {
-		if !strings.Contains(ch.Value, want[i]) {
-			t.Errorf("change[%d] = %q, want it to contain %q", i, ch.Value, want[i])
+	// Verify we got the newest 3 events (pass-2, pass-3, pass-4), not the oldest (create, pass-0, pass-1)
+	for _, ch := range changes {
+		if ch.Kind != "event" {
+			t.Errorf("Kind = %q, want 'event'", ch.Kind)
 		}
+	}
+	if changes[0].Value != "pass: {\"cataractae\":\"step-2\"}" {
+		t.Errorf("first change = %q, want step-2 (newest slice starts at step-2)", changes[0].Value)
+	}
+	if changes[2].Value != "pass: {\"cataractae\":\"step-4\"}" {
+		t.Errorf("last change = %q, want step-4 (newest slice ends at step-4)", changes[2].Value)
 	}
 }
 
@@ -2703,11 +2698,11 @@ func TestGetDropletChanges_OrderedOldestFirst(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	c.AddNote(item.ID, "implement", "first note")
+	c.Pool(item.ID, "first event")
 	time.Sleep(10 * time.Millisecond)
-	c.AddNote(item.ID, "review", "second note")
+	c.RecordEvent(item.ID, "pass", `{"cataractae":"reviewer"}`)
 
-	// create event + 2 notes = 3 total
+	// create event + pool event + pass event = 3 total
 	changes, err := c.GetDropletChanges(item.ID, 20)
 	if err != nil {
 		t.Fatal(err)
@@ -2729,6 +2724,184 @@ func TestGetDropletChanges_NotFoundReturnEmpty(t *testing.T) {
 	}
 	if len(changes) != 0 {
 		t.Errorf("got %d changes, want 0 for nonexistent droplet", len(changes))
+	}
+}
+
+// --- GetDropletTimeline tests ---
+
+func TestGetDropletTimeline_ReturnsEvents(t *testing.T) {
+	c := testClient(t)
+	item, err := c.Add("myrepo", "Timeline task", "", 1, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	c.Pool(item.ID, "needs review")
+
+	entries, err := c.GetDropletTimeline(item.ID, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 2 {
+		t.Fatalf("got %d entries, want 2 (create + pool)", len(entries))
+	}
+	if entries[0].EventType != "create" {
+		t.Errorf("first entry EventType = %q, want 'create'", entries[0].EventType)
+	}
+	if entries[1].EventType != "pool" {
+		t.Errorf("second entry EventType = %q, want 'pool'", entries[1].EventType)
+	}
+}
+
+func TestGetDropletTimeline_OrderedOldestFirst(t *testing.T) {
+	c := testClient(t)
+	item, err := c.Add("myrepo", "Timeline order", "", 1, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.Pool(item.ID, "first event")
+	time.Sleep(10 * time.Millisecond)
+	c.RecordEvent(item.ID, "pass", `{"cataractae":"reviewer"}`)
+
+	entries, err := c.GetDropletTimeline(item.ID, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 3 {
+		t.Fatalf("got %d entries, want 3", len(entries))
+	}
+	if !entries[0].Time.Before(entries[1].Time) {
+		t.Errorf("entries not in chronological order: %v >= %v", entries[0].Time, entries[1].Time)
+	}
+}
+
+func TestGetDropletTimeline_NotFoundReturnEmpty(t *testing.T) {
+	c := testClient(t)
+
+	entries, err := c.GetDropletTimeline("nonexistent", 0)
+	if err != nil {
+		t.Fatalf("expected no error for nonexistent droplet, got: %v", err)
+	}
+	if len(entries) != 0 {
+		t.Errorf("got %d entries, want 0 for nonexistent droplet", len(entries))
+	}
+}
+
+func TestGetDropletTimeline_IncludesStructuredPayload(t *testing.T) {
+	c := testClient(t)
+	item, err := c.Add("myrepo", "Payload task", "", 1, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	entries, err := c.GetDropletTimeline(item.ID, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("got %d entries, want 1", len(entries))
+	}
+	if entries[0].Payload == "" {
+		t.Error("create event should have a non-empty payload")
+	}
+}
+
+func TestGetDropletTimeline_RespectsLimit_ReturnsNewest(t *testing.T) {
+	c := testClient(t)
+	item, err := c.Add("myrepo", "Limit task", "", 1, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.Pool(item.ID, "first")
+	time.Sleep(10 * time.Millisecond)
+	c.RecordEvent(item.ID, "pass", `{"cataractae":"reviewer"}`)
+	time.Sleep(10 * time.Millisecond)
+	c.RecordEvent(item.ID, "dispatch", `{"aqueduct":"default","cataractae":"implement"}`)
+
+	entries, err := c.GetDropletTimeline(item.ID, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 2 {
+		t.Fatalf("got %d entries with limit=2, want 2", len(entries))
+	}
+	if entries[0].EventType != "pass" {
+		t.Errorf("first entry EventType = %q, want 'pass' (newest entries with oldest first display)", entries[0].EventType)
+	}
+	if entries[1].EventType != "dispatch" {
+		t.Errorf("second entry EventType = %q, want 'dispatch'", entries[1].EventType)
+	}
+}
+
+func TestGetDropletTimeline_LimitZero_ReturnsAll(t *testing.T) {
+	c := testClient(t)
+	item, err := c.Add("myrepo", "No-limit task", "", 1, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.Pool(item.ID, "first")
+	c.RecordEvent(item.ID, "pass", `{"cataractae":"reviewer"}`)
+
+	entries, err := c.GetDropletTimeline(item.ID, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 3 {
+		t.Fatalf("got %d entries with limit=0, want 3 (all events)", len(entries))
+	}
+}
+
+// --- DisplayInfo tests ---
+
+func TestDisplayInfo_MapsEventTypesToHumanReadableLabels(t *testing.T) {
+	tests := []struct {
+		eventType string
+		payload   string
+		wantLabel string
+		wantSub   string
+	}{
+		{"create", `{"repo":"myrepo","title":"My task","priority":1,"complexity":2}`, "created", "repo: myrepo"},
+		{"dispatch", `{"aqueduct":"default","cataractae":"implement"}`, "dispatched", "step: implement"},
+		{"pass", `{"cataractae":"reviewer","notes":"all good"}`, "pass", "by: reviewer"},
+		{"recirculate", `{"cataractae":"reviewer","target":"implement"}`, "recirculate", "to: implement"},
+		{"delivered", `{}`, "delivered", ""},
+		{"restart", `{"cataractae":"implement"}`, "restart", "by: implement"},
+		{"approve", `{"cataractae":"manual"}`, "approved", "by: manual"},
+		{"edit", `{"fields":["title"]}`, "edit", "fields:"},
+		{"pool", `{"reason":"blocked"}`, "pooled", "reason: blocked"},
+		{"cancel", `{"reason":"not needed"}`, "cancelled", "reason: not needed"},
+		{"exit_no_outcome", `{"session":"s1","worker":"w1"}`, "exit_no_outcome", "session: s1"},
+		{"stall", `{"cataractae":"implement","elapsed":"5m"}`, "stall", "step: implement"},
+		{"recovery", `{"cataractae":"implement"}`, "recovery", "by: implement"},
+		{"circuit_breaker", `{"death_count":3,"window":"10m"}`, "circuit_breaker", "dead sessions: 3"},
+		{"loop_recovery", `{"from":"impl","to":"impl"}`, "loop_recovery", "from: impl"},
+		{"auto_promote", `{"cataractae":"impl","routed_to":"review"}`, "auto_promote", "routed to: review"},
+		{"no_route", `{"cataractae":"impl"}`, "no_route", "by: impl"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.eventType, func(t *testing.T) {
+			gotLabel, gotDetail := DisplayInfo(tt.eventType, tt.payload)
+			if gotLabel != tt.wantLabel {
+				t.Errorf("label = %q, want %q", gotLabel, tt.wantLabel)
+			}
+			if tt.wantSub != "" && !strings.Contains(gotDetail, tt.wantSub) {
+				t.Errorf("detail = %q, want substring %q", gotDetail, tt.wantSub)
+			}
+			if tt.wantSub == "" && gotDetail != "" {
+				t.Errorf("detail = %q, want empty", gotDetail)
+			}
+		})
+	}
+}
+
+func TestDisplayInfo_UnknownEventType(t *testing.T) {
+	label, detail := DisplayInfo("unknown_event", `{"data":"test"}`)
+	if label != "unknown_event" {
+		t.Errorf("label = %q, want 'unknown_event'", label)
+	}
+	if detail != `{"data":"test"}` {
+		t.Errorf("detail = %q, want original payload", detail)
 	}
 }
 
@@ -3378,12 +3551,12 @@ func TestValidEventTypes_ContainsAllConstants(t *testing.T) {
 		EventAutoPromote, EventNoRoute,
 	}
 	for _, e := range expected {
-		if !validEventTypes[e] {
-			t.Errorf("validEventTypes missing %q", e)
+		if !ValidEventTypes[e] {
+			t.Errorf("ValidEventTypes missing %q", e)
 		}
 	}
-	if len(validEventTypes) != len(expected) {
-		t.Errorf("validEventTypes has %d entries, want %d", len(validEventTypes), len(expected))
+	if len(ValidEventTypes) != len(expected) {
+		t.Errorf("ValidEventTypes has %d entries, want %d", len(ValidEventTypes), len(expected))
 	}
 }
 

@@ -191,7 +191,7 @@ func TestDropletLog_JsonFormat(t *testing.T) {
 
 	lines := strings.Split(strings.TrimSpace(buf.String()), "\n")
 	if len(lines) < 2 {
-		t.Fatalf("expected at least 2 JSON lines (header + note), got %d", len(lines))
+		t.Fatalf("expected at least 2 JSON lines (event + note), got %d", len(lines))
 	}
 
 	type logEntry struct {
@@ -201,12 +201,12 @@ func TestDropletLog_JsonFormat(t *testing.T) {
 		Detail     string `json:"detail"`
 	}
 
-	var header logEntry
-	if err := json.Unmarshal([]byte(lines[0]), &header); err != nil {
+	var first logEntry
+	if err := json.Unmarshal([]byte(lines[0]), &first); err != nil {
 		t.Fatalf("first line is not valid JSON: %v\nline: %s", err, lines[0])
 	}
-	if header.Event != "created" {
-		t.Errorf("first event should be 'created', got %q", header.Event)
+	if first.Event != "created" {
+		t.Errorf("first event should be 'created', got %q", first.Event)
 	}
 
 	var note logEntry
@@ -215,6 +215,12 @@ func TestDropletLog_JsonFormat(t *testing.T) {
 	}
 	if note.Event != "note" {
 		t.Errorf("second event should be 'note', got %q", note.Event)
+	}
+	if note.Cataractae != "implement" {
+		t.Errorf("note cataractae should be 'implement', got %q", note.Cataractae)
+	}
+	if note.Detail != "wrote code" {
+		t.Errorf("note detail should be 'wrote code', got %q", note.Detail)
 	}
 }
 
@@ -237,9 +243,9 @@ func TestDropletLog_InvalidFormat(t *testing.T) {
 	}
 }
 
-func TestDropletLog_ShowsHeartbeat(t *testing.T) {
+func TestDropletLog_NoSyntheticHeartbeat(t *testing.T) {
 	c := setupLogTestDB(t)
-	item, err := c.Add("myrepo", "Heartbeat task", "", 1, 2)
+	item, err := c.Add("myrepo", "No hb task", "", 1, 2)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -252,61 +258,128 @@ func TestDropletLog_ShowsHeartbeat(t *testing.T) {
 		t.Fatalf("heartbeat failed: %v", err)
 	}
 
-	refreshed, err := c.Get(item.ID)
-	if err != nil {
-		t.Fatalf("get failed: %v", err)
-	}
-	if refreshed.LastHeartbeatAt.IsZero() {
-		t.Fatal("LastHeartbeatAt should be set after Heartbeat()")
-	}
-
 	out, err := runLogCapture(t, item.ID)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if !strings.Contains(out, "heartbeat") {
-		t.Errorf("log output missing 'heartbeat' event: %s", out)
-	}
-	if !strings.Contains(out, "last heartbeat recorded") {
-		t.Errorf("log output missing heartbeat detail: %s", out)
+	if strings.Contains(out, "last heartbeat recorded") {
+		t.Errorf("log output should not contain synthetic heartbeat detail: %s", out)
 	}
 }
 
-func TestDropletLog_HeartbeatInChronologicalOrder(t *testing.T) {
-	c := setupLogTestDB(t)
-	item, err := c.Add("myrepo", "Heartbeat order task", "", 1, 2)
-	if err != nil {
-		t.Fatal(err)
+func TestBuildLogEntries_DisplaysEventsFromTimeline(t *testing.T) {
+	now := time.Now().UTC().Truncate(time.Second)
+
+	timeline := []cistern.TimelineEntry{
+		{Time: now, EventType: "create", Payload: `{"repo":"myrepo","title":"Test task","priority":1,"complexity":2}`},
+		{Time: now.Add(time.Minute), EventType: "dispatch", Payload: `{"aqueduct":"default","cataractae":"implement","assignee":"worker-1"}`},
+		{Time: now.Add(2 * time.Minute), EventType: "pass", Payload: `{"cataractae":"implement","notes":"all good"}`},
 	}
 
-	c.GetReadyForAqueduct("myrepo", "default")
-	c.Assign(item.ID, "worker-1", "implement")
-	c.AddNote(item.ID, "implement", "early note")
-	err = c.Heartbeat(item.ID)
-	if err != nil {
-		t.Fatalf("heartbeat failed: %v", err)
-	}
+	notes := []cistern.CataractaeNote{}
 
-	time.Sleep(10 * time.Millisecond)
-	c.AddNote(item.ID, "implement", "late note")
+	entries := buildLogEntries(timeline, notes)
 
-	out, err := runLogCapture(t, item.ID)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	if len(entries) != 3 {
+		t.Fatalf("expected 3 entries, got %d", len(entries))
 	}
-
-	heartbeatIdx := strings.Index(out, "heartbeat")
-	lateNoteIdx := strings.Index(out, "late note")
-	if heartbeatIdx == -1 || lateNoteIdx == -1 {
-		t.Fatalf("log output missing expected entries: %s", out)
+	if entries[0].Event != "created" {
+		t.Errorf("first event should be 'created', got %q", entries[0].Event)
 	}
-	if heartbeatIdx > lateNoteIdx {
-		t.Errorf("heartbeat should appear before late note in chronological order: heartbeat at %d, late note at %d", heartbeatIdx, lateNoteIdx)
+	if !strings.Contains(entries[0].Detail, "repo: myrepo") {
+		t.Errorf("created entry missing 'repo: myrepo': %s", entries[0].Detail)
+	}
+	if entries[1].Event != "dispatched" {
+		t.Errorf("second event should be 'dispatched', got %q", entries[1].Event)
+	}
+	if entries[2].Event != "pass" {
+		t.Errorf("third event should be 'pass', got %q", entries[2].Event)
 	}
 }
 
-func TestRemapEvent_DisplaysHumanReadableDetails(t *testing.T) {
+func TestBuildLogEntries_NotesAfterEvents(t *testing.T) {
+	now := time.Now().UTC().Truncate(time.Second)
+
+	timeline := []cistern.TimelineEntry{
+		{Time: now, EventType: "create", Payload: `{}`},
+	}
+
+	notes := []cistern.CataractaeNote{
+		{ID: 1, DropletID: "test", CataractaeName: "implement", Content: "got started", CreatedAt: now.Add(time.Minute)},
+	}
+
+	entries := buildLogEntries(timeline, notes)
+
+	if len(entries) != 2 {
+		t.Fatalf("expected 2 entries, got %d", len(entries))
+	}
+	if entries[0].Event != "created" {
+		t.Errorf("first entry should be lifecycle event 'created', got %q", entries[0].Event)
+	}
+	if entries[1].Event != "note" {
+		t.Errorf("second entry should be 'note', got %q", entries[1].Event)
+	}
+	if entries[1].Cataractae != "implement" {
+		t.Errorf("note cataractae should be 'implement', got %q", entries[1].Cataractae)
+	}
+	if entries[1].Detail != "got started" {
+		t.Errorf("note detail should be 'got started', got %q", entries[1].Detail)
+	}
+}
+
+func TestBuildLogEntries_SortedByTime(t *testing.T) {
+	now := time.Now().UTC().Truncate(time.Second)
+
+	timeline := []cistern.TimelineEntry{
+		{Time: now.Add(2 * time.Minute), EventType: "pass", Payload: `{}`},
+		{Time: now, EventType: "create", Payload: `{}`},
+	}
+
+	notes := []cistern.CataractaeNote{
+		{ID: 1, DropletID: "test", CataractaeName: "implement", Content: "early note", CreatedAt: now.Add(time.Minute)},
+	}
+
+	entries := buildLogEntries(timeline, notes)
+
+	if len(entries) != 3 {
+		t.Fatalf("expected 3 entries, got %d", len(entries))
+	}
+	if entries[0].Event != "created" {
+		t.Errorf("entry 0 should be 'created', got %q", entries[0].Event)
+	}
+	if entries[1].Event != "note" {
+		t.Errorf("entry 1 should be 'note', got %q", entries[1].Event)
+	}
+	if entries[2].Event != "pass" {
+		t.Errorf("entry 2 should be 'pass', got %q", entries[2].Event)
+	}
+}
+
+func TestBuildLogEntries_NoDuplicateCreatedEvent(t *testing.T) {
+	now := time.Now().UTC().Truncate(time.Second)
+
+	timeline := []cistern.TimelineEntry{
+		{Time: now, EventType: "create", Payload: `{"repo":"myrepo","title":"New task","priority":1,"complexity":2}`},
+		{Time: now.Add(time.Minute), EventType: "dispatch", Payload: `{}`},
+	}
+
+	notes := []cistern.CataractaeNote{}
+
+	entries := buildLogEntries(timeline, notes)
+
+	createCount := 0
+	for _, e := range entries {
+		if e.Event == "created" {
+			createCount++
+		}
+	}
+	if createCount != 1 {
+		t.Errorf("expected exactly 1 created entry when event exists in timeline, got %d", createCount)
+	}
+}
+
+func TestDisplayInfo_DisplaysHumanReadableDetails(t *testing.T) {
 	tests := []struct {
 		name     string
 		evt      string
@@ -418,7 +491,7 @@ func TestRemapEvent_DisplaysHumanReadableDetails(t *testing.T) {
 			wantOmit: `"session"`,
 		},
 		{
-			name:     "stall event shows step, elapsed, heartbeat",
+			name:     "stall event shows step, elapsed",
 			evt:      "stall",
 			detail:   `{"cataractae":"implement","elapsed":"45m","heartbeat":"2026-04-21T10:00:00Z"}`,
 			wantEvt:  "stall",
@@ -469,132 +542,19 @@ func TestRemapEvent_DisplaysHumanReadableDetails(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			gotEvt, gotDetail := remapEvent(tt.evt, tt.detail)
+			gotEvt, gotDetail := cistern.DisplayInfo(tt.evt, tt.detail)
 			if gotEvt != tt.wantEvt {
-				t.Errorf("remapEvent(%q, ...) evt = %q, want %q", tt.evt, gotEvt, tt.wantEvt)
+				t.Errorf("DisplayInfo(%q, ...) evt = %q, want %q", tt.evt, gotEvt, tt.wantEvt)
 			}
 			if tt.wantSub != "" && !strings.Contains(gotDetail, tt.wantSub) {
-				t.Errorf("remapEvent(%q, ...) detail = %q, want substring %q", tt.evt, gotDetail, tt.wantSub)
+				t.Errorf("DisplayInfo(%q, ...) detail = %q, want substring %q", tt.evt, gotDetail, tt.wantSub)
 			}
 			if tt.wantOmit != "" && strings.Contains(gotDetail, tt.wantOmit) {
-				t.Errorf("remapEvent(%q, ...) detail = %q, should not contain raw JSON key %q", tt.evt, gotDetail, tt.wantOmit)
+				t.Errorf("DisplayInfo(%q, ...) detail = %q, should not contain raw JSON key %q", tt.evt, gotDetail, tt.wantOmit)
 			}
 			if tt.wantSub == "" && gotDetail != "" {
-				t.Errorf("remapEvent(%q, ...) detail = %q, want empty", tt.evt, gotDetail)
+				t.Errorf("DisplayInfo(%q, ...) detail = %q, want empty", tt.evt, gotDetail)
 			}
 		})
-	}
-}
-
-func TestBuildLogEntries_SynthesizesCreateEvent_WhenMissing(t *testing.T) {
-	now := time.Now().UTC().Truncate(time.Second)
-	item := &cistern.Droplet{
-		ID:         "pre-exist",
-		Repo:       "myrepo",
-		Title:      "Pre-existing task",
-		Priority:   1,
-		Complexity: 2,
-		Status:     "open",
-		CreatedAt:  now,
-		UpdatedAt:  now,
-	}
-
-	changes := []cistern.DropletChange{
-		{Time: now.Add(time.Minute), Kind: "note", Value: "implement: got started"},
-	}
-
-	entries := buildLogEntries(item, changes)
-
-	createFound := false
-	for _, e := range entries {
-		if e.Event == "created" {
-			createFound = true
-			if !strings.Contains(e.Detail, "repo: myrepo") {
-				t.Errorf("synthesized created entry missing repo: %s", e.Detail)
-			}
-			if !strings.Contains(e.Detail, "title: Pre-existing task") {
-				t.Errorf("synthesized created entry missing title: %s", e.Detail)
-			}
-			if e.Time != now.Format("2006-01-02 15:04:05") {
-				t.Errorf("synthesized created entry time = %q, want %q", e.Time, now.Format("2006-01-02 15:04:05"))
-			}
-			break
-		}
-	}
-	if !createFound {
-		t.Errorf("buildLogEntries should synthesize created event for pre-existing droplet; entries: %+v", entries)
-	}
-
-	noteFound := false
-	for _, e := range entries {
-		if e.Event == "note" && strings.Contains(e.Detail, "got started") {
-			noteFound = true
-		}
-	}
-	if !noteFound {
-		t.Errorf("buildLogEntries should still include notes; entries: %+v", entries)
-	}
-}
-
-func TestBuildLogEntries_DoesNotSynthesizeCreateEvent_WhenPresent(t *testing.T) {
-	now := time.Now().UTC().Truncate(time.Second)
-	item := &cistern.Droplet{
-		ID:         "with-create",
-		Repo:       "myrepo",
-		Title:      "New task",
-		Priority:   1,
-		Complexity: 2,
-		Status:     "open",
-		CreatedAt:  now,
-		UpdatedAt:  now,
-	}
-
-	changes := []cistern.DropletChange{
-		{Time: now, Kind: "event", Value: "create: {\"repo\":\"myrepo\",\"title\":\"New task\",\"priority\":1,\"complexity\":2}"},
-		{Time: now.Add(time.Minute), Kind: "note", Value: "implement: got started"},
-	}
-
-	entries := buildLogEntries(item, changes)
-
-	createCount := 0
-	for _, e := range entries {
-		if e.Event == "created" {
-			createCount++
-		}
-	}
-	if createCount != 1 {
-		t.Errorf("expected exactly 1 created entry when event exists, got %d", createCount)
-	}
-}
-
-func TestBuildLogEntries_SynthesizedCreateBeforeOtherEntries(t *testing.T) {
-	now := time.Now().UTC().Truncate(time.Second)
-	later := now.Add(2 * time.Minute)
-	item := &cistern.Droplet{
-		ID:         "pre-exist-order",
-		Repo:       "myrepo",
-		Title:      "Order task",
-		Priority:   1,
-		Complexity: 2,
-		Status:     "open",
-		CreatedAt:  now,
-		UpdatedAt:  later,
-	}
-
-	changes := []cistern.DropletChange{
-		{Time: later, Kind: "note", Value: "implement: started late"},
-	}
-
-	entries := buildLogEntries(item, changes)
-
-	if len(entries) < 2 {
-		t.Fatalf("expected at least 2 entries, got %d", len(entries))
-	}
-
-	if entries[0].Event != "created" {
-		t.Errorf("first entry should be 'created', got %q", entries[0].Event)
-	}
-	if entries[0].Time != now.Format("2006-01-02 15:04:05") {
-		t.Errorf("created entry time = %q, want %q", entries[0].Time, now.Format("2006-01-02 15:04:05"))
 	}
 }

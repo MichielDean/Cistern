@@ -6,7 +6,6 @@ import (
 	"io"
 	"os"
 	"sort"
-	"strings"
 	"text/tabwriter"
 	"time"
 
@@ -55,12 +54,17 @@ func runLog(out io.Writer, id string) error {
 		return err
 	}
 
-	changes, err := c.GetDropletChanges(id, 10000)
+	timeline, err := c.GetDropletTimeline(id, 0)
 	if err != nil {
 		return err
 	}
 
-	entries := buildLogEntries(item, changes)
+	notes, err := c.GetNotes(id)
+	if err != nil {
+		return err
+	}
+
+	entries := buildLogEntries(timeline, notes)
 
 	if logFmt == "json" {
 		return printLogJSON(out, entries)
@@ -68,71 +72,26 @@ func runLog(out io.Writer, id string) error {
 	return printLogText(out, item, entries)
 }
 
-func buildLogEntries(item *cistern.Droplet, changes []cistern.DropletChange) []logEntry {
+func buildLogEntries(timeline []cistern.TimelineEntry, notes []cistern.CataractaeNote) []logEntry {
 	var entries []logEntry
 
-	for _, ch := range changes {
-		var evt, detail, cataractae string
-
-		prefix, suffix, found := strings.Cut(ch.Value, ": ")
-		if ch.Kind == "note" {
-			evt = "note"
-			if found {
-				cataractae = prefix
-				detail = suffix
-			} else {
-				detail = ch.Value
-			}
-		} else {
-			if found {
-				evt = prefix
-				detail = suffix
-			} else {
-				evt = ch.Value
-			}
-			evt, detail = remapEvent(evt, detail)
-		}
-
+	for _, te := range timeline {
+		eventLabel, detail := cistern.DisplayInfo(te.EventType, te.Payload)
 		entries = append(entries, logEntry{
-			sortTime:   ch.Time,
-			Time:       ch.Time.Format("2006-01-02 15:04:05"),
-			Cataractae: cataractae,
-			Event:      evt,
-			Detail:     detail,
-		})
-	}
-
-	hasCreate := false
-	for _, e := range entries {
-		if e.Event == "created" {
-			hasCreate = true
-			break
-		}
-	}
-
-	if !hasCreate && !item.CreatedAt.IsZero() {
-		createPayload, _ := json.Marshal(map[string]any{
-			"repo":       item.Repo,
-			"title":      item.Title,
-			"priority":   item.Priority,
-			"complexity": item.Complexity,
-		})
-		detail := remapPayloadCreate(string(createPayload))
-		entries = append(entries, logEntry{
-			sortTime: item.CreatedAt,
-			Time:     item.CreatedAt.Format("2006-01-02 15:04:05"),
-			Event:    "created",
+			sortTime: te.Time,
+			Time:     te.Time.Format("2006-01-02 15:04:05"),
+			Event:    eventLabel,
 			Detail:   detail,
 		})
 	}
 
-	if !item.LastHeartbeatAt.IsZero() {
+	for _, n := range notes {
 		entries = append(entries, logEntry{
-			sortTime:   item.LastHeartbeatAt,
-			Time:       item.LastHeartbeatAt.Format("2006-01-02 15:04:05"),
-			Cataractae: item.CurrentCataractae,
-			Event:      "heartbeat",
-			Detail:     "last heartbeat recorded",
+			sortTime:   n.CreatedAt,
+			Time:       n.CreatedAt.Format("2006-01-02 15:04:05"),
+			Cataractae: n.CataractaeName,
+			Event:      "note",
+			Detail:     n.Content,
 		})
 	}
 
@@ -141,298 +100,6 @@ func buildLogEntries(item *cistern.Droplet, changes []cistern.DropletChange) []l
 	})
 
 	return entries
-}
-
-func remapEvent(evt, detail string) (string, string) {
-	switch evt {
-	case "create":
-		return "created", remapPayloadCreate(detail)
-	case "pool":
-		return "pooled", remapPayloadReason(detail)
-	case "cancel":
-		return "cancelled", remapPayloadReason(detail)
-	case "dispatch":
-		return "dispatched", remapPayloadDispatch(detail)
-	case "pass":
-		return "pass", remapPayloadCataractaeNotes(detail)
-	case "recirculate":
-		return "recirculate", remapPayloadRecirculate(detail)
-	case "delivered":
-		return "delivered", ""
-	case "restart":
-		return "restart", remapPayloadCataractae(detail)
-	case "approve":
-		return "approved", remapPayloadCataractae(detail)
-	case "edit":
-		return "edit", remapPayloadEdit(detail)
-	case "exit_no_outcome":
-		return "exit_no_outcome", remapPayloadExitNoOutcome(detail)
-	case "stall":
-		return "stall", remapPayloadStall(detail)
-	case "recovery":
-		return "recovery", remapPayloadCataractae(detail)
-	case "circuit_breaker":
-		return "circuit_breaker", remapPayloadCircuitBreaker(detail)
-	case "loop_recovery":
-		return "loop_recovery", remapPayloadLoopRecovery(detail)
-	case "auto_promote":
-		return "auto_promote", remapPayloadAutoPromote(detail)
-	case "no_route":
-		return "no_route", remapPayloadCataractae(detail)
-	default:
-		return evt, detail
-	}
-}
-
-func remapPayloadReason(detail string) string {
-	if detail == "" || detail == "{}" {
-		return ""
-	}
-	var payload map[string]any
-	if err := json.Unmarshal([]byte(detail), &payload); err == nil {
-		if reason, ok := payload["reason"]; ok && reason != "" {
-			return "reason: " + fmt.Sprintf("%v", reason)
-		}
-	}
-	return detail
-}
-
-func remapPayloadCreate(detail string) string {
-	if detail == "" || detail == "{}" {
-		return ""
-	}
-	var payload map[string]any
-	if err := json.Unmarshal([]byte(detail), &payload); err != nil {
-		return detail
-	}
-	var parts []string
-	if repo, ok := payload["repo"]; ok && repo != "" {
-		parts = append(parts, fmt.Sprintf("repo: %v", repo))
-	}
-	if title, ok := payload["title"]; ok && title != "" {
-		parts = append(parts, fmt.Sprintf("title: %v", title))
-	}
-	if priority, ok := payload["priority"]; ok {
-		parts = append(parts, fmt.Sprintf("priority: %v", priority))
-	}
-	if complexity, ok := payload["complexity"]; ok {
-		parts = append(parts, fmt.Sprintf("complexity: %v", complexity))
-	}
-	if len(parts) == 0 {
-		return ""
-	}
-	return strings.Join(parts, ", ")
-}
-
-func remapPayloadDispatch(detail string) string {
-	if detail == "" || detail == "{}" {
-		return ""
-	}
-	var payload map[string]any
-	if err := json.Unmarshal([]byte(detail), &payload); err != nil {
-		return detail
-	}
-	var parts []string
-	if aqueduct, ok := payload["aqueduct"]; ok && aqueduct != "" {
-		parts = append(parts, fmt.Sprintf("aqueduct: %v", aqueduct))
-	}
-	if cat, ok := payload["cataractae"]; ok && cat != "" {
-		parts = append(parts, fmt.Sprintf("step: %v", cat))
-	}
-	if assignee, ok := payload["assignee"]; ok && assignee != "" {
-		parts = append(parts, fmt.Sprintf("assignee: %v", assignee))
-	}
-	if len(parts) == 0 {
-		return ""
-	}
-	return strings.Join(parts, ", ")
-}
-
-func remapPayloadCataractaeNotes(detail string) string {
-	if detail == "" || detail == "{}" {
-		return ""
-	}
-	var payload map[string]any
-	if err := json.Unmarshal([]byte(detail), &payload); err != nil {
-		return detail
-	}
-	var parts []string
-	if cat, ok := payload["cataractae"]; ok && cat != "" {
-		parts = append(parts, fmt.Sprintf("by: %v", cat))
-	}
-	if notes, ok := payload["notes"]; ok && notes != "" {
-		parts = append(parts, fmt.Sprintf("notes: %v", notes))
-	}
-	if len(parts) == 0 {
-		return ""
-	}
-	return strings.Join(parts, ", ")
-}
-
-func remapPayloadRecirculate(detail string) string {
-	if detail == "" || detail == "{}" {
-		return ""
-	}
-	var payload map[string]any
-	if err := json.Unmarshal([]byte(detail), &payload); err != nil {
-		return detail
-	}
-	var parts []string
-	if cat, ok := payload["cataractae"]; ok && cat != "" {
-		parts = append(parts, fmt.Sprintf("by: %v", cat))
-	}
-	if target, ok := payload["target"]; ok && target != "" {
-		parts = append(parts, fmt.Sprintf("to: %v", target))
-	}
-	if notes, ok := payload["notes"]; ok && notes != "" {
-		parts = append(parts, fmt.Sprintf("notes: %v", notes))
-	}
-	if len(parts) == 0 {
-		return ""
-	}
-	return strings.Join(parts, ", ")
-}
-
-func remapPayloadCataractae(detail string) string {
-	if detail == "" || detail == "{}" {
-		return ""
-	}
-	var payload map[string]any
-	if err := json.Unmarshal([]byte(detail), &payload); err != nil {
-		return detail
-	}
-	if cat, ok := payload["cataractae"]; ok && cat != "" {
-		return fmt.Sprintf("by: %v", cat)
-	}
-	return ""
-}
-
-func remapPayloadEdit(detail string) string {
-	if detail == "" || detail == "{}" {
-		return ""
-	}
-	var payload map[string]any
-	if err := json.Unmarshal([]byte(detail), &payload); err != nil {
-		return detail
-	}
-	if fields, ok := payload["fields"]; ok {
-		return fmt.Sprintf("fields: %v", fields)
-	}
-	return ""
-}
-
-func remapPayloadExitNoOutcome(detail string) string {
-	if detail == "" || detail == "{}" {
-		return ""
-	}
-	var payload map[string]any
-	if err := json.Unmarshal([]byte(detail), &payload); err != nil {
-		return detail
-	}
-	var parts []string
-	if session, ok := payload["session"]; ok && session != "" {
-		parts = append(parts, fmt.Sprintf("session: %v", session))
-	}
-	if worker, ok := payload["worker"]; ok && worker != "" {
-		parts = append(parts, fmt.Sprintf("worker: %v", worker))
-	}
-	if cat, ok := payload["cataractae"]; ok && cat != "" {
-		parts = append(parts, fmt.Sprintf("step: %v", cat))
-	}
-	if len(parts) == 0 {
-		return ""
-	}
-	return strings.Join(parts, ", ")
-}
-
-func remapPayloadStall(detail string) string {
-	if detail == "" || detail == "{}" {
-		return ""
-	}
-	var payload map[string]any
-	if err := json.Unmarshal([]byte(detail), &payload); err != nil {
-		return detail
-	}
-	var parts []string
-	if cat, ok := payload["cataractae"]; ok && cat != "" {
-		parts = append(parts, fmt.Sprintf("step: %v", cat))
-	}
-	if elapsed, ok := payload["elapsed"]; ok && elapsed != "" {
-		parts = append(parts, fmt.Sprintf("elapsed: %v", elapsed))
-	}
-	if heartbeat, ok := payload["heartbeat"]; ok && heartbeat != "" {
-		parts = append(parts, fmt.Sprintf("heartbeat: %v", heartbeat))
-	}
-	if len(parts) == 0 {
-		return ""
-	}
-	return strings.Join(parts, ", ")
-}
-
-func remapPayloadCircuitBreaker(detail string) string {
-	if detail == "" || detail == "{}" {
-		return ""
-	}
-	var payload map[string]any
-	if err := json.Unmarshal([]byte(detail), &payload); err != nil {
-		return detail
-	}
-	var parts []string
-	if dc, ok := payload["death_count"]; ok {
-		parts = append(parts, fmt.Sprintf("dead sessions: %v", dc))
-	}
-	if window, ok := payload["window"]; ok && window != "" {
-		parts = append(parts, fmt.Sprintf("window: %v", window))
-	}
-	if len(parts) == 0 {
-		return ""
-	}
-	return strings.Join(parts, ", ")
-}
-
-func remapPayloadLoopRecovery(detail string) string {
-	if detail == "" || detail == "{}" {
-		return ""
-	}
-	var payload map[string]any
-	if err := json.Unmarshal([]byte(detail), &payload); err != nil {
-		return detail
-	}
-	var parts []string
-	if from, ok := payload["from"]; ok && from != "" {
-		parts = append(parts, fmt.Sprintf("from: %v", from))
-	}
-	if to, ok := payload["to"]; ok && to != "" {
-		parts = append(parts, fmt.Sprintf("to: %v", to))
-	}
-	if issue, ok := payload["issue"]; ok && issue != "" {
-		parts = append(parts, fmt.Sprintf("issue: %v", issue))
-	}
-	if len(parts) == 0 {
-		return ""
-	}
-	return strings.Join(parts, ", ")
-}
-
-func remapPayloadAutoPromote(detail string) string {
-	if detail == "" || detail == "{}" {
-		return ""
-	}
-	var payload map[string]any
-	if err := json.Unmarshal([]byte(detail), &payload); err != nil {
-		return detail
-	}
-	var parts []string
-	if cat, ok := payload["cataractae"]; ok && cat != "" {
-		parts = append(parts, fmt.Sprintf("step: %v", cat))
-	}
-	if routedTo, ok := payload["routed_to"]; ok && routedTo != "" {
-		parts = append(parts, fmt.Sprintf("routed to: %v", routedTo))
-	}
-	if len(parts) == 0 {
-		return ""
-	}
-	return strings.Join(parts, ", ")
 }
 
 func printLogText(out io.Writer, item *cistern.Droplet, entries []logEntry) error {

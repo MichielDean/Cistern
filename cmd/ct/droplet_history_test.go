@@ -167,7 +167,7 @@ func TestDropletHistory_JsonFormat(t *testing.T) {
 
 	lines := strings.Split(strings.TrimSpace(buf.String()), "\n")
 	if len(lines) < 2 {
-		t.Fatalf("expected at least 2 JSON lines (header + note), got %d", len(lines))
+		t.Fatalf("expected at least 2 JSON lines (event + note), got %d", len(lines))
 	}
 
 	type logEntry struct {
@@ -177,12 +177,12 @@ func TestDropletHistory_JsonFormat(t *testing.T) {
 		Detail     string `json:"detail"`
 	}
 
-	var header logEntry
-	if err := json.Unmarshal([]byte(lines[0]), &header); err != nil {
+	var first logEntry
+	if err := json.Unmarshal([]byte(lines[0]), &first); err != nil {
 		t.Fatalf("first line is not valid JSON: %v\nline: %s", err, lines[0])
 	}
-	if header.Event != "created" {
-		t.Errorf("first event should be 'created', got %q", header.Event)
+	if first.Event != "created" {
+		t.Errorf("first event should be 'created', got %q", first.Event)
 	}
 
 	var note logEntry
@@ -191,6 +191,9 @@ func TestDropletHistory_JsonFormat(t *testing.T) {
 	}
 	if note.Event != "note" {
 		t.Errorf("second event should be 'note', got %q", note.Event)
+	}
+	if note.Cataractae != "implement" {
+		t.Errorf("note cataractae should be 'implement', got %q", note.Cataractae)
 	}
 }
 
@@ -213,9 +216,9 @@ func TestDropletHistory_InvalidFormat(t *testing.T) {
 	}
 }
 
-func TestDropletHistory_ShowsHeartbeat(t *testing.T) {
+func TestDropletHistory_NoSyntheticHeartbeat(t *testing.T) {
 	c := setupHistoryTestDB(t)
-	item, err := c.Add("myrepo", "Heartbeat history task", "", 1, 2)
+	item, err := c.Add("myrepo", "No hb history task", "", 1, 2)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -233,11 +236,8 @@ func TestDropletHistory_ShowsHeartbeat(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if !strings.Contains(out, "heartbeat") {
-		t.Errorf("history output missing 'heartbeat' event: %s", out)
-	}
-	if !strings.Contains(out, "last heartbeat recorded") {
-		t.Errorf("history output missing heartbeat detail: %s", out)
+	if strings.Contains(out, "last heartbeat recorded") {
+		t.Errorf("history output should not contain synthetic heartbeat detail: %s", out)
 	}
 }
 

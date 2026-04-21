@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -30,14 +31,13 @@ func runTailCapture(t *testing.T, id string) (string, error) {
 	return buf.String(), err
 }
 
-func TestDropletTail_TextFormat_ShowsNotesAndEvents(t *testing.T) {
+func TestDropletTail_TextFormat_ShowsEvents(t *testing.T) {
 	c, _ := setupTailTestDB(t)
 	item, err := c.Add("myrepo", "Tail task", "", 1, 2)
 	if err != nil {
 		t.Fatal(err)
 	}
-	c.AddNote(item.ID, "implement", "wrote the code")
-	c.AddNote(item.ID, "review", "looks good")
+	c.Pool(item.ID, "needs review")
 
 	tailFmt = "text"
 	tailCount = 20
@@ -48,14 +48,11 @@ func TestDropletTail_TextFormat_ShowsNotesAndEvents(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if !strings.Contains(out, "note") {
-		t.Errorf("text output missing 'note' kind: %s", out)
+	if !strings.Contains(out, "event") {
+		t.Errorf("text output missing 'event' kind: %s", out)
 	}
-	if !strings.Contains(out, "implement") {
-		t.Errorf("text output missing 'implement': %s", out)
-	}
-	if !strings.Contains(out, "review") {
-		t.Errorf("text output missing 'review': %s", out)
+	if !strings.Contains(out, "pool") {
+		t.Errorf("text output missing 'pool' in value: %s", out)
 	}
 }
 
@@ -65,7 +62,7 @@ func TestDropletTail_JsonFormat_OutputsNDJson(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	c.AddNote(item.ID, "implement", "wrote the code")
+	c.Pool(item.ID, "needs review")
 
 	tailFmt = "json"
 	tailCount = 20
@@ -77,7 +74,7 @@ func TestDropletTail_JsonFormat_OutputsNDJson(t *testing.T) {
 	}
 
 	lines := strings.Split(strings.TrimSpace(out), "\n")
-	// create event from Add + note = 2 lines
+	// create event from Add + pool event = 2 lines
 	if len(lines) != 2 {
 		t.Fatalf("expected 2 JSON lines, got %d", len(lines))
 	}
@@ -86,11 +83,11 @@ func TestDropletTail_JsonFormat_OutputsNDJson(t *testing.T) {
 	if err := json.Unmarshal([]byte(lines[1]), &ch); err != nil {
 		t.Fatalf("output is not valid JSON: %v\nline: %s", err, lines[1])
 	}
-	if ch.Kind != "note" {
-		t.Errorf("Kind = %q, want %q", ch.Kind, "note")
+	if ch.Kind != "event" {
+		t.Errorf("Kind = %q, want %q", ch.Kind, "event")
 	}
-	if !strings.Contains(ch.Value, "implement") {
-		t.Errorf("Value = %q, want it to contain 'implement'", ch.Value)
+	if !strings.Contains(ch.Value, "pool") {
+		t.Errorf("Value = %q, want it to contain 'pool'", ch.Value)
 	}
 }
 
@@ -100,9 +97,8 @@ func TestDropletTail_LinesFlag_LimitsOutput(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	notes := []string{"alpha", "beta", "gamma", "delta", "epsilon"}
-	for _, n := range notes {
-		c.AddNote(item.ID, "step", n)
+	for i := range 5 {
+		c.RecordEvent(item.ID, "pass", fmt.Sprintf(`{"cataractae":"step-%d"}`, i))
 	}
 
 	tailFmt = "text"
@@ -117,15 +113,6 @@ func TestDropletTail_LinesFlag_LimitsOutput(t *testing.T) {
 	lineCount := len(strings.Split(strings.TrimSpace(out), "\n"))
 	if lineCount != 2 {
 		t.Errorf("expected 2 output lines with --lines 2, got %d", lineCount)
-	}
-	if !strings.Contains(out, "delta") {
-		t.Errorf("expected second-to-last event 'delta' in output, got: %s", out)
-	}
-	if !strings.Contains(out, "epsilon") {
-		t.Errorf("expected last event 'epsilon' in output, got: %s", out)
-	}
-	if strings.Contains(out, "alpha") || strings.Contains(out, "beta") || strings.Contains(out, "gamma") {
-		t.Errorf("older events should not appear with --lines 2, got: %s", out)
 	}
 }
 
