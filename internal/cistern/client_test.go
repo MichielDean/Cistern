@@ -3942,3 +3942,148 @@ func TestCountEventsByType_ZeroWhenWrongType(t *testing.T) {
 		t.Errorf("CountEventsByType = %d, want 0 when only stall events exist", count)
 	}
 }
+
+func TestMigration018_SchedulerNotesToEvents(t *testing.T) {
+	c := testClient(t)
+	item, _ := c.Add("myrepo", "Migration test", "", 1, 2)
+
+	notes := []struct {
+		cataractaeName string
+		content        string
+	}{
+		{"scheduler", "[scheduler:exit-no-outcome] Session ses-001 exited without outcome (worker=w1, cataractae=implement). [2026-04-21T10:00:00Z]"},
+		{"scheduler", "[scheduler:zombie] Session ses-002 died without outcome (worker=w2, cataractae=review). [2026-04-21T11:00:00Z]"},
+		{"scheduler", "[scheduler:stall] elapsed=45m0s heartbeat=2026-04-21T09:15:00Z"},
+		{"scheduler", "[scheduler:recovery] Orphan reset to open (cataractae=implement)."},
+		{"scheduler", "[scheduler:recovery] reset orphaned in_progress droplet to open — no assignee, no active session"},
+		{"scheduler", "[scheduler:loop-recovery] detected implement→implement loop on reviewer issue iss-001 — routing to reviewer"},
+		{"scheduler", "[scheduler:routing] Auto-promoted: cataractae=implement signaled recirculate but has no on_recirculate route — routing via on_pass to review"},
+		{"scheduler", "[scheduler:routing] cataractae=implement signaled recirculate but has no on_recirculate route and no on_pass route — droplet pooled"},
+		{"scheduler", "[circuit-breaker] 5 dead sessions in 15m0s with no outcome — pooling"},
+		{"scheduler", "cancelled: not needed [2026-04-21 03:00:05]"},
+		{"scheduler", "restarted at cataractae \"implement\" [2026-04-21 02:00:05]"},
+		{"scheduler", "[scheduler:loop-recovery-pending] issue=iss-001 — open reviewer issue found at implement, routing back to implement (cycle 1/2)"},
+		{"manual", "a manual note that should not be touched"},
+	}
+	for i, n := range notes {
+		ts := time.Date(2026, 4, 21, 12, i, 0, 0, time.UTC)
+		_, err := c.db.Exec(
+			`INSERT INTO cataractae_notes (droplet_id, cataractae_name, content, created_at) VALUES (?, ?, ?, ?)`,
+			item.ID, n.cataractaeName, n.content, ts,
+		)
+		if err != nil {
+			t.Fatalf("insert note %d: %v", i, err)
+		}
+	}
+
+	migrations, err := loadMigrations()
+	if err != nil {
+		t.Fatalf("loadMigrations: %v", err)
+	}
+	var m018 migrationEntry
+	found := false
+	for _, m := range migrations {
+		if m.Number == 18 {
+			m018 = m
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatal("migration 018 not found")
+	}
+
+	if err := applyMigration(c.db, m018); err != nil {
+		t.Fatalf("applyMigration 018: %v", err)
+	}
+
+	var schedulerNoteCount int
+	c.db.QueryRow(`SELECT COUNT(*) FROM cataractae_notes WHERE cataractae_name = 'scheduler'`).Scan(&schedulerNoteCount)
+	if schedulerNoteCount != 1 {
+		t.Errorf("scheduler note count after migration = %d, want 1 (loop-recovery-pending)", schedulerNoteCount)
+	}
+	var remainingContent string
+	c.db.QueryRow(`SELECT content FROM cataractae_notes WHERE cataractae_name = 'scheduler'`).Scan(&remainingContent)
+	if !strings.Contains(remainingContent, "[scheduler:loop-recovery-pending]") {
+		t.Errorf("remaining scheduler note = %q, want loop-recovery-pending marker", remainingContent)
+	}
+
+	var manualNoteCount int
+	c.db.QueryRow(`SELECT COUNT(*) FROM cataractae_notes WHERE cataractae_name = 'manual'`).Scan(&manualNoteCount)
+	if manualNoteCount != 1 {
+		t.Errorf("manual note count after migration = %d, want 1 (untouched)", manualNoteCount)
+	}
+
+	type eventCheck struct {
+		eventType string
+		wantJSON  string
+	}
+	expectedEvents := []eventCheck{
+		{EventExitNoOutcome, `"session":"ses-001"`},
+		{EventExitNoOutcome, `"session":"ses-002"`},
+		{EventStall, `"elapsed":"45m0s"`},
+		{EventRecovery, `"cataractae":"implement"`},
+		{EventRecovery, `"cataractae":""`},
+		{EventLoopRecovery, `"issue":"iss-001"`},
+		{EventAutoPromote, `"routed_to":"review"`},
+		{EventNoRoute, `"cataractae":"implement"`},
+		{EventCircuitBreaker, `"death_count":5`},
+		{EventCancel, `"reason":"not needed"`},
+		{EventRestart, `"cataractae":"implement"`},
+	}
+
+	for _, ec := range expectedEvents {
+		var count int
+		c.db.QueryRow(`SELECT COUNT(*) FROM events WHERE droplet_id = ? AND event_type = ? AND payload LIKE ?`, item.ID, ec.eventType, "%"+ec.wantJSON+"%").Scan(&count)
+		if count != 1 {
+			t.Errorf("event %s containing %q: count=%d, want 1", ec.eventType, ec.wantJSON, count)
+		}
+	}
+
+	var eventCount int
+	c.db.QueryRow(`SELECT COUNT(*) FROM events WHERE droplet_id = ?`, item.ID).Scan(&eventCount)
+	if eventCount < len(expectedEvents) {
+		t.Errorf("total events for droplet = %d, want at least %d", eventCount, len(expectedEvents))
+	}
+}
+
+func TestMigration018_Idempotent(t *testing.T) {
+	c := testClient(t)
+	item, _ := c.Add("myrepo", "Idempotent test", "", 1, 2)
+
+	ts := time.Date(2026, 4, 21, 12, 0, 0, 0, time.UTC)
+	c.db.Exec(`INSERT INTO cataractae_notes (droplet_id, cataractae_name, content, created_at) VALUES (?, ?, ?, ?)`,
+		item.ID, "scheduler", "[scheduler:stall] elapsed=5m0s heartbeat=none", ts)
+
+	migrations, _ := loadMigrations()
+	var m018 migrationEntry
+	for _, m := range migrations {
+		if m.Number == 18 {
+			m018 = m
+			break
+		}
+	}
+
+	if err := applyMigration(c.db, m018); err != nil {
+		t.Fatalf("first applyMigration 018: %v", err)
+	}
+
+	var noteCountBefore int
+	c.db.QueryRow(`SELECT COUNT(*) FROM cataractae_notes WHERE cataractae_name = 'scheduler'`).Scan(&noteCountBefore)
+
+	if err := applyMigration(c.db, m018); err != nil {
+		t.Fatalf("second applyMigration 018 (idempotency): %v", err)
+	}
+
+	var noteCountAfter int
+	c.db.QueryRow(`SELECT COUNT(*) FROM cataractae_notes WHERE cataractae_name = 'scheduler'`).Scan(&noteCountAfter)
+	if noteCountAfter != noteCountBefore {
+		t.Errorf("scheduler note count changed on second run: before=%d after=%d, want same", noteCountBefore, noteCountAfter)
+	}
+
+	var eventCount int
+	c.db.QueryRow(`SELECT COUNT(*) FROM events WHERE droplet_id = ? AND event_type = ?`, item.ID, EventStall).Scan(&eventCount)
+	if eventCount != 1 {
+		t.Errorf("stall event count after idempotent run = %d, want 1", eventCount)
+	}
+}
