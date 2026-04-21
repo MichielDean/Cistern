@@ -165,6 +165,10 @@ Every one is mechanical — the answer is either yes or no.
 - Every new public method on a struct that connects to external services needs
   an integration test
 
+### Serialization Boundaries
+
+When data crosses a language boundary (Go → JSON → TypeScript, Python → JSON → JS, etc.), every collection field must produce `[]`/`{}` in the empty case, never `null`. In Go, this means initializing as `[]T{}`/`map[string]T{}`, not leaving nil. In Python, this means `[]`/`{}`, not `None`. After writing any serialization struct, write one test that serializes the zero-value and asserts no field is null.
+
 ## Revision Cycles
 
 Address every open issue from prior cycles — partial fixes will be sent back.

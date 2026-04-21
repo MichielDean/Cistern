@@ -78,7 +78,16 @@ type DashboardData struct {
 // partial data; the --json CLI path propagates it to give scripts a clear
 // signal when infrastructure is broken.
 func fetchDashboardData(cfgPath, dbPath string) (*DashboardData, error) {
-	data := &DashboardData{FetchedAt: time.Now()}
+	data := &DashboardData{
+		Cataractae:      []CataractaeInfo{},
+		UnassignedItems: []*cistern.Droplet{},
+		CisternItems:    []*cistern.Droplet{},
+		PooledItems:     []*cistern.Droplet{},
+		RecentItems:     []*cistern.Droplet{},
+		BlockedByMap:    map[string]string{},
+		FlowActivities:  []FlowActivity{},
+		FetchedAt:       time.Now(),
+	}
 
 	cfg, err := aqueduct.ParseAqueductConfig(cfgPath)
 	if err != nil {
@@ -236,8 +245,8 @@ func fetchDashboardData(cfgPath, dbPath string) (*DashboardData, error) {
 			continue
 		}
 		notes, err := c.GetNotes(item.ID)
-		if err != nil {
-			notes = nil
+		if err != nil || notes == nil {
+			notes = []cistern.CataractaeNote{}
 		}
 		// Keep last 3 notes (most recent activity, newest first).
 		recent := notes

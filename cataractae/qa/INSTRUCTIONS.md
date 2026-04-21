@@ -171,3 +171,22 @@ finding naming what is missing.
   httptest.NewServer exists — mocks for HTTP clients are forbidden
 - Verify every new public method on a struct that connects to external services
   has an integration test
+
+### smoke_the_real_thing
+
+Reading tests is not enough. You must also **run the code** and verify it works end-to-end. "All tests pass" does not mean "the feature works."
+
+For any diff that adds or modifies an HTTP API endpoint, a web UI, or a CLI command:
+
+1. **Start the actual server.** Build it, run it, hit the endpoint with `curl` or the test runner. An empty-database GET must return valid JSON with `[]` for every collection field, not `null`.
+2. **Load the actual UI.** If the diff adds or modifies a web page, open it in a browser (or Playwright). Verify it renders without JS console errors. Verify it handles empty data (no items, no lists) without crashing.
+3. **Test the boundary.** If the diff adds serialization code (Go struct → JSON, Python model → JSON, etc.), build the zero-value struct, serialize it, and assert no field is `null` where the consumer expects a collection.
+
+If you cannot run the code (no server available, no browser), state that explicitly in your findings and flag it as a gap. "I could not smoke-test this" is a finding.
+
+Tools available:
+- `go test ./...` for Go tests
+- `curl http://localhost:<port>/api/...` for API endpoints
+- `npx vitest run` for React component tests
+- Playwright for end-to-end UI smoke tests (if available)
+- `npm run build` for frontend builds — a build that fails means the feature doesn't work

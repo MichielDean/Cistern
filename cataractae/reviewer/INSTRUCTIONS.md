@@ -62,6 +62,8 @@ These are common ways the contract principle manifests in specific languages. Th
 
 **Go:** Bare `recover()` swallowing all panics, `defer` inside loops, goroutine leaks, missing `context.Context` cancellation, ignoring error return values with `_`, race conditions on shared mutable state, `interface{}`/`any` abuse masking type errors, string formatting in errors instead of `fmt.Errorf("...: %w", err)`.
 
+**All languages:** Nil/null collections at serialization boundaries. When data crosses from one language to another (Go→JSON, Python→JSON, etc.), nil collections serialize as `null` instead of `[]`. The consumer will crash on `.length`, `.map()`, or iteration. Check every struct that gets serialized — are all collection fields initialized as empty, not nil?
+
 **TypeScript/JavaScript:** `==` instead of `===`, `any` type abuse, missing null checks before property access, unhandled promise rejections, missing `await` on async calls, uncontrolled re-renders in React.
 
 **SQL/ORM:** N+1 query patterns, raw string interpolation in queries (injection risk), missing indexes on frequently queried columns, unbounded queries without LIMIT, unquoted identifiers in DML/DDL, migrations that bundle DDL and reference data DML, placeholder descriptions in reference data INSERTs.
