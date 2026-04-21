@@ -33,3 +33,8 @@ export { SpecPreview } from './SpecPreview';
 export { ImportForm } from './ImportForm';
 export { JiraSetupNote } from './JiraSetupNote';
 export { ExportButton } from './ExportButton';
+export { ErrorBoundary } from './ErrorBoundary';
+export { TerminalView } from './TerminalView';
+export { LoadingSkeleton, SkeletonLine, SkeletonCard, SkeletonTable } from './LoadingSkeleton';
+export { ToastProvider, useToast } from './Toast';
+export { CommandPalette } from './CommandPalette';

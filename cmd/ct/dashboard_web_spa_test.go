@@ -275,3 +275,59 @@ func TestAuthMiddleware_OptionsExempt(t *testing.T) {
 		t.Errorf("OPTIONS /api/droplets: status = %d, want %d (CORS preflight should be exempt)", w.Code, http.StatusOK)
 	}
 }
+
+func TestSPAHandler_ServesUnknownSubRoutesAsIndexHTML(t *testing.T) {
+	handler := newSPAHandler("")
+	server := httptest.NewServer(handler)
+	defer server.Close()
+
+	for _, path := range []string{"/app/droplets/nonexistent-droplet-id", "/app/castellarious-typo"} {
+		resp, err := http.Get(server.URL + path)
+		if err != nil {
+			t.Fatalf("GET %s: %v", path, err)
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusOK {
+			t.Errorf("GET %s: status = %d, want %d", path, resp.StatusCode, http.StatusOK)
+		}
+
+		ct := resp.Header.Get("Content-Type")
+		if ct != "text/html; charset=utf-8" {
+			t.Errorf("GET %s: Content-Type = %q, want %q", path, ct, "text/html; charset=utf-8")
+		}
+	}
+}
+
+func TestSPAHandler_AssetsPathRequiresTrailingSlash(t *testing.T) {
+	handler := newSPAHandler("")
+	server := httptest.NewServer(handler)
+	defer server.Close()
+
+	resp, err := http.Get(server.URL + "/app/")
+	if err != nil {
+		t.Fatalf("GET /app/: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("GET /app/: status = %d, want %d", resp.StatusCode, http.StatusOK)
+	}
+}
+
+func TestSPAHandler_IndexHTMLHasNoCaching(t *testing.T) {
+	handler := newSPAHandler("")
+	server := httptest.NewServer(handler)
+	defer server.Close()
+
+	resp, err := http.Get(server.URL + "/app/")
+	if err != nil {
+		t.Fatalf("GET /app/: %v", err)
+	}
+	defer resp.Body.Close()
+
+	cc := resp.Header.Get("Cache-Control")
+	if cc != "no-cache" {
+		t.Errorf("Cache-Control = %q, want %q", cc, "no-cache")
+	}
+}

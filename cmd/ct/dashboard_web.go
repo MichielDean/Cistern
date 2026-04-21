@@ -2845,11 +2845,15 @@ html,body{width:100%;height:100%;background:#0d1117;overflow:hidden}
 /* ESC = back hint — fixed corner overlay, always visible, subtle */
 #esc-hint{position:fixed;bottom:10px;right:14px;z-index:9999;background:rgba(13,17,23,0.82);border:1px solid #30363d;border-radius:4px;padding:3px 8px;font-family:monospace;font-size:11px;color:#8b949e;cursor:pointer;user-select:none;-webkit-user-select:none;outline:none}
 #esc-hint:hover{color:#e6edf3;border-color:#58a6ff}
+/* New UI link — sits left of ESC hint */
+#new-ui-hint{position:fixed;bottom:10px;right:110px;z-index:9999;background:rgba(13,17,23,0.82);border:1px solid #30363d;border-radius:4px;padding:3px 8px;font-family:monospace;font-size:11px;color:#58a6ff;text-decoration:none;user-select:none;-webkit-user-select:none}
+#new-ui-hint:hover{color:#e6edf3;border-color:#58a6ff}
 </style>
 <link rel="stylesheet" href="/static/xterm.min.css"/>
 </head>
 <body>
 <div id="scroll"><div id="wrap"><div id="terminal"></div></div></div>
+<a id="new-ui-hint" href="/app/" title="Open the new web UI">New UI</a>
 <button id="esc-hint" onclick="sendEsc()" title="Send Esc to terminal (back / close overlay)">ESC = back</button>
 <script src="/static/xterm.min.js"></script>
 <script src="/static/addon-fit.min.js"></script>

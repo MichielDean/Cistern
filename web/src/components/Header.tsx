@@ -1,3 +1,4 @@
+import { useNavigate } from 'react-router-dom';
 import type { DashboardData } from '../api/types';
 
 interface HeaderProps {
@@ -7,8 +8,10 @@ interface HeaderProps {
 }
 
 export function Header({ data, connected, onMenuClick }: HeaderProps) {
+  const navigate = useNavigate();
+
   return (
-    <header className="h-[60px] bg-cistern-surface border-b border-cistern-border flex items-center px-4 gap-4 shrink-0">
+    <header className="h-[60px] bg-cistern-surface border-b border-cistern-border flex items-center px-4 gap-4 shrink-0" role="banner">
       <button
         onClick={onMenuClick}
         className="md:hidden text-cistern-muted hover:text-cistern-fg transition-colors"
@@ -35,6 +38,13 @@ export function Header({ data, connected, onMenuClick }: HeaderProps) {
           {connected ? 'Live' : 'Disconnected'}
         </span>
       </div>
+      <a
+        href="/"
+        className="hidden sm:inline text-xs text-cistern-muted hover:text-cistern-accent transition-colors border border-cistern-border rounded px-2 py-1"
+        title="Switch to terminal dashboard"
+      >
+        Classic Dashboard
+      </a>
     </header>
   );
 }

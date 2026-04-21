@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Outlet } from 'react-router-dom';
 import { Sidebar } from './components/Sidebar';
 import { Header } from './components/Header';
+import { ToastProvider } from './components/Toast';
 import { DashboardProvider, useDashboard } from './context/DashboardContext';
 import { useAuth } from './hooks/useAuth';
 import { LoginPage } from './components/LoginPage';
@@ -15,7 +16,9 @@ export function AppLayout() {
 
   return (
     <DashboardProvider>
-      <AppLayoutInner />
+      <ToastProvider>
+        <AppLayoutInner />
+      </ToastProvider>
     </DashboardProvider>
   );
 }

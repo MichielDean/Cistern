@@ -33,3 +33,37 @@ Before a PR can be merged:
 2. Ensure the `build` status check passes.
 
 If GitHub shows "This branch is out of date with the base branch", run the rebase above and push again.
+
+## Web UI Development
+
+The Cistern web UI is a React SPA served at `/app/` alongside the xterm.js TUI dashboard at `/`.
+
+### Prerequisites
+
+- Node.js 18+ and npm
+- Go 1.22+ (for building the server with embedded assets)
+
+### Build commands
+
+```bash
+# Build the React SPA (outputs to cmd/ct/assets/web/)
+make web-build
+
+# Run the Vite dev server with API proxy to localhost:5737
+make web-dev
+
+# Build the Go binary (includes embedded web assets)
+make build
+```
+
+### Development workflow
+
+1. Start the Go dashboard server: `ct dashboard --web --addr 0.0.0.0:5737`
+2. In a separate terminal, run `make web-dev` for hot-reloaded frontend development
+3. The Vite dev server proxies `/api` and `/ws` requests to the Go server
+
+### Architecture
+
+- **Go server** (`cmd/ct/dashboard_web_spa.go`): Embeds the built SPA via `//go:embed assets/web` and serves it under `/app/`. Client-side routing handles all sub-routes.
+- **React app** (`web/src/`): React Router routes under `/app/`, SSE for live updates, WebSocket for peek. Dark theme with Tailwind CSS.
+- **Tests**: Frontend tests use Vitest + React Testing Library (`npm test`). Go integration tests cover SPA routing and API endpoints.

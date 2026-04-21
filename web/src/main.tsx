@@ -12,12 +12,14 @@ import { ReposSkillsPage } from './pages/ReposSkillsPage';
 import { CreateDroplet } from './pages/CreateDroplet';
 import { FilterPage } from './pages/FilterPage';
 import { ImportPage } from './pages/ImportPage';
+import { NotFound } from './pages/NotFound';
+import { ErrorBoundary } from './components/ErrorBoundary';
 import './index.css';
 
 const router = createBrowserRouter([
   {
     path: '/app',
-    element: <AppLayout />,
+    element: <ErrorBoundary><AppLayout /></ErrorBoundary>,
     children: [
       { index: true, element: <Dashboard /> },
       { path: 'droplets', element: <DropletsList /> },
@@ -29,6 +31,7 @@ const router = createBrowserRouter([
       { path: 'repos', element: <ReposSkillsPage /> },
       { path: 'filter', element: <FilterPage /> },
       { path: 'import', element: <ImportPage /> },
+      { path: '*', element: <NotFound /> },
     ],
   },
 ]);

@@ -28,3 +28,4 @@ install
 web/node_modules/
 web/dist/
 *.tsbuildinfo
+cmd/ct/ct

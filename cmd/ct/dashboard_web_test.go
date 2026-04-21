@@ -1157,6 +1157,24 @@ func TestDashboardHTML_EscHint(t *testing.T) {
 	}
 }
 
+// TestDashboardHTML_NewUILink verifies that the "New UI" link to /app/ is
+// present in the xterm.js TUI dashboard HTML.
+func TestDashboardHTML_NewUILink(t *testing.T) {
+	checks := []struct {
+		want string
+		desc string
+	}{
+		{`id="new-ui-hint"`, "new-ui-hint element"},
+		{`href="/app/"`, "link target /app/"},
+		{"New UI", "link label"},
+	}
+	for _, c := range checks {
+		if !strings.Contains(dashboardHTML, c.want) {
+			t.Errorf("dashboardHTML must contain %s (%q)", c.desc, c.want)
+		}
+	}
+}
+
 // TestDashboardTUI_ReconnectDoesNotRestartChild asserts that disconnecting and
 // reconnecting a WebSocket client does not cause the child process to restart.
 //
