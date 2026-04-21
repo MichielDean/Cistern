@@ -8,8 +8,8 @@
 #
 # Stage 2 (runtime): cistern-systemd-test (systemd as PID 1) + extra tools
 #   (git, tmux) + the compiled binaries.  fakeagent is symlinked as
-#   /usr/local/bin/claude so that installer tests can exercise ct doctor /
-#   ct init without a real Claude Code installation or API key.
+#   /usr/local/bin/opencode so that installer tests can exercise ct doctor /
+#   ct init without a real opencode installation or API key.
 #
 # Build (from repo root — build base image first):
 #   docker build -t cistern-systemd-test test/docker/systemd
@@ -54,10 +54,10 @@ RUN apt-get update \
 COPY --from=builder /out/ct          /usr/local/bin/ct
 COPY --from=builder /out/fakeagent   /usr/local/bin/fakeagent
 
-# Stub the claude CLI with fakeagent.  This satisfies ct doctor's "claude CLI
+# Stub the opencode CLI with fakeagent.  This satisfies ct doctor's "opencode CLI
 # found" check and allows fakeagent-based tests to exercise the agent spawn
 # pipeline without a real LLM or API key.
-RUN ln -s /usr/local/bin/fakeagent /usr/local/bin/claude
+RUN ln -s /usr/local/bin/fakeagent /usr/local/bin/opencode
 
 # Stub the gh CLI so that ct doctor's "gh CLI installed" and "gh authenticated"
 # checks succeed without a real GitHub CLI installation or credentials.

@@ -288,7 +288,7 @@ ct cataractae render --step <name> [--droplet <id>]  # Preview rendered template
 ```
 
 **`ct cataractae generate`** generates configuration files for all cataractae defined in the workflow. For each step, it creates or updates:
-- `CLAUDE.md` (or `AGENTS.md` depending on the configured provider) — the rendered instructions template for the agent
+- `AGENTS.md` — the rendered instructions template for the agent
 - `PIPELINE_POSITION.md` — documents the step's role, predecessor, and successor in the workflow
 - `skills/cataractae-protocol/SKILL.md` — injects the universal behavioral protocol skill (copied from the installed skill)
 
@@ -444,7 +444,7 @@ The Castellarius module provides direct control of the Castellarius daemon (the 
 
 The Doctor module runs `ct doctor` on activation and displays system health and configuration checks in a scrollable pane:
 
-- **Credentials & Auth**: Claude OAuth token, API key fallback, provider binary availability, and required environment variables
+- **Credentials & Auth**: Provider binary availability, required environment variables, and authentication status
 - **Configuration**: Agent instruction files, installed skills, aqueduct YAML validity
 - **Runtime Health**: Castellarius daemon status, scheduler liveness, stalled droplet warnings
 
@@ -484,7 +484,7 @@ The Filter module provides an interactive multi-turn conversation for refining i
 - Press `enter` to submit and begin the conversation
 
 **Conversation View**
-- **Message history**: Displays alternating user (you) and LLM (Claude) messages in a scrollable pane
+- **Message history**: Displays alternating user (you) and LLM (opencode) messages in a scrollable pane
 - **Text input**: Single-line input at the bottom; press `enter` to submit
 - **Session indicator**: Current session ID shown in the header (maintained for `--resume` across sessions)
 - **Submission feedback**: Brief spinner displays during processing; full LLM response renders when complete (no streaming)
@@ -496,7 +496,7 @@ The Filter module provides an interactive multi-turn conversation for refining i
 - `esc` — **Return to sidebar** — Close the filter panel
 
 **Session Persistence**
-- Each session receives a unique ID from the Claude agent
+- Each session receives a unique ID from the opencode agent
 - Session ID is displayed at the top of the conversation
 - Use `ct filter --resume <session-id>` in the terminal to reconnect to a previous session and continue the conversation
 

@@ -83,11 +83,11 @@ ct droplet add \
 Filtration is a **thinking tool**, not a filing tool. It refines ideas into clear specs — filing is always done separately with `ct droplet add`.
 
 **⚠️ Filtration pitfalls:**
-- **Never set `ANTHROPIC_API_KEY` before running `ct filter`** — ct filter uses the opencode CLI, not API key auth. Setting `ANTHROPIC_API_KEY` in the environment causes authentication issues and ct filter may exit with a confusing usage-help message.
+- **Do not set provider API keys before running `ct filter`** — ct filter uses the opencode CLI, which manages its own credentials. Setting API keys in the environment may cause authentication conflicts.
 - **Run `ct filter` from `~/cistern`** — it uses `--allowedTools` to read codebase context. Running from another directory gives the agent no context.
 - **Don't use `--description` for long text** — pass the title only; provide full context in the first interactive turn instead.
 
-**Step 1 — Start (from ~/cistern, no ANTHROPIC_API_KEY exported):**
+**Step 1 — Start (from ~/cistern, no provider API keys exported):**
 ```bash
 cd ~/cistern
 ct filter --title "Rough idea"
@@ -173,7 +173,7 @@ systemctl --user start cistern-ttyd.service
 ## Infrastructure
 
 - Castellarius: systemd user service `cistern-castellarius.service` (Restart=always)
-- Auth: Opencode CLI manages its own credentials — no ANTHROPIC_API_KEY env var needed in service
+- Auth: Opencode CLI manages its own credentials — no provider API keys needed in the service environment
 - `start-castellarius.sh` just runs `exec ct castellarius start` — no credential setup
 - ttyd dashboard: port 5737, managed by `cistern-ttyd.service`
 - Self-restart: git_sync drought hook + binary mtime detection → os.Exit(0) → systemd restarts
