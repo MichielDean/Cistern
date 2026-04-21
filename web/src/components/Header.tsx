@@ -15,6 +15,7 @@ export function Header({ data, connected, onMenuClick }: HeaderProps) {
     if (connected && !prevConnected) {
       setJustConnected(true);
       const timer = setTimeout(() => setJustConnected(false), 2000);
+      setPrevConnected(connected);
       return () => clearTimeout(timer);
     }
     setPrevConnected(connected);

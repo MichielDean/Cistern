@@ -87,9 +87,13 @@ export function DropletDetail() {
   }, [mutate, refetchAll, addToast]);
 
   const handleRename = useCallback(async (newTitle: string) => {
-    await renameDroplet(id!, newTitle);
-    refetchAll();
-  }, [id, refetchAll]);
+    try {
+      await renameDroplet(id!, newTitle);
+      refetchAll();
+    } catch (err) {
+      addToast(err instanceof Error ? err.message : 'Rename failed', 'error');
+    }
+  }, [id, refetchAll, addToast]);
 
   const handleCopyId = useCallback(() => {
     if (currentDroplet?.id) {
@@ -226,12 +230,20 @@ export function DropletDetail() {
             issues={issues}
             loading={issuesLoading}
             onResolve={async (issueId, ev) => {
-              await resolveIssue(issueId, { evidence: ev });
-              refetchAll();
+              try {
+                await resolveIssue(issueId, { evidence: ev });
+                refetchAll();
+              } catch (err) {
+                addToast(err instanceof Error ? err.message : 'Resolve issue failed', 'error');
+              }
             }}
             onReject={async (issueId, ev) => {
-              await rejectIssue(issueId, { evidence: ev });
-              refetchAll();
+              try {
+                await rejectIssue(issueId, { evidence: ev });
+                refetchAll();
+              } catch (err) {
+                addToast(err instanceof Error ? err.message : 'Reject issue failed', 'error');
+              }
             }}
           />
         </section>
@@ -300,8 +312,12 @@ export function DropletDetail() {
         onClose={() => setShowCloseModal(false)}
         dropletId={d.id}
         onConfirm={async (dropletId: string) => {
-          await mutate(dropletId, 'close');
-          refetchAll();
+          try {
+            await mutate(dropletId, 'close');
+            refetchAll();
+          } catch (err) {
+            addToast(err instanceof Error ? err.message : 'Close failed', 'error');
+          }
         }}
       />
 
@@ -310,8 +326,12 @@ export function DropletDetail() {
         onClose={() => setShowReopenModal(false)}
         dropletId={d.id}
         onConfirm={async (dropletId: string) => {
-          await mutate(dropletId, 'reopen');
-          refetchAll();
+          try {
+            await mutate(dropletId, 'reopen');
+            refetchAll();
+          } catch (err) {
+            addToast(err instanceof Error ? err.message : 'Reopen failed', 'error');
+          }
         }}
       />
     </div>
