@@ -1271,8 +1271,9 @@ func apiAuthMiddleware(next http.Handler, apiKey string) http.Handler {
 		// Exempt WS peek endpoints — authentication is handled in-band via the
 		// first WebSocket message after upgrade, not via URL query parameters.
 		// This prevents auth tokens from leaking into server access logs and
-		// browser history.
-		if strings.HasPrefix(r.URL.Path, "/ws/aqueducts/") {
+		// browser history. Only exempt /ws/aqueducts/{name}/peek, not all
+		// /ws/aqueducts/ paths (defense-in-depth: other WS routes may need auth).
+		if strings.HasPrefix(r.URL.Path, "/ws/aqueducts/") && strings.HasSuffix(r.URL.Path, "/peek") {
 			next.ServeHTTP(w, r)
 			return
 		}

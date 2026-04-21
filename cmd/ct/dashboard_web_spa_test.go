@@ -1,6 +1,7 @@
 package main
 
 import (
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -37,7 +38,7 @@ func TestSPAHandler_ServesSubRoutes(t *testing.T) {
 		if err != nil {
 			t.Fatalf("GET %s: %v", path, err)
 		}
-		defer resp.Body.Close()
+		resp.Body.Close()
 
 		if resp.StatusCode != http.StatusOK {
 			t.Errorf("GET %s: status = %d, want %d", path, resp.StatusCode, http.StatusOK)
@@ -98,10 +99,12 @@ func TestSPAHandler_InjectsAuthMetaTag(t *testing.T) {
 		t.Fatalf("GET /app/: status = %d, want %d", resp.StatusCode, http.StatusOK)
 	}
 
-	body := make([]byte, resp.ContentLength)
-	resp.Body.Read(body) //nolint:errcheck
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("reading response body: %v", err)
+	}
 
-	if string(body) == "" {
+	if len(body) == 0 {
 		t.Fatal("response body is empty")
 	}
 
@@ -121,8 +124,10 @@ func TestSPAHandler_NoAuthMetaTagWithoutKey(t *testing.T) {
 	}
 	defer resp.Body.Close()
 
-	body := make([]byte, resp.ContentLength)
-	resp.Body.Read(body) //nolint:errcheck
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("reading response body: %v", err)
+	}
 
 	if contains(string(body), "cistern-auth") {
 		t.Error("index.html should NOT contain auth meta tag when no apiKey is configured")
@@ -223,6 +228,23 @@ func TestAuthMiddleware_WSPeekExempt(t *testing.T) {
 
 		if w.Code != http.StatusOK {
 			t.Errorf("GET %s: status = %d, want %d (WS peek should be exempt from middleware auth)", path, w.Code, http.StatusOK)
+		}
+	}
+}
+
+func TestAuthMiddleware_WSNonPeekRequiresAuth(t *testing.T) {
+	okHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+	handler := apiAuthMiddleware(okHandler, "test-key")
+
+	for _, path := range []string{"/ws/aqueducts/virgo", "/ws/aqueducts/virgo/stream", "/ws/aqueducts/"} {
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, req)
+
+		if w.Code != http.StatusUnauthorized {
+			t.Errorf("GET %s: status = %d, want %d (non-peek WS paths should require auth)", path, w.Code, http.StatusUnauthorized)
 		}
 	}
 }
@@ -332,7 +354,7 @@ func TestSPAHandler_ServesUnknownSubRoutesAsIndexHTML(t *testing.T) {
 		if err != nil {
 			t.Fatalf("GET %s: %v", path, err)
 		}
-		defer resp.Body.Close()
+		resp.Body.Close()
 
 		if resp.StatusCode != http.StatusOK {
 			t.Errorf("GET %s: status = %d, want %d", path, resp.StatusCode, http.StatusOK)
