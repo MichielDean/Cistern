@@ -856,7 +856,7 @@ ct droplet tail <id> --lines 50                             Show last 50 events 
 ct droplet tail <id> --format json                          Output events as NDJSON (one JSON object per line)
 
 # Log — chronological activity timeline for a droplet
-ct droplet log <id>                                         Show activity log (creation, transitions, signals, heartbeat, notes)
+ct droplet log <id>                                         Show activity log (creation, dispatch, pass, recirculate, delivered, restart, approve, edit, pool, cancel, heartbeat, notes)
 ct droplet log <id> --format json                           Output as NDJSON (one JSON object per line)
 
 # History — alias for ct droplet log

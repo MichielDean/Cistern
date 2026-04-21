@@ -207,7 +207,6 @@ func (c *pipelineClient) SetCataractae(id, cataractae string) error {
 	return nil
 }
 
-
 func (c *pipelineClient) ListIssues(dropletID string, openOnly bool, flaggedBy string) ([]cistern.DropletIssue, error) {
 	return nil, nil
 }
@@ -221,6 +220,10 @@ func (c *pipelineClient) FileDroplet(repo, title, description string, priority, 
 }
 
 func (c *pipelineClient) Heartbeat(id string) error {
+	return nil
+}
+
+func (c *pipelineClient) RecordEvent(id, eventType, payload string) error {
 	return nil
 }
 

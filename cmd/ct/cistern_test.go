@@ -690,19 +690,19 @@ func TestDropletCancel_WithReason(t *testing.T) {
 
 	c2, _ := cistern.New(db, "")
 	defer c2.Close()
-	notes, err := c2.GetNotes(item.ID)
+	changes, err := c2.GetDropletChanges(item.ID, 100)
 	if err != nil {
 		t.Fatal(err)
 	}
 	found := false
-	for _, n := range notes {
-		if n.CataractaeName == "scheduler" && strings.Contains(n.Content, "superseded by newer approach") {
+	for _, ch := range changes {
+		if ch.Kind == "event" && strings.Contains(ch.Value, "cancel") && strings.Contains(ch.Value, "superseded by newer approach") {
 			found = true
 			break
 		}
 	}
 	if !found {
-		t.Errorf("cancel scheduler note with reason not recorded; notes: %v", notes)
+		t.Errorf("cancel event with reason not found in changes: %v", changes)
 	}
 }
 

@@ -71,14 +71,6 @@ func runLog(out io.Writer, id string) error {
 func buildLogEntries(item *cistern.Droplet, changes []cistern.DropletChange) []logEntry {
 	var entries []logEntry
 
-	entries = append(entries, logEntry{
-		sortTime:   item.CreatedAt,
-		Time:       item.CreatedAt.Format("2006-01-02 15:04:05"),
-		Cataractae: "",
-		Event:      "created",
-		Detail:     fmt.Sprintf("status=open title=%q priority=%d", item.Title, item.Priority),
-	})
-
 	for _, ch := range changes {
 		var evt, detail, cataractae string
 
@@ -98,12 +90,7 @@ func buildLogEntries(item *cistern.Droplet, changes []cistern.DropletChange) []l
 			} else {
 				evt = ch.Value
 			}
-			if evt == "pool" {
-				evt = "pooled"
-				if detail != "" {
-					detail = "reason: " + detail
-				}
-			}
+			evt, detail = remapEvent(evt, detail)
 		}
 
 		entries = append(entries, logEntry{
@@ -112,6 +99,30 @@ func buildLogEntries(item *cistern.Droplet, changes []cistern.DropletChange) []l
 			Cataractae: cataractae,
 			Event:      evt,
 			Detail:     detail,
+		})
+	}
+
+	hasCreate := false
+	for _, e := range entries {
+		if e.Event == "created" {
+			hasCreate = true
+			break
+		}
+	}
+
+	if !hasCreate && !item.CreatedAt.IsZero() {
+		createPayload, _ := json.Marshal(map[string]any{
+			"repo":       item.Repo,
+			"title":      item.Title,
+			"priority":   item.Priority,
+			"complexity": item.Complexity,
+		})
+		detail := remapPayloadCreate(string(createPayload))
+		entries = append(entries, logEntry{
+			sortTime: item.CreatedAt,
+			Time:     item.CreatedAt.Format("2006-01-02 15:04:05"),
+			Event:    "created",
+			Detail:   detail,
 		})
 	}
 
@@ -130,6 +141,170 @@ func buildLogEntries(item *cistern.Droplet, changes []cistern.DropletChange) []l
 	})
 
 	return entries
+}
+
+func remapEvent(evt, detail string) (string, string) {
+	switch evt {
+	case "create":
+		return "created", remapPayloadCreate(detail)
+	case "pool":
+		return "pooled", remapPayloadReason(detail)
+	case "cancel":
+		return "cancelled", remapPayloadReason(detail)
+	case "dispatch":
+		return "dispatched", remapPayloadDispatch(detail)
+	case "pass":
+		return "pass", remapPayloadCataractaeNotes(detail)
+	case "recirculate":
+		return "recirculate", remapPayloadRecirculate(detail)
+	case "delivered":
+		return "delivered", ""
+	case "restart":
+		return "restart", remapPayloadCataractae(detail)
+	case "approve":
+		return "approved", remapPayloadCataractae(detail)
+	case "edit":
+		return "edit", remapPayloadEdit(detail)
+	default:
+		return evt, detail
+	}
+}
+
+func remapPayloadReason(detail string) string {
+	if detail == "" || detail == "{}" {
+		return ""
+	}
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(detail), &payload); err == nil {
+		if reason, ok := payload["reason"]; ok && reason != "" {
+			return "reason: " + fmt.Sprintf("%v", reason)
+		}
+	}
+	return detail
+}
+
+func remapPayloadCreate(detail string) string {
+	if detail == "" || detail == "{}" {
+		return ""
+	}
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(detail), &payload); err != nil {
+		return detail
+	}
+	var parts []string
+	if repo, ok := payload["repo"]; ok && repo != "" {
+		parts = append(parts, fmt.Sprintf("repo: %v", repo))
+	}
+	if title, ok := payload["title"]; ok && title != "" {
+		parts = append(parts, fmt.Sprintf("title: %v", title))
+	}
+	if priority, ok := payload["priority"]; ok {
+		parts = append(parts, fmt.Sprintf("priority: %v", priority))
+	}
+	if complexity, ok := payload["complexity"]; ok {
+		parts = append(parts, fmt.Sprintf("complexity: %v", complexity))
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return strings.Join(parts, ", ")
+}
+
+func remapPayloadDispatch(detail string) string {
+	if detail == "" || detail == "{}" {
+		return ""
+	}
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(detail), &payload); err != nil {
+		return detail
+	}
+	var parts []string
+	if aqueduct, ok := payload["aqueduct"]; ok && aqueduct != "" {
+		parts = append(parts, fmt.Sprintf("aqueduct: %v", aqueduct))
+	}
+	if cat, ok := payload["cataractae"]; ok && cat != "" {
+		parts = append(parts, fmt.Sprintf("step: %v", cat))
+	}
+	if assignee, ok := payload["assignee"]; ok && assignee != "" {
+		parts = append(parts, fmt.Sprintf("assignee: %v", assignee))
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return strings.Join(parts, ", ")
+}
+
+func remapPayloadCataractaeNotes(detail string) string {
+	if detail == "" || detail == "{}" {
+		return ""
+	}
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(detail), &payload); err != nil {
+		return detail
+	}
+	var parts []string
+	if cat, ok := payload["cataractae"]; ok && cat != "" {
+		parts = append(parts, fmt.Sprintf("by: %v", cat))
+	}
+	if notes, ok := payload["notes"]; ok && notes != "" {
+		parts = append(parts, fmt.Sprintf("notes: %v", notes))
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return strings.Join(parts, ", ")
+}
+
+func remapPayloadRecirculate(detail string) string {
+	if detail == "" || detail == "{}" {
+		return ""
+	}
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(detail), &payload); err != nil {
+		return detail
+	}
+	var parts []string
+	if cat, ok := payload["cataractae"]; ok && cat != "" {
+		parts = append(parts, fmt.Sprintf("by: %v", cat))
+	}
+	if target, ok := payload["target"]; ok && target != "" {
+		parts = append(parts, fmt.Sprintf("to: %v", target))
+	}
+	if notes, ok := payload["notes"]; ok && notes != "" {
+		parts = append(parts, fmt.Sprintf("notes: %v", notes))
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return strings.Join(parts, ", ")
+}
+
+func remapPayloadCataractae(detail string) string {
+	if detail == "" || detail == "{}" {
+		return ""
+	}
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(detail), &payload); err != nil {
+		return detail
+	}
+	if cat, ok := payload["cataractae"]; ok && cat != "" {
+		return fmt.Sprintf("by: %v", cat)
+	}
+	return ""
+}
+
+func remapPayloadEdit(detail string) string {
+	if detail == "" || detail == "{}" {
+		return ""
+	}
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(detail), &payload); err != nil {
+		return detail
+	}
+	if fields, ok := payload["fields"]; ok {
+		return fmt.Sprintf("fields: %v", fields)
+	}
+	return ""
 }
 
 func printLogText(out io.Writer, item *cistern.Droplet, entries []logEntry) error {

@@ -77,13 +77,14 @@ func TestDropletTail_JsonFormat_OutputsNDJson(t *testing.T) {
 	}
 
 	lines := strings.Split(strings.TrimSpace(out), "\n")
-	if len(lines) != 1 {
-		t.Fatalf("expected 1 JSON line, got %d", len(lines))
+	// create event from Add + note = 2 lines
+	if len(lines) != 2 {
+		t.Fatalf("expected 2 JSON lines, got %d", len(lines))
 	}
 
 	var ch cistern.DropletChange
-	if err := json.Unmarshal([]byte(lines[0]), &ch); err != nil {
-		t.Fatalf("output is not valid JSON: %v\nline: %s", err, lines[0])
+	if err := json.Unmarshal([]byte(lines[1]), &ch); err != nil {
+		t.Fatalf("output is not valid JSON: %v\nline: %s", err, lines[1])
 	}
 	if ch.Kind != "note" {
 		t.Errorf("Kind = %q, want %q", ch.Kind, "note")

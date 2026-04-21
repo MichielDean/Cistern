@@ -8,6 +8,7 @@ import (
 	"crypto/rand"
 	"database/sql"
 	_ "embed"
+	"encoding/json"
 	"fmt"
 	"math/big"
 	"regexp"
@@ -16,6 +17,36 @@ import (
 
 	_ "github.com/mattn/go-sqlite3"
 )
+
+const (
+	EventCreate      = "create"
+	EventDispatch    = "dispatch"
+	EventPass        = "pass"
+	EventRecirculate = "recirculate"
+	EventDelivered   = "delivered"
+	EventRestart     = "restart"
+	EventApprove     = "approve"
+	EventEdit        = "edit"
+	EventPool        = "pool"
+	EventCancel      = "cancel"
+)
+
+var validEventTypes = map[string]bool{
+	EventCreate:      true,
+	EventDispatch:    true,
+	EventPass:        true,
+	EventRecirculate: true,
+	EventDelivered:   true,
+	EventRestart:     true,
+	EventApprove:     true,
+	EventEdit:        true,
+	EventPool:        true,
+	EventCancel:      true,
+}
+
+type executor interface {
+	Exec(query string, args ...any) (sql.Result, error)
+}
 
 // externalRefRE validates the 'provider:key' format for external_ref values.
 // Both parts must consist solely of characters safe for use in git branch names
@@ -178,6 +209,16 @@ func (c *Client) Add(repo, title, description string, priority, complexity int, 
 		}
 	}
 
+	createPayload, _ := json.Marshal(map[string]any{
+		"repo":       repo,
+		"title":      title,
+		"priority":   priority,
+		"complexity": complexity,
+	})
+	if err := c.recordEvent(tx, id, EventCreate, string(createPayload)); err != nil {
+		return nil, err
+	}
+
 	if err := tx.Commit(); err != nil {
 		return nil, fmt.Errorf("cistern: commit: %w", err)
 	}
@@ -257,6 +298,14 @@ func (c *Client) GetReady(repo string) (*Droplet, error) {
 		return nil, fmt.Errorf("cistern: mark in_progress %s: %w", droplet.ID, err)
 	}
 
+	dispatchPayload, _ := json.Marshal(map[string]any{
+		"cataractae": droplet.CurrentCataractae,
+		"assignee":   droplet.Assignee,
+	})
+	if err := c.recordEvent(tx, droplet.ID, EventDispatch, string(dispatchPayload)); err != nil {
+		return nil, err
+	}
+
 	if err := tx.Commit(); err != nil {
 		return nil, fmt.Errorf("cistern: commit: %w", err)
 	}
@@ -315,6 +364,16 @@ func (c *Client) GetReadyForAqueduct(repo, aqueductName string) (*Droplet, error
 	); err != nil {
 		return nil, fmt.Errorf("cistern: mark in_progress %s: %w", droplet.ID, err)
 	}
+
+	dispatchPayload, _ := json.Marshal(map[string]any{
+		"aqueduct":   aqueductName,
+		"cataractae": droplet.CurrentCataractae,
+		"assignee":   droplet.Assignee,
+	})
+	if err := c.recordEvent(tx, droplet.ID, EventDispatch, string(dispatchPayload)); err != nil {
+		return nil, err
+	}
+
 	if err := tx.Commit(); err != nil {
 		return nil, fmt.Errorf("cistern: commit: %w", err)
 	}
@@ -467,6 +526,26 @@ func (c *Client) EditDroplet(id string, fields EditDropletFields) error {
 		return fmt.Errorf("cistern: priority must be a positive integer, got %d", *fields.Priority)
 	}
 
+	var changedFields []string
+	if fields.Title != nil {
+		changedFields = append(changedFields, "title")
+	}
+	if fields.Description != nil {
+		changedFields = append(changedFields, "description")
+	}
+	if fields.Complexity != nil {
+		changedFields = append(changedFields, "complexity")
+	}
+	if fields.Priority != nil {
+		changedFields = append(changedFields, "priority")
+	}
+
+	tx, err := c.db.Begin()
+	if err != nil {
+		return fmt.Errorf("cistern: begin tx: %w", err)
+	}
+	defer tx.Rollback()
+
 	var setClauses []string
 	var args []any
 	if fields.Title != nil {
@@ -490,7 +569,7 @@ func (c *Client) EditDroplet(id string, fields EditDropletFields) error {
 	args = append(args, id)
 
 	query := "UPDATE droplets SET " + strings.Join(setClauses, ", ") + " WHERE id = ? AND status IN ('open', 'pooled')"
-	res, err := c.db.Exec(query, args...)
+	res, err := tx.Exec(query, args...)
 	if err != nil {
 		return fmt.Errorf("cistern: edit %s: %w", id, err)
 	}
@@ -499,11 +578,20 @@ func (c *Client) EditDroplet(id string, fields EditDropletFields) error {
 		return fmt.Errorf("cistern: rows affected: %w", err)
 	}
 	if n == 0 {
-		d, err := c.Get(id)
-		if err != nil {
-			return err
+		var status string
+		if err := tx.QueryRow(`SELECT status FROM droplets WHERE id = ?`, id).Scan(&status); err != nil {
+			return fmt.Errorf("cistern: droplet %s not found", id)
 		}
-		return fmt.Errorf("droplet %s is %s — cannot edit a droplet that has been picked up", id, d.Status)
+		return fmt.Errorf("droplet %s is %s — cannot edit a droplet that has been picked up", id, status)
+	}
+
+	editPayload, _ := json.Marshal(map[string]any{"fields": changedFields})
+	if err := c.recordEvent(tx, id, EventEdit, string(editPayload)); err != nil {
+		return err
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("cistern: commit: %w", err)
 	}
 	return nil
 }
@@ -528,6 +616,183 @@ func (c *Client) AddNote(id, step, content string) error {
 	)
 	if err != nil {
 		return fmt.Errorf("cistern: add note %s: %w", id, err)
+	}
+	return nil
+}
+
+// RecordEvent inserts a typed event row into the events table. eventType must
+// be one of the Event* constants; payload must be valid JSON (use "{}" for
+// empty). Returns an error for unknown event types or invalid JSON.
+func (c *Client) RecordEvent(id, eventType, payload string) error {
+	return c.recordEvent(c.db, id, eventType, payload)
+}
+
+func (c *Client) recordEvent(exec executor, id, eventType, payload string) error {
+	if !validEventTypes[eventType] {
+		return fmt.Errorf("cistern: unknown event type %q", eventType)
+	}
+	if !json.Valid([]byte(payload)) {
+		return fmt.Errorf("cistern: event payload must be valid JSON, got %q", payload)
+	}
+	_, err := exec.Exec(
+		`INSERT INTO events (droplet_id, event_type, payload, created_at) VALUES (?, ?, ?, ?)`,
+		id, eventType, payload, time.Now().UTC(),
+	)
+	if err != nil {
+		return fmt.Errorf("cistern: record %s event %s: %w", eventType, id, err)
+	}
+	return nil
+}
+
+// Pass sets outcome to "pass" on a droplet and records a pass event, all within
+// a single transaction. This ensures the outcome and event are always consistent.
+// Returns an error if the droplet has a terminal status (delivered or cancelled).
+func (c *Client) Pass(id, cataractaeName, notes string) error {
+	item, err := c.Get(id)
+	if err != nil {
+		return fmt.Errorf("cistern: pass %s: %w", id, err)
+	}
+	if item.Status == "delivered" || item.Status == "cancelled" {
+		return fmt.Errorf("cistern: cannot pass %s: droplet has terminal status %q", id, item.Status)
+	}
+
+	tx, err := c.db.Begin()
+	if err != nil {
+		return fmt.Errorf("cistern: begin tx: %w", err)
+	}
+	defer tx.Rollback()
+
+	now := time.Now().UTC()
+	res, err := tx.Exec(
+		`UPDATE droplets SET outcome = ?, updated_at = ? WHERE id = ? AND status NOT IN ('delivered', 'cancelled')`,
+		"pass", now, id,
+	)
+	if err != nil {
+		return fmt.Errorf("cistern: pass %s: %w", id, err)
+	}
+	if err := checkRowsAffected(res, id); err != nil {
+		return err
+	}
+
+	passPayload, _ := json.Marshal(map[string]any{"cataractae": cataractaeName, "notes": notes})
+	if err := c.recordEvent(tx, id, EventPass, string(passPayload)); err != nil {
+		return err
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("cistern: commit: %w", err)
+	}
+	return nil
+}
+
+// Recirculate sets the outcome for a recirculate signal and records a recirculate event.
+// When status is not in_progress, it also calls Assign to re-open the droplet at the
+// target cataractae, all within a single transaction.
+func (c *Client) Recirculate(id, cataractaeName, target, notes string) error {
+	item, err := c.Get(id)
+	if err != nil {
+		return fmt.Errorf("cistern: recirculate %s: %w", id, err)
+	}
+
+	outcome := "recirculate"
+	if target != "" {
+		outcome = "recirculate:" + target
+	}
+
+	if item.Status == "delivered" || item.Status == "cancelled" {
+		return fmt.Errorf("cistern: cannot recirculate %s: droplet has terminal status %q", id, item.Status)
+	}
+
+	tx, err := c.db.Begin()
+	if err != nil {
+		return fmt.Errorf("cistern: begin tx: %w", err)
+	}
+	defer tx.Rollback()
+
+	now := time.Now().UTC()
+
+	if item.Status != "in_progress" {
+		effectiveTarget := target
+		if effectiveTarget == "" {
+			effectiveTarget = item.CurrentCataractae
+		}
+		var res sql.Result
+		res, err = tx.Exec(
+			`UPDATE droplets SET assignee = ?, current_cataractae = ?, outcome = NULL, status = 'open',
+			 assigned_aqueduct = '', updated_at = ? WHERE id = ? AND status NOT IN ('delivered', 'cancelled')`,
+			"", effectiveTarget, now, id,
+		)
+		if err != nil {
+			return fmt.Errorf("cistern: recirculate assign %s: %w", id, err)
+		}
+		if err := checkRowsAffected(res, id); err != nil {
+			return err
+		}
+	} else {
+		res, err := tx.Exec(
+			`UPDATE droplets SET outcome = ?, updated_at = ? WHERE id = ? AND status NOT IN ('delivered', 'cancelled')`,
+			outcome, now, id,
+		)
+		if err != nil {
+			return fmt.Errorf("cistern: recirculate %s: %w", id, err)
+		}
+		if err := checkRowsAffected(res, id); err != nil {
+			return err
+		}
+	}
+
+	recircPayload, _ := json.Marshal(map[string]any{"cataractae": cataractaeName, "target": target, "notes": notes})
+	if err := c.recordEvent(tx, id, EventRecirculate, string(recircPayload)); err != nil {
+		return err
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("cistern: commit: %w", err)
+	}
+	return nil
+}
+
+// Approve approves a human-gated droplet for delivery. It assigns the droplet to
+// the delivery cataractae and records an approve event within a single transaction.
+// Returns an error if the droplet has a terminal status or is not at the human gate.
+func (c *Client) Approve(id, cataractaeName string) error {
+	item, err := c.Get(id)
+	if err != nil {
+		return fmt.Errorf("cistern: approve %s: %w", id, err)
+	}
+	if item.Status == "delivered" || item.Status == "cancelled" {
+		return fmt.Errorf("cistern: cannot approve %s: droplet has terminal status %q", id, item.Status)
+	}
+	if item.CurrentCataractae != "human" {
+		return fmt.Errorf("cistern: %s is not awaiting human approval (cataractae: %s)", id, item.CurrentCataractae)
+	}
+
+	tx, err := c.db.Begin()
+	if err != nil {
+		return fmt.Errorf("cistern: begin tx: %w", err)
+	}
+	defer tx.Rollback()
+
+	now := time.Now().UTC()
+	res, err := tx.Exec(
+		`UPDATE droplets SET assignee = ?, current_cataractae = ?, outcome = NULL, status = 'open',
+		 assigned_aqueduct = '', updated_at = ? WHERE id = ? AND status NOT IN ('delivered', 'cancelled') AND current_cataractae = 'human'`,
+		"", "delivery", now, id,
+	)
+	if err != nil {
+		return fmt.Errorf("cistern: approve assign %s: %w", id, err)
+	}
+	if err := checkRowsAffected(res, id); err != nil {
+		return err
+	}
+
+	approvePayload, _ := json.Marshal(map[string]any{"cataractae": cataractaeName})
+	if err := c.recordEvent(tx, id, EventApprove, string(approvePayload)); err != nil {
+		return err
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("cistern: commit: %w", err)
 	}
 	return nil
 }
@@ -558,25 +823,41 @@ func (c *Client) GetNotes(id string) ([]CataractaeNote, error) {
 }
 
 // Pool marks a droplet as pooled — cannot currently flow forward — and records the reason.
-// assigned_aqueduct is cleared atomically so no ghost assignments linger.
+// assigned_aqueduct and outcome are cleared/set atomically so no ghost assignments linger.
 func (c *Client) Pool(id, reason string) error {
-	res, err := c.db.Exec(
-		`UPDATE droplets SET status = 'pooled', assigned_aqueduct = '', updated_at = ? WHERE id = ?`,
-		time.Now().UTC(), id,
+	tx, err := c.db.Begin()
+	if err != nil {
+		return fmt.Errorf("cistern: begin tx: %w", err)
+	}
+	defer tx.Rollback()
+
+	now := time.Now().UTC()
+	res, err := tx.Exec(
+		`UPDATE droplets SET status = 'pooled', outcome = 'pool', assigned_aqueduct = '', updated_at = ? WHERE id = ? AND status NOT IN ('delivered', 'cancelled')`,
+		now, id,
 	)
 	if err != nil {
 		return fmt.Errorf("cistern: pool %s: %w", id, err)
 	}
-	if err := checkRowsAffected(res, id); err != nil {
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("cistern: pool %s: rows affected: %w", id, err)
+	}
+	if n == 0 {
+		var status string
+		if err := tx.QueryRow(`SELECT status FROM droplets WHERE id = ?`, id).Scan(&status); err != nil {
+			return fmt.Errorf("cistern: droplet %s not found", id)
+		}
+		return fmt.Errorf("cistern: pool %s: droplet has terminal status %q", id, status)
+	}
+
+	poolPayload, _ := json.Marshal(map[string]any{"reason": reason})
+	if err := c.recordEvent(tx, id, EventPool, string(poolPayload)); err != nil {
 		return err
 	}
 
-	_, err = c.db.Exec(
-		`INSERT INTO events (droplet_id, event_type, payload, created_at) VALUES (?, 'pool', ?, ?)`,
-		id, reason, time.Now().UTC(),
-	)
-	if err != nil {
-		return fmt.Errorf("cistern: pool event %s: %w", id, err)
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("cistern: commit: %w", err)
 	}
 	return nil
 }
@@ -585,12 +866,17 @@ func (c *Client) Pool(id, reason string) error {
 // dispatch queue and from default list views. They can still be retrieved with
 // List(repo, "cancelled"). It clears outcome and assigned_aqueduct atomically
 // so no ghost assignments linger. The assignee is preserved so the scheduler's
-// external-cancel pool-release path can find and free the slot. A scheduler
-// note with timestamp is recorded, and the reason (if non-empty) is included.
+// external-cancel pool-release path can find and free the slot.
 // The cancel is recorded as an event in the events table for the audit trail.
 func (c *Client) Cancel(id, reason string) error {
+	tx, err := c.db.Begin()
+	if err != nil {
+		return fmt.Errorf("cistern: begin tx: %w", err)
+	}
+	defer tx.Rollback()
+
 	now := time.Now().UTC()
-	res, err := c.db.Exec(
+	res, err := tx.Exec(
 		`UPDATE droplets SET status = 'cancelled', outcome = NULL, assigned_aqueduct = '', updated_at = ? WHERE id = ? AND status NOT IN ('delivered', 'cancelled')`,
 		now, id,
 	)
@@ -602,29 +888,20 @@ func (c *Client) Cancel(id, reason string) error {
 		return fmt.Errorf("cistern: cancel %s: rows affected: %w", id, err)
 	}
 	if n == 0 {
-		item, getErr := c.Get(id)
-		if getErr != nil {
+		var status string
+		if err := tx.QueryRow(`SELECT status FROM droplets WHERE id = ?`, id).Scan(&status); err != nil {
 			return fmt.Errorf("cistern: droplet %s not found", id)
 		}
-		return fmt.Errorf("cistern: cancel %s: droplet has terminal status %q", id, item.Status)
+		return fmt.Errorf("cistern: cancel %s: droplet has terminal status %q", id, status)
 	}
 
-	ts := now.Format("2006-01-02 15:04:05")
-	label := "cancelled"
-	if reason != "" {
-		label = "cancelled: " + reason
-	}
-	note := fmt.Sprintf("%s [%s]", label, ts)
-	if err := c.AddNote(id, "scheduler", note); err != nil {
-		return fmt.Errorf("cistern: cancel note %s: %w", id, err)
+	cancelPayload, _ := json.Marshal(map[string]any{"reason": reason})
+	if err := c.recordEvent(tx, id, EventCancel, string(cancelPayload)); err != nil {
+		return err
 	}
 
-	_, err = c.db.Exec(
-		`INSERT INTO events (droplet_id, event_type, payload, created_at) VALUES (?, 'cancel', ?, ?)`,
-		id, reason, now,
-	)
-	if err != nil {
-		return fmt.Errorf("cistern: cancel event %s: %w", id, err)
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("cistern: commit: %w", err)
 	}
 	return nil
 }
@@ -637,15 +914,40 @@ func (c *Client) FileDroplet(repo, title, description string, priority, complexi
 
 // CloseItem marks a droplet as delivered.
 // assigned_aqueduct is cleared atomically so no ghost assignments linger.
+// Returns an error if the droplet has a terminal status (delivered or cancelled).
 func (c *Client) CloseItem(id string) error {
-	res, err := c.db.Exec(
-		`UPDATE droplets SET status = 'delivered', assigned_aqueduct = '', updated_at = ? WHERE id = ?`,
+	tx, err := c.db.Begin()
+	if err != nil {
+		return fmt.Errorf("cistern: begin tx: %w", err)
+	}
+	defer tx.Rollback()
+
+	res, err := tx.Exec(
+		`UPDATE droplets SET status = 'delivered', assigned_aqueduct = '', updated_at = ? WHERE id = ? AND status NOT IN ('delivered', 'cancelled')`,
 		time.Now().UTC(), id,
 	)
 	if err != nil {
 		return fmt.Errorf("cistern: close %s: %w", id, err)
 	}
-	return checkRowsAffected(res, id)
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("cistern: close %s: rows affected: %w", id, err)
+	}
+	if n == 0 {
+		var status string
+		if err := tx.QueryRow(`SELECT status FROM droplets WHERE id = ?`, id).Scan(&status); err != nil {
+			return fmt.Errorf("cistern: droplet %s not found", id)
+		}
+		return fmt.Errorf("cistern: close %s: droplet has terminal status %q", id, status)
+	}
+	if err := c.recordEvent(tx, id, EventDelivered, "{}"); err != nil {
+		return err
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("cistern: commit: %w", err)
+	}
+	return nil
 }
 
 // SetOutcome records the agent outcome on a droplet. Pass empty string to clear
@@ -1270,7 +1572,7 @@ func (c *Client) CountOpenIssues(dropletID string) (int, error) {
 
 // Restart resets a stuck or failed droplet back to 'open' status at the specified
 // cataractae stage. It clears the assignee and outcome fields, sets current_cataractae
-// to cataractaeName, and writes a scheduler note with a timestamp. All existing notes
+// to cataractaeName, and records a restart event. All existing notes
 // are preserved. Returns the updated droplet.
 func (c *Client) Restart(id, cataractaeName string) (*Droplet, error) {
 	droplet, err := c.Get(id)
@@ -1279,7 +1581,14 @@ func (c *Client) Restart(id, cataractaeName string) (*Droplet, error) {
 	}
 
 	now := time.Now().UTC()
-	res, err := c.db.Exec(
+
+	tx, err := c.db.Begin()
+	if err != nil {
+		return nil, fmt.Errorf("cistern: begin tx: %w", err)
+	}
+	defer tx.Rollback()
+
+	res, err := tx.Exec(
 		`UPDATE droplets SET status = 'open', assignee = '', outcome = NULL,
 		 current_cataractae = ?, assigned_aqueduct = '', updated_at = ?,
 		 stage_dispatched_at = NULL, last_heartbeat_at = NULL
@@ -1293,10 +1602,13 @@ func (c *Client) Restart(id, cataractaeName string) (*Droplet, error) {
 		return nil, err
 	}
 
-	ts := now.Format("2006-01-02 15:04:05")
-	note := fmt.Sprintf("restarted at cataractae %q [%s]", cataractaeName, ts)
-	if err := c.AddNote(id, "scheduler", note); err != nil {
-		return nil, fmt.Errorf("cistern: restart note %s: %w", id, err)
+	restartPayload, _ := json.Marshal(map[string]any{"cataractae": cataractaeName})
+	if err := c.recordEvent(tx, id, EventRestart, string(restartPayload)); err != nil {
+		return nil, err
+	}
+
+	if err := tx.Commit(); err != nil {
+		return nil, fmt.Errorf("cistern: commit: %w", err)
 	}
 
 	droplet.Status = "open"

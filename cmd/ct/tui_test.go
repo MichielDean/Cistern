@@ -1517,11 +1517,11 @@ func TestExecActionCmd_Cancel_SetsDropletCancelled(t *testing.T) {
 }
 
 // TestExecActionCmd_Pool_SetsDropletPooled verifies that execActionCmd
-// with actionPool sets the droplet status to "pooled".
+// with actionPool sets the droplet status to "pooled" and outcome to "pool".
 //
 // Given: a real cistern DB with an open droplet
 // When:  execActionCmd with actionPool is executed
-// Then:  tuiActionResultMsg.err is nil and droplet status is "pooled"
+// Then:  tuiActionResultMsg.err is nil, droplet status is "pooled", and outcome is "pool"
 func TestExecActionCmd_Pool_SetsDropletPooled(t *testing.T) {
 	dbPath, id := newTestDBWithDroplet(t)
 	m := newTabAppModel("", dbPath)
@@ -1552,14 +1552,17 @@ func TestExecActionCmd_Pool_SetsDropletPooled(t *testing.T) {
 	if d.Status != "pooled" {
 		t.Errorf("status = %q, want %q", d.Status, "pooled")
 	}
+	if d.Outcome != "pool" {
+		t.Errorf("outcome = %q, want %q", d.Outcome, "pool")
+	}
 }
 
 // TestExecActionCmd_Restart_SetsDropletOpen verifies that execActionCmd with
-// actionRestart sets the droplet status to "open".
+// actionRestart restarts the droplet via c.Restart (transactional, records event).
 //
 // Given: a real cistern DB with a droplet
 // When:  execActionCmd with actionRestart and a step name is executed
-// Then:  tuiActionResultMsg.err is nil and droplet status is "open"
+// Then:  tuiActionResultMsg.err is nil, droplet status is "open", and a restart event is recorded
 func TestExecActionCmd_Restart_SetsDropletOpen(t *testing.T) {
 	dbPath, id := newTestDBWithDroplet(t)
 	m := newTabAppModel("", dbPath)
@@ -1589,6 +1592,20 @@ func TestExecActionCmd_Restart_SetsDropletOpen(t *testing.T) {
 	}
 	if d.Status != "open" {
 		t.Errorf("status = %q, want %q", d.Status, "open")
+	}
+
+	changes, err := c.GetDropletChanges(id, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	foundRestart := false
+	for _, ch := range changes {
+		if ch.Kind == "event" && strings.Contains(ch.Value, "restart") && strings.Contains(ch.Value, "implement") {
+			foundRestart = true
+		}
+	}
+	if !foundRestart {
+		t.Error("expected restart event with 'implement' cataractae")
 	}
 }
 

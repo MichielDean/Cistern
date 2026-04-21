@@ -62,6 +62,9 @@ type CisternClient interface {
 	// Heartbeat records the current time as the agent's most recent activity
 	// timestamp. Called by agents via `ct droplet heartbeat <id>` every 60 seconds.
 	Heartbeat(id string) error
+	// RecordEvent inserts a typed event row into the events table. Used by CLI
+	// and dashboard handlers, and by Client methods internally.
+	RecordEvent(id, eventType, payload string) error
 }
 
 // CataractaeRunner executes a single workflow step.

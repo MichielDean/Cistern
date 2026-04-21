@@ -159,7 +159,7 @@ func TestDropletRestart_WithNotes(t *testing.T) {
 	}
 }
 
-func TestDropletRestart_WritesSchedulerNote(t *testing.T) {
+func TestDropletRestart_WritesRestartEvent(t *testing.T) {
 	c, _ := setupRestartTestDB(t)
 	item, err := c.Add("myrepo", "Task", "", 1, 3)
 	if err != nil {
@@ -173,18 +173,18 @@ func TestDropletRestart_WritesSchedulerNote(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	notes, err := c.GetNotes(item.ID)
+	changes, err := c.GetDropletChanges(item.ID, 100)
 	if err != nil {
 		t.Fatal(err)
 	}
-	foundScheduler := false
-	for _, n := range notes {
-		if n.CataractaeName == "scheduler" && strings.Contains(n.Content, "restarted at cataractae") {
-			foundScheduler = true
+	foundRestart := false
+	for _, ch := range changes {
+		if ch.Kind == "event" && strings.Contains(ch.Value, "restart") && strings.Contains(ch.Value, "implement") {
+			foundRestart = true
 		}
 	}
-	if !foundScheduler {
-		t.Error("expected scheduler note with 'restarted at cataractae'")
+	if !foundRestart {
+		t.Error("expected restart event with 'implement' cataractae")
 	}
 }
 

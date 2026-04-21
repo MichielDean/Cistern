@@ -288,6 +288,10 @@ func (m *mockClient) ListIssues(dropletID string, openOnly bool, flaggedBy strin
 	return result, nil
 }
 
+func (m *mockClient) RecordEvent(id, eventType, payload string) error {
+	return nil
+}
+
 // mockRunner records Spawn calls and writes outcomes to the mockClient.
 // Set client to enable routing assertions; nil disables outcome writing.
 type mockRunner struct {
@@ -2350,11 +2354,11 @@ func TestHeartbeatRepo_OrphanRecovery_ClearsAssignedAqueduct(t *testing.T) {
 	runner := newMockRunner(client)
 
 	item := &cistern.Droplet{
-		ID:               "orphan-aq",
+		ID:                "orphan-aq",
 		CurrentCataractae: "implement",
-		Status:           "in_progress",
-		Assignee:         "",
-		AssignedAqueduct: "virgo", // stale aqueduct from a previous dispatch attempt
+		Status:            "in_progress",
+		Assignee:          "",
+		AssignedAqueduct:  "virgo", // stale aqueduct from a previous dispatch attempt
 	}
 	client.items[item.ID] = item
 

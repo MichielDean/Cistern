@@ -14,6 +14,43 @@ Cistern now uses opencode as the only agent CLI provider. The claude, codex, gem
 - Updated `cmd/ct/doctor_test.go` comments to distinguish LLM API provider from agent CLI provider
 - Updated `AGENTS.md` to remove multi-provider InstructionsFile references (now AGENTS.md only)
 
+### Structured event types for cataractae lifecycle (ci-meaol)
+
+Every meaningful state transition on a droplet now writes a typed row to the events table. The `outcome` column stays as the scheduler fast-path read — events are the audit trail, not the signal. `ct droplet log` renders all event types with human-readable details instead of raw JSON.
+
+**New event types and insertion points:**
+- `create`: `Client.Add()` after tx.Commit — payload: `{repo, title, priority, complexity}`
+- `dispatch`: `Client.GetReady()` / `Client.GetReadyForAqueduct()` after status set to in_progress — payload: `{aqueduct, cataractae, assignee}`
+- `pass`: `Client.Pass()` after SetOutcome — payload: `{cataractae, notes}`
+- `recirculate`: `Client.Recirculate()` after SetOutcome — payload: `{cataractae, target, notes}`
+- `delivered`: `Client.CloseItem()` after status update — payload: `{}`
+- `restart`: `Client.Restart()` — payload: `{cataractae}` — replaces the scheduler note
+- `approve`: `Client.Approve()` after Assign — payload: `{cataractae}`
+- `edit`: `Client.EditDroplet()` after update succeeds — payload: `{fields: [title, priority, ...]}`
+- `pool`: `Client.Pool()` — payload: `{reason}` — replaces existing direct INSERT
+- `cancel`: `Client.Cancel()` — payload: `{reason}` — replaces existing direct INSERT and scheduler note
+
+**Key changes:**
+- New `Client.RecordEvent(id, eventType, payload string) error` helper — centralized INSERT with validation against a valid event types set
+- Payload is always valid JSON; empty payload is `{}`
+- All mutation methods (`Pass`, `Recirculate`, `Approve`, `Pool`, `Cancel`, `CloseItem`, `Restart`, `EditDroplet`) wrap their status UPDATE + `RecordEvent` in a single DB transaction
+- Terminal-status guards in WHERE clauses with `checkRowsAffected` prevent resurrection of delivered/cancelled droplets
+- `Cancel()` and `Restart()` no longer write scheduler notes — events replace them
+- `Pool()` now sets `outcome = 'pool'` alongside `status = 'pooled'`
+- `buildLogEntries` synthesizes a `created` entry for pre-existing droplets that lack a create event in the events table
+- `remapEvent` and `remapPayload*` functions render all 10 event types with human-readable detail (e.g., `by: reviewer, notes: all good` instead of raw JSON)
+- `CisternClient` interface updated with `RecordEvent`; all mock implementations updated
+
+**Files changed:**
+- `internal/cistern/client.go` — Event type constants, `validEventTypes`, `recordEvent`, `RecordEvent`, `Pass`, `Recirculate`, `Approve`, transactional `Pool`/`Cancel`/`CloseItem`/`EditDroplet`/`Restart`, terminal-status guards
+- `internal/cistern/client_test.go` — Event recording, transactionality, terminal-status guard, payload validation tests
+- `cmd/ct/cistern.go` — CLI handlers use `c.Pass()`, `c.Recirculate()`, `c.Approve()`, `c.Pool()` instead of `SetOutcome`/`Assign`
+- `cmd/ct/dashboard_web.go` — Dashboard handlers use transactional Client methods
+- `cmd/ct/tui.go` — TUI actions use `c.Pass()`, `c.Recirculate()`, `c.Approve()`, `c.Restart()`
+- `cmd/ct/droplet_log.go` — `remapEvent`, `remapPayload*` functions, synthesized create events
+- `internal/castellarius/scheduler.go` — `CisternClient` interface gains `RecordEvent`
+- `internal/castellarius/scheduler_test.go`, `internal/castellarius/smoke_test.go` — Mock implementations updated
+
 ### Web UI: Integration, routing, and peek (ci-k67x9)
 
 Wired the React SPA into the Go server, established routing, added the live session peek viewer, and finalized the web UI as a first-class Cistern interface alongside the existing TUI and CLI.

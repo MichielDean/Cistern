@@ -392,6 +392,22 @@ func TestPool(t *testing.T) {
 	if got.Status != "pooled" {
 		t.Errorf("status = %q, want %q", got.Status, "pooled")
 	}
+	if got.Outcome != "pool" {
+		t.Errorf("outcome = %q, want %q", got.Outcome, "pool")
+	}
+	changes, err := c.GetDropletChanges(item.ID, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	foundPoolEvent := false
+	for _, ch := range changes {
+		if ch.Kind == "event" && strings.Contains(ch.Value, "pool") {
+			foundPoolEvent = true
+		}
+	}
+	if !foundPoolEvent {
+		t.Error("expected pool event in droplet changes")
+	}
 }
 
 func TestCloseItem(t *testing.T) {
@@ -1093,7 +1109,7 @@ func TestListRecentEvents_WithEvents(t *testing.T) {
 	c := testClient(t)
 	item, _ := c.Add("myrepo", "Task", "", 1, 3)
 
-	// AddNote writes to cataractae_notes; Pool writes to events.
+	// AddNote writes to cataractae_notes; Pool writes to events; Add also creates a create event.
 	c.AddNote(item.ID, "implement", "wrote the code")
 	c.Pool(item.ID, "needs human review")
 
@@ -1101,8 +1117,9 @@ func TestListRecentEvents_WithEvents(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(events) != 2 {
-		t.Fatalf("got %d events, want 2", len(events))
+	// create event from Add, note from AddNote, pool event from Pool = 3
+	if len(events) != 3 {
+		t.Fatalf("got %d events, want 3", len(events))
 	}
 	for _, e := range events {
 		if e.Droplet != item.ID {
@@ -1395,7 +1412,7 @@ func TestCancel_SetsStatusCancelled(t *testing.T) {
 	}
 }
 
-func TestCancel_RecordsSchedulerNoteWithReason(t *testing.T) {
+func TestCancel_RecordsCancelEventWithReason(t *testing.T) {
 	c := testClient(t)
 	item, _ := c.Add("myrepo", "Old feature", "", 1, 3)
 
@@ -1404,23 +1421,23 @@ func TestCancel_RecordsSchedulerNoteWithReason(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	notes, err := c.GetNotes(item.ID)
+	changes, err := c.GetDropletChanges(item.ID, 100)
 	if err != nil {
 		t.Fatal(err)
 	}
 	found := false
-	for _, n := range notes {
-		if n.CataractaeName == "scheduler" && strings.Contains(n.Content, reason) && strings.Contains(n.Content, "cancelled:") {
+	for _, ch := range changes {
+		if ch.Kind == "event" && strings.Contains(ch.Value, "cancel") && strings.Contains(ch.Value, reason) {
 			found = true
 			break
 		}
 	}
 	if !found {
-		t.Errorf("scheduler note with reason %q not found in notes: %v", reason, notes)
+		t.Errorf("cancel event with reason %q not found in changes: %v", reason, changes)
 	}
 }
 
-func TestCancel_EmptyReason_WritesSchedulerNote(t *testing.T) {
+func TestCancel_RecordsCancelEventWithoutReason(t *testing.T) {
 	c := testClient(t)
 	item, _ := c.Add("myrepo", "Old feature", "", 1, 3)
 
@@ -1428,18 +1445,19 @@ func TestCancel_EmptyReason_WritesSchedulerNote(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	notes, err := c.GetNotes(item.ID)
+	changes, err := c.GetDropletChanges(item.ID, 100)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(notes) == 0 {
-		t.Fatal("expected a scheduler note after cancel even with empty reason")
+	found := false
+	for _, ch := range changes {
+		if ch.Kind == "event" && strings.Contains(ch.Value, "cancel") {
+			found = true
+			break
+		}
 	}
-	if notes[0].CataractaeName != "scheduler" {
-		t.Errorf("note source = %q, want %q", notes[0].CataractaeName, "scheduler")
-	}
-	if !strings.Contains(notes[0].Content, "cancelled [") {
-		t.Errorf("note content = %q, want 'cancelled [...timestamp...]'", notes[0].Content)
+	if !found {
+		t.Errorf("cancel event not found in changes: %v", changes)
 	}
 }
 
@@ -1669,18 +1687,16 @@ func TestList_CancelledStatus_ReturnsOnlyCancelled(t *testing.T) {
 	}
 }
 
-// TestCancel_NotFound_NoOrphanNote verifies that cancelling a nonexistent droplet
-// does NOT create an orphan note row (UPDATE must happen before AddNote).
-func TestCancel_NotFound_NoOrphanNote(t *testing.T) {
+// TestCancel_NotFound_NoOrphanData verifies that cancelling a nonexistent droplet
+// does NOT create an orphan note or event row (UPDATE must happen before RecordEvent).
+func TestCancel_NotFound_NoOrphanData(t *testing.T) {
 	c := testClient(t)
 
-	// Cancel a droplet that does not exist — must return an error.
 	err := c.Cancel("nonexistent-id", "some reason")
 	if err == nil {
 		t.Fatal("expected error for nonexistent droplet, got nil")
 	}
 
-	// No note should have been inserted for the nonexistent droplet.
 	notes, err2 := c.GetNotes("nonexistent-id")
 	if err2 != nil {
 		t.Fatal(err2)
@@ -2543,6 +2559,7 @@ func TestExternalRef_RoundTrips_ThroughGetReadyForAqueduct(t *testing.T) {
 
 func TestGetDropletChanges_Empty(t *testing.T) {
 	c := testClient(t)
+
 	item, err := c.Add("myrepo", "Task", "", 1, 2)
 	if err != nil {
 		t.Fatal(err)
@@ -2552,8 +2569,11 @@ func TestGetDropletChanges_Empty(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(changes) != 0 {
-		t.Errorf("got %d changes, want 0 for new droplet", len(changes))
+	if len(changes) != 1 {
+		t.Errorf("got %d changes, want 1 (create event) for new droplet", len(changes))
+	}
+	if changes[0].Kind != "event" {
+		t.Errorf("Kind = %q, want event", changes[0].Kind)
 	}
 }
 
@@ -2572,17 +2592,19 @@ func TestGetDropletChanges_ReturnsNotes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(changes) != 1 {
-		t.Fatalf("got %d changes, want 1", len(changes))
+	// create event + 1 note = 2
+	if len(changes) != 2 {
+		t.Fatalf("got %d changes, want 2", len(changes))
 	}
-	if changes[0].Kind != "note" {
-		t.Errorf("Kind = %q, want %q", changes[0].Kind, "note")
+	noteFound := false
+	for _, ch := range changes {
+		if ch.Kind == "note" && strings.Contains(ch.Value, "implement") && strings.Contains(ch.Value, "wrote the code") {
+			noteFound = true
+			break
+		}
 	}
-	if !strings.Contains(changes[0].Value, "implement") {
-		t.Errorf("Value = %q, want it to contain 'implement'", changes[0].Value)
-	}
-	if !strings.Contains(changes[0].Value, "wrote the code") {
-		t.Errorf("Value = %q, want it to contain note content", changes[0].Value)
+	if !noteFound {
+		t.Errorf("implement note not found in changes: %v", changes)
 	}
 }
 
@@ -2599,14 +2621,19 @@ func TestGetDropletChanges_ReturnsEvents(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(changes) != 1 {
-		t.Fatalf("got %d changes, want 1", len(changes))
+	// create event + pool event = 2
+	if len(changes) != 2 {
+		t.Fatalf("got %d changes, want 2", len(changes))
 	}
-	if changes[0].Kind != "event" {
-		t.Errorf("Kind = %q, want %q", changes[0].Kind, "event")
+	poolFound := false
+	for _, ch := range changes {
+		if ch.Kind == "event" && strings.Contains(ch.Value, "pool") {
+			poolFound = true
+			break
+		}
 	}
-	if !strings.Contains(changes[0].Value, "pool") {
-		t.Errorf("Value = %q, want it to contain 'pool'", changes[0].Value)
+	if !poolFound {
+		t.Errorf("pool event not found in changes: %v", changes)
 	}
 }
 
@@ -2625,8 +2652,9 @@ func TestGetDropletChanges_MixedNotesAndEvents(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(changes) != 3 {
-		t.Fatalf("got %d changes, want 3", len(changes))
+	// create event + 2 notes + pool event = 4
+	if len(changes) != 4 {
+		t.Fatalf("got %d changes, want 4", len(changes))
 	}
 	kinds := map[string]int{}
 	for _, ch := range changes {
@@ -2635,8 +2663,8 @@ func TestGetDropletChanges_MixedNotesAndEvents(t *testing.T) {
 	if kinds["note"] != 2 {
 		t.Errorf("expected 2 note changes, got %d", kinds["note"])
 	}
-	if kinds["event"] != 1 {
-		t.Errorf("expected 1 event change, got %d", kinds["event"])
+	if kinds["event"] != 2 {
+		t.Errorf("expected 2 event changes, got %d", kinds["event"])
 	}
 }
 
@@ -2652,6 +2680,7 @@ func TestGetDropletChanges_RespectsLimit_ReturnsNewest(t *testing.T) {
 		c.AddNote(item.ID, "step", n)
 	}
 
+	// create event + 5 notes = 6 total; limit 3 returns 3 newest
 	changes, err := c.GetDropletChanges(item.ID, 3)
 	if err != nil {
 		t.Fatal(err)
@@ -2678,12 +2707,13 @@ func TestGetDropletChanges_OrderedOldestFirst(t *testing.T) {
 	time.Sleep(10 * time.Millisecond)
 	c.AddNote(item.ID, "review", "second note")
 
+	// create event + 2 notes = 3 total
 	changes, err := c.GetDropletChanges(item.ID, 20)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(changes) != 2 {
-		t.Fatalf("got %d changes, want 2", len(changes))
+	if len(changes) != 3 {
+		t.Fatalf("got %d changes, want 3", len(changes))
 	}
 	if !changes[0].Time.Before(changes[1].Time) {
 		t.Errorf("changes not in chronological order: %v >= %v", changes[0].Time, changes[1].Time)
@@ -2759,7 +2789,7 @@ func TestRestart_WithSameCataractae(t *testing.T) {
 	}
 }
 
-func TestRestart_WritesSchedulerNote(t *testing.T) {
+func TestRestart_RecordsRestartEvent(t *testing.T) {
 	c := testClient(t)
 	item, err := c.Add("myrepo", "Task", "", 1, 3)
 	if err != nil {
@@ -2771,24 +2801,19 @@ func TestRestart_WritesSchedulerNote(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	notes, err := c.GetNotes(item.ID)
+	changes, err := c.GetDropletChanges(item.ID, 100)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(notes) != 1 {
-		t.Fatalf("got %d notes, want 1", len(notes))
+	found := false
+	for _, ch := range changes {
+		if ch.Kind == "event" && strings.Contains(ch.Value, "restart") && strings.Contains(ch.Value, "delivery") {
+			found = true
+			break
+		}
 	}
-	if notes[0].CataractaeName != "scheduler" {
-		t.Errorf("note cataractae = %q, want %q", notes[0].CataractaeName, "scheduler")
-	}
-	if !strings.Contains(notes[0].Content, "restarted at cataractae") {
-		t.Errorf("note content = %q, want it to contain 'restarted at cataractae'", notes[0].Content)
-	}
-	if !strings.Contains(notes[0].Content, "delivery") {
-		t.Errorf("note content = %q, want it to contain 'delivery'", notes[0].Content)
-	}
-	if !strings.Contains(notes[0].Content, "[") {
-		t.Errorf("note content = %q, want it to contain a timestamp in brackets", notes[0].Content)
+	if !found {
+		t.Errorf("restart event with cataractae 'delivery' not found in changes: %v", changes)
 	}
 }
 
@@ -3068,5 +3093,612 @@ func TestClient_DeleteFilterSession_NotFound(t *testing.T) {
 	err := c.DeleteFilterSession("nonexistent")
 	if err == nil {
 		t.Fatal("expected error for nonexistent session")
+	}
+}
+
+func TestRecordEvent_ValidType(t *testing.T) {
+	c := testClient(t)
+	item, _ := c.Add("myrepo", "Event test", "", 1, 2)
+
+	err := c.RecordEvent(item.ID, EventPass, `{"cataractae":"implementer","notes":"all good"}`)
+	if err != nil {
+		t.Fatalf("RecordEvent: %v", err)
+	}
+
+	changes, err := c.GetDropletChanges(item.ID, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, ch := range changes {
+		if ch.Kind == "event" && strings.Contains(ch.Value, "pass") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("pass event not found in changes: %v", changes)
+	}
+}
+
+func TestRecordEvent_UnknownType_ReturnsError(t *testing.T) {
+	c := testClient(t)
+	item, _ := c.Add("myrepo", "Event test", "", 1, 2)
+
+	err := c.RecordEvent(item.ID, "invalid_type", "{}")
+	if err == nil {
+		t.Fatal("expected error for unknown event type")
+	}
+	if !strings.Contains(err.Error(), "unknown event type") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestRecordEvent_InvalidJSON_ReturnsError(t *testing.T) {
+	c := testClient(t)
+	item, _ := c.Add("myrepo", "Event test", "", 1, 2)
+
+	err := c.RecordEvent(item.ID, EventPass, "not json")
+	if err == nil {
+		t.Fatal("expected error for invalid JSON payload")
+	}
+	if !strings.Contains(err.Error(), "valid JSON") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestRecordEvent_EmptyPayload(t *testing.T) {
+	c := testClient(t)
+	item, _ := c.Add("myrepo", "Event test", "", 1, 2)
+
+	err := c.RecordEvent(item.ID, EventDelivered, "{}")
+	if err != nil {
+		t.Fatalf("RecordEvent with empty payload: %v", err)
+	}
+}
+
+func TestAdd_RecordsCreateEvent(t *testing.T) {
+	c := testClient(t)
+	item, _ := c.Add("myrepo", "Create event test", "", 1, 2)
+
+	changes, err := c.GetDropletChanges(item.ID, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, ch := range changes {
+		if ch.Kind == "event" && strings.Contains(ch.Value, "create: ") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("create event not found in changes: %v", changes)
+	}
+}
+
+func TestGetReady_RecordsDispatchEvent(t *testing.T) {
+	c := testClient(t)
+	c.Add("myrepo", "Dispatch test", "", 1, 2)
+
+	_, err := c.GetReady("myrepo")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	items, err := c.List("myrepo", "in_progress")
+	if err != nil {
+		t.Fatal(err)
+	}
+	changes, err := c.GetDropletChanges(items[0].ID, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, ch := range changes {
+		if ch.Kind == "event" && strings.Contains(ch.Value, "dispatch: ") && strings.Contains(ch.Value, "cataractae") && strings.Contains(ch.Value, "assignee") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("dispatch event with cataractae/assignee not found in changes: %v", changes)
+	}
+}
+
+func TestGetReadyForAqueduct_RecordsDispatchEvent(t *testing.T) {
+	c := testClient(t)
+	item, _ := c.Add("myrepo", "Dispatch aqueduct test", "", 1, 2)
+
+	_, err := c.GetReadyForAqueduct("myrepo", "my-aqueduct")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	changes, err := c.GetDropletChanges(item.ID, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, ch := range changes {
+		if ch.Kind == "event" && strings.Contains(ch.Value, "dispatch: ") && strings.Contains(ch.Value, "my-aqueduct") && strings.Contains(ch.Value, "cataractae") && strings.Contains(ch.Value, "assignee") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("dispatch event with aqueduct, cataractae, and assignee not found in changes: %v", changes)
+	}
+}
+
+func TestCloseItem_RecordsDeliveredEvent(t *testing.T) {
+	c := testClient(t)
+	item, _ := c.Add("myrepo", "Delivered event test", "", 1, 2)
+
+	if err := c.CloseItem(item.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	changes, err := c.GetDropletChanges(item.ID, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, ch := range changes {
+		if ch.Kind == "event" && strings.Contains(ch.Value, "delivered") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("delivered event not found in changes: %v", changes)
+	}
+}
+
+func TestPool_RecordsPoolEventWithJSONPayload(t *testing.T) {
+	c := testClient(t)
+	item, _ := c.Add("myrepo", "Pool event test", "", 1, 2)
+
+	if err := c.Pool(item.ID, "stuck on flaky test"); err != nil {
+		t.Fatal(err)
+	}
+
+	changes, err := c.GetDropletChanges(item.ID, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, ch := range changes {
+		if ch.Kind == "event" && strings.Contains(ch.Value, "pool") && strings.Contains(ch.Value, "stuck on flaky test") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("pool event with reason not found in changes: %v", changes)
+	}
+}
+
+func TestCancel_RecordsCancelEventWithJSONPayload(t *testing.T) {
+	c := testClient(t)
+	item, _ := c.Add("myrepo", "Cancel event test", "", 1, 2)
+
+	reason := "superseded by new approach"
+	if err := c.Cancel(item.ID, reason); err != nil {
+		t.Fatal(err)
+	}
+
+	changes, err := c.GetDropletChanges(item.ID, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, ch := range changes {
+		if ch.Kind == "event" && strings.Contains(ch.Value, "cancel") && strings.Contains(ch.Value, reason) {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("cancel event with reason not found in changes: %v", changes)
+	}
+}
+
+func TestCancel_NoLongerWritesSchedulerNote(t *testing.T) {
+	c := testClient(t)
+	item, _ := c.Add("myrepo", "Cancel no note test", "", 1, 2)
+
+	if err := c.Cancel(item.ID, "reason"); err != nil {
+		t.Fatal(err)
+	}
+
+	notes, err := c.GetNotes(item.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, n := range notes {
+		if n.CataractaeName == "scheduler" {
+			t.Errorf("cancel should no longer write scheduler notes, found: %s", n.Content)
+		}
+	}
+}
+
+func TestRestart_NoLongerWritesSchedulerNote(t *testing.T) {
+	c := testClient(t)
+	item, _ := c.Add("myrepo", "Restart no note test", "", 1, 2)
+
+	_, err := c.Restart(item.ID, "implement")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	notes, err := c.GetNotes(item.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, n := range notes {
+		if n.CataractaeName == "scheduler" {
+			t.Errorf("restart should no longer write scheduler notes, found: %s", n.Content)
+		}
+	}
+}
+
+func TestEditDroplet_RecordsEditEvent(t *testing.T) {
+	c := testClient(t)
+	item, _ := c.Add("myrepo", "Edit event test", "", 1, 2)
+
+	err := c.EditDroplet(item.ID, EditDropletFields{Title: ptr("New Title"), Priority: ptr(3)})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	changes, err := c.GetDropletChanges(item.ID, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, ch := range changes {
+		if ch.Kind == "event" && strings.Contains(ch.Value, "edit") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("edit event not found in changes: %v", changes)
+	}
+}
+
+func TestValidEventTypes_ContainsAllConstants(t *testing.T) {
+	expected := []string{
+		EventCreate, EventDispatch, EventPass, EventRecirculate,
+		EventDelivered, EventRestart, EventApprove, EventEdit,
+		EventPool, EventCancel,
+	}
+	for _, e := range expected {
+		if !validEventTypes[e] {
+			t.Errorf("validEventTypes missing %q", e)
+		}
+	}
+	if len(validEventTypes) != len(expected) {
+		t.Errorf("validEventTypes has %d entries, want %d", len(validEventTypes), len(expected))
+	}
+}
+
+func TestPass_SetsOutcomeAndRecordsEvent(t *testing.T) {
+	c := testClient(t)
+	item, _ := c.Add("myrepo", "Pass test", "", 1, 2)
+	c.UpdateStatus(item.ID, "in_progress")
+
+	if err := c.Pass(item.ID, "implementer", "all good"); err != nil {
+		t.Fatalf("Pass: %v", err)
+	}
+
+	got, _ := c.Get(item.ID)
+	if got.Outcome != "pass" {
+		t.Errorf("outcome = %q, want pass", got.Outcome)
+	}
+
+	changes, _ := c.GetDropletChanges(item.ID, 100)
+	found := false
+	for _, ch := range changes {
+		if ch.Kind == "event" && strings.Contains(ch.Value, "pass") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("pass event not found in changes: %v", changes)
+	}
+}
+
+func TestPass_WhenTerminal_ReturnsError(t *testing.T) {
+	c := testClient(t)
+	item, _ := c.Add("myrepo", "Pass terminal test", "", 1, 2)
+	c.CloseItem(item.ID)
+
+	err := c.Pass(item.ID, "reviewer", "")
+	if err == nil {
+		t.Fatal("expected error for terminal status")
+	}
+	if !strings.Contains(err.Error(), "terminal status") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestPass_NotFound(t *testing.T) {
+	c := testClient(t)
+	if err := c.Pass("nonexistent", "reviewer", ""); err == nil {
+		t.Fatal("expected error for nonexistent droplet")
+	}
+}
+
+func TestRecirculate_InProgress_SetsOutcomeAndRecordsEvent(t *testing.T) {
+	c := testClient(t)
+	item, _ := c.Add("myrepo", "Recirculate test", "", 1, 2)
+	c.UpdateStatus(item.ID, "in_progress")
+
+	if err := c.Recirculate(item.ID, "reviewer", "implement", "needs fixes"); err != nil {
+		t.Fatalf("Recirculate: %v", err)
+	}
+
+	got, _ := c.Get(item.ID)
+	if got.Outcome != "recirculate:implement" {
+		t.Errorf("outcome = %q, want recirculate:implement", got.Outcome)
+	}
+
+	changes, _ := c.GetDropletChanges(item.ID, 100)
+	found := false
+	for _, ch := range changes {
+		if ch.Kind == "event" && strings.Contains(ch.Value, "recirculate") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("recirculate event not found in changes: %v", changes)
+	}
+}
+
+func TestRecirculate_NonInProgress_AssignsAndRecordsEvent(t *testing.T) {
+	c := testClient(t)
+	item, _ := c.Add("myrepo", "Recirculate non-in-progress", "", 1, 2)
+	c.Pool(item.ID, "stuck")
+
+	if err := c.Recirculate(item.ID, "reviewer", "implement", ""); err != nil {
+		t.Fatalf("Recirculate on pooled: %v", err)
+	}
+
+	got, _ := c.Get(item.ID)
+	if got.Status != "open" {
+		t.Errorf("status = %q, want open", got.Status)
+	}
+	if got.CurrentCataractae != "implement" {
+		t.Errorf("current_cataractae = %q, want implement", got.CurrentCataractae)
+	}
+}
+
+func TestRecirculate_NonInProgress_DefaultsToCurrentCataractae(t *testing.T) {
+	c := testClient(t)
+	item, _ := c.Add("myrepo", "Recirculate default target", "", 1, 2)
+	c.Pool(item.ID, "stuck")
+	c.SetCataractae(item.ID, "review")
+
+	if err := c.Recirculate(item.ID, "reviewer", "", ""); err != nil {
+		t.Fatalf("Recirculate: %v", err)
+	}
+
+	got, _ := c.Get(item.ID)
+	if got.CurrentCataractae != "review" {
+		t.Errorf("current_cataractae = %q, want review (defaults to current)", got.CurrentCataractae)
+	}
+}
+
+func TestRecirculate_WhenTerminal_ReturnsError(t *testing.T) {
+	c := testClient(t)
+	item, _ := c.Add("myrepo", "Recirculate terminal test", "", 1, 2)
+	c.Cancel(item.ID, "not needed")
+
+	if err := c.Recirculate(item.ID, "reviewer", "", ""); err == nil {
+		t.Fatal("expected error for terminal status")
+	}
+}
+
+func TestRecirculate_NotFound(t *testing.T) {
+	c := testClient(t)
+	if err := c.Recirculate("nonexistent", "reviewer", "", ""); err == nil {
+		t.Fatal("expected error for nonexistent droplet")
+	}
+}
+
+func TestApprove_SetsDeliveryStepAndRecordsEvent(t *testing.T) {
+	c := testClient(t)
+	item, _ := c.Add("myrepo", "Approve test", "", 1, 2)
+	c.SetCataractae(item.ID, "human")
+
+	if err := c.Approve(item.ID, "manual"); err != nil {
+		t.Fatalf("Approve: %v", err)
+	}
+
+	got, _ := c.Get(item.ID)
+	if got.CurrentCataractae != "delivery" {
+		t.Errorf("current_cataractae = %q, want delivery", got.CurrentCataractae)
+	}
+	if got.Status != "open" {
+		t.Errorf("status = %q, want open", got.Status)
+	}
+
+	changes, _ := c.GetDropletChanges(item.ID, 100)
+	found := false
+	for _, ch := range changes {
+		if ch.Kind == "event" && strings.Contains(ch.Value, "approve") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("approve event not found in changes: %v", changes)
+	}
+}
+
+func TestApprove_NotHumanGated(t *testing.T) {
+	c := testClient(t)
+	item, _ := c.Add("myrepo", "Approve not human test", "", 1, 2)
+
+	if err := c.Approve(item.ID, "manual"); err == nil {
+		t.Fatal("expected error for non-human gated droplet")
+	}
+}
+
+func TestApprove_WhenTerminal_ReturnsError(t *testing.T) {
+	c := testClient(t)
+	item, _ := c.Add("myrepo", "Approve terminal test", "", 1, 2)
+	c.SetCataractae(item.ID, "human")
+	c.Cancel(item.ID, "not needed")
+
+	if err := c.Approve(item.ID, "manual"); err == nil {
+		t.Fatal("expected error for terminal status")
+	}
+}
+
+func TestApprove_NotFound(t *testing.T) {
+	c := testClient(t)
+	if err := c.Approve("nonexistent", "manual"); err == nil {
+		t.Fatal("expected error for nonexistent droplet")
+	}
+}
+
+func TestPass_DeliveredGuardInWhere(t *testing.T) {
+	c := testClient(t)
+	item, _ := c.Add("myrepo", "Pass guard test", "", 1, 2)
+	c.UpdateStatus(item.ID, "in_progress")
+
+	c.CloseItem(item.ID)
+
+	err := c.Pass(item.ID, "reviewer", "")
+	if err == nil {
+		t.Fatal("expected error when droplet becomes delivered before Pass")
+	}
+}
+
+func TestRecirculate_CancelledGuardInWhere(t *testing.T) {
+	c := testClient(t)
+	item, _ := c.Add("myrepo", "Recirculate guard test", "", 1, 2)
+	c.UpdateStatus(item.ID, "in_progress")
+
+	c.Cancel(item.ID, "obsolete")
+
+	err := c.Recirculate(item.ID, "reviewer", "implement", "fix it")
+	if err == nil {
+		t.Fatal("expected error when droplet becomes cancelled before Recirculate")
+	}
+}
+
+func TestApprove_CataractaeGuardInWhere(t *testing.T) {
+	c := testClient(t)
+	item, _ := c.Add("myrepo", "Approve guard test", "", 1, 2)
+	c.SetCataractae(item.ID, "human")
+
+	c.SetCataractae(item.ID, "delivery")
+
+	err := c.Approve(item.ID, "manual")
+	if err == nil {
+		t.Fatal("expected error when cataractae changed from human before Approve")
+	}
+}
+
+func TestPool_Delivered_ReturnsTerminalError(t *testing.T) {
+	c := testClient(t)
+	item, _ := c.Add("myrepo", "Pool delivered guard test", "", 1, 2)
+	c.CloseItem(item.ID)
+
+	err := c.Pool(item.ID, "should fail")
+	if err == nil {
+		t.Fatal("expected error for delivered droplet")
+	}
+	if !strings.Contains(err.Error(), "terminal status") {
+		t.Errorf("unexpected error: %v", err)
+	}
+
+	got, _ := c.Get(item.ID)
+	if got.Status != "delivered" {
+		t.Errorf("status = %q, want delivered (should not resurrect)", got.Status)
+	}
+}
+
+func TestPool_Cancelled_ReturnsTerminalError(t *testing.T) {
+	c := testClient(t)
+	item, _ := c.Add("myrepo", "Pool cancelled guard test", "", 1, 2)
+	c.Cancel(item.ID, "no longer needed")
+
+	err := c.Pool(item.ID, "should fail")
+	if err == nil {
+		t.Fatal("expected error for cancelled droplet")
+	}
+	if !strings.Contains(err.Error(), "terminal status") {
+		t.Errorf("unexpected error: %v", err)
+	}
+
+	got, _ := c.Get(item.ID)
+	if got.Status != "cancelled" {
+		t.Errorf("status = %q, want cancelled (should not resurrect)", got.Status)
+	}
+}
+
+func TestCloseItem_Cancelled_ReturnsTerminalError(t *testing.T) {
+	c := testClient(t)
+	item, _ := c.Add("myrepo", "Close cancelled guard test", "", 1, 2)
+	c.Cancel(item.ID, "superseded")
+
+	err := c.CloseItem(item.ID)
+	if err == nil {
+		t.Fatal("expected error for cancelled droplet")
+	}
+	if !strings.Contains(err.Error(), "terminal status") {
+		t.Errorf("unexpected error: %v", err)
+	}
+
+	got, _ := c.Get(item.ID)
+	if got.Status != "cancelled" {
+		t.Errorf("status = %q, want cancelled (should not resurrect)", got.Status)
+	}
+}
+
+func TestCloseItem_Delivered_ReturnsTerminalError(t *testing.T) {
+	c := testClient(t)
+	item, _ := c.Add("myrepo", "Close delivered guard test", "", 1, 2)
+	c.CloseItem(item.ID)
+
+	err := c.CloseItem(item.ID)
+	if err == nil {
+		t.Fatal("expected error for already-delivered droplet")
+	}
+	if !strings.Contains(err.Error(), "terminal status") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestPool_DeliveredGuardInWhere(t *testing.T) {
+	c := testClient(t)
+	item, _ := c.Add("myrepo", "Pool guard where test", "", 1, 2)
+	c.UpdateStatus(item.ID, "in_progress")
+
+	c.CloseItem(item.ID)
+
+	err := c.Pool(item.ID, "should fail")
+	if err == nil {
+		t.Fatal("expected error when droplet becomes delivered before Pool")
+	}
+}
+
+func TestCloseItem_CancelledGuardInWhere(t *testing.T) {
+	c := testClient(t)
+	item, _ := c.Add("myrepo", "Close guard where test", "", 1, 2)
+	c.UpdateStatus(item.ID, "in_progress")
+
+	c.Cancel(item.ID, "obsolete")
+
+	err := c.CloseItem(item.ID)
+	if err == nil {
+		t.Fatal("expected error when droplet becomes cancelled before CloseItem")
 	}
 }
