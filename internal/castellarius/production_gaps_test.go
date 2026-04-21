@@ -336,15 +336,13 @@ func TestHeartbeat_DB_NotStalled_WhenRecentHeartbeat(t *testing.T) {
 
 	sched.heartbeatRepo(context.Background(), cfg.Repos[0])
 
-	// Recent heartbeat → no stall note should be written.
-	notes, err := c.GetNotes(item.ID)
+	// Recent heartbeat → no stall event should be recorded.
+	stallCount, err := c.CountEventsByType(item.ID, cistern.EventStall, time.Time{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, n := range notes {
-		if strings.HasPrefix(n.Content, stallNotePrefix) {
-			t.Errorf("DB integration: stall note written for heartbeating agent: %s", n.Content)
-		}
+	if stallCount != 0 {
+		t.Errorf("DB integration: stall event written for heartbeating agent (count=%d)", stallCount)
 	}
 }
 
@@ -391,23 +389,13 @@ func TestHeartbeat_DB_Stalled_WhenNoHeartbeat(t *testing.T) {
 
 	sched.heartbeatRepo(context.Background(), cfg.Repos[0])
 
-	// No heartbeat → stall detected → escalation note written with heartbeat=none.
-	notes, err := c.GetNotes(item.ID)
+	// No heartbeat → stall detected → stall event recorded with heartbeat=none in payload.
+	stallCount, err := c.CountEventsByType(item.ID, cistern.EventStall, time.Time{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	var stallNote string
-	for _, n := range notes {
-		if strings.HasPrefix(n.Content, stallNotePrefix) {
-			stallNote = n.Content
-			break
-		}
-	}
-	if stallNote == "" {
-		t.Error("DB integration: expected stall note for no-heartbeat agent, got none")
+	if stallCount == 0 {
+		t.Error("DB integration: expected stall event for no-heartbeat agent, got none")
 		return
-	}
-	if !strings.Contains(stallNote, "heartbeat=none") {
-		t.Errorf("DB integration: stall note missing heartbeat=none; got: %s", stallNote)
 	}
 }

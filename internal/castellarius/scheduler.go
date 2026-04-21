@@ -8,6 +8,7 @@ package castellarius
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"os"
@@ -20,12 +21,6 @@ import (
 
 	"github.com/MichielDean/cistern/internal/aqueduct"
 	"github.com/MichielDean/cistern/internal/cistern"
-)
-
-const (
-	// stallNotePrefix is the structured prefix for all scheduler stall notes.
-	// It allows stall notes to be identified and filtered programmatically.
-	stallNotePrefix = "[scheduler:stall]"
 )
 
 // CisternClient is the interface for interacting with the work cistern.
@@ -65,6 +60,9 @@ type CisternClient interface {
 	// RecordEvent inserts a typed event row into the events table. Used by CLI
 	// and dashboard handlers, and by Client methods internally.
 	RecordEvent(id, eventType, payload string) error
+	// CountEventsByType returns the number of events with the given type for a
+	// droplet created after the since timestamp.
+	CountEventsByType(id, eventType string, since time.Time) (int, error)
 }
 
 // CataractaeRunner executes a single workflow step.
@@ -587,6 +585,12 @@ func (s *Castellarius) addNote(client CisternClient, dropletID, source, msg stri
 	}
 }
 
+func (s *Castellarius) addEvent(client CisternClient, dropletID, eventType, payload string) {
+	if err := client.RecordEvent(dropletID, eventType, payload); err != nil {
+		s.logger.Warn("RecordEvent failed", "droplet", dropletID, "eventType", eventType, "error", err)
+	}
+}
+
 // purgeOldItems deletes closed/pooled items older than retention_days across all repos.
 func (s *Castellarius) purgeOldItems() {
 	retentionDays := s.config.RetentionDays
@@ -814,15 +818,15 @@ func (s *Castellarius) observeRepo(_ context.Context, repo aqueduct.RepoConfig) 
 					}
 					pendingCount := loopRecoveryPendingCount(notes, issue.ID)
 					if pendingCount >= loopDetectN-1 {
-						// Loop confirmed — route to the reviewer cataractae.
-						recoveryNote := fmt.Sprintf(
-							"[scheduler:loop-recovery] detected %s→%s loop on reviewer issue %s — routing to reviewer",
-							step.Name, step.Name, issue.ID,
-						)
 						s.logger.Info("observe: loop recovery — routing to reviewer",
 							"droplet", item.ID, "step", step.Name,
 							"reviewer", issue.FlaggedBy, "issue", issue.ID)
-						s.addNote(client, item.ID, "scheduler", recoveryNote)
+						payload, _ := json.Marshal(map[string]any{
+							"from":  step.Name,
+							"to":    step.Name,
+							"issue": issue.ID,
+						})
+						s.addEvent(client, item.ID, cistern.EventLoopRecovery, string(payload))
 						next = issue.FlaggedBy
 						break
 					}
@@ -842,26 +846,27 @@ func (s *Castellarius) observeRepo(_ context.Context, repo aqueduct.RepoConfig) 
 		// auto-promote to pass (routing via on_pass) or pool with a diagnostic note.
 		if next == "" && result == ResultRecirculate {
 			if step.OnPass != "" {
-				// Auto-promote: treat recirculate as pass and route via on_pass.
-				note := fmt.Sprintf(
-					"[scheduler:routing] Auto-promoted: cataractae=%s signaled recirculate but has no on_recirculate route — routing via on_pass to %s",
-					step.Name, step.OnPass,
-				)
 				s.logger.Warn("observe: recirculate auto-promoted to pass via on_pass",
 					"droplet", item.ID, "step", step.Name, "next", step.OnPass)
-				s.addNote(client, item.ID, "scheduler", note)
+				payload, _ := json.Marshal(map[string]any{
+					"cataractae": step.Name,
+					"routed_to":  step.OnPass,
+				})
+				s.addEvent(client, item.ID, cistern.EventAutoPromote, string(payload))
 				next = step.OnPass
 			} else {
-				// No on_recirculate and no on_pass: pool the droplet with a diagnostic note.
-				note := fmt.Sprintf(
+				s.logger.Warn("observe: recirculate with no on_recirculate or on_pass route — pooling",
+					"droplet", item.ID, "step", step.Name)
+				payload, _ := json.Marshal(map[string]any{
+					"cataractae": step.Name,
+				})
+				s.addEvent(client, item.ID, cistern.EventNoRoute, string(payload))
+				cleanupBranch(true)
+				reason := fmt.Sprintf(
 					"[scheduler:routing] cataractae=%s signaled recirculate but has no on_recirculate route and no on_pass route — droplet pooled",
 					step.Name,
 				)
-				s.logger.Warn("observe: recirculate with no on_recirculate or on_pass route — pooling",
-					"droplet", item.ID, "step", step.Name)
-				s.addNote(client, item.ID, "scheduler", note)
-				cleanupBranch(true)
-				if err := client.Pool(item.ID, note); err != nil {
+				if err := client.Pool(item.ID, reason); err != nil {
 					s.logger.Error("observe: pool (no route) failed", "droplet", item.ID, "error", err)
 				}
 				continue
@@ -1341,9 +1346,12 @@ func (s *Castellarius) heartbeatRepo(ctx context.Context, repo aqueduct.RepoConf
 						pool.Release(w)
 					}
 				}
-				noteMsg := fmt.Sprintf("[scheduler:exit-no-outcome] Session %s exited without outcome (worker=%s, cataractae=%s). [%s]",
-					sessionID, item.Assignee, step.Name, time.Now().UTC().Format(time.RFC3339))
-				s.addNote(client, item.ID, "scheduler", noteMsg)
+				payload, _ := json.Marshal(map[string]any{
+					"session":    sessionID,
+					"worker":     item.Assignee,
+					"cataractae": step.Name,
+				})
+				s.addEvent(client, item.ID, cistern.EventExitNoOutcome, string(payload))
 				if err := client.Assign(item.ID, "", step.Name); err != nil {
 					s.logger.Error("heartbeat: reset failed", "droplet", item.ID, "error", err)
 				}
@@ -1365,9 +1373,12 @@ func (s *Castellarius) heartbeatRepo(ctx context.Context, repo aqueduct.RepoConf
 		if !item.LastHeartbeatAt.IsZero() {
 			heartbeatStatus = item.LastHeartbeatAt.UTC().Format(time.RFC3339)
 		}
-		note := fmt.Sprintf("%s elapsed=%s heartbeat=%s",
-			stallNotePrefix, formatStallDuration(time.Since(stallSig)), heartbeatStatus)
-		s.addNote(client, item.ID, "scheduler", note)
+		stallPayload, _ := json.Marshal(map[string]any{
+			"cataractae": item.CurrentCataractae,
+			"elapsed":    formatStallDuration(time.Since(stallSig)),
+			"heartbeat":  heartbeatStatus,
+		})
+		s.addEvent(client, item.ID, cistern.EventStall, string(stallPayload))
 		s.logger.Warn("heartbeat: stall detected",
 			"repo", repo.Name, "droplet", item.ID,
 			"cataractae", item.CurrentCataractae,
@@ -1382,8 +1393,10 @@ func (s *Castellarius) heartbeatRepo(ctx context.Context, repo aqueduct.RepoConf
 					stepName = step.Name
 				}
 			}
-			s.addNote(client, item.ID, "scheduler",
-				fmt.Sprintf("[scheduler:recovery] Orphan reset to open (cataractae=%s).", stepName))
+			recoveryPayload, _ := json.Marshal(map[string]any{
+				"cataractae": stepName,
+			})
+			s.addEvent(client, item.ID, cistern.EventRecovery, string(recoveryPayload))
 			s.logger.Info("heartbeat: orphan reset to open",
 				"repo", repo.Name, "droplet", item.ID, "cataractae", stepName)
 			if err := client.Assign(item.ID, "", stepName); err != nil {
@@ -1452,28 +1465,22 @@ func (s *Castellarius) circuitBreaker(repo aqueduct.RepoConfig, items []*cistern
 			continue
 		}
 
-		notes, err := client.GetNotes(item.ID)
+		cutoff := time.Now().Add(-circuitBreakerWindow)
+		dispatchCount, err := client.CountEventsByType(item.ID, cistern.EventExitNoOutcome, cutoff)
 		if err != nil {
+			s.logger.Warn("circuit breaker: count events failed", "droplet", item.ID, "error", err)
 			continue
 		}
 
-		cutoff := time.Now().Add(-circuitBreakerWindow)
-		dispatchCount := 0
-		for _, n := range notes {
-			if n.CataractaeName == "scheduler" &&
-				strings.Contains(n.Content, "Session exited without outcome") &&
-				n.CreatedAt.After(cutoff) {
-				dispatchCount++
-			}
-		}
-
 		if dispatchCount >= circuitBreakerMaxDispatches {
-			reason := fmt.Sprintf("[circuit-breaker] %d dead sessions in %s with no outcome — pooling",
-				dispatchCount, circuitBreakerWindow)
 			s.logger.Warn("circuit breaker: pooling droplet",
 				"repo", repo.Name, "droplet", item.ID,
 				"dead_sessions", dispatchCount, "window", circuitBreakerWindow)
-			s.addNote(client, item.ID, "scheduler", reason)
+			cbPayload, _ := json.Marshal(map[string]any{
+				"death_count": dispatchCount,
+				"window":      circuitBreakerWindow.String(),
+			})
+			s.addEvent(client, item.ID, cistern.EventCircuitBreaker, string(cbPayload))
 
 			// Release the pool slot.
 			if item.Assignee != "" {
@@ -1489,6 +1496,8 @@ func (s *Castellarius) circuitBreaker(repo aqueduct.RepoConfig, items []*cistern
 				removeDropletWorktree(primaryDir, s.sandboxRoot, repo.Name, item.ID, true)
 			}
 
+			reason := fmt.Sprintf("[circuit-breaker] %d dead sessions in %s with no outcome — pooling",
+				dispatchCount, circuitBreakerWindow)
 			if err := client.Pool(item.ID, reason); err != nil {
 				s.logger.Error("circuit breaker: pool failed", "droplet", item.ID, "error", err)
 			}

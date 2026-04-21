@@ -3373,6 +3373,9 @@ func TestValidEventTypes_ContainsAllConstants(t *testing.T) {
 		EventCreate, EventDispatch, EventPass, EventRecirculate,
 		EventDelivered, EventRestart, EventApprove, EventEdit,
 		EventPool, EventCancel,
+		EventExitNoOutcome, EventStall, EventRecovery,
+		EventCircuitBreaker, EventLoopRecovery,
+		EventAutoPromote, EventNoRoute,
 	}
 	for _, e := range expected {
 		if !validEventTypes[e] {
@@ -3700,5 +3703,69 @@ func TestCloseItem_CancelledGuardInWhere(t *testing.T) {
 	err := c.CloseItem(item.ID)
 	if err == nil {
 		t.Fatal("expected error when droplet becomes cancelled before CloseItem")
+	}
+}
+
+func TestCountEventsByType_CountsMatchingEvents(t *testing.T) {
+	c := testClient(t)
+	item, _ := c.Add("myrepo", "Count test", "", 1, 2)
+	payload := `{"session":"s1","worker":"w1","cataractae":"implement"}`
+	c.RecordEvent(item.ID, EventExitNoOutcome, payload)
+	c.RecordEvent(item.ID, EventExitNoOutcome, payload)
+	c.RecordEvent(item.ID, EventExitNoOutcome, payload)
+	c.RecordEvent(item.ID, EventStall, `{"cataractae":"implement"}`)
+
+	count, err := c.CountEventsByType(item.ID, EventExitNoOutcome, time.Time{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if count != 3 {
+		t.Errorf("CountEventsByType = %d, want 3", count)
+	}
+}
+
+func TestCountEventsByType_RespectsCutoff(t *testing.T) {
+	c := testClient(t)
+	item, _ := c.Add("myrepo", "Cutoff test", "", 1, 2)
+
+	c.RecordEvent(item.ID, EventExitNoOutcome, `{}`)
+	time.Sleep(10 * time.Millisecond)
+	cutoff := time.Now().UTC()
+	time.Sleep(10 * time.Millisecond)
+	c.RecordEvent(item.ID, EventExitNoOutcome, `{}`)
+
+	count, err := c.CountEventsByType(item.ID, EventExitNoOutcome, cutoff)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 {
+		t.Errorf("CountEventsByType = %d, want 1 (only recent event)", count)
+	}
+}
+
+func TestCountEventsByType_ZeroWhenNone(t *testing.T) {
+	c := testClient(t)
+	item, _ := c.Add("myrepo", "Zero test", "", 1, 2)
+
+	count, err := c.CountEventsByType(item.ID, EventExitNoOutcome, time.Time{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if count != 0 {
+		t.Errorf("CountEventsByType = %d, want 0 when no events", count)
+	}
+}
+
+func TestCountEventsByType_ZeroWhenWrongType(t *testing.T) {
+	c := testClient(t)
+	item, _ := c.Add("myrepo", "Wrong type test", "", 1, 2)
+	c.RecordEvent(item.ID, EventStall, `{"cataractae":"implement"}`)
+
+	count, err := c.CountEventsByType(item.ID, EventExitNoOutcome, time.Time{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if count != 0 {
+		t.Errorf("CountEventsByType = %d, want 0 when only stall events exist", count)
 	}
 }

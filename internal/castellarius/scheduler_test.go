@@ -41,6 +41,7 @@ type mockClient struct {
 	issues              map[string][]cistern.DropletIssue // id → issues
 	pooled              map[string]string
 	attached            []attachedNote
+	events              []recordedEvent
 	closed              map[string]bool
 	lastReviewedCommits map[string]string
 	addNoteErr          error             // if set, AddNote returns this error
@@ -53,10 +54,15 @@ type mockClient struct {
 	cancelled           map[string]string // id → cancel reason
 	filed               []filedDroplet    // FileDroplet calls
 	assignCalls         int               // total Assign call count
+	eventCounts         map[string]int    // "dropletID:eventType" → pre-configured count
 }
 
 type attachedNote struct {
 	id, fromStep, notes string
+}
+
+type recordedEvent struct {
+	id, eventType, payload string
 }
 
 func newMockClient() *mockClient {
@@ -69,6 +75,7 @@ func newMockClient() *mockClient {
 		closed:              make(map[string]bool),
 		lastReviewedCommits: make(map[string]string),
 		cancelled:           make(map[string]string),
+		eventCounts:         make(map[string]int),
 	}
 }
 
@@ -289,7 +296,20 @@ func (m *mockClient) ListIssues(dropletID string, openOnly bool, flaggedBy strin
 }
 
 func (m *mockClient) RecordEvent(id, eventType, payload string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.events = append(m.events, recordedEvent{id, eventType, payload})
 	return nil
+}
+
+func (m *mockClient) CountEventsByType(id, eventType string, since time.Time) (int, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	key := id + ":" + eventType
+	if count, ok := m.eventCounts[key]; ok {
+		return count, nil
+	}
+	return 0, nil
 }
 
 // mockRunner records Spawn calls and writes outcomes to the mockClient.
@@ -704,15 +724,15 @@ func TestTick_RecirculateAutoPromotesToPass(t *testing.T) {
 		t.Error("expected no pooling when recirculate auto-promotes via on_pass")
 	}
 	// Warning note must be attached.
-	var hasNote bool
-	for _, n := range client.attached {
-		if n.id == "b1" && strings.Contains(n.notes, "Auto-promoted") && strings.Contains(n.notes, "recirculate") {
-			hasNote = true
+	var hasEvent bool
+	for _, e := range client.events {
+		if e.id == "b1" && e.eventType == cistern.EventAutoPromote {
+			hasEvent = true
 			break
 		}
 	}
-	if !hasNote {
-		t.Error("expected auto-promote warning note attached to droplet")
+	if !hasEvent {
+		t.Error("expected auto_promote event attached to droplet")
 	}
 }
 
@@ -801,16 +821,16 @@ func TestTick_RecirculateNoRoute_BlocksWithDiagnosticNote(t *testing.T) {
 		t.Fatal("expected droplet to be pooled when no on_recirculate route exists")
 	}
 
-	// And: a diagnostic note naming the step and missing route is attached.
+	// And: a no_route event naming the step is recorded.
 	found := false
-	for _, n := range client.attached {
-		if n.id == "b1" && strings.Contains(n.notes, "implement") && strings.Contains(n.notes, "on_recirculate") {
+	for _, e := range client.events {
+		if e.id == "b1" && e.eventType == cistern.EventNoRoute {
 			found = true
 			break
 		}
 	}
 	if !found {
-		t.Errorf("expected diagnostic note about missing on_recirculate route, got notes: %v", client.attached)
+		t.Errorf("expected no_route event, got events: %v", client.events)
 	}
 }
 
@@ -875,10 +895,10 @@ func TestTick_ImplementRecirculate_NoReviewerIssues_RoutesNormally(t *testing.T)
 	if _, ok := client.pooled["d1"]; ok {
 		t.Error("expected no pooling")
 	}
-	// No loop-recovery notes should be added.
-	for _, n := range client.attached {
-		if n.id == "d1" && strings.Contains(n.notes, "loop-recovery") {
-			t.Errorf("unexpected loop-recovery note: %q", n.notes)
+	// No loop-recovery events should be recorded.
+	for _, e := range client.events {
+		if e.id == "d1" && e.eventType == cistern.EventLoopRecovery {
+			t.Errorf("unexpected loop_recovery event")
 		}
 	}
 }
@@ -1000,18 +1020,15 @@ func TestTick_ImplementRecirculate_LoopRecovery_WritesStructuredNote(t *testing.
 	defer client.mu.Unlock()
 
 	// The structured recovery note must be present.
-	var hasRecoveryNote bool
-	for _, n := range client.attached {
-		if n.id == "d4" &&
-			strings.Contains(n.notes, "[scheduler:loop-recovery]") &&
-			strings.Contains(n.notes, "iss-003") &&
-			strings.Contains(n.notes, "routing to reviewer") {
-			hasRecoveryNote = true
+	var hasRecoveryEvent bool
+	for _, e := range client.events {
+		if e.id == "d4" && e.eventType == cistern.EventLoopRecovery {
+			hasRecoveryEvent = true
 			break
 		}
 	}
-	if !hasRecoveryNote {
-		t.Errorf("expected [scheduler:loop-recovery] note with issue ID, got: %v", client.attached)
+	if !hasRecoveryEvent {
+		t.Errorf("expected loop_recovery event, got: %v", client.events)
 	}
 }
 
@@ -1044,10 +1061,10 @@ func TestTick_ImplementRecirculate_GetNotesError_RoutesNormally(t *testing.T) {
 	if client.steps["d6"] != "implement" {
 		t.Errorf("expected implement on GetNotes error, got %q", client.steps["d6"])
 	}
-	// No loop-recovery notes should have been added.
-	for _, n := range client.attached {
-		if n.id == "d6" && strings.Contains(n.notes, "loop-recovery") {
-			t.Errorf("unexpected loop-recovery note on GetNotes error: %q", n.notes)
+	// No loop-recovery events should have been recorded.
+	for _, e := range client.events {
+		if e.id == "d6" && e.eventType == cistern.EventLoopRecovery {
+			t.Errorf("unexpected loop_recovery event on GetNotes error")
 		}
 	}
 }
@@ -1078,10 +1095,10 @@ func TestTick_ImplementRecirculate_ListIssuesError_RoutesNormally(t *testing.T) 
 	if client.steps["d7"] != "implement" {
 		t.Errorf("expected implement on ListIssues error, got %q", client.steps["d7"])
 	}
-	// No loop-recovery notes should have been added.
-	for _, n := range client.attached {
-		if n.id == "d7" && strings.Contains(n.notes, "loop-recovery") {
-			t.Errorf("unexpected loop-recovery note on ListIssues error: %q", n.notes)
+	// No loop-recovery events should have been recorded.
+	for _, e := range client.events {
+		if e.id == "d7" && e.eventType == cistern.EventLoopRecovery {
+			t.Errorf("unexpected loop_recovery event on ListIssues error")
 		}
 	}
 }
@@ -2120,15 +2137,15 @@ func TestHeartbeatRepo_StallDetected_AppendsNoteAndWarnLog(t *testing.T) {
 
 	sched.heartbeatRepo(context.Background(), config.Repos[0])
 
-	// Stall note and orphan note must both be appended.
-	if len(client.attached) != 2 {
-		t.Fatalf("expected 2 notes (stall + orphan), got %d", len(client.attached))
+	// Stall event and recovery event must both be recorded.
+	if len(client.events) != 2 {
+		t.Fatalf("expected 2 events (stall + recovery), got %d", len(client.events))
 	}
-	if !strings.HasPrefix(client.attached[0].notes, stallNotePrefix) {
-		t.Errorf("stall note missing structured prefix %q; got: %s", stallNotePrefix, client.attached[0].notes)
+	if client.events[0].eventType != cistern.EventStall {
+		t.Errorf("first event type = %q, want %q", client.events[0].eventType, cistern.EventStall)
 	}
-	if !strings.Contains(client.attached[1].notes, "[scheduler:recovery]") {
-		t.Errorf("orphan note missing '[scheduler:recovery]'; got: %s", client.attached[1].notes)
+	if client.events[1].eventType != cistern.EventRecovery {
+		t.Errorf("second event type = %q, want %q", client.events[1].eventType, cistern.EventRecovery)
 	}
 
 	// A Warn-level log entry must be present containing the droplet ID.
@@ -2164,19 +2181,19 @@ func TestHeartbeatRepo_OrphanRecovery_SecondTick_ItemResetToOpenNotReprocessed(t
 	runner := newMockRunner(client)
 	sched := NewFromParts(config, workflows, clients, runner)
 
-	// First call: no signals → stalled → stall note + recovery note written, item reset to open.
+	// First call: no signals → stalled → stall event + recovery event written, item reset to open.
 	sched.heartbeatRepo(context.Background(), config.Repos[0])
-	if len(client.attached) != 2 {
-		t.Fatalf("expected 2 notes (stall + recovery) after first tick, got %d", len(client.attached))
+	if len(client.events) != 2 {
+		t.Fatalf("expected 2 events (stall + recovery) after first tick, got %d", len(client.events))
 	}
 	if item.Status != "open" {
 		t.Errorf("expected item reset to open after orphan handling, got status %q", item.Status)
 	}
 
-	// Second call: item is now open (no longer in_progress) → no additional notes.
+	// Second call: item is now open (no longer in_progress) → no additional events.
 	sched.heartbeatRepo(context.Background(), config.Repos[0])
-	if len(client.attached) != 2 {
-		t.Errorf("expected still 2 notes after second tick (item is open), got %d", len(client.attached))
+	if len(client.events) != 2 {
+		t.Errorf("expected still 2 events after second tick (item is open), got %d", len(client.events))
 	}
 }
 
@@ -2206,8 +2223,8 @@ func TestHeartbeatRepo_StallThreshold_ExplicitMinutesRespected(t *testing.T) {
 
 	sched.heartbeatRepo(context.Background(), config.Repos[0])
 
-	if len(client.attached) != 2 {
-		t.Errorf("expected 2 notes (stall + recovery) with 1-min threshold and 2-min-old heartbeat, got %d", len(client.attached))
+	if len(client.events) != 2 {
+		t.Errorf("expected 2 events (stall + recovery) with 1-min threshold and 2-min-old heartbeat, got %d", len(client.events))
 	}
 }
 
@@ -2238,9 +2255,9 @@ func TestHeartbeatRepo_StallThreshold_DefaultsTo45Minutes(t *testing.T) {
 
 	sched.heartbeatRepo(context.Background(), config.Repos[0])
 
-	// 2 min < 45 min → not stalled → no note written.
-	if len(client.attached) != 0 {
-		t.Errorf("expected 0 stall notes with default 45-min threshold and 2-min-old heartbeat, got %d", len(client.attached))
+	// 2 min < 45 min → not stalled → no events written.
+	if len(client.events) != 0 {
+		t.Errorf("expected 0 events with default 45-min threshold and 2-min-old heartbeat, got %d", len(client.events))
 	}
 }
 
@@ -2274,12 +2291,12 @@ func TestHeartbeatRepo_StallWithAssignee_WritesNoteNoRespawn(t *testing.T) {
 
 	sched.heartbeatRepo(context.Background(), config.Repos[0])
 
-	// Stall note must be written.
-	if len(client.attached) != 1 {
-		t.Fatalf("expected 1 stall note, got %d", len(client.attached))
+	// Stall event must be recorded.
+	if len(client.events) != 1 {
+		t.Fatalf("expected 1 stall event, got %d", len(client.events))
 	}
-	if !strings.HasPrefix(client.attached[0].notes, stallNotePrefix) {
-		t.Errorf("stall note missing prefix %q; got: %s", stallNotePrefix, client.attached[0].notes)
+	if client.events[0].eventType != cistern.EventStall {
+		t.Errorf("stall event type = %q, want %q", client.events[0].eventType, cistern.EventStall)
 	}
 
 	// Spawn must NOT have been called — stall detection does not respawn.
@@ -2324,12 +2341,12 @@ func TestHeartbeatRepo_StallWithNoAssignee_RecoverAndNoSpawn(t *testing.T) {
 
 	sched.heartbeatRepo(context.Background(), config.Repos[0])
 
-	// Stall note and orphan note must both be written.
-	if len(client.attached) != 2 {
-		t.Fatalf("expected 2 notes (stall + orphan) for orphaned droplet, got %d", len(client.attached))
+	// Stall event and recovery event must both be recorded.
+	if len(client.events) != 2 {
+		t.Fatalf("expected 2 events (stall + recovery) for orphaned droplet, got %d", len(client.events))
 	}
-	if !strings.Contains(client.attached[1].notes, "[scheduler:recovery]") {
-		t.Errorf("second note should be recovery note; got: %s", client.attached[1].notes)
+	if client.events[1].eventType != cistern.EventRecovery {
+		t.Errorf("second event type = %q, want %q", client.events[1].eventType, cistern.EventRecovery)
 	}
 
 	// Item must be reset to open for re-dispatch.
@@ -2404,15 +2421,15 @@ func TestHeartbeatRepo_OrphanRecovery_AssignFailure_ClearsDebounce(t *testing.T)
 
 	sched.heartbeatRepo(context.Background(), config.Repos[0])
 
-	// Orphan note must be written (best-effort) even when Pool fails.
-	orphanNotes := 0
-	for _, n := range client.attached {
-		if strings.Contains(n.notes, "[scheduler:recovery]") {
-			orphanNotes++
+	// Recovery event must be recorded (best-effort) even when Pool fails.
+	recoveryEvents := 0
+	for _, e := range client.events {
+		if e.eventType == cistern.EventRecovery {
+			recoveryEvents++
 		}
 	}
-	if orphanNotes < 1 {
-		t.Errorf("expected recovery note even on Assign failure, got %d recovery notes", orphanNotes)
+	if recoveryEvents < 1 {
+		t.Errorf("expected recovery event even on Assign failure, got %d recovery events", recoveryEvents)
 	}
 }
 
@@ -2450,9 +2467,9 @@ func TestHeartbeatRepo_AgentEmittingHeartbeat_NotStalled(t *testing.T) {
 
 	sched.heartbeatRepo(context.Background(), config.Repos[0])
 
-	// Agent is heartbeating → not stalled → no note written, no spawn.
-	if len(client.attached) != 0 {
-		t.Errorf("expected no stall notes for heartbeating agent, got %d", len(client.attached))
+	// Agent is heartbeating → not stalled → no events written, no spawn.
+	if len(client.events) != 0 {
+		t.Errorf("expected no stall events for heartbeating agent, got %d", len(client.events))
 	}
 	runner.mu.Lock()
 	calls := runner.calls
@@ -2493,15 +2510,15 @@ func TestHeartbeatRepo_AgentNotEmittingHeartbeat_Stalled(t *testing.T) {
 
 	sched.heartbeatRepo(context.Background(), config.Repos[0])
 
-	// Stall detected → escalation note written.
-	if len(client.attached) != 1 {
-		t.Fatalf("expected 1 stall note for non-heartbeating agent, got %d", len(client.attached))
+	// Stall detected → escalation event recorded.
+	if len(client.events) != 1 {
+		t.Fatalf("expected 1 stall event for non-heartbeating agent, got %d", len(client.events))
 	}
-	if !strings.HasPrefix(client.attached[0].notes, stallNotePrefix) {
-		t.Errorf("stall note missing prefix %q; got: %s", stallNotePrefix, client.attached[0].notes)
+	if client.events[0].eventType != cistern.EventStall {
+		t.Errorf("stall event type = %q, want %q", client.events[0].eventType, cistern.EventStall)
 	}
-	if !strings.Contains(client.attached[0].notes, "heartbeat=") {
-		t.Errorf("stall note missing heartbeat field; got: %s", client.attached[0].notes)
+	if !strings.Contains(client.events[0].payload, "heartbeat") {
+		t.Errorf("stall event payload missing heartbeat field; got: %s", client.events[0].payload)
 	}
 
 	// No auto-respawn — stall detection does not respawn; that is exit detection's job.
@@ -2543,13 +2560,12 @@ func TestHeartbeatRepo_TmuxDead_WritesNoteAndResetsDroplet(t *testing.T) {
 
 	sched.heartbeatRepo(context.Background(), config.Repos[0])
 
-	// Note must have been written.
-	if len(client.attached) != 1 {
-		t.Fatalf("expected 1 exit note, got %d", len(client.attached))
+	// Event must have been recorded.
+	if len(client.events) != 1 {
+		t.Fatalf("expected 1 exit_no_outcome event, got %d", len(client.events))
 	}
-	note := client.attached[0].notes
-	if !strings.Contains(note, "[scheduler:exit-no-outcome]") {
-		t.Errorf("exit note missing [scheduler:exit-no-outcome] prefix; got: %s", note)
+	if client.events[0].eventType != cistern.EventExitNoOutcome {
+		t.Errorf("exit event type = %q, want %q", client.events[0].eventType, cistern.EventExitNoOutcome)
 	}
 
 	// Droplet must have been reset to open for re-dispatch.

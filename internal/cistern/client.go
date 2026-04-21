@@ -19,29 +19,43 @@ import (
 )
 
 const (
-	EventCreate      = "create"
-	EventDispatch    = "dispatch"
-	EventPass        = "pass"
-	EventRecirculate = "recirculate"
-	EventDelivered   = "delivered"
-	EventRestart     = "restart"
-	EventApprove     = "approve"
-	EventEdit        = "edit"
-	EventPool        = "pool"
-	EventCancel      = "cancel"
+	EventCreate         = "create"
+	EventDispatch       = "dispatch"
+	EventPass           = "pass"
+	EventRecirculate    = "recirculate"
+	EventDelivered      = "delivered"
+	EventRestart        = "restart"
+	EventApprove        = "approve"
+	EventEdit           = "edit"
+	EventPool           = "pool"
+	EventCancel         = "cancel"
+	EventExitNoOutcome  = "exit_no_outcome"
+	EventStall          = "stall"
+	EventRecovery       = "recovery"
+	EventCircuitBreaker = "circuit_breaker"
+	EventLoopRecovery   = "loop_recovery"
+	EventAutoPromote    = "auto_promote"
+	EventNoRoute        = "no_route"
 )
 
 var validEventTypes = map[string]bool{
-	EventCreate:      true,
-	EventDispatch:    true,
-	EventPass:        true,
-	EventRecirculate: true,
-	EventDelivered:   true,
-	EventRestart:     true,
-	EventApprove:     true,
-	EventEdit:        true,
-	EventPool:        true,
-	EventCancel:      true,
+	EventCreate:         true,
+	EventDispatch:       true,
+	EventPass:           true,
+	EventRecirculate:    true,
+	EventDelivered:      true,
+	EventRestart:        true,
+	EventApprove:        true,
+	EventEdit:           true,
+	EventPool:           true,
+	EventCancel:         true,
+	EventExitNoOutcome:  true,
+	EventStall:          true,
+	EventRecovery:       true,
+	EventCircuitBreaker: true,
+	EventLoopRecovery:   true,
+	EventAutoPromote:    true,
+	EventNoRoute:        true,
 }
 
 type executor interface {
@@ -1235,6 +1249,20 @@ func (c *Client) ListRecentEvents(limit int) ([]RecentEvent, error) {
 		events = append(events, e)
 	}
 	return events, rows.Err()
+}
+
+// CountEventsByType returns the number of events with the given eventType for
+// the specified droplet created after the since timestamp.
+func (c *Client) CountEventsByType(id, eventType string, since time.Time) (int, error) {
+	var count int
+	err := c.db.QueryRow(
+		`SELECT COUNT(*) FROM events WHERE droplet_id = ? AND event_type = ? AND created_at > ?`,
+		id, eventType, since,
+	).Scan(&count)
+	if err != nil {
+		return 0, fmt.Errorf("cistern: count events by type %s for %s: %w", eventType, id, err)
+	}
+	return count, nil
 }
 
 // DropletChange represents a note or event change for a single droplet.
