@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { getAuthParams } from '../hooks/useAuth';
 import { truncateBuffer, isAuthCloseCode } from '../utils/buffer';
+import { TerminalView } from './TerminalView';
 
 interface PeekPanelProps {
   aqueductName: string;
@@ -19,6 +20,7 @@ export function PeekPanel({ aqueductName, onClose }: PeekPanelProps) {
   const searchInputRef = useRef<HTMLInputElement>(null);
   const wsRef = useRef<WebSocket | null>(null);
   const mountedRef = useRef(true);
+  const userScrollingRef = useRef(false);
 
   const appendOutput = useCallback((chunk: string) => {
     setOutput((prev) => truncateBuffer(prev, chunk));
@@ -61,14 +63,29 @@ export function PeekPanel({ aqueductName, onClose }: PeekPanelProps) {
   }, [aqueductName, appendOutput, reconnectKey]);
 
   useEffect(() => {
-    if (autoScroll && terminalRef.current) {
+    if (autoScroll && terminalRef.current && !userScrollingRef.current) {
       terminalRef.current.scrollTop = terminalRef.current.scrollHeight;
     }
   }, [output, autoScroll]);
 
+  const handleScroll = useCallback(() => {
+    const el = terminalRef.current;
+    if (!el) return;
+    const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
+    if (atBottom) {
+      userScrollingRef.current = false;
+      setAutoScroll(true);
+    } else {
+      userScrollingRef.current = true;
+      setAutoScroll(false);
+    }
+  }, []);
+
   useEffect(() => {
     const handleKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
+        e.preventDefault();
+        e.stopPropagation();
         if (searchVisible) {
           setSearchVisible(false);
           setSearchQuery('');
@@ -81,8 +98,8 @@ export function PeekPanel({ aqueductName, onClose }: PeekPanelProps) {
         setSearchVisible(true);
       }
     };
-    window.addEventListener('keydown', handleKey);
-    return () => window.removeEventListener('keydown', handleKey);
+    window.addEventListener('keydown', handleKey, true);
+    return () => window.removeEventListener('keydown', handleKey, true);
   }, [onClose, searchVisible]);
 
   useEffect(() => {
@@ -169,12 +186,13 @@ export function PeekPanel({ aqueductName, onClose }: PeekPanelProps) {
         </div>
       )}
       {!error && (
-        <pre
+        <TerminalView
           ref={terminalRef}
-          className="flex-1 overflow-auto p-4 font-mono text-xs text-cistern-green bg-cistern-bg whitespace-pre-wrap break-all"
-        >
-          {highlightedOutput || 'Connecting\u2026'}
-        </pre>
+          content={highlightedOutput || 'Connecting\u2026'}
+          autoScroll={false}
+          className="flex-1 p-4"
+          onScroll={handleScroll}
+        />
       )}
     </div>
   );

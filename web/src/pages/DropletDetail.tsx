@@ -24,6 +24,7 @@ import { RenameInput } from '../components/RenameInput';
 import { FileIssueModal } from '../components/FileIssueModal';
 import { CloseModal } from '../components/CloseModal';
 import { ReopenModal } from '../components/ReopenModal';
+import { LoadingSkeleton } from '../components/LoadingSkeleton';
 import { formatAge } from '../utils/formatAge';
 import type { ActionRequest, Droplet, DropletIssue } from '../api/types';
 
@@ -101,8 +102,13 @@ export function DropletDetail() {
 
   if (loading || !currentDroplet) {
     return (
-      <div className="flex items-center justify-center h-full">
-        <div className="text-cistern-muted font-mono">Loading droplet…</div>
+      <div className="flex-1 p-4 md:p-6 space-y-6">
+        <LoadingSkeleton className="h-8 w-48 mb-2" />
+        <LoadingSkeleton className="h-4 w-64" />
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mt-4">
+          <LoadingSkeleton className="h-48" />
+          <LoadingSkeleton className="h-48" />
+        </div>
       </div>
     );
   }

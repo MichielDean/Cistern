@@ -1,17 +1,24 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, act } from '@testing-library/react';
-import { ToastProvider, useToast } from '../components/Toast';
+import { ToastProvider, useToast, ToastOutlet } from '../components/Toast';
 
 function ToastTrigger({ message, type, duration }: { message: string; type?: 'success' | 'error' | 'info'; duration?: number }) {
   const { addToast } = useToast();
   return (
-    <button
-      onClick={() => addToast(message, type, duration)}
-      data-testid="trigger"
-    >
-      Show Toast
-    </button>
+    <>
+      <button
+        onClick={() => addToast(message, type, duration)}
+        data-testid="trigger"
+      >
+        Show Toast
+      </button>
+      <ToastOutlet />
+    </>
   );
+}
+
+function TestWrapper({ children }: { children: React.ReactNode }) {
+  return <ToastProvider>{children}</ToastProvider>;
 }
 
 describe('Toast', () => {
@@ -24,9 +31,9 @@ describe('Toast', () => {
 
   it('shows a toast when addToast is called', () => {
     render(
-      <ToastProvider>
+      <TestWrapper>
         <ToastTrigger message="Hello world" type="info" duration={0} />
-      </ToastProvider>,
+      </TestWrapper>,
     );
     fireEvent.click(screen.getByTestId('trigger'));
     expect(screen.getByText('Hello world')).toBeInTheDocument();
@@ -34,9 +41,9 @@ describe('Toast', () => {
 
   it('renders different toast types with correct styles', () => {
     render(
-      <ToastProvider>
+      <TestWrapper>
         <ToastTrigger message="Error occurred" type="error" duration={0} />
-      </ToastProvider>,
+      </TestWrapper>,
     );
     fireEvent.click(screen.getByTestId('trigger'));
     const toast = screen.getByText('Error occurred').closest('div');
@@ -45,9 +52,9 @@ describe('Toast', () => {
 
   it('removes toast when dismiss button is clicked', () => {
     render(
-      <ToastProvider>
+      <TestWrapper>
         <ToastTrigger message="Dismissible" type="info" duration={0} />
-      </ToastProvider>,
+      </TestWrapper>,
     );
     fireEvent.click(screen.getByTestId('trigger'));
     expect(screen.getByText('Dismissible')).toBeInTheDocument();
@@ -57,9 +64,9 @@ describe('Toast', () => {
 
   it('auto-removes toast after duration', () => {
     render(
-      <ToastProvider>
+      <TestWrapper>
         <ToastTrigger message="Timed" type="info" duration={1000} />
-      </ToastProvider>,
+      </TestWrapper>,
     );
     fireEvent.click(screen.getByTestId('trigger'));
     expect(screen.getByText('Timed')).toBeInTheDocument();
@@ -71,9 +78,10 @@ describe('Toast', () => {
 
   it('renders no toasts initially', () => {
     const { container } = render(
-      <ToastProvider>
+      <TestWrapper>
         <div>No toasts</div>
-      </ToastProvider>,
+        <ToastOutlet />
+      </TestWrapper>,
     );
     expect(container.querySelectorAll('[role="status"]').length).toBe(0);
   });

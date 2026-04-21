@@ -34,7 +34,7 @@ export function SkeletonTable({ rows = 5, cols = 4 }: { rows?: number; cols?: nu
           style={{ gridTemplateColumns: `repeat(${cols}, 1fr)` }}
         >
           {Array.from({ length: cols }).map((_, col) => (
-            <SkeletonLine key={col} width={`${60 + Math.random() * 30}%`} />
+            <SkeletonLine key={col} width={`${60 + ((row + col) * 7) % 31}%`} />
           ))}
         </div>
       ))}

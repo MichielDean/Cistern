@@ -1,46 +1,23 @@
-import { useState, useRef, useCallback, useEffect } from 'react';
+import { useCallback } from 'react';
 import { StatusIndicator } from '../components/StatusIndicator';
 import { ActionButton } from '../components/ActionButton';
+import { useToast } from '../components/Toast';
+import { LoadingSkeleton } from '../components/LoadingSkeleton';
 import { useCastellariusStatus, castellariusAction } from '../api/castellarius';
-
-interface Toast {
-  message: string;
-  type: 'success' | 'error';
-}
 
 export function CastellariusPage() {
   const { status, loading, error, refresh } = useCastellariusStatus(5000);
-  const [toast, setToast] = useState<Toast | null>(null);
-  const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const { addToast } = useToast();
 
-  const showToast = useCallback((message: string, type: Toast['type']) => {
-    if (toastTimerRef.current !== null) {
-      clearTimeout(toastTimerRef.current);
-    }
-    setToast({ message, type });
-    toastTimerRef.current = setTimeout(() => {
-      toastTimerRef.current = null;
-      setToast(null);
-    }, 3000);
-  }, []);
-
-  useEffect(() => {
-    return () => {
-      if (toastTimerRef.current !== null) {
-        clearTimeout(toastTimerRef.current);
-      }
-    };
-  }, []);
-
-  const handleAction = async (action: 'start' | 'stop' | 'restart') => {
+  const handleAction = useCallback(async (action: 'start' | 'stop' | 'restart') => {
     try {
       await castellariusAction(action);
-      showToast(`${action} succeeded`, 'success');
+      addToast(`${action} succeeded`, 'success');
       refresh();
     } catch (err) {
-      showToast(err instanceof Error ? err.message : `${action} failed`, 'error');
+      addToast(err instanceof Error ? err.message : `${action} failed`, 'error');
     }
-  };
+  }, [addToast, refresh]);
 
   if (error && !status) {
     return (
@@ -55,8 +32,9 @@ export function CastellariusPage() {
 
   if (loading && !status) {
     return (
-      <div className="flex items-center justify-center h-full">
-        <div className="text-cistern-muted font-mono">Loading…</div>
+      <div className="flex-1 p-4 md:p-6 space-y-6">
+        <LoadingSkeleton className="h-24" />
+        <LoadingSkeleton className="h-16" />
       </div>
     );
   }
@@ -116,14 +94,6 @@ export function CastellariusPage() {
       <div className="flex items-center gap-2">
         <StatusIndicator status={status.farm_running ? 'running' : 'stopped'} label={`Farm ${status.farm_running ? 'Running' : 'Stopped'}`} />
       </div>
-
-      {toast && (
-        <div className={`fixed bottom-4 right-4 bg-cistern-surface border border-cistern-border rounded-lg p-3 font-mono text-sm ${
-          toast.type === 'success' ? 'text-cistern-green' : 'text-cistern-red'
-        }`}>
-          {toast.message}
-        </div>
-      )}
     </div>
   );
 }

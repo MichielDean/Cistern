@@ -36,5 +36,6 @@ export { ExportButton } from './ExportButton';
 export { ErrorBoundary } from './ErrorBoundary';
 export { TerminalView } from './TerminalView';
 export { LoadingSkeleton, SkeletonLine, SkeletonCard, SkeletonTable } from './LoadingSkeleton';
-export { ToastProvider, useToast } from './Toast';
+export { ToastProvider, useToast, ToastOutlet } from './Toast';
+export type { Toast } from './Toast';
 export { CommandPalette } from './CommandPalette';

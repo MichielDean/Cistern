@@ -54,6 +54,7 @@ export function CommandPalette({ open, onClose }: CommandPaletteProps) {
     const handleKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         e.preventDefault();
+        e.stopPropagation();
         onClose();
       } else if (e.key === 'ArrowDown') {
         e.preventDefault();
@@ -66,8 +67,8 @@ export function CommandPalette({ open, onClose }: CommandPaletteProps) {
         execute(filtered[selectedIndex]);
       }
     };
-    window.addEventListener('keydown', handleKey);
-    return () => window.removeEventListener('keydown', handleKey);
+    window.addEventListener('keydown', handleKey, true);
+    return () => window.removeEventListener('keydown', handleKey, true);
   }, [open, filtered, selectedIndex, execute, onClose]);
 
   useEffect(() => {

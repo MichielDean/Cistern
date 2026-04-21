@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { LogViewer } from '../components/LogViewer';
+import { LoadingSkeleton } from '../components/LoadingSkeleton';
 import { fetchLogHistory, createLogEventSource, fetchLogSources } from '../api/logs';
 import type { LogEntry, LogSourceInfo } from '../api/types';
 
@@ -137,8 +138,12 @@ export function LogsPage() {
       </div>
       <div className="flex-1 overflow-hidden">
         {loading && entries.length === 0 ? (
-          <div className="flex items-center justify-center h-full">
-            <div className="text-cistern-muted font-mono">Loading logs…</div>
+          <div className="flex-1 p-4 space-y-2">
+            <LoadingSkeleton className="h-4 w-full" />
+            <LoadingSkeleton className="h-4 w-3/4" />
+            <LoadingSkeleton className="h-4 w-5/6" />
+            <LoadingSkeleton className="h-4 w-2/3" />
+            <LoadingSkeleton className="h-4 w-full" />
           </div>
         ) : (
           <LogViewer

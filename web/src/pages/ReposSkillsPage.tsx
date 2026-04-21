@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { fetchRepos, fetchSkills } from '../api/repos';
+import { SkeletonCard } from '../components/LoadingSkeleton';
 import type { RepoInfo, SkillInfo } from '../api/types';
 
 export function ReposSkillsPage() {
@@ -40,8 +41,13 @@ export function ReposSkillsPage() {
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center h-full">
-        <div className="text-cistern-muted font-mono">Loading…</div>
+      <div className="flex-1 overflow-y-auto p-4 md:p-6 space-y-8">
+        <section>
+          <SkeletonCard lines={4} />
+          <div className="mt-4">
+            <SkeletonCard lines={3} />
+          </div>
+        </section>
       </div>
     );
   }

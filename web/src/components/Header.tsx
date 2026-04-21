@@ -1,4 +1,3 @@
-import { useNavigate } from 'react-router-dom';
 import type { DashboardData } from '../api/types';
 
 interface HeaderProps {
@@ -8,7 +7,6 @@ interface HeaderProps {
 }
 
 export function Header({ data, connected, onMenuClick }: HeaderProps) {
-  const navigate = useNavigate();
 
   return (
     <header className="h-[60px] bg-cistern-surface border-b border-cistern-border flex items-center px-4 gap-4 shrink-0" role="banner">
