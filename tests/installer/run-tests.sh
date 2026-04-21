@@ -75,7 +75,7 @@ fi
 # Given: fakeagent installed as /usr/local/bin/opencode
 # When:  invoking `opencode` (non-interactive mode)
 # Then:  exits 0 and outputs valid JSON proposal array
-if fa_out=$(opencode --output-format json 2>&1); then
+if fa_out=$(FAKEAGENT_MODE=raw_fallback opencode --output-format json 2>&1); then
     if echo "${fa_out}" | grep -q '"title":"mock proposal"'; then
         pass "fakeagent_print_output"
     else
