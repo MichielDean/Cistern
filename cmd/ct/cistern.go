@@ -975,24 +975,12 @@ var dropletPassCmd = &cobra.Command{
 		}
 		defer c.Close()
 
-		item, err := c.Get(args[0])
-		if err != nil {
-			return err
-		}
-		if item.Status == "delivered" || item.Status == "cancelled" {
-			return fmt.Errorf("cannot pass: droplet %s has terminal status %q", args[0], item.Status)
-		}
-
 		if passNotes != "" {
 			if err := c.AddNote(args[0], cataractaeName(), passNotes); err != nil {
 				return err
 			}
 		}
-		if err := c.SetOutcome(args[0], "pass"); err != nil {
-			return err
-		}
-		passPayload, _ := json.Marshal(map[string]any{"cataractae": cataractaeName(), "notes": passNotes})
-		if err := c.RecordEvent(args[0], cistern.EventPass, string(passPayload)); err != nil {
+		if err := c.Pass(args[0], cataractaeName(), passNotes); err != nil {
 			return err
 		}
 		notifyCastellarius()
@@ -1022,48 +1010,19 @@ var dropletRecirculateCmd = &cobra.Command{
 		}
 		defer c.Close()
 
-		item, err := c.Get(args[0])
-		if err != nil {
-			return err
-		}
-		if item.Status == "delivered" || item.Status == "cancelled" {
-			return fmt.Errorf("cannot recirculate: droplet %s has terminal status %q", args[0], item.Status)
-		}
-
 		if recirculateNotes != "" {
 			if err := c.AddNote(args[0], cataractaeName(), "♻ "+recirculateNotes); err != nil {
 				return err
 			}
 		}
+		if err := c.Recirculate(args[0], cataractaeName(), recirculateTo, recirculateNotes); err != nil {
+			return err
+		}
+		notifyCastellarius()
 		outcome := "recirculate"
 		if recirculateTo != "" {
 			outcome = "recirculate:" + recirculateTo
 		}
-		// When not in_progress, Castellarius will never observe this droplet.
-		// Directly open it for the target cataractae. Assign clears outcome.
-		if item.Status != "in_progress" {
-			target := recirculateTo
-			if target == "" {
-				target = item.CurrentCataractae
-			}
-			if err := c.Assign(args[0], "", target); err != nil {
-				return err
-			}
-			recircPayload, _ := json.Marshal(map[string]any{"cataractae": cataractaeName(), "target": target, "notes": recirculateNotes})
-			if err := c.RecordEvent(args[0], cistern.EventRecirculate, string(recircPayload)); err != nil {
-				return err
-			}
-			fmt.Printf("droplet %s: outcome=%s\n", args[0], outcome)
-			return nil
-		}
-		if err := c.SetOutcome(args[0], outcome); err != nil {
-			return err
-		}
-		recircPayload, _ := json.Marshal(map[string]any{"cataractae": cataractaeName(), "target": recirculateTo, "notes": recirculateNotes})
-		if err := c.RecordEvent(args[0], cistern.EventRecirculate, string(recircPayload)); err != nil {
-			return err
-		}
-		notifyCastellarius()
 		fmt.Printf("droplet %s: outcome=%s\n", args[0], outcome)
 		return nil
 	},
@@ -1110,18 +1069,7 @@ var dropletApproveCmd = &cobra.Command{
 		}
 		defer c.Close()
 
-		item, err := c.Get(id)
-		if err != nil {
-			return err
-		}
-		if item.CurrentCataractae != "human" {
-			return fmt.Errorf("%s is not awaiting human approval (cataractae: %s)", id, item.CurrentCataractae)
-		}
-		if err := c.Assign(id, "", "delivery"); err != nil {
-			return err
-		}
-		approvePayload, _ := json.Marshal(map[string]any{"cataractae": cataractaeName()})
-		if err := c.RecordEvent(id, cistern.EventApprove, string(approvePayload)); err != nil {
+		if err := c.Approve(id, cataractaeName()); err != nil {
 			return err
 		}
 		fmt.Printf("Droplet %s approved for delivery\n", id)

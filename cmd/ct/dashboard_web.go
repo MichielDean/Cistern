@@ -1792,11 +1792,7 @@ func handlePassDroplet(dbPath string) http.HandlerFunc {
 					return err
 				}
 			}
-			if err := c.SetOutcome(id, "pass"); err != nil {
-				return err
-			}
-			passPayload, _ := json.Marshal(map[string]any{"cataractae": "manual", "notes": req.Notes})
-			if err := c.RecordEvent(id, cistern.EventPass, string(passPayload)); err != nil {
+			if err := c.Pass(id, "manual", req.Notes); err != nil {
 				return err
 			}
 			notifyCastellarius()
@@ -1823,16 +1819,12 @@ func handleRecirculateDroplet(dbPath string) http.HandlerFunc {
 					return err
 				}
 			}
+			if err := c.Recirculate(id, "manual", req.To, req.Notes); err != nil {
+				return err
+			}
 			outcome := "recirculate"
 			if req.To != "" {
 				outcome = "recirculate:" + req.To
-			}
-			if err := c.SetOutcome(id, outcome); err != nil {
-				return err
-			}
-			recircPayload, _ := json.Marshal(map[string]any{"cataractae": "manual", "target": req.To, "notes": req.Notes})
-			if err := c.RecordEvent(id, cistern.EventRecirculate, string(recircPayload)); err != nil {
-				return err
 			}
 			notifyCastellarius()
 			writeAPIJSON(w, http.StatusOK, map[string]string{"id": id, "outcome": outcome})
@@ -1948,21 +1940,11 @@ func handleApproveDroplet(dbPath string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id := r.PathValue("id")
 		apiClient(dbPath, w, func(c *cistern.Client) error {
-			item, err := c.Get(id)
-			if err != nil {
-				return err
-			}
-			if item.CurrentCataractae != "human" {
-				writeAPIError(w, http.StatusBadRequest, "droplet is not awaiting human approval")
-				return nil
-			}
-			// Empty worker is intentional: Assign(id, "", step) clears the assignee
-			// and marks the droplet for the scheduler to pick up at the given step.
-			if err := c.Assign(id, "", "delivery"); err != nil {
-				return err
-			}
-			approvePayload, _ := json.Marshal(map[string]any{"cataractae": "manual"})
-			if err := c.RecordEvent(id, cistern.EventApprove, string(approvePayload)); err != nil {
+			if err := c.Approve(id, "manual"); err != nil {
+				if strings.Contains(err.Error(), "not awaiting human approval") {
+					writeAPIError(w, http.StatusBadRequest, "droplet is not awaiting human approval")
+					return nil
+				}
 				return err
 			}
 			writeAPIJSON(w, http.StatusOK, map[string]string{"id": id, "status": "approved"})

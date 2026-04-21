@@ -209,7 +209,7 @@ func (m tabAppModel) execActionCmd(dropletID, action, input string) tea.Cmd {
 				execErr = fmt.Errorf("cannot %s: droplet %s has terminal status %q", action, dropletID, item.Status)
 				break
 			}
-			if err := c.SetOutcome(dropletID, "pass"); err != nil {
+			if err := c.Pass(dropletID, "manual", ""); err != nil {
 				execErr = err
 				break
 			}
@@ -217,47 +217,17 @@ func (m tabAppModel) execActionCmd(dropletID, action, input string) tea.Cmd {
 				execErr = c.CloseItem(dropletID)
 			}
 		case actionRecirculate:
-			item, err := c.Get(dropletID)
+			err := c.Recirculate(dropletID, "manual", input, "")
 			if err != nil {
 				execErr = err
 				break
 			}
-			if isTerminalStatus(item.Status) {
-				execErr = fmt.Errorf("cannot %s: droplet %s has terminal status %q", action, dropletID, item.Status)
-				break
-			}
-			if item.Status != "in_progress" {
-				target := input
-				if target == "" {
-					target = item.CurrentCataractae
-				}
-				execErr = c.Assign(dropletID, "", target)
-				break
-			}
-			outcome := "recirculate"
-			if input != "" {
-				outcome = "recirculate:" + input
-			}
-			execErr = c.SetOutcome(dropletID, outcome)
 		case actionClose:
 			execErr = c.CloseItem(dropletID)
 		case actionReopen:
 			execErr = c.UpdateStatus(dropletID, "open")
 		case actionApprove:
-			item, err := c.Get(dropletID)
-			if err != nil {
-				execErr = err
-				break
-			}
-			if isTerminalStatus(item.Status) {
-				execErr = fmt.Errorf("cannot %s: droplet %s has terminal status %q", action, dropletID, item.Status)
-				break
-			}
-			if item.CurrentCataractae != "human" {
-				execErr = fmt.Errorf("%s is not awaiting human approval (cataractae: %s)", dropletID, item.CurrentCataractae)
-				break
-			}
-			execErr = c.Assign(dropletID, "", "delivery")
+			execErr = c.Approve(dropletID, "manual")
 		case actionAddDep:
 			execErr = c.AddDependency(dropletID, input)
 		case actionRemoveDep:

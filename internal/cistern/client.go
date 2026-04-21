@@ -644,6 +644,159 @@ func (c *Client) recordEvent(exec executor, id, eventType, payload string) error
 	return nil
 }
 
+// Pass sets outcome to "pass" on a droplet and records a pass event, all within
+// a single transaction. This ensures the outcome and event are always consistent.
+// Returns an error if the droplet has a terminal status (delivered or cancelled).
+func (c *Client) Pass(id, cataractaeName, notes string) error {
+	item, err := c.Get(id)
+	if err != nil {
+		return fmt.Errorf("cistern: pass %s: %w", id, err)
+	}
+	if item.Status == "delivered" || item.Status == "cancelled" {
+		return fmt.Errorf("cistern: cannot pass %s: droplet has terminal status %q", id, item.Status)
+	}
+
+	tx, err := c.db.Begin()
+	if err != nil {
+		return fmt.Errorf("cistern: begin tx: %w", err)
+	}
+	defer tx.Rollback()
+
+	now := time.Now().UTC()
+	res, err := tx.Exec(
+		`UPDATE droplets SET outcome = ?, updated_at = ? WHERE id = ?`,
+		"pass", now, id,
+	)
+	if err != nil {
+		return fmt.Errorf("cistern: pass %s: %w", id, err)
+	}
+	if err := checkRowsAffected(res, id); err != nil {
+		return err
+	}
+
+	passPayload, _ := json.Marshal(map[string]any{"cataractae": cataractaeName, "notes": notes})
+	if err := c.recordEvent(tx, id, EventPass, string(passPayload)); err != nil {
+		return err
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("cistern: commit: %w", err)
+	}
+	return nil
+}
+
+// Recirculate sets the outcome for a recirculate signal and records a recirculate event.
+// When status is not in_progress, it also calls Assign to re-open the droplet at the
+// target cataractae, all within a single transaction.
+func (c *Client) Recirculate(id, cataractaeName, target, notes string) error {
+	item, err := c.Get(id)
+	if err != nil {
+		return fmt.Errorf("cistern: recirculate %s: %w", id, err)
+	}
+
+	outcome := "recirculate"
+	if target != "" {
+		outcome = "recirculate:" + target
+	}
+
+	if item.Status == "delivered" || item.Status == "cancelled" {
+		return fmt.Errorf("cistern: cannot recirculate %s: droplet has terminal status %q", id, item.Status)
+	}
+
+	tx, err := c.db.Begin()
+	if err != nil {
+		return fmt.Errorf("cistern: begin tx: %w", err)
+	}
+	defer tx.Rollback()
+
+	now := time.Now().UTC()
+
+	if item.Status != "in_progress" {
+		effectiveTarget := target
+		if effectiveTarget == "" {
+			effectiveTarget = item.CurrentCataractae
+		}
+		var res sql.Result
+		res, err = tx.Exec(
+			`UPDATE droplets SET assignee = ?, current_cataractae = ?, outcome = NULL, status = 'open',
+			 assigned_aqueduct = '', updated_at = ? WHERE id = ?`,
+			"", effectiveTarget, now, id,
+		)
+		if err != nil {
+			return fmt.Errorf("cistern: recirculate assign %s: %w", id, err)
+		}
+		if err := checkRowsAffected(res, id); err != nil {
+			return err
+		}
+	} else {
+		res, err := tx.Exec(
+			`UPDATE droplets SET outcome = ?, updated_at = ? WHERE id = ?`,
+			outcome, now, id,
+		)
+		if err != nil {
+			return fmt.Errorf("cistern: recirculate %s: %w", id, err)
+		}
+		if err := checkRowsAffected(res, id); err != nil {
+			return err
+		}
+	}
+
+	recircPayload, _ := json.Marshal(map[string]any{"cataractae": cataractaeName, "target": target, "notes": notes})
+	if err := c.recordEvent(tx, id, EventRecirculate, string(recircPayload)); err != nil {
+		return err
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("cistern: commit: %w", err)
+	}
+	return nil
+}
+
+// Approve approves a human-gated droplet for delivery. It assigns the droplet to
+// the delivery cataractae and records an approve event within a single transaction.
+// Returns an error if the droplet has a terminal status or is not at the human gate.
+func (c *Client) Approve(id, cataractaeName string) error {
+	item, err := c.Get(id)
+	if err != nil {
+		return fmt.Errorf("cistern: approve %s: %w", id, err)
+	}
+	if item.Status == "delivered" || item.Status == "cancelled" {
+		return fmt.Errorf("cistern: cannot approve %s: droplet has terminal status %q", id, item.Status)
+	}
+	if item.CurrentCataractae != "human" {
+		return fmt.Errorf("cistern: %s is not awaiting human approval (cataractae: %s)", id, item.CurrentCataractae)
+	}
+
+	tx, err := c.db.Begin()
+	if err != nil {
+		return fmt.Errorf("cistern: begin tx: %w", err)
+	}
+	defer tx.Rollback()
+
+	now := time.Now().UTC()
+	res, err := tx.Exec(
+		`UPDATE droplets SET assignee = ?, current_cataractae = ?, outcome = NULL, status = 'open',
+		 assigned_aqueduct = '', updated_at = ? WHERE id = ?`,
+		"", "delivery", now, id,
+	)
+	if err != nil {
+		return fmt.Errorf("cistern: approve assign %s: %w", id, err)
+	}
+	if err := checkRowsAffected(res, id); err != nil {
+		return err
+	}
+
+	approvePayload, _ := json.Marshal(map[string]any{"cataractae": cataractaeName})
+	if err := c.recordEvent(tx, id, EventApprove, string(approvePayload)); err != nil {
+		return err
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("cistern: commit: %w", err)
+	}
+	return nil
+}
+
 // GetNotes returns all cataractae notes for a droplet, newest first.
 func (c *Client) GetNotes(id string) ([]CataractaeNote, error) {
 	rows, err := c.db.Query(

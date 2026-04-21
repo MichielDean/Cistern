@@ -3367,3 +3367,186 @@ func TestValidEventTypes_ContainsAllConstants(t *testing.T) {
 		t.Errorf("validEventTypes has %d entries, want %d", len(validEventTypes), len(expected))
 	}
 }
+
+func TestPass_SetsOutcomeAndRecordsEvent(t *testing.T) {
+	c := testClient(t)
+	item, _ := c.Add("myrepo", "Pass test", "", 1, 2)
+	c.UpdateStatus(item.ID, "in_progress")
+
+	if err := c.Pass(item.ID, "implementer", "all good"); err != nil {
+		t.Fatalf("Pass: %v", err)
+	}
+
+	got, _ := c.Get(item.ID)
+	if got.Outcome != "pass" {
+		t.Errorf("outcome = %q, want pass", got.Outcome)
+	}
+
+	changes, _ := c.GetDropletChanges(item.ID, 100)
+	found := false
+	for _, ch := range changes {
+		if ch.Kind == "event" && strings.Contains(ch.Value, "pass") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("pass event not found in changes: %v", changes)
+	}
+}
+
+func TestPass_WhenTerminal_ReturnsError(t *testing.T) {
+	c := testClient(t)
+	item, _ := c.Add("myrepo", "Pass terminal test", "", 1, 2)
+	c.CloseItem(item.ID)
+
+	err := c.Pass(item.ID, "reviewer", "")
+	if err == nil {
+		t.Fatal("expected error for terminal status")
+	}
+	if !strings.Contains(err.Error(), "terminal status") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestPass_NotFound(t *testing.T) {
+	c := testClient(t)
+	if err := c.Pass("nonexistent", "reviewer", ""); err == nil {
+		t.Fatal("expected error for nonexistent droplet")
+	}
+}
+
+func TestRecirculate_InProgress_SetsOutcomeAndRecordsEvent(t *testing.T) {
+	c := testClient(t)
+	item, _ := c.Add("myrepo", "Recirculate test", "", 1, 2)
+	c.UpdateStatus(item.ID, "in_progress")
+
+	if err := c.Recirculate(item.ID, "reviewer", "implement", "needs fixes"); err != nil {
+		t.Fatalf("Recirculate: %v", err)
+	}
+
+	got, _ := c.Get(item.ID)
+	if got.Outcome != "recirculate:implement" {
+		t.Errorf("outcome = %q, want recirculate:implement", got.Outcome)
+	}
+
+	changes, _ := c.GetDropletChanges(item.ID, 100)
+	found := false
+	for _, ch := range changes {
+		if ch.Kind == "event" && strings.Contains(ch.Value, "recirculate") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("recirculate event not found in changes: %v", changes)
+	}
+}
+
+func TestRecirculate_NonInProgress_AssignsAndRecordsEvent(t *testing.T) {
+	c := testClient(t)
+	item, _ := c.Add("myrepo", "Recirculate non-in-progress", "", 1, 2)
+	c.Pool(item.ID, "stuck")
+
+	if err := c.Recirculate(item.ID, "reviewer", "implement", ""); err != nil {
+		t.Fatalf("Recirculate on pooled: %v", err)
+	}
+
+	got, _ := c.Get(item.ID)
+	if got.Status != "open" {
+		t.Errorf("status = %q, want open", got.Status)
+	}
+	if got.CurrentCataractae != "implement" {
+		t.Errorf("current_cataractae = %q, want implement", got.CurrentCataractae)
+	}
+}
+
+func TestRecirculate_NonInProgress_DefaultsToCurrentCataractae(t *testing.T) {
+	c := testClient(t)
+	item, _ := c.Add("myrepo", "Recirculate default target", "", 1, 2)
+	c.Pool(item.ID, "stuck")
+	c.SetCataractae(item.ID, "review")
+
+	if err := c.Recirculate(item.ID, "reviewer", "", ""); err != nil {
+		t.Fatalf("Recirculate: %v", err)
+	}
+
+	got, _ := c.Get(item.ID)
+	if got.CurrentCataractae != "review" {
+		t.Errorf("current_cataractae = %q, want review (defaults to current)", got.CurrentCataractae)
+	}
+}
+
+func TestRecirculate_WhenTerminal_ReturnsError(t *testing.T) {
+	c := testClient(t)
+	item, _ := c.Add("myrepo", "Recirculate terminal test", "", 1, 2)
+	c.Cancel(item.ID, "not needed")
+
+	if err := c.Recirculate(item.ID, "reviewer", "", ""); err == nil {
+		t.Fatal("expected error for terminal status")
+	}
+}
+
+func TestRecirculate_NotFound(t *testing.T) {
+	c := testClient(t)
+	if err := c.Recirculate("nonexistent", "reviewer", "", ""); err == nil {
+		t.Fatal("expected error for nonexistent droplet")
+	}
+}
+
+func TestApprove_SetsDeliveryStepAndRecordsEvent(t *testing.T) {
+	c := testClient(t)
+	item, _ := c.Add("myrepo", "Approve test", "", 1, 2)
+	c.SetCataractae(item.ID, "human")
+
+	if err := c.Approve(item.ID, "manual"); err != nil {
+		t.Fatalf("Approve: %v", err)
+	}
+
+	got, _ := c.Get(item.ID)
+	if got.CurrentCataractae != "delivery" {
+		t.Errorf("current_cataractae = %q, want delivery", got.CurrentCataractae)
+	}
+	if got.Status != "open" {
+		t.Errorf("status = %q, want open", got.Status)
+	}
+
+	changes, _ := c.GetDropletChanges(item.ID, 100)
+	found := false
+	for _, ch := range changes {
+		if ch.Kind == "event" && strings.Contains(ch.Value, "approve") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("approve event not found in changes: %v", changes)
+	}
+}
+
+func TestApprove_NotHumanGated(t *testing.T) {
+	c := testClient(t)
+	item, _ := c.Add("myrepo", "Approve not human test", "", 1, 2)
+
+	if err := c.Approve(item.ID, "manual"); err == nil {
+		t.Fatal("expected error for non-human gated droplet")
+	}
+}
+
+func TestApprove_WhenTerminal_ReturnsError(t *testing.T) {
+	c := testClient(t)
+	item, _ := c.Add("myrepo", "Approve terminal test", "", 1, 2)
+	c.SetCataractae(item.ID, "human")
+	c.Cancel(item.ID, "not needed")
+
+	if err := c.Approve(item.ID, "manual"); err == nil {
+		t.Fatal("expected error for terminal status")
+	}
+}
+
+func TestApprove_NotFound(t *testing.T) {
+	c := testClient(t)
+	if err := c.Approve("nonexistent", "manual"); err == nil {
+		t.Fatal("expected error for nonexistent droplet")
+	}
+}
