@@ -57,16 +57,6 @@ func parsePayload(payload string) map[string]any {
 	return m
 }
 
-func joinParts(parts ...string) string {
-	var nonEmpty []string
-	for _, p := range parts {
-		if p != "" {
-			nonEmpty = append(nonEmpty, p)
-		}
-	}
-	return strings.Join(nonEmpty, ", ")
-}
-
 // DisplayInfo maps an event_type and its JSON payload to human-readable
 // eventLabel and detail strings. This replaces the remapEvent and
 // remapPayload* functions that were previously in cmd/ct/droplet_log.go.
