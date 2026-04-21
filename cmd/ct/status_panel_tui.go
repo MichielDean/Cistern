@@ -149,11 +149,11 @@ func (p statusPanel) View() string {
 	}
 
 	// ── Castellarius health ──────────────────────────────────────────────────
-	farmStatus := tuiStyleRed.Render("stopped")
-	if p.data.FarmRunning {
-		farmStatus = tuiStyleGreen.Render("watching")
+	castellariusStatus := tuiStyleRed.Render("stopped")
+	if p.data.CastellariusRunning {
+		castellariusStatus = tuiStyleGreen.Render("watching")
 	}
-	lines = append(lines, "  Castellarius  "+farmStatus, "")
+	lines = append(lines, "  Castellarius  "+castellariusStatus, "")
 
 	// ── Aqueduct flow summary ────────────────────────────────────────────────
 	if len(p.data.Cataractae) > 0 {

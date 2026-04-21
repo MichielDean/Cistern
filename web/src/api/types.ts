@@ -124,7 +124,7 @@ export interface DashboardData {
   recent_items: Droplet[];
   blocked_by_map: Record<string, string>;
   flow_activities: FlowActivity[];
-  farm_running: boolean;
+  castellarius_running: boolean;
   fetched_at: string;
 }
 
@@ -147,7 +147,7 @@ export interface CastellariusStatus {
   pid: number | null;
   uptime_seconds: number | null;
   aqueducts: AqueductStatus[];
-  farm_running: boolean;
+  castellarius_running: boolean;
 }
 
 export type DoctorCheckStatus = 'pass' | 'fail' | 'warn';

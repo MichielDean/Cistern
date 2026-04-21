@@ -15,12 +15,12 @@ describe('DashboardData type', () => {
       recent_items: [],
       blocked_by_map: {},
       flow_activities: [],
-      farm_running: true,
+      castellarius_running: true,
       fetched_at: '2026-04-19T00:00:00Z',
     };
     expect(data.cataractae_count).toBe(3);
     expect(data.flowing_count).toBe(1);
-    expect(data.farm_running).toBe(true);
+    expect(data.castellarius_running).toBe(true);
   });
 });
 

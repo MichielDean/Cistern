@@ -183,11 +183,44 @@ func (r *integrationRunner) Spawn(_ context.Context, req castellarius.Cataractae
 	}
 	args = append(args, agentCmd)
 
-	out, err := exec.Command("tmux", args...).CombinedOutput()
+	cmd := exec.Command("tmux", args...)
+	cmd.Env = intTmuxEnv(r)
+	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("tmux new-session %s: %w: %s", sessionID, err, out)
 	}
 	return nil
+}
+
+// intTmuxEnv builds a minimal environment for the tmux process started by
+// the integration runner. Only the env vars explicitly forwarded via -e flags
+// and system-essential vars are included. This prevents secrets from the test
+// process's environment (e.g., LEAKED_SECRET_KEY) from leaking into the tmux
+// server's global environment and onward into agent sessions.
+func intTmuxEnv(r *integrationRunner) []string {
+	home, _ := os.UserHomeDir()
+	env := []string{
+		"PATH=" + os.Getenv("PATH"),
+		"HOME=" + home,
+		"USER=" + os.Getenv("USER"),
+		"SHELL=" + os.Getenv("SHELL"),
+		"TERM=" + os.Getenv("TERM"),
+	}
+	if xrd := os.Getenv("XDG_RUNTIME_DIR"); xrd != "" {
+		env = append(env, "XDG_RUNTIME_DIR="+xrd)
+	}
+	if tmp := os.Getenv("TMPDIR"); tmp != "" {
+		env = append(env, "TMPDIR="+tmp)
+	}
+	// Include vars that the -e flags forward to the session.
+	env = append(env, "CT_DB="+r.dbPath)
+	if r.ctBin != "" {
+		env = append(env, "CT_BIN="+r.ctBin)
+	}
+	for k, v := range r.extraEnv {
+		env = append(env, k+"="+v)
+	}
+	return env
 }
 
 // sessionIDs returns a snapshot of spawned tmux session names.

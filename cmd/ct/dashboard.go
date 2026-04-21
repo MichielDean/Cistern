@@ -68,7 +68,7 @@ type DashboardData struct {
 	RecentItems     []*cistern.Droplet `json:"recent_items"`     // recently closed/pooled
 	BlockedByMap    map[string]string  `json:"blocked_by_map"`   // droplet ID -> first blocking dep ID
 	FlowActivities  []FlowActivity     `json:"flow_activities"`  // live narrative for in-progress droplets
-	FarmRunning     bool               `json:"farm_running"`
+	CastellariusRunning bool               `json:"castellarius_running"`
 	FetchedAt       time.Time          `json:"fetched_at"`
 }
 
@@ -259,7 +259,7 @@ func fetchDashboardData(cfgPath, dbPath string) (*DashboardData, error) {
 		})
 	}
 
-	data.FarmRunning = true
+	data.CastellariusRunning = true
 	return data, nil
 }
 
@@ -273,7 +273,7 @@ func dashboardStateHash(d *DashboardData) string {
 		return ""
 	}
 	var b strings.Builder
-	fmt.Fprintf(&b, "%d/%d/%d/%d/%v", d.FlowingCount, d.QueuedCount, d.DoneCount, len(d.PooledItems), d.FarmRunning)
+	fmt.Fprintf(&b, "%d/%d/%d/%d/%v", d.FlowingCount, d.QueuedCount, d.DoneCount, len(d.PooledItems), d.CastellariusRunning)
 	for _, ch := range d.Cataractae {
 		fmt.Fprintf(&b, "|%s:%s:%s", ch.Name, ch.DropletID, ch.Step)
 	}

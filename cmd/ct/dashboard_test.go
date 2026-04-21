@@ -155,8 +155,8 @@ func TestFetchDashboardData_FeedsDataCorrectly(t *testing.T) {
 	if data.DoneCount != 1 {
 		t.Errorf("DoneCount = %d, want 1", data.DoneCount)
 	}
-	if !data.FarmRunning {
-		t.Error("FarmRunning should be true when queue is accessible")
+	if !data.CastellariusRunning {
+		t.Error("CastellariusRunning should be true when queue is accessible")
 	}
 	if data.FetchedAt.IsZero() {
 		t.Error("FetchedAt should be set")
@@ -213,9 +213,9 @@ func TestFetchDashboardData_FeedsDataCorrectly(t *testing.T) {
 	}
 }
 
-// --- TestFetchDashboardData_FarmNotRunning_ShowsDroughtState ---
+// --- TestFetchDashboardData_CastellariusNotRunning_ShowsDroughtState ---
 
-func TestFetchDashboardData_FarmNotRunning_ShowsDroughtState(t *testing.T) {
+func TestFetchDashboardData_CastellariusNotRunning_ShowsDroughtState(t *testing.T) {
 	t.Run("missing config returns error and partial data", func(t *testing.T) {
 		data, err := fetchDashboardData("/nonexistent/cistern.yaml", "/nonexistent/cistern.db")
 
@@ -225,8 +225,8 @@ func TestFetchDashboardData_FarmNotRunning_ShowsDroughtState(t *testing.T) {
 		if data == nil {
 			t.Fatal("expected non-nil DashboardData even on error")
 		}
-		if data.FarmRunning {
-			t.Error("FarmRunning should be false when config is missing")
+		if data.CastellariusRunning {
+			t.Error("CastellariusRunning should be false when config is missing")
 		}
 		if data.CataractaeCount != 0 {
 			t.Errorf("CataractaeCount = %d, want 0", data.CataractaeCount)
@@ -526,7 +526,7 @@ func TestRenderDashboard_ContainsExpectedSections(t *testing.T) {
 		RecentItems: []*cistern.Droplet{
 			{ID: "ci-xyz99", Status: "delivered", CurrentCataractae: "merge", UpdatedAt: time.Now()},
 		},
-		FarmRunning: true,
+		CastellariusRunning: true,
 		FetchedAt:   time.Date(2026, 3, 14, 15, 7, 42, 0, time.UTC),
 	}
 
@@ -1912,10 +1912,10 @@ func TestFetchDashboardData_AssignedToRemovedAqueduct_AppearsAsUnassigned(t *tes
 // state hash changes when an orphaned droplet appears, so the dashboard does
 // not enter idle mode while unassigned items exist.
 func TestDashboardStateHash_ChangesWhenUnassignedItemsChange(t *testing.T) {
-	base := &DashboardData{FlowingCount: 1, FarmRunning: true}
+	base := &DashboardData{FlowingCount: 1, CastellariusRunning: true}
 	withOrphan := &DashboardData{
 		FlowingCount: 1,
-		FarmRunning:  true,
+		CastellariusRunning:  true,
 		UnassignedItems: []*cistern.Droplet{
 			{ID: "ci-orph1", CurrentCataractae: "implement"},
 		},

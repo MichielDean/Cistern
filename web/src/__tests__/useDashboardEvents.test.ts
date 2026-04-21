@@ -15,7 +15,7 @@ const mockDashboardData: DashboardData = {
   recent_items: [],
   blocked_by_map: {},
   flow_activities: [],
-  farm_running: true,
+  castellarius_running: true,
   fetched_at: '2026-04-19T00:00:00Z',
 };
 

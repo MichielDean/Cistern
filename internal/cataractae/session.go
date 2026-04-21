@@ -214,8 +214,40 @@ var resolveCommandFn = resolveCommand
 // execTmuxNewSession runs "tmux" with the given args (which begin with "new-session")
 // and returns the combined output and any error. It is a variable so tests can
 // substitute a fake implementation without requiring a real tmux server.
+//
+// The command runs with a minimal environment to prevent the calling process's
+// environment (which may contain secrets like API keys) from leaking into
+// the tmux server's global environment and onward into agent sessions.
+// When tmux starts a new server, it inherits the client's environment as the
+// global environment. By providing only system-essential vars here, the server
+// starts clean. All agent-visible vars are set explicitly via -e flags in
+// collectEnvArgs.
 var execTmuxNewSession = func(args []string) ([]byte, error) {
-	return exec.Command("tmux", args...).CombinedOutput()
+	cmd := exec.Command("tmux", args...)
+	cmd.Env = minimalTmuxEnv()
+	return cmd.CombinedOutput()
+}
+
+// minimalTmuxEnv returns a minimal environment for the tmux process itself.
+// Secrets and other vars must NOT leak through the tmux server's global
+// environment into agent sessions. Only system-essential vars are included;
+// all agent-visible vars are set explicitly via -e flags in collectEnvArgs.
+func minimalTmuxEnv() []string {
+	home, _ := os.UserHomeDir()
+	env := []string{
+		"PATH=" + os.Getenv("PATH"),
+		"HOME=" + home,
+		"USER=" + os.Getenv("USER"),
+		"SHELL=" + os.Getenv("SHELL"),
+		"TERM=" + os.Getenv("TERM"),
+	}
+	if tmp := os.Getenv("TMPDIR"); tmp != "" {
+		env = append(env, "TMPDIR="+tmp)
+	}
+	if xrd := os.Getenv("XDG_RUNTIME_DIR"); xrd != "" {
+		env = append(env, "XDG_RUNTIME_DIR="+xrd)
+	}
+	return env
 }
 
 // execTmuxKillServer runs "tmux kill-server" to clear any stale tmux server state.

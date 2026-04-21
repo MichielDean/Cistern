@@ -32,6 +32,7 @@ import (
 	"time"
 
 	"github.com/MichielDean/cistern/internal/aqueduct"
+	"github.com/MichielDean/cistern/internal/castellarius"
 	"github.com/MichielDean/cistern/internal/cistern"
 	"github.com/MichielDean/cistern/internal/skills"
 	"github.com/MichielDean/cistern/internal/tracker"
@@ -330,7 +331,7 @@ func wsReadClientFrame(br *bufio.Reader, buf []byte) (opcode byte, payload []byt
 // isAllowedWSOrigin returns true for localhost and private-network (RFC 1918)
 // addresses. The dashboard is a local tool — LAN access is expected.
 func isAllowedWSOrigin(host string) bool {
-	if host == "localhost" || host == "127.0.0.1" || host == "::1" {
+	if host == "localhost" || host == "127.0.0.1" || host == "::1" || host == "lobsterdog.local" {
 		return true
 	}
 	ip := net.ParseIP(host)
@@ -1131,7 +1132,7 @@ func newDashboardMuxInternalWith(cfgPath, dbPath string, tui *DashboardTUI, fetc
 	apiMux.HandleFunc("GET /api/stats", handleGetStats(dbPath))
 
 	// Castellarius
-	apiMux.HandleFunc("GET /api/castellarius/status", handleCastellariusStatus())
+	apiMux.HandleFunc("GET /api/castellarius/status", handleCastellariusStatus(cfgPath, dbPath))
 	apiMux.HandleFunc("POST /api/castellarius/start", handleCastellariusStart())
 	apiMux.HandleFunc("POST /api/castellarius/stop", handleCastellariusStop())
 	apiMux.HandleFunc("POST /api/castellarius/restart", handleCastellariusRestart())
@@ -1249,6 +1250,7 @@ func defaultAllowedOrigins() []string {
 		"http://localhost:5737",
 		"http://127.0.0.1:5737",
 		"http://[::1]:5737",
+		"http://lobsterdog.local:5737",
 	}
 }
 
@@ -2315,9 +2317,63 @@ func handleGetStats(dbPath string) http.HandlerFunc {
 
 // ── Castellarius handlers ──
 
-func handleCastellariusStatus() http.HandlerFunc {
+func handleCastellariusStatus(cfgPath, dbPath string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		writeAPIJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+		type aqueductStatus struct {
+			Name          string  `json:"name"`
+			Status        string  `json:"status"`
+			DropletID     *string `json:"droplet_id"`
+			DropletTitle  *string `json:"droplet_title"`
+			CurrentStep   *string `json:"current_step"`
+			Elapsed       int64   `json:"elapsed"`
+		}
+		type castellariusStatusResp struct {
+			Running             bool             `json:"running"`
+			PID                 *int             `json:"pid"`
+			UptimeSeconds       *float64         `json:"uptime_seconds"`
+			Aqueducts           []aqueductStatus `json:"aqueducts"`
+			CastellariusRunning bool             `json:"castellarius_running"`
+		}
+
+		data, _ := fetchDashboardData(cfgPath, dbPath)
+
+		hf, _ := castellarius.ReadHealthFile(filepath.Dir(dbPath))
+		running := hf != nil && hf.PID > 0
+		var pid *int
+		var uptime *float64
+		if running {
+			pid = &hf.PID
+			if !hf.LastTickAt.IsZero() {
+				elapsed := time.Since(hf.LastTickAt).Seconds()
+				uptime = &elapsed
+			}
+		}
+
+		aqueducts := make([]aqueductStatus, len(data.Cataractae))
+		for i, cat := range data.Cataractae {
+			aq := aqueductStatus{
+				Name:    cat.Name,
+				Elapsed: int64(cat.Elapsed),
+			}
+			if cat.DropletID != "" {
+				aq.Status = "flowing"
+				aq.DropletID = &cat.DropletID
+				aq.DropletTitle = &cat.Title
+				aq.CurrentStep = &cat.Step
+			} else {
+				aq.Status = "idle"
+			}
+			aqueducts[i] = aq
+		}
+
+		resp := castellariusStatusResp{
+			Running:             running,
+			PID:                 pid,
+			UptimeSeconds:       uptime,
+			Aqueducts:           aqueducts,
+			CastellariusRunning: data.CastellariusRunning,
+		}
+		writeAPIJSON(w, http.StatusOK, resp)
 	}
 }
 

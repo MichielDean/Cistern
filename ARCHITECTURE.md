@@ -26,7 +26,7 @@ export interface CastellariusStatus {
   pid: number | null;
   uptime_seconds: number | null;
   aqueducts: AqueductStatus[];
-  farm_running: boolean;
+  castellarius_running: boolean;
 }
 
 // ── Doctor ──
@@ -329,7 +329,7 @@ Layout (single scrollable column):
 │ └────────────────────────────────┘   │
 └──────────────────────────────────────┘
 
-Farm Status: [running/stopped]
+Castellarius Watching: [watching/stopped]
 ```
 
 Hook: `useCastellariusStatus(5000)` — polls every 5 seconds.

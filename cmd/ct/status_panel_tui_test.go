@@ -100,30 +100,30 @@ func TestStatusPanel_View_WithData_ShowsCounts(t *testing.T) {
 	}
 }
 
-// TestStatusPanel_View_FarmRunning_ShowsWatching verifies castellarius "watching"
-// is shown when the farm is running.
+// TestStatusPanel_View_CastellariusRunning_ShowsWatching verifies castellarius "watching"
+// is shown when Castellarius is running.
 //
-// Given: a statusPanel with FarmRunning = true
+// Given: a statusPanel with CastellariusRunning = true
 // When:  View() is called
 // Then:  output contains "watching"
-func TestStatusPanel_View_FarmRunning_ShowsWatching(t *testing.T) {
+func TestStatusPanel_View_CastellariusRunning_ShowsWatching(t *testing.T) {
 	p := newStatusPanel("", "")
-	p.data = &DashboardData{FarmRunning: true, FetchedAt: time.Now()}
+	p.data = &DashboardData{CastellariusRunning: true, FetchedAt: time.Now()}
 	v := p.View()
 	if !strings.Contains(v, "watching") {
 		t.Errorf("View() does not contain %q; output:\n%s", "watching", v)
 	}
 }
 
-// TestStatusPanel_View_FarmStopped_ShowsStopped verifies castellarius "stopped"
-// is shown when the farm is not running.
+// TestStatusPanel_View_CastellariusStopped_ShowsStopped verifies castellarius "stopped"
+// is shown when Castellarius is not running.
 //
-// Given: a statusPanel with FarmRunning = false
+// Given: a statusPanel with CastellariusRunning = false
 // When:  View() is called
 // Then:  output contains "stopped"
-func TestStatusPanel_View_FarmStopped_ShowsStopped(t *testing.T) {
+func TestStatusPanel_View_CastellariusStopped_ShowsStopped(t *testing.T) {
 	p := newStatusPanel("", "")
-	p.data = &DashboardData{FarmRunning: false, FetchedAt: time.Now()}
+	p.data = &DashboardData{CastellariusRunning: false, FetchedAt: time.Now()}
 	v := p.View()
 	if !strings.Contains(v, "stopped") {
 		t.Errorf("View() does not contain %q; output:\n%s", "stopped", v)
@@ -481,7 +481,7 @@ func TestStatusPanel_View_ScrollClamped_WhenScrollYExceedsContent(t *testing.T) 
 	p := newStatusPanel("", "")
 	p.data = &DashboardData{
 		FlowingCount: 1,
-		FarmRunning:  true,
+		CastellariusRunning:  true,
 		FetchedAt:    time.Now(),
 	}
 	p.height = 5       // short viewport to stress clamping

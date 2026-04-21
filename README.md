@@ -764,7 +764,7 @@ The web dashboard exposes a REST API at `/api/` that mirrors all TUI operations.
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| `GET` | `/api/castellarius/status` | Current Castellarius status (running, PID, uptime, aqueducts, farm status) |
+| `GET` | `/api/castellarius/status` | Current Castellarius status (running, PID, uptime, aqueducts, watching status) |
 | `POST` | `/api/castellarius/start` | Start the daemon (requires auth) |
 | `POST` | `/api/castellarius/stop` | Stop the daemon (requires auth) |
 | `POST` | `/api/castellarius/restart` | Restart the daemon (requires auth) |

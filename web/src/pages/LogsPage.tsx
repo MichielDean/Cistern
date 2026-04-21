@@ -7,7 +7,7 @@ import type { LogEntry, LogSourceInfo } from '../api/types';
 export function LogsPage() {
   const [entries, setEntries] = useState<LogEntry[]>([]);
   const [sources, setSources] = useState<LogSourceInfo[]>([]);
-  const [activeSource, setActiveSource] = useState('castellarius');
+  const [activeSource, setActiveSource] = useState('');
   const [autoScroll, setAutoScroll] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
   const [loading, setLoading] = useState(true);
@@ -21,7 +21,11 @@ export function LogsPage() {
   }, [activeSource]);
 
   useEffect(() => {
-    fetchLogSources().then(setSources).catch((err) => {
+    fetchLogSources().then((srcs) => {
+      setSources(srcs);
+      const nonCastellarius = srcs.find(s => s.name !== 'castellarius');
+      setActiveSource(nonCastellarius ? nonCastellarius.name : (srcs.length > 0 ? srcs[0].name : ''));
+    }).catch((err) => {
       setError(err instanceof Error ? err : new Error(String(err)));
     });
   }, []);

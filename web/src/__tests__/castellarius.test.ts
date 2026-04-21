@@ -14,7 +14,7 @@ describe('fetchCastellariusStatus', () => {
     const result = await fetchCastellariusStatus();
     expect(result.running).toBe(true);
     expect(result.aqueducts).toEqual([]);
-    expect(result.farm_running).toBe(false);
+    expect(result.castellarius_running).toBe(false);
   });
 
   it('passes through full response', async () => {
@@ -23,7 +23,7 @@ describe('fetchCastellariusStatus', () => {
       pid: 123,
       uptime_seconds: 3600,
       aqueducts: [{ name: 'default', status: 'flowing', droplet_id: 'ci-abc', droplet_title: 'Test', current_step: 'implement', elapsed: 300000000000 }],
-      farm_running: true,
+      castellarius_running: true,
     };
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
       ok: true,

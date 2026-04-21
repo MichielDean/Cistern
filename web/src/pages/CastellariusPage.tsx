@@ -1,13 +1,23 @@
-import { useCallback } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { StatusIndicator } from '../components/StatusIndicator';
 import { ActionButton } from '../components/ActionButton';
+import { LogViewer } from '../components/LogViewer';
 import { useToast } from '../components/Toast';
 import { SkeletonCard } from '../components/LoadingSkeleton';
 import { useCastellariusStatus, castellariusAction } from '../api/castellarius';
+import { fetchLogHistory, createLogEventSource } from '../api/logs';
+import type { LogEntry } from '../api/types';
 
 export function CastellariusPage() {
   const { status, loading, error, refresh } = useCastellariusStatus(5000);
   const { addToast } = useToast();
+  const [logEntries, setLogEntries] = useState<LogEntry[]>([]);
+  const [logError, setLogError] = useState<Error | null>(null);
+  const [logLoading, setLogLoading] = useState(true);
+  const [autoScroll, setAutoScroll] = useState(true);
+  const [searchQuery, setSearchQuery] = useState('');
+  const esRef = useRef<EventSource | null>(null);
+  const lastLine = useRef(0);
 
   const handleAction = useCallback(async (action: 'start' | 'stop' | 'restart') => {
     try {
@@ -18,6 +28,35 @@ export function CastellariusPage() {
       addToast(err instanceof Error ? err.message : `${action} failed`, 'error');
     }
   }, [addToast, refresh]);
+
+  useEffect(() => {
+    setLogLoading(true);
+    setLogError(null);
+    fetchLogHistory(500, 'castellarius').then((entries) => {
+      lastLine.current = entries.length > 0 ? entries[entries.length - 1].line : 0;
+      setLogEntries(entries);
+    }).catch((err) => {
+      setLogError(err instanceof Error ? err : new Error(String(err)));
+    }).finally(() => setLogLoading(false));
+
+    if (esRef.current) {
+      esRef.current.close();
+      esRef.current = null;
+    }
+    esRef.current = createLogEventSource('castellarius', (entry) => {
+      if (entry.line <= lastLine.current) return;
+      setLogEntries((prev) => [...prev, entry]);
+    }, (err) => {
+      setLogError(err);
+    });
+
+    return () => {
+      if (esRef.current) {
+        esRef.current.close();
+        esRef.current = null;
+      }
+    };
+  }, []);
 
   if (error && !status) {
     return (
@@ -83,7 +122,7 @@ export function CastellariusPage() {
         <h2 className="text-sm font-mono text-cistern-muted uppercase tracking-wider mb-3">Aqueducts</h2>
         <div className="space-y-3">
           {status.aqueducts.length === 0 && (
-            <div className="text-cistern-muted text-sm font-mono">No aqueducts active</div>
+            <div className="text-cistern-muted text-sm font-mono">No aqueducts configured</div>
           )}
           {status.aqueducts.map((aq) => (
             <AqueductRow key={aq.name} aqueduct={aq} />
@@ -91,9 +130,44 @@ export function CastellariusPage() {
         </div>
       </section>
 
-      <div className="flex items-center gap-2">
-        <StatusIndicator status={status.farm_running ? 'running' : 'stopped'} label={`Farm ${status.farm_running ? 'Running' : 'Stopped'}`} />
-      </div>
+      <section>
+        <div className="flex items-center justify-between mb-3">
+          <h2 className="text-sm font-mono text-cistern-muted uppercase tracking-wider">Castellarius Log</h2>
+          <div className="flex items-center gap-2">
+            <input
+              type="text"
+              placeholder="Filter..."
+              value={searchQuery}
+              onChange={e => setSearchQuery(e.target.value)}
+              className="bg-cistern-bg border border-cistern-border text-cististern-fg font-mono text-xs px-2 py-1 rounded-md w-32"
+            />
+            <label className="flex items-center gap-1 text-xs font-mono text-cistern-muted cursor-pointer">
+              <input
+                type="checkbox"
+                checked={autoScroll}
+                onChange={e => setAutoScroll(e.target.checked)}
+                className="accent-cistern-accent"
+              />
+              Auto-scroll
+            </label>
+          </div>
+        </div>
+        <div className="bg-cistern-surface border border-cistern-border rounded-lg h-64">
+          {logError && logEntries.length === 0 ? (
+            <div className="flex items-center justify-center h-full text-cistern-muted text-sm font-mono">{logError.message}</div>
+          ) : logLoading && logEntries.length === 0 ? (
+            <div className="flex items-center justify-center h-full text-cistern-muted text-sm font-mono">Loading...</div>
+          ) : (
+            <LogViewer
+              entries={logEntries}
+              autoScroll={autoScroll}
+              onAutoScrollChange={setAutoScroll}
+              maxHeight="100%"
+              searchQuery={searchQuery}
+            />
+          )}
+        </div>
+      </section>
     </div>
   );
 }
@@ -125,17 +199,17 @@ function AqueductRow({ aqueduct }: { aqueduct: { name: string; status: string; d
           <span className="text-cistern-green">{aqueduct.droplet_id}</span>
           {aqueduct.droplet_title && (
             <>
-              <span className="text-cistern-muted mx-2">·</span>
+              <span className="text-cistern-muted mx-2">&middot;</span>
               <span className="text-cistern-fg">{aqueduct.droplet_title}</span>
             </>
           )}
           {aqueduct.current_step && (
             <>
-              <span className="text-cistern-muted mx-2">·</span>
+              <span className="text-cistern-muted mx-2">&middot;</span>
               <span className="text-cistern-accent">{aqueduct.current_step}</span>
             </>
           )}
-          <span className="text-cistern-muted mx-2">·</span>
+          <span className="text-cistern-muted mx-2">&middot;</span>
           <span className="text-cistern-muted">{elapsedStr}</span>
         </div>
       )}

@@ -12,7 +12,7 @@ export async function fetchCastellariusStatus(): Promise<CastellariusStatus> {
       pid: null,
       uptime_seconds: null,
       aqueducts: [],
-      farm_running: false,
+      castellarius_running: false,
     };
   }
   return data as CastellariusStatus;

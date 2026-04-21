@@ -96,7 +96,7 @@ func TestStatusJSONOutput_ValidStructure(t *testing.T) {
 		t.Fatalf("output is not valid JSON: %v\noutput: %s", err, out)
 	}
 
-	for _, key := range []string{"flowing_count", "queued_count", "cataractae", "farm_running"} {
+	for _, key := range []string{"flowing_count", "queued_count", "cataractae", "castellarius_running"} {
 		if _, ok := result[key]; !ok {
 			t.Errorf("JSON output missing key %q; keys present: %v", key, result)
 		}

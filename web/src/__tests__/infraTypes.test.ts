@@ -16,13 +16,13 @@ describe('CastellariusStatus shape validation', () => {
       pid: 12345,
       uptime_seconds: 8100,
       aqueducts: [],
-      farm_running: true,
+      castellarius_running: true,
     };
     expect(typeof status.running).toBe('boolean');
     expect(typeof status.pid === 'number' || status.pid === null).toBe(true);
     expect(typeof status.uptime_seconds === 'number' || status.uptime_seconds === null).toBe(true);
     expect(Array.isArray(status.aqueducts)).toBe(true);
-    expect(typeof status.farm_running).toBe('boolean');
+    expect(typeof status.castellarius_running).toBe('boolean');
   });
 
   it('stopped status renders correctly with null optionals', () => {
@@ -31,7 +31,7 @@ describe('CastellariusStatus shape validation', () => {
       pid: null,
       uptime_seconds: null,
       aqueducts: [],
-      farm_running: false,
+      castellarius_running: false,
     };
     const label = status.running ? 'Running' : 'Stopped';
     expect(label).toBe('Stopped');
@@ -50,7 +50,7 @@ describe('CastellariusStatus shape validation', () => {
         current_step: 'implement',
         elapsed: 300_000_000_000,
       }],
-      farm_running: false,
+      castellarius_running: false,
     };
     const flowing = status.aqueducts.filter(a => a.status === 'flowing');
     expect(flowing).toHaveLength(1);

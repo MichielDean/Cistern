@@ -148,9 +148,9 @@ function CisternCountCard({ data }: { data: DashboardData }) {
       </div>
       <div className="mt-3 pt-3 border-t border-cistern-border">
         <div className="flex items-center gap-2">
-          <div className={`w-2 h-2 rounded-full ${data.farm_running ? 'bg-cistern-green' : 'bg-cistern-muted'}`} />
+          <div className={`w-2 h-2 rounded-full ${data.castellarius_running ? 'bg-cistern-green' : 'bg-cistern-muted'}`} />
           <span className="text-xs text-cistern-muted">
-            Castellarius {data.farm_running ? 'Running' : 'Stopped'}
+            Castellarius {data.castellarius_running ? 'Watching' : 'Stopped'}
           </span>
         </div>
       </div>
