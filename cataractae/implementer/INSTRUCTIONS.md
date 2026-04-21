@@ -165,20 +165,9 @@ Every one is mechanical — the answer is either yes or no.
 - Every new public method on a struct that connects to external services needs
   an integration test
 
-### API Serialization Contracts
+### Serialization Boundaries
 
-- **Go nil slices marshal to JSON `null`, not `[]`.** Any slice or map field
-  that reaches a JSON API consumer (HTTP handler, WebSocket, SSE) MUST be
-  initialized as an empty collection, never left as nil. The TypeScript
-  consumer will call `.length`, `.map()`, or spread on these fields — `null`
-  is a runtime crash. Construct structs with empty collections:
-  `Items: []*Droplet{}`, not `Items: nil` (the zero value). After appending,
-  Go returns a non-nil slice, but the zero-value case (nothing appended) must
-  also produce `[]` in JSON.
-- **After writing any handler that returns JSON, verify the empty case.**
-  Write a test that calls the endpoint with no data and asserts the response
-  contains `[]` for every collection field, not `null`. This is not optional
-  — it is the single most common serialization bug in Go HTTP APIs.
+When data crosses a language boundary (Go → JSON → TypeScript, Python → JSON → JS, etc.), every collection field must produce `[]`/`{}` in the empty case, never `null`. In Go, this means initializing as `[]T{}`/`map[string]T{}`, not leaving nil. In Python, this means `[]`/`{}`, not `None`. After writing any serialization struct, write one test that serializes the zero-value and asserts no field is null.
 
 ## Revision Cycles
 

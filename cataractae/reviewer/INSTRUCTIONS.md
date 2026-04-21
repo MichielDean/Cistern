@@ -60,7 +60,9 @@ Some areas have a long history of failures invisible at the call site. Adapt you
 
 These are common ways the contract principle manifests in specific languages. They are not exhaustive — the principle catches what isn't listed.
 
-**Go:** Bare `recover()` swallowing all panics, `defer` inside loops, goroutine leaks, missing `context.Context` cancellation, ignoring error return values with `_`, race conditions on shared mutable state, `interface{}`/`any` abuse masking type errors, string formatting in errors instead of `fmt.Errorf("...: %w", err)`, **nil slices marshaling to JSON `null` instead of `[]` — any struct serialized to JSON must initialize collection fields as empty, not nil**.
+**Go:** Bare `recover()` swallowing all panics, `defer` inside loops, goroutine leaks, missing `context.Context` cancellation, ignoring error return values with `_`, race conditions on shared mutable state, `interface{}`/`any` abuse masking type errors, string formatting in errors instead of `fmt.Errorf("...: %w", err)`.
+
+**All languages:** Nil/null collections at serialization boundaries. When data crosses from one language to another (Go→JSON, Python→JSON, etc.), nil collections serialize as `null` instead of `[]`. The consumer will crash on `.length`, `.map()`, or iteration. Check every struct that gets serialized — are all collection fields initialized as empty, not nil?
 
 **TypeScript/JavaScript:** `==` instead of `===`, `any` type abuse, missing null checks before property access, unhandled promise rejections, missing `await` on async calls, uncontrolled re-renders in React.
 
@@ -141,21 +143,6 @@ finding with the specific file:line and what must change.
   httptest.NewServer exist? (Mocks for HTTP clients are forbidden.)
 - [ ] Does every new public method on a struct that connects to external
   services have an integration test?
-
-### json_serialization
-
-- [ ] For every Go struct that reaches a JSON API consumer (HTTP handler,
-  WebSocket, SSE), do all slice and map fields initialize as empty collections
-  rather than nil? **Go nil slices marshal to JSON `null`, not `[]`.** Any
-  nil slice or nil map that a TypeScript/JS consumer will access with `.length`,
-  `.map()`, `Object.keys()`, or spread will crash at runtime. This is the
-  single most common Go→JSON serialization bug. Flag every struct constructor
-  or zero-value initialization where a collection field could be nil at the
-  point of serialization.
-- [ ] For every TypeScript type that consumes a Go JSON endpoint, does the
-  type match the actual Go JSON output for the empty case? If the Go type is
-  `[]T` but the TypeScript type says `T[]`, the field must never serialize to
-  `null`. Check by reading the Go struct tags, not just the TypeScript types.
 
 ## What to Review, What to Skip
 

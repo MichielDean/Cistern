@@ -172,22 +172,21 @@ finding naming what is missing.
 - Verify every new public method on a struct that connects to external services
   has an integration test
 
-### api_contract_smoke
+### smoke_the_real_thing
 
-- **Every JSON API endpoint must have a test that exercises the empty-data
-  case.** When the database is empty or a query returns no results, the
-  response must contain `[]` for every array field, not `null`. Go nil slices
-  marshal to `null` — this is a known hazard. The test must assert the JSON
-  shape, not just "no error." If no such test exists, recirculate with a
-  specific finding naming the endpoint and the missing empty-case test.
-- **Every React component that renders API data must have a test using null
-  for array fields, not just empty arrays.** Test fixtures that always use
-  `pooled_items: []` prove nothing about null-safety. At minimum, one test
-  must pass `null` (or `undefined`) for each array prop and verify the
-  component renders without crashing. If no such test exists, recirculate
-  with a specific finding naming the component and the missing null test.
-- **The golden test: start the actual server, hit the endpoint with an empty
-  database, and assert the JSON response contains no `null` collection
-  fields.** This is a single test that catches an entire class of bugs. If
-  the diff adds or modifies any JSON endpoint and no such test exists,
-  recirculate.
+Reading tests is not enough. You must also **run the code** and verify it works end-to-end. "All tests pass" does not mean "the feature works."
+
+For any diff that adds or modifies an HTTP API endpoint, a web UI, or a CLI command:
+
+1. **Start the actual server.** Build it, run it, hit the endpoint with `curl` or the test runner. An empty-database GET must return valid JSON with `[]` for every collection field, not `null`.
+2. **Load the actual UI.** If the diff adds or modifies a web page, open it in a browser (or Playwright). Verify it renders without JS console errors. Verify it handles empty data (no items, no lists) without crashing.
+3. **Test the boundary.** If the diff adds serialization code (Go struct → JSON, Python model → JSON, etc.), build the zero-value struct, serialize it, and assert no field is `null` where the consumer expects a collection.
+
+If you cannot run the code (no server available, no browser), state that explicitly in your findings and flag it as a gap. "I could not smoke-test this" is a finding.
+
+Tools available:
+- `go test ./...` for Go tests
+- `curl http://localhost:<port>/api/...` for API endpoints
+- `npx vitest run` for React component tests
+- Playwright for end-to-end UI smoke tests (if available)
+- `npm run build` for frontend builds — a build that fails means the feature doesn't work
