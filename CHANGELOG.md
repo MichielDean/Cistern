@@ -2,6 +2,62 @@
 
 ## Unreleased
 
+### Web UI: Integration, routing, and peek (ci-k67x9)
+
+Wired the React SPA into the Go server, established routing, added the live session peek viewer, and finalized the web UI as a first-class Cistern interface alongside the existing TUI and CLI.
+
+**Key features:**
+- **SPA route handler**: Go server serves `index.html` for all `/app/` routes; static assets served from embedded Vite build output via `//go:embed assets/web`; existing `/` route (xterm.js TUI) unchanged for backward compatibility
+- **Live terminal peek**: PeekPanel connects to `/ws/aqueducts/{name}/peek` via WebSocket for real-time agent session viewing; search within output (Ctrl+F) with highlighted matches capped at 200; auto-scroll with manual override toggle (scroll within 30px of bottom resumes auto-scroll); Escape closes peek or clears search
+- **TerminalView component**: forwardRef monospace text renderer for PeekPanel output
+- **Toast notification system**: ToastProvider with ToastOutlet; success/error/info toasts with 3s auto-dismiss; message truncation at 300 chars; replaces inline toasts in CastellariusPage
+- **Skeleton loading screens**: LoadingSkeleton with card/row/table variants; SkeletonLine, SkeletonCard, SkeletonTable; replaces plain "Loading…" text across all pages
+- **Error boundary**: Class-based ErrorBoundary wraps RouterProvider; catches render errors app-wide with "Try Again" button (full page reload via `window.location.reload()`)
+- **404 catch-all route**: NotFound page for unknown `/app/` paths with link back to dashboard
+- **Command palette**: Ctrl+K opens searchable command palette for quick navigation; disabled when focus is in INPUT/TEXTAREA/contentEditable; arrow key navigation, Enter to select
+- **Network status indicator**: Header shows "Live" (connected), "Reconnecting…" (disconnected), "Connected" (2s flash on reconnection)
+- **Cross-UI navigation**: "Classic Dashboard" link in SPA header → `/`; "New UI" link in xterm.js TUI → `/app/`
+- **401 auth interceptor**: apiFetch intercepts 401 responses; clears stored API key and dispatches `cistern:auth-expired` CustomEvent; App.tsx listens and calls logout()
+- **Error message truncation**: API errors truncated to 200 chars; toast messages truncated to 300 chars; prevents UI overflow from large error responses
+- **Submit guards and error handling**: DropletDetail action buttons disabled during mutations with spinner; all async actions wrapped in try/catch with toast error display; clipboard write has error handler
+- **Keyboard accessibility**: Sidebar NavLink focus:ring styles; Escape closes peek/search/modals; Ctrl+F opens peek search
+- **WebSocket in-band auth**: Peek endpoint authentication via first WebSocket message `{"type":"auth","token":"..."}` after upgrade; constant-time comparison; no auth tokens in URL query parameters (prevents leakage in logs/history)
+- **CSP hardening**: `connect-src` uses dynamically injected `ws://<host>` and `wss://<host>` from sanitized request Host header instead of wildcards; `sanitizeCSPHost` strips non-CSP-safe characters to prevent injection
+- **API auth middleware**: WS peek endpoints exempted from `apiAuthMiddleware` (auth handled in-band after upgrade, not via query parameters)
+- **Makefile**: `make web-build`, `make web-dev`, `make build`, `make test`, `make lint`
+- **CONTRIBUTING.md**: New "Web UI Development" section with prerequisites, build commands, development workflow, and architecture
+
+**Files changed:**
+- `cmd/ct/dashboard_web.go` — wsClosePayload helper, in-band WS auth, WS auth middleware exemption, "New UI" link in xterm.js TUI, CSP host sanitization
+- `cmd/ct/dashboard_web_spa.go` — sanitizeCSPHost function, dynamic CSP connect-src from Host header
+- `cmd/ct/dashboard_web_spa_test.go` — SPA integration tests: auth meta injection, CSP headers, SPA route handling, constructor injection, security exemptions
+- `cmd/ct/dashboard_web_test.go` — WS auth integration tests (raw TCP), constant-time comparison tests
+- `web/src/App.tsx` — ErrorBoundary wrapping RouterProvider, ToastProvider, CommandPalette (Ctrl+K with input guard), cistern:auth-expired listener, logout on auth expiry
+- `web/src/api/shared.ts` — 401 interceptor with clearStoredKey + cistern:auth-expired dispatch, error message truncation (MAX_ERROR_BODY_LENGTH)
+- `web/src/components/CommandPalette.tsx` — Searchable command palette with ModalOverlay
+- `web/src/components/ErrorBoundary.tsx` — Class-based error boundary with "Try Again" (window.location.reload)
+- `web/src/components/Header.tsx` — Network status indicator (justConnected flash), "Classic Dashboard" link, role="banner"
+- `web/src/components/LoadingSkeleton.tsx` — LoadingSkeleton wrapper (card/row/table), SkeletonLine, SkeletonCard, SkeletonTable
+- `web/src/components/PeekPanel.tsx` — In-band WS auth, search (Ctrl+F), auto-scroll with onScroll handler (30px threshold), search highlight with MAX_HIGHLIGHTS cap, Escape handling, TerminalView integration
+- `web/src/components/Sidebar.tsx` — NavLink focus:ring styles for keyboard accessibility
+- `web/src/components/TerminalView.tsx` — forwardRef monospace text renderer
+- `web/src/components/Toast.tsx` — ToastOutlet component, type-based styling
+- `web/src/components/index.ts` — Export updates
+- `web/src/context/ToastContext.tsx` — ToastProvider with timer cleanup, truncateToastMessage (300 char limit)
+- `web/src/hooks/useAuth.ts` — Export isAuthRequired, getStoredKey, clearStoredKey; .catch() handler for verifyKey
+- `web/src/main.tsx` — ErrorBoundary, NotFound route, import updates
+- `web/src/pages/CastellariusPage.tsx` — Migrated from inline toast to useToast/addToast
+- `web/src/pages/Dashboard.tsx` — Skeleton loading states
+- `web/src/pages/DoctorPage.tsx` — Skeleton loading states
+- `web/src/pages/DropletDetail.tsx` — Skeleton loading, submit guards (disabled + spinner), error handling for all async actions (handleAction, handleRename, onResolve, onReject, handleCopyId, close/reopen modals), useToast
+- `web/src/pages/FilterPage.tsx` — addToast for error display instead of silent .catch
+- `web/src/pages/LogsPage.tsx` — Skeleton loading, proper error handling for fetchLogSources
+- `web/src/pages/NotFound.tsx` — 404 page
+- `web/src/pages/ReposSkillsPage.tsx` — Skeleton loading states
+- `web/src/__tests__/` — New tests for ErrorBoundary, LoadingSkeleton, NotFound, TerminalView, Toast, shared (401 interceptor), useAuth (.catch handler)
+- `CONTRIBUTING.md` — Web UI Development section
+- `Makefile` — web-build, web-dev, build, test, lint targets
+
 ### Web UI: Filter/refine and import pages (ci-v18q6)
 
 Built the LLM-assisted filter/refine page for creating well-specified droplets, and the external tracker import page — the smart features that help operators write better droplet specs and bring in external work items.

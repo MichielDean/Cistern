@@ -593,7 +593,10 @@ ct dashboard --web --addr 127.0.0.1:8080  Custom listen address (must include ho
 
 The `/app/` route serves a React single-page application providing an alternative
 to the xterm.js terminal dashboard. It connects to the same `/api/dashboard/events`
-SSE stream and `/ws/aqueducts/{name}/peek` WebSocket used by the TUI.
+SSE stream used by the TUI. WebSocket connections for live terminal peek use
+in-band authentication (auth token sent as the first WebSocket message after
+upgrade) rather than URL query parameters, preventing token leakage in server
+access logs and browser history.
 
 **Features:**
 - Live aqueduct visualization — CSS-based pipeline arch showing cataractae stages,
@@ -603,7 +606,8 @@ SSE stream and `/ws/aqueducts/{name}/peek` WebSocket used by the TUI.
 - Queue view with blocked-by indicators, pooled droplets, orphaned warnings
 - Recent flow — last 5 delivered/pooled droplets
 - Live terminal peek — click an aqueduct to open a slideover viewing the agent's
-  tmux session via WebSocket
+  tmux session via WebSocket; search within output (Ctrl+F), auto-scroll with
+  manual override toggle, highlighted search matches (capped at 200 highlights)
 - Droplets list (`/app/droplets`) — filterable, sortable, paginated table of all
   droplets with status badges, search, and repo filter; click any row for detail
 - Create droplet (`/app/droplets/new`) — multi-field form with repo dropdown
@@ -616,7 +620,8 @@ SSE stream and `/ws/aqueducts/{name}/peek` WebSocket used by the TUI.
   (pass/recirculate/pool), dependencies with add/remove (resolves/blocked_by/blocks),
   issue tracker with file/resolve/reject, modals for notes/metadata/restart,
   inline rename on title click (save on Enter/blur, cancel on Escape), close/reopen
-  confirmation dialogs
+  confirmation dialogs, submit guards (buttons disabled during mutations with
+  spinner), error toasts on all async action failures
 - **Castellarius control page** (`/app/castellarius`) — view running/stopped status, PID, uptime; start/stop/restart the daemon; aqueduct table with flow status, current droplet, step, and elapsed time; auto-refreshes every 5 seconds
 - **Doctor page** (`/app/doctor`) — run health checks with pass/fail/warn indicators; re-run or fix from the UI; grouped by category with summary card
 - **Logs page** (`/app/logs`) — real-time log viewer with SSE streaming; source selector (castellarius.log and other available logs); log level color coding (INFO=cyan, WARN=yellow, ERROR=red, DEBUG=dim); search/filter, auto-scroll toggle, line numbers; file size and last-modified metadata
@@ -630,14 +635,41 @@ SSE stream and `/ws/aqueducts/{name}/peek` WebSocket used by the TUI.
   flagged-by role, sort by newest/oldest
 - Dark theme matching the Cistern color palette
 - Responsive sidebar navigation that collapses on mobile
+- Toast notification system — success/error/info toasts with auto-dismiss (3s),
+  truncation of long messages; all API errors displayed as toasts
+- Skeleton loading screens — card, row, and table skeleton variants replace
+  plain "Loading…" text across dashboard, droplet detail, castellarius, doctor,
+  logs, and repos pages
+- Error boundary — catches React render errors app-wide, shows fallback UI
+  with "Try Again" button (full page reload)
+- 404 catch-all route — unknown `/app/` paths show a 404 page with link back
+  to dashboard
+- Command palette — press Ctrl+K to open a searchable command palette for
+  quick navigation to any page; disabled when focus is in input/textarea fields
+- Network status indicator — header shows connection state: "Live" (connected),
+  "Reconnecting…" (disconnected), "Connected" (brief flash on reconnection)
+- Cross-UI navigation — "Classic Dashboard" link in SPA header points to `/`,
+  "New UI" link in xterm.js TUI points to `/app/`
+- 401 auth interceptor — on API 401 responses, clears stored API key and
+  redirects to login; works with `cistern:auth-expired` custom event
+- Keyboard accessibility — sidebar nav links have focus:ring styles;
+  Escape closes peek/search/modals; Ctrl+F opens peek search
 - Authentication — when `CISTERN_DASHBOARD_API_KEY` is configured, a login page
   is shown; the API key is stored in localStorage and sent via Bearer header
-  on REST calls and as a `token` query parameter on SSE/WebSocket connections
+  on REST calls, as a `token` query parameter on SSE connections, and via
+  in-band `{"type":"auth","token":"..."}` WebSocket message after upgrade
+  (peek endpoint only; query parameters are no longer used for WebSocket auth)
 
 **Build integration:**
 ```bash
-cd web && npm run build    # Outputs to cmd/ct/assets/web/ (embedded in Go binary)
-cd web && npm run dev      # Vite dev server (proxies API calls to Go server)
+# Using make (recommended)
+make web-build              # Build React SPA → cmd/ct/assets/web/
+make web-dev                # Vite dev server (proxies API calls to Go server)
+make build                  # Build Go binary (includes embedded web assets)
+
+# Or run directly
+cd web && npm run build     # Outputs to cmd/ct/assets/web/ (embedded in Go binary)
+cd web && npm run dev       # Vite dev server (proxies API calls to Go server)
 ```
 
 The SPA assets are embedded via `//go:embed` and served at `/app/`. The existing
