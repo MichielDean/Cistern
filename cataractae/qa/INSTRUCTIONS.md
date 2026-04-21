@@ -171,3 +171,23 @@ finding naming what is missing.
   httptest.NewServer exists — mocks for HTTP clients are forbidden
 - Verify every new public method on a struct that connects to external services
   has an integration test
+
+### api_contract_smoke
+
+- **Every JSON API endpoint must have a test that exercises the empty-data
+  case.** When the database is empty or a query returns no results, the
+  response must contain `[]` for every array field, not `null`. Go nil slices
+  marshal to `null` — this is a known hazard. The test must assert the JSON
+  shape, not just "no error." If no such test exists, recirculate with a
+  specific finding naming the endpoint and the missing empty-case test.
+- **Every React component that renders API data must have a test using null
+  for array fields, not just empty arrays.** Test fixtures that always use
+  `pooled_items: []` prove nothing about null-safety. At minimum, one test
+  must pass `null` (or `undefined`) for each array prop and verify the
+  component renders without crashing. If no such test exists, recirculate
+  with a specific finding naming the component and the missing null test.
+- **The golden test: start the actual server, hit the endpoint with an empty
+  database, and assert the JSON response contains no `null` collection
+  fields.** This is a single test that catches an entire class of bugs. If
+  the diff adds or modifies any JSON endpoint and no such test exists,
+  recirculate.
