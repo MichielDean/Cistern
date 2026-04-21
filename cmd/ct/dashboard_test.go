@@ -3,9 +3,13 @@ package main
 import (
 	"bytes"
 	"database/sql"
+	"encoding/json"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -261,6 +265,184 @@ func TestFetchDashboardData_FarmNotRunning_ShowsDroughtState(t *testing.T) {
 			}
 		}
 	})
+}
+
+// --- TestFetchDashboardData_EmptyDB_NeverReturnsNilSlices ---
+//
+// TestFetchDashboardData_EmptyDB_NeverReturnsNilSlices is the regression test
+// for the null-array bug: when pooled_items or unassigned_items are empty, the
+// Go API must return [] not null. Nil Go slices serialize to JSON null; empty
+// slices serialize to [].
+//
+// Given: a valid config and an empty database (no droplets at all)
+// When:  fetchDashboardData is called
+// Then:  all slice fields are non-nil (empty, not nil)
+func TestFetchDashboardData_EmptyDB_NeverReturnsNilSlices(t *testing.T) {
+	cfgPath := tempCfg(t)
+	dbPath := tempDB(t)
+
+	data, err := fetchDashboardData(cfgPath, dbPath)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	sliceChecks := []struct {
+		name  string
+		slice any
+	}{
+		{"Cataractae", data.Cataractae},
+		{"UnassignedItems", data.UnassignedItems},
+		{"CisternItems", data.CisternItems},
+		{"PooledItems", data.PooledItems},
+		{"RecentItems", data.RecentItems},
+		{"FlowActivities", data.FlowActivities},
+	}
+	for _, sc := range sliceChecks {
+		rv := reflect.ValueOf(sc.slice)
+		if rv.IsNil() {
+			t.Errorf("%s is nil — must be empty slice to avoid JSON null", sc.name)
+		}
+	}
+	if data.BlockedByMap == nil {
+		t.Error("BlockedByMap is nil — must be empty map to avoid JSON null")
+	}
+}
+
+// TestDashboardData_JSONSerialization_NeverProducesNullForArrays verifies that
+// a zero-value DashboardData (simulating empty DB) serializes to JSON with []
+// for all array fields instead of null. This is the contract the React SPA
+// depends on.
+//
+// Given: a DashboardData with all slice fields initialised as empty (not nil)
+// When:  it is serialized to JSON
+// Then:  no array field appears as "null" — all appear as "[]"
+func TestDashboardData_JSONSerialization_NeverProducesNullForArrays(t *testing.T) {
+	data := &DashboardData{
+		Cataractae:      []CataractaeInfo{},
+		UnassignedItems: []*cistern.Droplet{},
+		CisternItems:    []*cistern.Droplet{},
+		PooledItems:     []*cistern.Droplet{},
+		RecentItems:     []*cistern.Droplet{},
+		BlockedByMap:    map[string]string{},
+		FlowActivities:  []FlowActivity{},
+		FetchedAt:       time.Now(),
+	}
+
+	b, err := json.Marshal(data)
+	if err != nil {
+		t.Fatalf("json.Marshal: %v", err)
+	}
+	raw := string(b)
+
+	nullFields := []string{
+		`"cataractae":null`,
+		`"unassigned_items":null`,
+		`"cistern_items":null`,
+		`"pooled_items":null`,
+		`"recent_items":null`,
+		`"blocked_by_map":null`,
+		`"flow_activities":null`,
+	}
+	for _, nf := range nullFields {
+		if strings.Contains(raw, nf) {
+			t.Errorf("JSON contains %q — array/map fields must serialize as [] or {}, not null", nf)
+		}
+	}
+}
+
+// TestFetchDashboardData_EmptyDB_APIDashboardReturnsNoNulls is an integration
+// test that hits /api/dashboard with an empty database and asserts that the JSON
+// response contains no null values for any array field.
+//
+// Given: a web dashboard mux backed by an empty database
+// When:  GET /api/dashboard is called
+// Then:  the JSON response has [] for all array fields, not null
+func TestFetchDashboardData_EmptyDB_APIDashboardReturnsNoNulls(t *testing.T) {
+	cfgPath := tempCfg(t)
+	dbPath := tempDB(t)
+
+	mux := newDashboardMux(cfgPath, dbPath)
+	req := httptest.NewRequest(http.MethodGet, "/api/dashboard", nil)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("GET /api/dashboard status = %d, want 200", w.Code)
+	}
+
+	var raw map[string]interface{}
+	if err := json.Unmarshal(w.Body.Bytes(), &raw); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+
+	arrayFields := []string{
+		"cataractae",
+		"unassigned_items",
+		"cistern_items",
+		"pooled_items",
+		"recent_items",
+		"flow_activities",
+	}
+	for _, field := range arrayFields {
+		val, ok := raw[field]
+		if !ok {
+			t.Errorf("field %q missing from response", field)
+			continue
+		}
+		if val == nil {
+			t.Errorf("field %q is null — must be []", field)
+			continue
+		}
+		arr, ok := val.([]interface{})
+		if !ok {
+			t.Errorf("field %q is %T, want []interface{} (JSON array)", field, val)
+			continue
+		}
+		if field == "cataractae" {
+			if len(arr) == 0 {
+				t.Errorf("field %q is empty — config defines cataractae even for empty DB", field)
+			}
+			continue
+		}
+		if len(arr) != 0 {
+			t.Errorf("field %q has %d items, want 0 for empty DB", field, len(arr))
+		}
+	}
+
+	if raw["blocked_by_map"] == nil {
+		t.Error("field \"blocked_by_map\" is null — must be {}")
+	}
+}
+
+// --- TestFetchDashboardData_NilDashboardData_ProducesJSONNulls ---
+//
+// TestFetchDashboardData_NilDashboardData_ProducesJSONNulls is the inverse
+// regression test confirming that nil slices DO produce JSON null. This
+// validates that the fix (initialising empty slices) is the correct approach.
+func TestFetchDashboardData_NilDashboardData_ProducesJSONNulls(t *testing.T) {
+	data := &DashboardData{
+		FetchedAt: time.Now(),
+	}
+
+	b, err := json.Marshal(data)
+	if err != nil {
+		t.Fatalf("json.Marshal: %v", err)
+	}
+	raw := string(b)
+
+	nilFieldsProduced := []string{
+		`"cataractae":null`,
+		`"unassigned_items":null`,
+		`"cistern_items":null`,
+		`"pooled_items":null`,
+		`"recent_items":null`,
+		`"flow_activities":null`,
+	}
+	for _, nf := range nilFieldsProduced {
+		if !strings.Contains(raw, nf) {
+			t.Errorf("expected nil DashboardData to produce %q but it didn't — regression test is invalid", nf)
+		}
+	}
 }
 
 // --- TestDashboard_ExitsCleanlyOnQ ---

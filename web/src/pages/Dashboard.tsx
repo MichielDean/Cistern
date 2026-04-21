@@ -11,7 +11,7 @@ export function Dashboard() {
   const activityMap = useMemo(() => {
     const map: Record<string, FlowActivity> = {};
     if (data) {
-      for (const act of data.flow_activities) {
+      for (const act of data.flow_activities ?? []) {
         map[act.droplet_id] = act;
       }
     }
@@ -42,12 +42,12 @@ export function Dashboard() {
     );
   }
 
-  const flowingIds = new Set(data.cataractae.filter(c => c.droplet_id).map(c => c.droplet_id));
+  const flowingIds = new Set((data.cataractae ?? []).filter(c => c.droplet_id).map(c => c.droplet_id));
 
   return (
     <div className="flex-1 overflow-y-auto p-4 md:p-6 space-y-6">
       <AqueductSection
-        cataractae={data.cataractae}
+        cataractae={data.cataractae ?? []}
         flowingIds={flowingIds}
         activityMap={activityMap}
         onPeek={setPeekAqueduct}
@@ -116,10 +116,10 @@ function SummarySection({
   return (
     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
       <CisternCountCard data={data} />
-      <QueueSection items={data.cistern_items} blockedByMap={data.blocked_by_map} />
-      <PooledSection items={data.pooled_items} />
-      <UnassignedSection items={data.unassigned_items} />
-      <RecentSection items={data.recent_items} />
+      <QueueSection items={data.cistern_items ?? []} blockedByMap={data.blocked_by_map ?? {}} />
+      <PooledSection items={data.pooled_items ?? []} />
+      <UnassignedSection items={data.unassigned_items ?? []} />
+      <RecentSection items={data.recent_items ?? []} />
     </div>
   );
 }
@@ -143,7 +143,7 @@ function CisternCountCard({ data }: { data: DashboardData }) {
         </div>
         <div className="flex items-center justify-between">
           <span className="text-sm text-cistern-fg">Pooled</span>
-          <span className="font-mono text-cistern-red">{data.pooled_items.length}</span>
+          <span className="font-mono text-cistern-red">{(data.pooled_items ?? []).length}</span>
         </div>
       </div>
       <div className="mt-3 pt-3 border-t border-cistern-border">

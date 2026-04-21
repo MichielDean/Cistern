@@ -225,19 +225,17 @@ func fetchDashboardData(cfgPath, dbPath string) (*DashboardData, error) {
 	})
 
 	// Recent flow: most recently updated delivered/pooled items.
-	var recent []*cistern.Droplet
 	for _, item := range allItems {
 		if item.Status == "delivered" || item.Status == "pooled" {
-			recent = append(recent, item)
+			data.RecentItems = append(data.RecentItems, item)
 		}
 	}
-	sort.Slice(recent, func(i, j int) bool {
-		return recent[i].UpdatedAt.After(recent[j].UpdatedAt)
+	sort.Slice(data.RecentItems, func(i, j int) bool {
+		return data.RecentItems[i].UpdatedAt.After(data.RecentItems[j].UpdatedAt)
 	})
-	if len(recent) > recentEventLimit {
-		recent = recent[:recentEventLimit]
+	if len(data.RecentItems) > recentEventLimit {
+		data.RecentItems = data.RecentItems[:recentEventLimit]
 	}
-	data.RecentItems = recent
 
 	// Current flow: build live narrative for each in-progress droplet.
 	for _, item := range allItems {
