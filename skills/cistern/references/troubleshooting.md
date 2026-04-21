@@ -103,18 +103,19 @@ When a reviewer cataractae opens an issue on a droplet, only that reviewer can c
 1. An implementer step recirculates back to itself
 2. The scheduler checks if there's an open issue filed by a different cataractae (usually `reviewer`)
 3. On the **first recirculation** with an open reviewer issue, a `[scheduler:loop-recovery-pending]` note is added and the droplet recirculates normally
-4. On the **second consecutive recirculation** with the same open issue, loop is confirmed and the droplet is automatically routed to the reviewer
+4. On the **second consecutive recirculation** with the same open issue, loop is confirmed and the droplet is automatically routed to the reviewer — a `loop_recovery` event is recorded
 
 **Identifying loop recovery in action:**
 
-Check droplet notes:
+Check droplet events and notes:
 ```bash
-ct droplet show <id>              # Look for [scheduler:loop-recovery*] notes
+ct droplet log <id>              # Look for loop_recovery events and loop-recovery-pending notes
+ct droplet show <id>             # View notes including [scheduler:loop-recovery-pending]
 ```
 
-You'll see notes like:
-- `[scheduler:loop-recovery-pending] issue=<issue-id> — open reviewer issue found at implement, routing back to implement (cycle 1/2)`
-- `[scheduler:loop-recovery] detected implement→implement loop on reviewer issue <issue-id> — routing to reviewer`
+You'll see:
+- A `[scheduler:loop-recovery-pending]` note on the first recirculation (still stored as a note for internal tracking)
+- A `loop_recovery` event on the second recirculation: `loop_recovery  from: implement, to: implement, issue: <issue-id>`
 
 **No action required** — this is automatic recovery. The reviewer cataractae will run, verify the implementer's fix, close the issue, and the droplet will advance normally.
 
@@ -180,31 +181,32 @@ If repeatedly failing, check logs for the specific cataractae:
 journalctl --user -u cistern-castellarius --since "1 hour ago"
 ```
 
-### Understanding Scheduler Stall Notes
+### Understanding Scheduler Stall Events
 
-When a droplet has been inactive for a prolonged period (default: 45 minutes), the Castellarius scheduler detects it as "stalled" and appends a structured stall note. These notes use the prefix `[scheduler:stall]` and include diagnostic signals to help identify why the droplet is not progressing.
+When a droplet has been inactive for a prolonged period (default: 45 minutes), the Castellarius scheduler detects it as "stalled" and records a structured `stall` event with diagnostic signals. These events appear in `ct droplet log` with human-readable detail.
 
-**Stall note format:**
+**Stall event display in `ct droplet log`:**
 ```
-[scheduler:stall] elapsed=2h30m heartbeat=2026-01-15T10:30:45Z
+stall  step: implement, elapsed: 2h30m, heartbeat: 2026-01-15T10:30:45Z
 ```
 or, if no heartbeat has been emitted:
 ```
-[scheduler:stall] elapsed=2h30m heartbeat=none
+stall  step: implement, elapsed: 2h30m, heartbeat: none
 ```
 
 **Fields explained:**
+- `step` — The cataractae stage where the droplet is stalled
 - `elapsed` — How long the droplet has been inactive (rounded to nearest minute; e.g., `2h30m`, `45m`)
 - `heartbeat` — The RFC3339 timestamp of the agent's most recent `ct droplet heartbeat <id>` call, or `none` if no heartbeat has ever been emitted (pre-feature agents or agents that exited before their first heartbeat)
 
-**Rate-limiting:** To prevent log spam from long-stalled droplets, the scheduler writes at most one stall note per hour for the same droplet. If a droplet remains stalled beyond the first detection, no new note is written until 60 minutes have passed since the last note (or until the heartbeat advances, which resets the window).
+**Rate-limiting:** To prevent log spam from long-stalled droplets, the scheduler writes at most one stall event per hour for the same droplet. If a droplet remains stalled beyond the first detection, no new event is written until 60 minutes have passed since the last event (or until the heartbeat advances, which resets the window).
 
-**What to do when you see stall notes:**
+**What to do when you see stall events:**
 1. Check the `heartbeat` field: if it shows `none`, the agent never emitted a heartbeat — it likely died before starting work. Check exit detection logs and consider restarting:
    - `ct droplet restart <id>` — restart at current cataractae
    - `ct droplet restart <id> --cataractae implement` — restart at a specific cataractae
 2. If `heartbeat` shows a timestamp, the agent was alive at that point. Check if the agent session is still running: `ct droplet peek <id>` (shows live session output)
-3. A stall note does **not** trigger an automatic respawn — the agent may simply be slow (e.g., waiting on an LLM response). Monitor before acting.
+3. A stall event does **not** trigger an automatic respawn — the agent may simply be slow (e.g., waiting on an LLM response). Monitor before acting.
 4. If the droplet can proceed, restart it:
    - `ct droplet restart <id>` — restart at current cataractae
    - `ct droplet restart <id> --cataractae review` — restart at a specific cataractae
@@ -230,9 +232,9 @@ If the provider remains degraded, investigate:
 - Is authentication stale? Run `ct doctor --fix` to refresh tokens
 - Rate limiting? Reduce concurrent aqueducts or add delays in cataractae timeouts
 
-### Droplet Reset With "Session Exited Without Outcome" Note
+### Droplet Reset With "exit_no_outcome" Event
 
-If you see a droplet note like: `"[scheduler:exit-no-outcome] Session <id> exited without outcome (worker=<name>, cataractae=<step>). [<timestamp>]"`, the Castellarius detected that an agent session exited without signaling an outcome.
+If you see an `exit_no_outcome` event in `ct droplet log <id>`, the Castellarius detected that an agent session exited without signaling an outcome. The event payload includes the session name, worker (assignee), and cataractae step.
 
 **What this means:**
 - The agent's tmux session is gone (agent finished and exited, or crashed)
@@ -240,7 +242,7 @@ If you see a droplet note like: `"[scheduler:exit-no-outcome] Session <id> exite
 - The Castellarius heartbeat detected this and checked the DB — no outcome was written, and the cataractae stage hadn't advanced — so it reset the droplet for re-dispatch
 
 **Expected behavior:**
-1. The note is added to the droplet history
+1. An `exit_no_outcome` event is recorded in the droplet history
 2. The aqueduct pool slot is released
 3. The droplet is reset to `open` status at the current cataractae
 4. It will be re-dispatched on the next cycle
@@ -262,9 +264,9 @@ journalctl --user -u cistern-castellarius --since "1h ago" | grep <id>  # Check 
 **Recovery action:**
 No action is needed — the droplet will be re-dispatched automatically. If it keeps hitting the same limit, pool it with `ct droplet pool <id> --notes "..."` and investigate.
 
-### Droplet Pooled With "Spawn-Cycle Limit" Note
+### Droplet Pooled With "circuit_breaker" Event
 
-If you see a droplet note like: `"spawn-cycle limit: 5 spawns in window with no outcome recorded"`, the Castellarius detected a droplet that spawned multiple times in succession without signaling an outcome. This is an automatic circuit breaker for repeated exits without outcome.
+If you see a `circuit_breaker` event in `ct droplet log <id>` (displayed as `circuit_breaker  dead sessions: 5, window: 10m0s`), the Castellarius detected a droplet that spawned multiple times in succession without signaling an outcome. This is an automatic circuit breaker for repeated exits without outcome, replacing the previous spawn-cycle limit note.
 
 **What this means:**
 - The droplet was dispatched and spawned successfully 5 times within a 10-minute window
@@ -273,7 +275,7 @@ If you see a droplet note like: `"spawn-cycle limit: 5 spawns in window with no 
 - The Castellarius automatically pooled the droplet to prevent runaway token burn
 
 **Expected behavior:**
-1. The spawn-cycle limit note is added to the droplet history
+1. A `circuit_breaker` event is recorded in the droplet history with `death_count` and `window`
 2. The droplet is moved to `pooled` status
 3. The agent session is killed to stop token consumption
 4. The aqueduct pool slot is released
@@ -302,9 +304,9 @@ ct droplet restart <id> --cataractae implement  # Re-dispatch at a specific cata
 
 If the issue persists after restart, the droplet will be pooled again. Investigate the agent logs before attempting another restart.
 
-### Droplet Reset With "Orphan Recovery" Note
+### Droplet Reset With "recovery" Event
 
-If you see a droplet note like: `"[scheduler:recovery] reset orphaned in_progress droplet to open — no assignee, no active session"`, the Castellarius detected and recovered a droplet that was stuck with no active worker session.
+If you see a `recovery` event in `ct droplet log <id>` (displayed as `recovery  by: <step>`), the Castellarius detected and recovered a droplet that was stuck with no active worker session.
 
 **What this means:**
 - The droplet was in `in_progress` status but had an empty `assignee` field
@@ -314,16 +316,19 @@ If you see a droplet note like: `"[scheduler:recovery] reset orphaned in_progres
 - The Castellarius heartbeat automatically recovered it (check interval: 30 seconds by default)
 
 **Expected behavior:**
-1. The recovery note is added to the droplet history
+1. A `recovery` event is recorded in the droplet history
 2. The droplet is reset to `open` status at its current cataractae
 3. The assignee and assigned_aqueduct fields are cleared
 4. It will be re-dispatched on the next cycle as if freshly queued
 
 **No action needed** — the droplet will be re-dispatched automatically. This recovery prevents permanently stuck droplets after infrastructure events.
 
-### Cataractae Signaled Recirculate But No on_recirculate Route Configured
+### No on_recirculate Route Configured (auto_promote / no_route Events)
 
-If you see a diagnostic note like: `"cataractae 'foo' signaled recirculate but has no on_recirculate route configured"`, the droplet is blocked because an agent incorrectly used `ct droplet recirculate` instead of `ct droplet pass` or `ct droplet pool`.
+If you see an `auto_promote` or `no_route` event in `ct droplet log <id>`, the droplet's cataractae signaled recirculate but the step has no `on_recirculate` route configured.
+
+- **`auto_promote` event**: The cataractae has an `on_pass` route, so the Castellarius promoted the recirculate to a pass and routed the droplet forward. Displayed as `auto_promote  step: review, routed to: delivery`.
+- **`no_route` event**: Neither `on_recirculate` nor `on_pass` is configured. The droplet is pooled. Displayed as `no_route  by: review`.
 
 **Common causes:**
 - Agent mistakenly called recirculate when the task was complete (should be `pass`)

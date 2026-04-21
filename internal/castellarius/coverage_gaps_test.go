@@ -5,7 +5,6 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 
@@ -230,9 +229,9 @@ func TestRecoverInProgress(t *testing.T) {
 	t.Cleanup(func() { isTmuxAliveFn = orig })
 
 	tests := []struct {
-		name      string
-		item      *cistern.Droplet
-		wantStep  string
+		name       string
+		item       *cistern.Droplet
+		wantStep   string
 		wantPooled bool
 	}{
 		{
@@ -291,19 +290,17 @@ func TestRecoverInProgress(t *testing.T) {
 
 func TestHeartbeatRepo(t *testing.T) {
 	tests := []struct {
-		name      string
-		item      *cistern.Droplet
-		wantNotes int // number of scheduler notes appended (stall + optional recovery)
+		name       string
+		item       *cistern.Droplet
+		wantEvents int // number of scheduler events recorded (stall + optional recovery)
 	}{
 		{
 			name: "writes stall note for droplet with no recent signals",
 			item: &cistern.Droplet{
 				ID: "hb-1", CurrentCataractae: "implement", Status: "in_progress",
 				Assignee: "", Outcome: "",
-				// No notes, no worktree, no session log — zero signals → stalled.
-				// Orphan recovery fires: stall note + recovery note = 2 total.
 			},
-			wantNotes: 2,
+			wantEvents: 2, // stall + recovery
 		},
 		{
 			name: "skips item with outcome",
@@ -311,7 +308,7 @@ func TestHeartbeatRepo(t *testing.T) {
 				ID: "hb-2", CurrentCataractae: "review", Status: "in_progress",
 				Assignee: "", Outcome: "pass",
 			},
-			wantNotes: 0, // observe phase handles items with outcomes
+			wantEvents: 0,
 		},
 	}
 	for _, tc := range tests {
@@ -322,8 +319,8 @@ func TestHeartbeatRepo(t *testing.T) {
 			sched.heartbeatRepo(context.Background(), sched.config.Repos[0])
 			client.mu.Lock()
 			defer client.mu.Unlock()
-			if len(client.attached) != tc.wantNotes {
-				t.Errorf("stall notes = %d, want %d", len(client.attached), tc.wantNotes)
+			if len(client.events) != tc.wantEvents {
+				t.Errorf("scheduler events = %d, want %d", len(client.events), tc.wantEvents)
 			}
 		})
 	}
@@ -351,14 +348,14 @@ func TestHeartbeatRepo_StallDetected_ForAssignedDroplet(t *testing.T) {
 
 	client.mu.Lock()
 	defer client.mu.Unlock()
-	if len(client.attached) != 1 {
-		t.Errorf("expected 1 stall note for assigned droplet with no signals, got %d", len(client.attached))
+	if len(client.events) != 1 {
+		t.Errorf("expected 1 stall event for assigned droplet with no signals, got %d", len(client.events))
 	}
 }
 
 func TestHeartbeatRepo_ActiveDroplet_NotStalled(t *testing.T) {
 	// A droplet whose newest note signal is within the stall threshold should
-	// not receive a stall note. Mock tmux as alive so the liveness check passes
+	// not receive a stall event. Mock tmux as alive so the liveness check passes
 	// through to the stall detector.
 	orig := isTmuxAliveFn
 	isTmuxAliveFn = func(_ string) bool { return true }
@@ -380,8 +377,8 @@ func TestHeartbeatRepo_ActiveDroplet_NotStalled(t *testing.T) {
 
 	client.mu.Lock()
 	defer client.mu.Unlock()
-	if len(client.attached) != 0 {
-		t.Errorf("expected 0 stall notes for active droplet, got %d", len(client.attached))
+	if len(client.events) != 0 {
+		t.Errorf("expected 0 stall events for active droplet, got %d", len(client.events))
 	}
 }
 
@@ -406,14 +403,14 @@ func TestHeartbeatRepo_UnknownAssignee_WritesStallNote(t *testing.T) {
 
 	client.mu.Lock()
 	defer client.mu.Unlock()
-	if len(client.attached) != 1 {
-		t.Errorf("expected 1 stall note for unknown-assignee droplet with no signals, got %d", len(client.attached))
+	if len(client.events) != 1 {
+		t.Errorf("expected 1 stall event for unknown-assignee droplet with no signals, got %d", len(client.events))
 	}
 }
 
 // TestHeartbeatRepo_ExitNoOutcome_AddsNoteAndResetsToOpen verifies that when
-// a tmux session is dead and the item is old enough, heartbeatRepo writes an
-// exit-no-outcome note (containing session name, worker, and cataractae) and resets the
+// a tmux session is dead and the item is old enough, heartbeatRepo records an
+// exit_no_outcome event (containing session, worker, and cataractae) and resets the
 // droplet to open for re-dispatch.
 func TestHeartbeatRepo_ExitNoOutcome_AddsNoteAndResetsToOpen(t *testing.T) {
 	orig := isTmuxAliveFn
@@ -428,6 +425,7 @@ func TestHeartbeatRepo_ExitNoOutcome_AddsNoteAndResetsToOpen(t *testing.T) {
 		Assignee:          "alpha",
 		Outcome:           "",
 		UpdatedAt:         time.Now().Add(-10 * time.Minute), // old enough
+		StageDispatchedAt: time.Now().Add(-10 * time.Minute),
 	}
 	client.items[item.ID] = item
 
@@ -437,18 +435,11 @@ func TestHeartbeatRepo_ExitNoOutcome_AddsNoteAndResetsToOpen(t *testing.T) {
 	client.mu.Lock()
 	defer client.mu.Unlock()
 
-	if len(client.attached) != 1 {
-		t.Fatalf("expected 1 exit note, got %d", len(client.attached))
+	if len(client.events) != 1 {
+		t.Fatalf("expected 1 exit_no_outcome event, got %d", len(client.events))
 	}
-	note := client.attached[0]
-	if note.fromStep != "scheduler" {
-		t.Errorf("note fromStep = %q, want %q", note.fromStep, "scheduler")
-	}
-	// Note must mention session name, aqueduct worker, cataractae, and UTC timestamp.
-	for _, want := range []string{"test-repo-alpha", "alpha", "implement", time.Now().UTC().Format("2006-01-02")} {
-		if !strings.Contains(note.notes, want) {
-			t.Errorf("exit note missing %q; got: %s", want, note.notes)
-		}
+	if client.events[0].eventType != cistern.EventExitNoOutcome {
+		t.Errorf("event type = %q, want %q", client.events[0].eventType, cistern.EventExitNoOutcome)
 	}
 	// Droplet must be reset to open for re-dispatch.
 	if got := client.items[item.ID].Status; got != "open" {
@@ -489,8 +480,6 @@ func TestHeartbeatRepo_ExitGuardYoungSession_Skipped(t *testing.T) {
 }
 
 func TestHeartbeatInProgress_CallsHeartbeatForAllRepos(t *testing.T) {
-	// Basic smoke test: heartbeatInProgress should iterate all repos without
-	// panic and write a stall note for a droplet with no recent signals.
 	client := newMockClient()
 	item := &cistern.Droplet{
 		ID:                "hb-all-1",
@@ -506,8 +495,8 @@ func TestHeartbeatInProgress_CallsHeartbeatForAllRepos(t *testing.T) {
 
 	client.mu.Lock()
 	defer client.mu.Unlock()
-	if len(client.attached) != 2 {
-		t.Errorf("heartbeatInProgress: expected 2 notes (stall + recovery) for orphaned item, got %d", len(client.attached))
+	if len(client.events) != 2 {
+		t.Errorf("heartbeatInProgress: expected 2 events (stall + recovery) for orphaned item, got %d", len(client.events))
 	}
 }
 

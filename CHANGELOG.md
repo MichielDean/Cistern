@@ -2,6 +2,38 @@
 
 ## Unreleased
 
+### Promote scheduler events from notes to structured events (ci-pia3m)
+
+Scheduler failure modes that affect droplet state now write structured event rows with JSON payloads instead of free-text notes. The `cataractae_notes` table is reserved for agent notes only (except `loop-recovery-pending` markers, which remain as notes for backward compatibility). `ct droplet log` displays all new event types with human-readable detail.
+
+**New event types and payloads:**
+- `exit_no_outcome`: Agent session died without signaling — `{session, worker, cataractae}`
+- `stall`: Inactivity detected past threshold — `{cataractae, elapsed, heartbeat}`
+- `recovery`: Orphaned in_progress droplet reset to open — `{cataractae}`
+- `circuit_breaker`: Too many dead sessions in window — `{death_count, window}`
+- `loop_recovery`: Recirculate-to-self loop broken, routed to reviewer — `{from, to, issue}`
+- `auto_promote`: Recirculate with no on_recirculate route auto-promoted — `{cataractae, routed_to}`
+- `no_route`: Recirculate with no route at all — `{cataractae}`
+
+**Key changes:**
+- Seven `AddNote()` call sites in `scheduler.go` replaced by `RecordEvent()` with typed JSON payloads
+- `loop-recovery-pending` markers retained as notes (queried by `loopRecoveryPendingCount()`)
+- Circuit breaker now uses `CountEventsByType(id, EventExitNoOutcome, since)` instead of scanning `cataractae_notes` for string patterns
+- `stallNotePrefix` constant removed
+- `addEvent` helper mirrors `addNote` pattern: logs errors at Warn level, never propagates
+- `remapEvent` and seven new `remapPayload*` functions render events in `ct droplet log`
+- `CisternClient` interface gains `CountEventsByType(id, eventType string, since time.Time) (int, error)`
+- Mock `RecordEvent` now records invocations for test assertions
+- All scheduler test assertions updated from note-matching to event-matching
+
+**Files changed:**
+- `internal/cistern/client.go` — Seven new event type constants, `validEventTypes` entries, `CountEventsByType` method
+- `internal/castellarius/scheduler.go` — `addEvent` helper, seven `AddNote` sites replaced by `addEvent`, circuit breaker uses `CountEventsByType`, `stallNotePrefix` removed, `CisternClient` interface gains `CountEventsByType`
+- `cmd/ct/droplet_log.go` — Seven new `remapPayload*` functions for human-readable event rendering
+- `cmd/ct/droplet_log_test.go` — Seven test cases for new event remapping
+- `internal/castellarius/scheduler_test.go`, `internal/castellarius/coverage_gaps_test.go`, `internal/castellarius/production_gaps_test.go` — Assertions migrated from note-matching to event-matching; mock `CountEventsByType` added
+- `internal/cistern/client_test.go` — `TestValidEventTypes_ContainsAllConstants` updated with new constants
+
 ### Migrate to opencode as the only agent CLI provider (ci-6zxwb)
 
 Cistern now uses opencode as the only agent CLI provider. The claude, codex, gemini, and copilot provider presets have been removed from the codebase. ANTHROPIC_API_KEY is no longer required for agent operation. CLAUDE.md instruction files have been replaced by AGENTS.md across the codebase. The LLM API backend (used by ct filter/refine) remains independently configurable and continues to support anthropic, openai, openrouter, ollama, and custom providers — these are LLM API backends, not agent CLI providers.
@@ -431,7 +463,7 @@ Added `ct droplet log <id>` command that displays a structured timeline of event
 - **Creation event**: Shows when the droplet was created with title and priority
 - **Stage transitions**: Displays when the droplet moved between cataractae stages
 - **Outcome signals**: Shows pass/recirculate/pool events with reasons
-- **Scheduler events**: Displays scheduler-generated notes (zombie detection, stall notes)
+- **Scheduler events**: Displays scheduler-generated events (zombie detection as `exit_no_outcome`, stall, recovery, loop recovery, auto-promote, no-route events)
 - **Heartbeat records**: Shows last heartbeat timestamp with the assigned cataractae
 - **Note attribution**: Cataractae-prefixed notes are split into cataractae name and detail
 - **Chronological ordering**: All events sorted by timestamp (stable sort preserves order for simultaneous events)
@@ -571,7 +603,7 @@ Added an automatic circuit breaker that detects and pools droplets caught in spa
 - When a spawn-cycle limit is reached, the droplet receives a note like: `"spawn-cycle limit: 5 spawns in window with no outcome recorded"`
 - The droplet is moved to `pooled` status and the agent session is killed to stop token consumption
 - Operators can investigate the underlying cause and restart once fixed
-- See `openclaw/cistern/references/troubleshooting.md#droplet-pooled-with-spawn-cycle-limit-note` for diagnosis steps
+- See `skills/cistern/references/troubleshooting.md#droplet-pooled-with-circuit_breaker-event` for diagnosis steps
 
 **Impact**: Eliminates the token-burn regression class entirely. Even if a future bug causes repeated respawns, the limiter will fire within 10 minutes and protect infrastructure costs.
 

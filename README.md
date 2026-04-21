@@ -386,11 +386,11 @@ heartbeat_interval: 30s
 # Stall detection: threshold for inactivity before marking a droplet as stalled
 # Monitors three progress signals: newest note timestamp, worktree file mtime,
 # and session log mtime. Droplet is stalled if all three are older than this threshold.
-# When detected: (1) a diagnostic note is appended, (2) if the droplet has an assignee
-# with prior session history, the session is automatically re-spawned with --continue
-# to allow the agent to resume; (3) further diagnostic notes are suppressed until
-# one of the signals advances. Re-spawn failures are automatically retried on the next
-# heartbeat tick.
+# When detected: (1) a "stall" event is recorded with diagnostic signals, (2) if the
+# droplet has an assignee with prior session history, the session is automatically
+# re-spawned with --continue to allow the agent to resume; (3) further stall events
+# are suppressed until one of the signals advances. Re-spawn failures are automatically
+# retried on the next heartbeat tick.
 # Default: 45 minutes
 stall_threshold_minutes: 45
 
@@ -856,7 +856,7 @@ ct droplet tail <id> --lines 50                             Show last 50 events 
 ct droplet tail <id> --format json                          Output events as NDJSON (one JSON object per line)
 
 # Log — chronological activity timeline for a droplet
-ct droplet log <id>                                         Show activity log (creation, dispatch, pass, recirculate, delivered, restart, approve, edit, pool, cancel, heartbeat, notes)
+ct droplet log <id>                                         Show activity log (creation, dispatch, pass, recirculate, delivered, restart, approve, edit, pool, cancel, exit_no_outcome, stall, recovery, circuit_breaker, loop_recovery, auto_promote, no_route, heartbeat, notes)
 ct droplet log <id> --format json                           Output as NDJSON (one JSON object per line)
 
 # History — alias for ct droplet log
@@ -963,7 +963,7 @@ When a dispatch loop is detected, the Castellarius attempts ordered self-recover
 
 After **3 failed self-fix attempts**, the droplet is pooled with a note describing the failure. Use `ct droplet show <id>` to inspect the recovery history, then `ct droplet restart <id> --cataractae <step>` to re-enter once the underlying issue is resolved.
 
-Recovery attempts are attached as notes on the droplet and logged by the Castellarius with the prefix `dispatch-loop recovery:`. A successful agent spawn resets all counters — a droplet that recovers cleanly leaves no permanent trace.
+Recovery attempts are recorded as events and notes on the droplet and logged by the Castellarius with the prefix `dispatch-loop recovery:`. A successful agent spawn resets all counters — a droplet that recovers cleanly leaves no permanent trace.
 
 ---
 

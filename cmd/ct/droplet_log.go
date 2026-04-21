@@ -165,6 +165,20 @@ func remapEvent(evt, detail string) (string, string) {
 		return "approved", remapPayloadCataractae(detail)
 	case "edit":
 		return "edit", remapPayloadEdit(detail)
+	case "exit_no_outcome":
+		return "exit_no_outcome", remapPayloadExitNoOutcome(detail)
+	case "stall":
+		return "stall", remapPayloadStall(detail)
+	case "recovery":
+		return "recovery", remapPayloadCataractae(detail)
+	case "circuit_breaker":
+		return "circuit_breaker", remapPayloadCircuitBreaker(detail)
+	case "loop_recovery":
+		return "loop_recovery", remapPayloadLoopRecovery(detail)
+	case "auto_promote":
+		return "auto_promote", remapPayloadAutoPromote(detail)
+	case "no_route":
+		return "no_route", remapPayloadCataractae(detail)
 	default:
 		return evt, detail
 	}
@@ -305,6 +319,120 @@ func remapPayloadEdit(detail string) string {
 		return fmt.Sprintf("fields: %v", fields)
 	}
 	return ""
+}
+
+func remapPayloadExitNoOutcome(detail string) string {
+	if detail == "" || detail == "{}" {
+		return ""
+	}
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(detail), &payload); err != nil {
+		return detail
+	}
+	var parts []string
+	if session, ok := payload["session"]; ok && session != "" {
+		parts = append(parts, fmt.Sprintf("session: %v", session))
+	}
+	if worker, ok := payload["worker"]; ok && worker != "" {
+		parts = append(parts, fmt.Sprintf("worker: %v", worker))
+	}
+	if cat, ok := payload["cataractae"]; ok && cat != "" {
+		parts = append(parts, fmt.Sprintf("step: %v", cat))
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return strings.Join(parts, ", ")
+}
+
+func remapPayloadStall(detail string) string {
+	if detail == "" || detail == "{}" {
+		return ""
+	}
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(detail), &payload); err != nil {
+		return detail
+	}
+	var parts []string
+	if cat, ok := payload["cataractae"]; ok && cat != "" {
+		parts = append(parts, fmt.Sprintf("step: %v", cat))
+	}
+	if elapsed, ok := payload["elapsed"]; ok && elapsed != "" {
+		parts = append(parts, fmt.Sprintf("elapsed: %v", elapsed))
+	}
+	if heartbeat, ok := payload["heartbeat"]; ok && heartbeat != "" {
+		parts = append(parts, fmt.Sprintf("heartbeat: %v", heartbeat))
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return strings.Join(parts, ", ")
+}
+
+func remapPayloadCircuitBreaker(detail string) string {
+	if detail == "" || detail == "{}" {
+		return ""
+	}
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(detail), &payload); err != nil {
+		return detail
+	}
+	var parts []string
+	if dc, ok := payload["death_count"]; ok {
+		parts = append(parts, fmt.Sprintf("dead sessions: %v", dc))
+	}
+	if window, ok := payload["window"]; ok && window != "" {
+		parts = append(parts, fmt.Sprintf("window: %v", window))
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return strings.Join(parts, ", ")
+}
+
+func remapPayloadLoopRecovery(detail string) string {
+	if detail == "" || detail == "{}" {
+		return ""
+	}
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(detail), &payload); err != nil {
+		return detail
+	}
+	var parts []string
+	if from, ok := payload["from"]; ok && from != "" {
+		parts = append(parts, fmt.Sprintf("from: %v", from))
+	}
+	if to, ok := payload["to"]; ok && to != "" {
+		parts = append(parts, fmt.Sprintf("to: %v", to))
+	}
+	if issue, ok := payload["issue"]; ok && issue != "" {
+		parts = append(parts, fmt.Sprintf("issue: %v", issue))
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return strings.Join(parts, ", ")
+}
+
+func remapPayloadAutoPromote(detail string) string {
+	if detail == "" || detail == "{}" {
+		return ""
+	}
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(detail), &payload); err != nil {
+		return detail
+	}
+	var parts []string
+	if cat, ok := payload["cataractae"]; ok && cat != "" {
+		parts = append(parts, fmt.Sprintf("step: %v", cat))
+	}
+	if routedTo, ok := payload["routed_to"]; ok && routedTo != "" {
+		parts = append(parts, fmt.Sprintf("routed to: %v", routedTo))
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return strings.Join(parts, ", ")
 }
 
 func printLogText(out io.Writer, item *cistern.Droplet, entries []logEntry) error {
