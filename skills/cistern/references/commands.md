@@ -67,11 +67,11 @@ ct droplet log <id> --format text         # Tab-aligned table with timestamps (d
 ct droplet log <id> --format json          # One JSON object per line (NDJSON)
 ```
 
-Displays a structured timeline of events for a droplet, parsed from its notes and change history. Includes creation event, stage transitions, outcome signals (pass/recirculate/pool), scheduler events, and heartbeat records.
+Displays a structured timeline of events for a droplet, parsed from the events table and notes. Includes creation event, dispatch with aqueduct/step/assignee, pass/recirculate with cataractae attribution, deliver, restart, approve, edit (with changed fields), pool with reason, cancel with reason, and heartbeat records. Pre-existing droplets (created before this version) that lack a create event get a synthesized creation entry.
 
-In text mode, the output starts with a header line (`Droplet: <id>  Title: <title>  Status: <status>`) followed by a tab-aligned table with columns: `TIME`, `CATARACTAE`, `EVENT`, `DETAIL`. In JSON mode, each line is a JSON object with `time`, `cataractae`, `event`, and `detail` fields.
+In text mode, the output starts with a header line (`Droplet: <id>  Title: <title>  Status: <status>`) followed by a tab-aligned table with columns: `TIME`, `CATARACTAE`, `EVENT`, `DETAIL`. Event payloads are rendered in human-readable form (e.g., `by: reviewer, notes: all good` instead of raw JSON). In JSON mode, each line is a JSON object with `time`, `cataractae`, `event`, and `detail` fields.
 
-Events include: `created` (droplet creation), stage transition names, `pooled` (with reason), `heartbeat` (last known heartbeat), and `note` (cataractae-prefixed notes).
+Event types displayed: `created` (with repo, title, priority, complexity), `dispatched` (with aqueduct, step, assignee), `pass` (with cataractae, notes), `recirculate` (with cataractae, target, notes), `delivered`, `restart` (with cataractae), `approved` (with cataractae), `edit` (with changed fields), `pooled` (with reason), `cancelled` (with reason), `heartbeat` (last known heartbeat), `note` (cataractae-prefixed notes).
 
 ### History — Chronological Activity Timeline (alias for log)
 
