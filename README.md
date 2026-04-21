@@ -731,6 +731,13 @@ The web dashboard exposes a REST API at `/api/` that mirrors all TUI operations.
 | `GET` | `/api/droplets/export` | Export droplets (query params: `?format=json|csv&status=&priority=&repo=`) |
 | `POST` | `/api/droplets/purge` | Delete old completed droplets (JSON body: `older_than`, `dry_run`) |
 
+### Dashboard
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/api/dashboard` | Full dashboard data (cataractae list, cistern queue, pooled/recent/unassigned items, flow activities, blocked-by map). All array fields are guaranteed `[]` (never JSON `null`) even when empty |
+| `GET` | `/api/dashboard/stream` | SSE stream of dashboard updates (pushed every 2 seconds) |
+
 ### SSE (Server-Sent Events)
 
 | Method | Endpoint | Description |

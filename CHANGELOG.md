@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+### Fix web SPA crash on empty data — null array regression (ci-1a9sf)
+
+The web SPA crashed on launch when `pooled_items`, `unassigned_items`, or other collection fields were empty. The Go API serialized nil slices as JSON `null` (standard Go behavior), and the React frontend called `.length` on them without null-coalescing.
+
+**Key changes:**
+- `cmd/ct/dashboard.go`: `fetchDashboardData` constructor now initializes `RecentItems` as `[]*cistern.Droplet{}` — the one collection field that was missing from the existing empty-slice initialization block. The local `recent` variable (which could be nil) is eliminated; items now append directly to `data.RecentItems`
+- `web/src/pages/Dashboard.tsx`: null-coalesces all `DashboardData` array/map access points (`data.pooled_items ?? []`, `data.unassigned_items ?? []`, `data.cistern_items ?? []`, `data.recent_items ?? []`, `data.flow_activities ?? []`, `data.cataractae ?? []`, `data.blocked_by_map ?? {}`) as defense-in-depth
+- `web/src/components/AqueductArch.tsx`: null-coalesces `activity.recent_notes` (lines 96, 98) — a crash path when a `FlowActivity` exists but `recent_notes` is null
+- 4 new Go regression tests: struct nil-slice check, JSON serialization contract, HTTP API integration with empty DB, inverse nil validation
+- 2 new React test files: `Dashboard.test.tsx` (null-array rendering), `AqueductArchNullNotes.test.tsx` (null recent_notes)
+
 ### Rebuild ct droplet log from structured events (ci-peclu)
 
 `ct droplet log` now derives its timeline entirely from the events table via a new `GetDropletTimeline` query. The old UNION-based `GetDropletChanges` query mixing events and notes is replaced with structured event retrieval. Notes are queried separately via `GetNotes()` and clearly distinguished from lifecycle events in the output.
