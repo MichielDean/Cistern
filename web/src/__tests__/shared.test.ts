@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { apiFetch } from '../api/shared';
 
 describe('apiFetch', () => {
-  const originalFetch = global.fetch;
+  const originalFetch = globalThis.fetch;
 
   beforeEach(() => {
     vi.stubEnv('cistern_auth', '');
@@ -10,13 +10,13 @@ describe('apiFetch', () => {
 
   afterEach(() => {
     vi.restoreAllMocks();
-    global.fetch = originalFetch;
+    globalThis.fetch = originalFetch;
     localStorage.clear();
     document.head.innerHTML = '';
   });
 
   it('returns parsed JSON on success', async () => {
-    global.fetch = vi.fn().mockResolvedValue({
+    globalThis.fetch = vi.fn().mockResolvedValue({
       ok: true,
       status: 200,
       json: () => Promise.resolve({ id: 1 }),
@@ -27,7 +27,7 @@ describe('apiFetch', () => {
   });
 
   it('returns undefined for 204 responses', async () => {
-    global.fetch = vi.fn().mockResolvedValue({
+    globalThis.fetch = vi.fn().mockResolvedValue({
       ok: true,
       status: 204,
     });
@@ -37,7 +37,7 @@ describe('apiFetch', () => {
   });
 
   it('throws on non-401 error responses', async () => {
-    global.fetch = vi.fn().mockResolvedValue({
+    globalThis.fetch = vi.fn().mockResolvedValue({
       ok: false,
       status: 500,
       text: () => Promise.resolve('Internal Server Error'),
@@ -48,7 +48,7 @@ describe('apiFetch', () => {
 
   it('truncates long error response bodies', async () => {
     const longBody = 'x'.repeat(300);
-    global.fetch = vi.fn().mockResolvedValue({
+    globalThis.fetch = vi.fn().mockResolvedValue({
       ok: false,
       status: 500,
       text: () => Promise.resolve(longBody),
@@ -65,7 +65,7 @@ describe('apiFetch', () => {
 
     localStorage.setItem('cistern_api_key', 'old-key');
 
-    global.fetch = vi.fn().mockResolvedValue({
+    globalThis.fetch = vi.fn().mockResolvedValue({
       ok: false,
       status: 401,
     });
@@ -84,7 +84,7 @@ describe('apiFetch', () => {
   it('does not clear stored key on 401 when auth is not required', async () => {
     localStorage.setItem('cistern_api_key', 'old-key');
 
-    global.fetch = vi.fn().mockResolvedValue({
+    globalThis.fetch = vi.fn().mockResolvedValue({
       ok: false,
       status: 401,
     });
@@ -106,7 +106,7 @@ describe('apiFetch', () => {
     meta.setAttribute('content', 'required');
     document.head.appendChild(meta);
 
-    global.fetch = vi.fn().mockResolvedValue({
+    globalThis.fetch = vi.fn().mockResolvedValue({
       ok: false,
       status: 401,
     });

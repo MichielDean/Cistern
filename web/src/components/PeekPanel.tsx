@@ -1,4 +1,4 @@
-import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { getStoredKey } from '../hooks/useAuth';
 import { truncateBuffer, isAuthCloseCode } from '../utils/buffer';
 import { TerminalView } from './TerminalView';
