@@ -721,7 +721,7 @@ The web dashboard exposes a REST API at `/api/` that mirrors all TUI operations.
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | `GET` | `/api/droplets/{id}/log` | Event timeline (query params: `?format=notes&limit=`) |
-| `GET` | `/api/droplets/{id}/changes` | Ordered changes (query params: `?limit=`) |
+| `GET` | `/api/droplets/{id}/changes` | Ordered events (query params: `?limit=`); Kind is always "event" |
 | `GET` | `/api/stats` | Droplet counts by status |
 
 ### Export & Purge
@@ -856,7 +856,7 @@ ct droplet tail <id> --lines 50                             Show last 50 events 
 ct droplet tail <id> --format json                          Output events as NDJSON (one JSON object per line)
 
 # Log — chronological activity timeline for a droplet
-ct droplet log <id>                                         Show activity log (creation, dispatch, pass, recirculate, delivered, restart, approve, edit, pool, cancel, exit_no_outcome, stall, recovery, circuit_breaker, loop_recovery, auto_promote, no_route, heartbeat, notes)
+ct droplet log <id>                                         Show activity log (creation, dispatch, pass, recirculate, delivered, restart, approve, edit, pool, cancel, exit_no_outcome, stall, recovery, circuit_breaker, loop_recovery, auto_promote, no_route; agent notes shown separately)
 ct droplet log <id> --format json                           Output as NDJSON (one JSON object per line)
 
 # History — alias for ct droplet log

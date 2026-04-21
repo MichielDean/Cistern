@@ -2,6 +2,28 @@
 
 ## Unreleased
 
+### Rebuild ct droplet log from structured events (ci-peclu)
+
+`ct droplet log` now derives its timeline entirely from the events table via a new `GetDropletTimeline` query. The old UNION-based `GetDropletChanges` query mixing events and notes is replaced with structured event retrieval. Notes are queried separately via `GetNotes()` and clearly distinguished from lifecycle events in the output.
+
+**Key changes:**
+- New `internal/cistern/event_types.go`: `ValidEventTypes` map, `DisplayInfo()` function (ported from `remapEvent` + `remapPayload*`)
+- New `TimelineEntry` struct and `GetDropletTimeline(id, limit)` method for structured event retrieval
+- `buildLogEntries` rewritten: takes `[]TimelineEntry` and `[]CataractaeNote` instead of `*Droplet` and `[]DropletChange`
+- Synthetic "created" and "heartbeat" entries removed (create events exist since ci-meaol; heartbeat display dropped per spec)
+- `GetDropletChanges` now returns events-only (Kind always "event", Value is "event_type: payload")
+- `ListRecentEvents` drops UNION with cataractae_notes — returns events only
+- `ct droplet log --format json` outputs structured entries with `event_type` and `payload`
+- Notes accessible via `ct droplet log` but clearly separated from lifecycle events
+- No `kind=note` entries in timeline for scheduler activity
+
+**Files changed:**
+- `internal/cistern/event_types.go` — new file: event constants, `ValidEventTypes`, `DisplayInfo()`
+- `internal/cistern/client.go` — `TimelineEntry`, `GetDropletTimeline`, rewritten `GetDropletChanges`, `ListRecentEvents` drops UNION
+- `cmd/ct/droplet_log.go` — rewritten `buildLogEntries`, removed `remapEvent`/`remapPayload*` functions
+- `cmd/ct/droplet_history.go` — uses `GetDropletTimeline` + `GetNotes`
+- `cmd/ct/droplet_log_test.go`, `cmd/ct/droplet_history_test.go`, `cmd/ct/droplet_tail_test.go`, `internal/cistern/client_test.go` — updated tests
+
 ### Promote scheduler events from notes to structured events (ci-pia3m)
 
 Scheduler failure modes that affect droplet state now write structured event rows with JSON payloads instead of free-text notes. The `cataractae_notes` table is reserved for agent notes only (except `loop-recovery-pending` markers, which remain as notes for backward compatibility). `ct droplet log` displays all new event types with human-readable detail.
