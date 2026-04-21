@@ -773,24 +773,24 @@ func TestUncommittedFiles_NoExcludeKeepsAll(t *testing.T) {
 	}
 }
 
-// TestUncommittedFiles_CustomInstructionsFile verifies that a non-default
-// InstructionsFile (e.g. GEMINI.md, AGENTS.md) is also excluded when specified.
+// TestUncommittedFiles_CustomInstructionsFile verifies that a custom
+// InstructionsFile is excluded when specified.
 func TestUncommittedFiles_CustomInstructionsFile(t *testing.T) {
 	dir := initTestRepo(t)
 
-	if err := os.WriteFile(filepath.Join(dir, "GEMINI.md"), []byte("modified\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "custom-instructions.md"), []byte("modified\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	runGit(t, dir, "add", "GEMINI.md")
+	runGit(t, dir, "add", "custom-instructions.md")
 
-	files, err := uncommittedFiles(dir, []string{"GEMINI.md"})
+	files, err := uncommittedFiles(dir, []string{"custom-instructions.md"})
 	if err != nil {
 		t.Fatalf("uncommittedFiles: %v", err)
 	}
 
 	for _, f := range files {
-		if f == "GEMINI.md" {
-			t.Error("GEMINI.md must be excluded when passed in exclude list (ci-czkeg)")
+		if f == "custom-instructions.md" {
+			t.Error("custom-instructions.md must be excluded when passed in exclude list (ci-czkeg)")
 		}
 	}
 }

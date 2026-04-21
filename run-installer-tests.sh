@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # run-installer-tests.sh — installer test harness for Cistern
 #
-# Builds the installer-test Docker image (systemd + ct + fakeagent claude
+# Builds the installer-test Docker image (systemd + ct + fakeagent opencode
 # stub), starts a container, runs scaffolding tests, and reports results in
 # GitHub Actions annotation format.
 #
@@ -107,9 +107,9 @@ test_ct_available() {
 }
 
 # test_fakeagent_available verifies that the fakeagent stub is installed as
-# "claude" and is on PATH — matching the path npm installs the real Claude CLI.
+# "opencode" and is on PATH — matching the expected location for the opencode CLI.
 test_fakeagent_available() {
-    exec_in_container which claude >/dev/null
+    exec_in_container which opencode >/dev/null
 }
 
 # test_ct_init verifies that `ct init` exits 0 and creates the Cistern config
@@ -143,12 +143,12 @@ test_service_status_helper() {
 # Given: no ~/.cistern exists in the test home directory
 # When:  ct init is run
 # Then:  the Castellarius service unit is loaded and active,
-#        the claude agent binary is on PATH, and ct doctor exits 0.
+#        the opencode agent binary is on PATH, and ct doctor exits 0.
 #
 # A minimal cistern.yaml (repos: []) is used so that ct castellarius start
 # does not fail on missing skills or workflow paths.  A placeholder
-# ANTHROPIC_API_KEY is written to the env file before ct doctor runs so
-# that the credential check passes without a real API key.
+# GH_TOKEN is written to the env file before ct doctor runs so
+# that the credential check passes without a real token.
 test_fresh_install() {
     local home_dir="/tmp/cistern-test-fresh"
 
@@ -159,9 +159,9 @@ test_fresh_install() {
     exec_in_container env HOME="${home_dir}" ct init \
         >/dev/null 2>&1 || return 1
 
-    # Add a placeholder API key so ct doctor's ANTHROPIC_API_KEY check passes.
+    # Add a placeholder GH_TOKEN so ct doctor's env check passes.
     exec_in_container bash -c \
-        "printf 'ANTHROPIC_API_KEY=sk-ant-test-placeholder\n' \
+        "printf 'GH_TOKEN=ghp-test-placeholder\n' \
             >> '${home_dir}/.cistern/env'" || return 1
 
     # Create skill stubs so ct castellarius start passes validateWorkflowSkills.
@@ -173,7 +173,7 @@ test_fresh_install() {
     " || return 1
 
     # Use ct doctor --fix to create cistern.db before the service starts.
-    exec_in_container env HOME="${home_dir}" ANTHROPIC_API_KEY=sk-ant-test-placeholder \
+    exec_in_container env HOME="${home_dir}" GH_TOKEN=ghp-test-placeholder \
         ct doctor --fix >/dev/null 2>&1 || true
 
     # Install and start the system service.
@@ -184,11 +184,11 @@ test_fresh_install() {
         return 1
     fi
 
-    # Then: agent binary (claude stub) is present on PATH.
-    exec_in_container which claude >/dev/null || return 1
+    # Then: agent binary (opencode stub) is present on PATH.
+    exec_in_container which opencode >/dev/null || return 1
 
     # Then: ct doctor exits 0 (all checks pass with the configured environment).
-    exec_in_container env HOME="${home_dir}" ANTHROPIC_API_KEY=sk-ant-test-placeholder \
+    exec_in_container env HOME="${home_dir}" GH_TOKEN=ghp-test-placeholder \
         ct doctor >/dev/null 2>&1
 }
 
@@ -215,7 +215,7 @@ test_upgrade() {
         mkdir -p '${cistern_dir}/aqueduct' '${cistern_dir}/cataractae' &&
         printf 'repos:\n  - name: TestRepo\n    url: https://github.com/example/TestRepo\n    workflow_path: aqueduct/aqueduct.yaml\n    cataractae: 1\n    names: [test]\n    prefix: tr\nmax_cataractae: 2\nstale_old_key: removed_in_v2\n' \
             > '${cistern_dir}/cistern.yaml' &&
-        printf 'ANTHROPIC_API_KEY=sk-ant-old-key\n' \
+        printf 'GH_TOKEN=ghp-test-old-key\n' \
             > '${cistern_dir}/env' &&
         chmod 600 '${cistern_dir}/env'
     " || return 1
@@ -239,7 +239,7 @@ test_upgrade() {
     " || return 1
 
     # Create cistern.db via ct doctor --fix so the service can open it.
-    exec_in_container env HOME="${home_dir}" ANTHROPIC_API_KEY=sk-ant-old-key \
+    exec_in_container env HOME="${home_dir}" GH_TOKEN=ghp-test-old-key \
         ct doctor --fix >/dev/null 2>&1 || true
 
     # (Re-)install the service unit pointing at the upgrade home and restart it.
@@ -252,17 +252,17 @@ test_upgrade() {
     fi
 
     # Then: ct doctor still exits 0 after the upgrade.
-    exec_in_container env HOME="${home_dir}" ANTHROPIC_API_KEY=sk-ant-old-key \
+    exec_in_container env HOME="${home_dir}" GH_TOKEN=ghp-test-old-key \
         ct doctor >/dev/null 2>&1
 }
 
 # test_missing_credentials verifies that the service starts cleanly without
-# ~/.cistern/env when using the claude provider.
+# ~/.cistern/env when using the opencode provider.
 #
 # Given: ct init has run but ~/.cistern/env is deleted afterwards
 # When:  the service starts and ct doctor runs
-# Then:  the service reaches active state (no ANTHROPIC_API_KEY required for claude)
-# And:   ct doctor exits 0 (OAuth check skips silently when no credentials file)
+# Then:  the service reaches active state (opencode provider requires no env vars)
+# And:   ct doctor exits 0
 test_missing_credentials() {
     local home_dir="/tmp/cistern-test-missing-creds"
 
@@ -289,13 +289,12 @@ test_missing_credentials() {
     # Install and start the system service.
     install_system_service "${home_dir}" || return 1
 
-    # Then: service reaches active state — claude provider does not require ANTHROPIC_API_KEY.
+    # Then: service reaches active state — opencode provider does not require env vars.
     if ! wait_for_service_active "cistern-castellarius" 10; then
         return 1
     fi
 
-    # Then: ct doctor exits 0 — no ANTHROPIC_API_KEY required, OAuth check skips when
-    # no credentials file is present.
+    # Then: ct doctor exits 0 — opencode provider has no required env vars.
     exec_in_container env HOME="${home_dir}" \
         ct doctor >/dev/null 2>&1
 }
@@ -335,7 +334,7 @@ main() {
 
     run_test "systemd boots in container"                                      test_systemd_boots
     run_test "ct binary is available"                                          test_ct_available
-    run_test "fakeagent available as claude stub"                              test_fakeagent_available
+    run_test "fakeagent available as opencode stub"                           test_fakeagent_available
     run_test "ct init creates cistern config"                                  test_ct_init
     run_test "ct doctor runs without crash"                                    test_ct_doctor
     run_test "service_status helper queries systemd"                           test_service_status_helper

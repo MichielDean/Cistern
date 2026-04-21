@@ -3,7 +3,7 @@
 Smoke tests for the Cistern installer, exercised inside a systemd-capable
 Ubuntu 24.04 container.  The container starts real systemd as PID 1 and then
 verifies that the installer artifacts (`ct`, `start-castellarius.sh`, the
-fakeagent Claude stub) work correctly without `pass` or GPG.
+fakeagent opencode stub) work correctly without `pass` or GPG.
 
 ## Quick start (run locally)
 
@@ -109,8 +109,8 @@ as a GitHub Actions step:
 |------|---------------|
 | `systemd_multi_user_target` | `systemd` reached `multi-user.target` inside the container |
 | `ct_binary_version` | `ct version` exits 0 |
-| `fakeagent_print_output` | `claude --print` returns the hardcoded JSON proposal array |
-| `claude_on_path` | `claude` resolves via `exec.LookPath` (on `PATH`) |
+| `fakeagent_print_output` | `opencode` returns the hardcoded JSON proposal array |
+| `opencode_on_path` | `opencode` resolves via `exec.LookPath` (on `PATH`) |
 | `no_pass_installed` | `pass` password manager is absent |
 | `ct_init_creates_config` | `ct init` creates `~/.cistern/cistern.yaml` |
 | `ct_doctor_agent_cli_found` | `ct doctor` reports the configured agent CLI as found |
@@ -122,7 +122,7 @@ Each scenario resets container state via `_reset_scenario_state` before running 
 
 **Scenario 1 — Fresh install**
 
-Preconditions: no `~/.cistern` present, valid `ANTHROPIC_API_KEY` in `~/.cistern/env`.
+Preconditions: no `~/.cistern` present, valid `GH_TOKEN` in `~/.cistern/env`.
 
 | Assertion | What it checks |
 |-----------|---------------|
@@ -141,16 +141,15 @@ Preconditions: `ct init` has run; `~/.cistern/env` is absent (no API key).
 | `missing_creds_ct_doctor_message` | `ct doctor` output contains a message referencing missing credentials |
 | `missing_creds_ct_doctor_exits_nonzero` | `ct doctor` exits non-zero |
 
-**Scenario 3 — Wrong / expired token**
+**Scenario 3 — No API key**
 
-Preconditions: `~/.cistern/env` contains a syntactically valid but rejected API key; `~/.claude/.credentials.json` contains an expired OAuth token (`expiresAt` in the past).
+Preconditions: `ct init` has run; `~/.cistern/env` is absent (no API key).
 
 | Assertion | What it checks |
 |-----------|---------------|
-| `wrong_token_ct_init` | `ct init` exits 0 |
-| `wrong_token_service_startup_error` | service enters `failed` state and the journal contains an actionable message mentioning `invalid` or `expired` token |
-| `wrong_token_ct_doctor_surfaces_error` | `ct doctor` output surfaces the same expired-token error |
-| `wrong_token_ct_doctor_exits_nonzero` | `ct doctor` exits non-zero |
+| `no_creds_ct_init` | `ct init` exits 0 |
+| `no_creds_service_active` | `cistern-castellarius.service` reaches `active (running)` state |
+| `no_creds_ct_doctor_passes` | `ct doctor` exits 0 — no credential check fails for opencode |
 
 **Scenario 4 — Upgrade**
 
@@ -159,7 +158,7 @@ Preconditions: `~/.cistern` is pre-seeded with a fixture representing a prior-ve
 | Assertion | What it checks |
 |-----------|---------------|
 | `upgrade_ct_init` | `ct init` exits 0 when run over an existing install |
-| `upgrade_credentials_preserved` | existing `ANTHROPIC_API_KEY` in `~/.cistern/env` is not overwritten |
+| `upgrade_credentials_preserved` | existing `GH_TOKEN` in `~/.cistern/env` is not overwritten |
 | `upgrade_service_active` | `cistern-castellarius.service` reaches `active (running)` state after upgrade |
 | `upgrade_ct_doctor_passes` | `ct doctor` exits 0 with no errors after upgrade |
 
@@ -168,7 +167,7 @@ Preconditions: `~/.cistern` is pre-seeded with a fixture representing a prior-ve
 | Path | Source | Description |
 |------|--------|-------------|
 | `/usr/local/bin/ct` | built from `./cmd/ct` | Cistern CLI |
-| `/usr/local/bin/claude` | built from `./internal/testutil/fakeagent/` | Claude CLI stub (no real LLM) |
+| `/usr/local/bin/opencode` | built from `./internal/testutil/fakeagent/` | opencode CLI stub (no real LLM) |
 | `/usr/local/bin/start-castellarius.sh` | `start-castellarius.sh` in repo root | Wrapper for `ct castellarius start` |
 | `/usr/local/bin/run-tests.sh` | `tests/installer/run-tests.sh` | Smoke test runner |
 
@@ -176,11 +175,11 @@ Preconditions: `~/.cistern` is pre-seeded with a fixture representing a prior-ve
 
 The test image does **not** install `pass` or `gnupg`.
 
-- The `fakeagent` Claude stub handles all agent invocations without making
-  real API calls, so no `ANTHROPIC_API_KEY` is needed for the smoke tests.
+- The `fakeagent` opencode stub handles all agent invocations without making
+  real API calls, so no API key is needed for the smoke tests.
 - `ct init` and `ct doctor` do not require `pass` or GPG at any point.
 - For integration runs where a real API key is needed, pass it as an
-  environment variable: `docker run -e ANTHROPIC_API_KEY=sk-ant-... ...`
+  environment variable: `docker run -e GH_TOKEN=ghp_... ...`
 
 ## Overriding the image tag
 

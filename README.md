@@ -42,7 +42,7 @@ ct castellarius start
 
 # After rebuilding ct (go build), restart the Castellarius to pick up changes:
 # ct binary changes → restart required (long-running process uses old binary)
-# feature.yaml / CLAUDE.md / AGENTS.md / GEMINI.md / skills changes → no restart (read per spawn)
+# feature.yaml / AGENTS.md / skills changes → no restart (read per spawn)
 
 # See the overall picture
 ct status
@@ -155,7 +155,7 @@ myproject-virgo: 1 windows (review)
 myproject-marcia: 1 windows (implement)
 ```
 
-Before dispatching a droplet, the Castellarius checks the worktree for uncommitted files. If files are dirty (excluding `CONTEXT.md`, `.current-stage`, and the provider's InstructionsFile like `AGENTS.md` or `CLAUDE.md`), the droplet is recirculated with a diagnostic note rather than spawning an agent into inconsistent state.
+Before dispatching a droplet, the Castellarius checks the worktree for uncommitted files. If files are dirty (excluding `CONTEXT.md`, `.current-stage`, and the provider's InstructionsFile `AGENTS.md`), the droplet is recirculated with a diagnostic note rather than spawning an agent into inconsistent state.
 
 By convention, aqueduct names are drawn from historic Roman aqueducts (`virgo`, `marcia`, `claudia`, `traiana`, `julia`, `appia`, `anio`, `tepula`, `alexandrina`, …), but any names work.
 
@@ -168,7 +168,7 @@ cataractae/
   implementer/
     PERSONA.md                               # Who this cataractae is — role, guardrails (hand-authored, stable)
     INSTRUCTIONS.md                          # Task protocol and steps (hand-authored)
-    CLAUDE.md                                # Generated: concatenated from PERSONA.md + INSTRUCTIONS.md (filename depends on provider)
+    AGENTS.md                                # Generated: concatenated from PERSONA.md + INSTRUCTIONS.md
     PIPELINE_POSITION.md                     # Generated: describes role, predecessor, successor in the workflow
     skills/cataractae-protocol/SKILL.md      # Generated: injected universal behavioral protocol
   reviewer/
@@ -176,13 +176,13 @@ cataractae/
   ...
 ```
 
-The generated files (`CLAUDE.md`, `PIPELINE_POSITION.md`, and injected skills) are generated artifacts — edit `PERSONA.md` and `INSTRUCTIONS.md` directly and regenerate. The instructions filename matches the active provider: `CLAUDE.md` for claude, `AGENTS.md` for codex/copilot/opencode, `GEMINI.md` for gemini.
+The generated files (`AGENTS.md`, `PIPELINE_POSITION.md`, and injected skills) are generated artifacts — edit `PERSONA.md` and `INSTRUCTIONS.md` directly and regenerate. The instructions filename is always `AGENTS.md` for the opencode provider.
 
 ```bash
 ct cataractae add <name>            # Scaffold a new cataractae directory with template files; auto-generates the provider's instructions file
 ct cataractae list                  # See all cataractae definitions and how to edit them
 ct cataractae edit implementer      # Open INSTRUCTIONS.md in $EDITOR, save, instructions file regenerates
-ct cataractae generate              # Regenerate provider instructions files (CLAUDE.md, AGENTS.md, or GEMINI.md) from source files
+ct cataractae generate              # Regenerate provider instructions files (AGENTS.md) from source files
 ct cataractae status                # Show which cataractae are actively processing droplets
 ```
 
@@ -205,11 +205,11 @@ cataractae:
     context: full_codebase
 ```
 
-Valid values are any string accepted by the configured provider's CLI (e.g. `sonnet`, `opus`, `haiku`, `claude-opus-4-6` for `claude`). If `model:` is omitted, the agent uses the `provider.model:` default from `cistern.yaml`, or the CLI's own default if neither is set. `ct doctor` validates that the value is a non-empty string when present.
+Valid values are any string accepted by the configured provider's CLI. If `model:` is omitted, the agent uses the `provider.model:` default from `cistern.yaml`, or the CLI's own default if neither is set. `ct doctor` validates that the value is a non-empty string when present.
 
-### CLAUDE.md Templates
+### Instructions Templates
 
-Cataractae instructions can use Go template syntax to render content at spawn time. This allows CLAUDE.md (or PERSONA.md/INSTRUCTIONS.md that generate CLAUDE.md) to reference the current step's routing, droplet metadata, and pipeline structure. Templates are rendered before the file is sent to the agent — agents never see raw template markers.
+Cataractae instructions can use Go template syntax to render content at spawn time. This allows `AGENTS.md` (or `PERSONA.md`/`INSTRUCTIONS.md` that generate `AGENTS.md`) to reference the current step's routing, droplet metadata, and pipeline structure. Templates are rendered before the file is sent to the agent — agents never see raw template markers.
 
 **Template variables available at render time:**
 
@@ -231,7 +231,7 @@ Cataractae instructions can use Go template syntax to render content at spawn ti
 {{.Pipeline}}               Ordered slice of all step names
 ```
 
-**Example template fragment (in CLAUDE.md or INSTRUCTIONS.md):**
+**Example template fragment (in AGENTS.md or INSTRUCTIONS.md):**
 
 ```markdown
 ## Signaling Outcomes
@@ -252,7 +252,7 @@ Cataractae instructions can use Go template syntax to render content at spawn ti
 - ct droplet pool {{.Droplet.ID}} — cannot currently proceed
 ```
 
-**Static files pass through unchanged** — if a CLAUDE.md contains no template markers, it is used as-is. This maintains backward compatibility.
+**Static files pass through unchanged** — if `AGENTS.md` contains no template markers, it is used as-is. This maintains backward compatibility.
 
 **Previewing templates:**
 
@@ -265,7 +265,7 @@ ct cataractae render --step review --droplet ci-amg37    # Render with specific 
 
 ## Skills
 
-Skills are reusable knowledge packages injected into cataractae at spawn time. Providers with `--add-dir` support (`claude`) receive skills via filesystem injection; providers without it (codex, gemini, copilot, opencode) receive skill content as text in the prompt preamble. Either way, skills keep cataractae prompts concise by factoring out shared conventions.
+Skills are reusable knowledge packages injected into cataractae at spawn time. Opencode receives skill content as text in the prompt preamble. Skills keep cataractae prompts concise by factoring out shared conventions.
 
 ```bash
 ct skills install <name> <url>   Install a skill from a URL
@@ -288,7 +288,7 @@ Skills are referenced by name in your aqueduct YAML under each cataractae's `ski
 | `cistern-github` | PR creation, CI checks, squash-merge, and automatic conflict resolution for Cistern delivery | implement, review, delivery |
 | `cistern-reviewer` | Adversarial code review for Go, TypeScript/Next.js, and TypeScript/React — all findings equal, recirculate on any finding, pass only when nothing remains | review |
 
-The `cistern-git` skill encodes hard-won rules: always use `git add -A -- ':!CONTEXT.md' ':!<InstructionsFile>'` (where `<InstructionsFile>` is the provider-specific filename like `AGENTS.md`, `CLAUDE.md`, or `GEMINI.md`), always use merge-base diff (`git diff $(git merge-base HEAD origin/main)..HEAD`) instead of two-dot — two-dot includes other PRs that merged to main after branching on unrebased branches, never stash in per-droplet worktrees.
+The `cistern-git` skill encodes hard-won rules: always use `git add -A -- ':!CONTEXT.md' ':!AGENTS.md'`, always use merge-base diff (`git diff $(git merge-base HEAD origin/main)..HEAD`) instead of two-dot — two-dot includes other PRs that merged to main after branching on unrebased branches, never stash in per-droplet worktrees.
 
 ## Drought Protocols
 
@@ -302,7 +302,7 @@ drought_hooks:
     restart_if_updated: true     # Hot-reload the Castellarius when the workflow changes
 
   - name: sync-cataractae
-    action: cataractae_generate  # Regenerate CLAUDE.md files from PERSONA.md + INSTRUCTIONS.md
+    action: cataractae_generate  # Regenerate AGENTS.md files from PERSONA.md + INSTRUCTIONS.md
 
   - name: prune-worktrees
     action: worktree_prune       # Prune stale aqueduct registrations
@@ -321,7 +321,7 @@ drought_hooks:
 | Action | What it does |
 |---|---|
 | `git_sync` | Fetches `origin/main` (with 30s timeout) and deploys `aqueduct.yaml`, `cataractae/<role>/PERSONA.md`, `cataractae/<role>/INSTRUCTIONS.md`, and `skills/` to `~/.cistern/`. Resets the `_primary` clone's working tree to `origin/main` so new worktrees always inherit current files. Safe for agent worktrees (droplet ID directories) — they are never reset and retain in-progress work. Skips files that are already up to date. **Must be the first drought hook** so roles and skills are available to subsequent hooks. |
-| `cataractae_generate` | Regenerates the provider-specific instructions file (`CLAUDE.md`, `AGENTS.md`, or `GEMINI.md`) for each cataractae from its `PERSONA.md` + `INSTRUCTIONS.md`. Run after `git_sync` to pick up new source files. |
+| `cataractae_generate` | Regenerates the instructions file (`AGENTS.md`) for each cataractae from its `PERSONA.md` + `INSTRUCTIONS.md`. Run after `git_sync` to pick up new source files. |
 | `worktree_prune` | Runs `git worktree prune` on the repo's primary clone to remove stale worktree registrations. |
 | `db_vacuum` | Flushes the SQLite WAL file back into the main database using `PRAGMA wal_checkpoint(TRUNCATE)`. This reclaims space without requiring an exclusive lock, making it safe to run while agents are active. |
 | `shell` | Runs an arbitrary shell command. Use for custom maintenance. |
@@ -338,47 +338,35 @@ curl -sSL https://raw.githubusercontent.com/MichielDean/cistern/main/install.sh 
 
 Requirements:
 - Go 1.22+
-- `claude` CLI with OAuth login (`claude login`)
+- `opencode` CLI installed and configured
 - `git`, `tmux`
 - `gh` CLI installed and authenticated (`gh auth login`) — required for delivery, optional for initial setup
 
-The Castellarius automatically refreshes the Claude OAuth access token before each agent spawn when it is expired or within 5 minutes of expiry. If the refresh fails (e.g. the refresh token itself has expired), the spawn fails with a clear error directing you to run `claude` interactively to re-authenticate. `ct doctor` verifies that the `claude` CLI is authenticated; `ct doctor --fix` can create the `~/.cistern/env` credential file if missing.
+The Castellarius automatically manages agent credentials. `ct doctor` verifies that the agent CLI is available and authenticated.
 
 ## Credentials
 
-Cistern resolves credentials in the following order:
+Cistern uses the opencode CLI for agent sessions. Configure credentials based on your provider:
 
-1. **~/.claude/.credentials.json** — OAuth token managed by the Claude CLI. When you run `claude` interactively, it updates this file with a fresh access token. Castellarius automatically detects token expiry and triggers refresh via the OAuth endpoint. No manual sync required.
-
-2. **ANTHROPIC_API_KEY in ~/.cistern/env** — Fallback for API-key auth setups or non-OAuth configurations. A simple `KEY=VALUE` file, one pair per line, chmod 600.
-
-**For Claude users (recommended):** Run `claude` interactively once to authenticate. Castellarius will read your OAuth credentials from `~/.claude/.credentials.json` and keep them fresh automatically. You do not need to set `ANTHROPIC_API_KEY` in `~/.cistern/env`.
+**For opencode (default):** The opencode CLI manages its own configuration. Ensure it is installed and available on PATH:
 
 ```bash
-claude          # Authenticate once — updates ~/.claude/.credentials.json
-ct castellarius start  # Reads OAuth token; automatic refresh on expiry
+opencode                  # Configure once (follows opencode setup)
+ct castellarius start     # Starts the Castellarius
+ct status                 # Confirm running
 ```
 
-**For API key authentication:** Add `ANTHROPIC_API_KEY` to `~/.cistern/env`:
+**For API key authentication:** Add provider-specific keys to `~/.cistern/env`:
 
 ```bash
-# Plaintext (simplest)
-echo 'ANTHROPIC_API_KEY=sk-ant-...' >> ~/.cistern/env
+# If your provider requires an API key:
 echo 'GH_TOKEN=ghp_...' >> ~/.cistern/env
-chmod 600 ~/.cistern/env
-
-# From pass
-echo "ANTHROPIC_API_KEY=$(pass show anthropic/api-key)" >> ~/.cistern/env
-chmod 600 ~/.cistern/env
-
-# From 1Password CLI
-echo "ANTHROPIC_API_KEY=$(op read 'op://Personal/Anthropic/api-key')" >> ~/.cistern/env
 chmod 600 ~/.cistern/env
 ```
 
 `ct init` creates `~/.cistern/env` automatically with the correct permissions (600). The file is added to `~/.cistern/.gitignore` so it is never accidentally committed.
 
-`ct doctor` verifies that the `claude` CLI is authenticated (via `claude auth status`) and checks that `~/.cistern/env` exists with required credential variables. `ct doctor --fix` can create and populate `~/.cistern/env` for missing credentials.
+`ct doctor` verifies that the agent CLI is available and checks that `~/.cistern/env` exists with required credential variables. `ct doctor --fix` can create and populate `~/.cistern/env` for missing credentials.
 
 ## Configuration
 
@@ -465,27 +453,23 @@ See `cistern.yaml` in this repo for all options.
 
 ## Provider Configuration
 
-Cistern supports multiple agent CLIs through a provider preset system. Configure the provider in `~/.cistern/cistern.yaml` using the top-level `provider:` block or on a per-repo basis.
+Cistern uses the opencode agent CLI as its default and only provider. Configure the provider in `~/.cistern/cistern.yaml` using the top-level `provider:` block or on a per-repo basis.
 
-**Built-in presets:**
+**Built-in preset:**
 
 | Name | CLI | Env variable required | Instructions file |
 |---|---|---|---|
-| `claude` *(default)* | `claude` | `ANTHROPIC_API_KEY` | `CLAUDE.md` |
-| `codex` | `codex` | `OPENAI_API_KEY` | `AGENTS.md` |
-| `gemini` | `gemini` | `GEMINI_API_KEY` | `GEMINI.md` |
-| `copilot` | `copilot` | `GH_TOKEN` | `AGENTS.md` |
-| `opencode` | `opencode` | — | `AGENTS.md` |
+| `opencode` *(default)* | `opencode` | — | `AGENTS.md` |
 
 **Top-level provider (applies to all repos):**
 
 ```yaml
 provider:
-  name: claude          # built-in preset name, or 'custom'
-  model: opus           # default model passed via the preset's model flag
-  command: ""           # override the executable (e.g. a wrapper script)
-  args: []              # extra args appended to the preset's fixed args
-  env: {}               # extra env vars injected into the agent process
+  name: opencode          # built-in preset name, or 'custom'
+  model: ""               # default model passed to opencode (empty = opencode default)
+  command: ""              # override the executable (e.g. a wrapper script)
+  args: []                # extra args appended to the preset's fixed args
+  env: {}                 # extra env vars injected into the agent process
 ```
 
 **Per-repo override (overrides the top-level for that repo only):**
@@ -499,13 +483,13 @@ repos:
     names:
       - virgo
     provider:
-      name: gemini      # this repo uses gemini instead of claude
-      model: gemini-2.0-flash
+      name: opencode      # this repo uses opencode (same as default, shown for illustration)
+      model: ""             # uses opencode's default model
 ```
 
 **Resolution order:** built-in preset defaults → top-level `provider:` overrides → repo-level `provider:` overrides. When a repo specifies a different `name:` than the top-level, top-level field overrides are not applied — only the repo-level overrides take effect.
 
-If no `provider:` block is present, the `claude` preset is used. Existing configs work unchanged.
+If no `provider:` block is present, the `opencode` preset is used. Existing configs work unchanged.
 
 The configured provider is also used for **filtration** (`ct droplet add --filter`). There is no separate API key or config for filtration — the same preset, binary, and env var requirements apply to both cataractae sessions and the filtration pass.
 
@@ -561,7 +545,7 @@ When a droplet is imported from Jira, the provider fetches the issue by key (e.g
 
 ## Docker
 
-Cistern ships a multi-stage Dockerfile. The image includes `tmux`, `git`, `gh`, and both `ct` and `aqueduct` binaries.
+Cistern ships a multi-stage Dockerfile. The image includes `tmux`, `git`, `gh`, `opencode`, and both `ct` and `aqueduct` binaries.
 
 ```bash
 docker build -t cistern .
@@ -912,7 +896,7 @@ ct cataractae add <name>             Scaffold a new cataractae directory with PE
 ct cataractae list                   See all cataractae definitions
 ct cataractae status                 Show which cataractae are active and what they're processing
 ct cataractae edit <cataractae>       Edit cataractae definition in $EDITOR
-ct cataractae generate               Regenerate provider instructions files (CLAUDE.md/AGENTS.md/GEMINI.md) from source files
+ct cataractae generate               Regenerate provider instructions files (AGENTS.md) from source files
 ct cataractae render --step <name>   Preview rendered template for a step with sample droplet data
 ct cataractae render --step <name> --droplet <id>  Preview with specific droplet context
 

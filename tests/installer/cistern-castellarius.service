@@ -9,7 +9,7 @@
 #
 # EnvironmentFile loads credentials from ~/.cistern/env when present.
 # The leading '-' makes the file optional — start-castellarius.sh validates
-# that ANTHROPIC_API_KEY is actually set and emits actionable errors when absent.
+# that any required credentials are actually set and emits actionable errors when absent.
 
 [Unit]
 Description=Cistern Castellarius — installer integration test

@@ -108,7 +108,6 @@ Requires a TTY — run via tmux. Example wrapper pattern:
 ```bash
 cat > /tmp/add-droplet.sh << 'EOF'
 #!/bin/bash
-export ANTHROPIC_API_KEY=$(cat ~/.cistern/env | grep ANTHROPIC_API_KEY | cut -d= -f2)
 export PATH="$HOME/go/bin:$HOME/.local/bin:$PATH"
 ct droplet add --repo cistern --filter --title "My idea" --description "Rough description here"
 EOF
@@ -289,13 +288,13 @@ ct cataractae render --step <name> [--droplet <id>]  # Preview rendered template
 ```
 
 **`ct cataractae generate`** generates configuration files for all cataractae defined in the workflow. For each step, it creates or updates:
-- `CLAUDE.md` (or `AGENTS.md`, `GEMINI.md` depending on the configured provider) — the rendered instructions template for the agent
+- `CLAUDE.md` (or `AGENTS.md` depending on the configured provider) — the rendered instructions template for the agent
 - `PIPELINE_POSITION.md` — documents the step's role, predecessor, and successor in the workflow
 - `skills/cataractae-protocol/SKILL.md` — injects the universal behavioral protocol skill (copied from the installed skill)
 
 Run this command after modifying `PERSONA.md`, `INSTRUCTIONS.md`, or the workflow configuration. Missing configurations are skipped gracefully.
 
-**`ct cataractae render`** previews the rendered CLAUDE.md template for a given step, substituting all template variables (step metadata, droplet info, etc.). Useful for authoring and debugging pipeline stage configurations.
+**`ct cataractae render`** previews the rendered instructions template for a given step, substituting all template variables (step metadata, droplet info, etc.). Useful for authoring and debugging pipeline stage configurations.
 Without `--droplet`, uses placeholder values so you can inspect the template structure without a real droplet.
 
 ## Aqueducts
@@ -525,13 +524,11 @@ Verifies your Cistern installation is functional. Runs several categories of che
 Lists every skill referenced by any aqueduct across all configured repos and reports whether each is installed at `~/.cistern/skills/<name>/`. Shows a table with skill name, install status (✓ installed / ✗ missing), and which cataractae use each skill. Replaces the normal doctor check suite when set.
 
 **Credentials & Auth:**
-- Claude OAuth token (auto-refresh via `--fix` if expired)
-- API key fallback (`ANTHROPIC_API_KEY` in `~/.cistern/env`)
-- Provider binary availability for configured providers
+- Provider credentials and authentication status
 - Required env vars for each provider in `~/.cistern/env`
 
 **Configuration:**
-- Agent instruction files (`CLAUDE.md`, `AGENTS.md`, etc.) for each role in workflow
+- Agent instruction files (`AGENTS.md`) for each role in workflow
 - Skills installed at `~/.cistern/skills/<name>/`
 - Aqueduct YAML validity and configuration consistency
 

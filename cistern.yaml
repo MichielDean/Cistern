@@ -66,7 +66,7 @@ drought_hooks:
     restart_if_updated: true    # Exit cleanly after sync so supervisor restarts with new workflow
 
   - name: sync-cataractae
-    action: cataractae_generate # Regenerate CLAUDE.md files from updated workflow YAML
+    action: cataractae_generate # Regenerate instruction files from updated workflow YAML
 
   - name: prune-worktrees
     action: worktree_prune      # Prune stale aqueduct registrations

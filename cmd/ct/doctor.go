@@ -878,7 +878,7 @@ func checkCisternEnvHasKey(envPath, key string) error {
 }
 
 // cisternEnvStub is the default content written to a new ~/.cistern/env file.
-const cisternEnvStub = "# Cistern credentials — add your provider API keys here\n# OPENAI_API_KEY=sk-...\n# GEMINI_API_KEY=...\n# GH_TOKEN=ghp_...\n"
+const cisternEnvStub = "# Cistern credentials — add your provider API keys here\n# GH_TOKEN=ghp_...\n"
 
 // fixCisternEnvFile creates envPath with mode 0o600 if it does not exist.
 // New files are populated with a commented-out stub.

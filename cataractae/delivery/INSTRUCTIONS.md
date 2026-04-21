@@ -191,4 +191,4 @@ ct droplet pool $DROPLET_ID --notes "Cannot merge: <exact reason> — $PR_URL"
 - Build + test must pass before every push
 - Fix CI, conflicts, and review comments yourself — recirculate only after 2 failed fix attempts
 - Recirculate only for code-level failures — pool for infrastructure failures
-- Never commit the provider's InstructionsFile (AGENTS.md for opencode/codex, CLAUDE.md for claude, GEMINI.md for gemini) — it is overwritten by the Castellarius and must be excluded from all git add operations alongside CONTEXT.md
+- Never commit the provider's InstructionsFile (AGENTS.md) — it is overwritten by the Castellarius and must be excluded from all git add operations alongside CONTEXT.md

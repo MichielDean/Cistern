@@ -56,10 +56,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # ct CLI — the main Cistern binary.
 COPY --chmod=0755 --from=builder /out/ct /usr/local/bin/ct
 
-# fakeagent installed as "claude" — acts as the Claude CLI stub.
-# Placed at /usr/local/bin/claude so exec.LookPath("claude") resolves it,
-# matching the path npm installs the real Claude Code CLI.
-COPY --chmod=0755 --from=builder /out/fakeagent /usr/local/bin/claude
+# fakeagent installed as "opencode" — acts as the opencode CLI stub.
+# Placed at /usr/local/bin/opencode so exec.LookPath("opencode") resolves it.
+COPY --chmod=0755 --from=builder /out/fakeagent /usr/local/bin/opencode
 
 # ── Installer scripts ─────────────────────────────────────────────────────────
 

@@ -23,23 +23,22 @@ ct init                     # Create ~/.cistern/ with default config, credential
 
 Set up credentials (choose one):
 
-**Option A: OAuth (Recommended for Claude users)**
+**Option A: Default (opencode)**
 
-Run the Claude CLI once to authenticate — it creates `~/.claude/.credentials.json` with your OAuth token. Castellarius reads this automatically and refreshes on expiry:
+Opencode uses local configuration and does not require an API key environment variable. Simply ensure the `opencode` CLI is installed and available on PATH:
 
 ```bash
-claude                      # Authenticate once
-ct castellarius start       # Reads OAuth token automatically
-ct status                   # Confirm running
+opencode                  # Configure once (follows opencode setup)
+ct castellarius start     # Starts the Castellarius
+ct status                 # Confirm running
 ```
 
 **Option B: API Key Authentication**
 
-Add `ANTHROPIC_API_KEY` to `~/.cistern/env`:
+Add provider API keys to `~/.cistern/env` as needed:
 
 ```bash
-echo 'ANTHROPIC_API_KEY=sk-ant-...' >> ~/.cistern/env
-echo 'GH_TOKEN=ghp_...' >> ~/.cistern/env
+echo 'GH_TOKEN=ghp_...' >> ~/.cistern/env   # if using a provider that requires it
 chmod 600 ~/.cistern/env
 ct castellarius start       # Reads from ~/.cistern/env
 ct status                   # Confirm running

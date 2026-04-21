@@ -213,7 +213,7 @@ or, if no heartbeat has been emitted:
 ### Droplet Repeatedly Failing with "backing off" Messages
 
 If you see logs like `droplet=<id> backing off <seconds>s after <N> consecutive quick exits`, the session is exiting very quickly (≤30 seconds by default). This usually indicates:
-- Missing or expired API credentials (ANTHROPIC_API_KEY, etc.)
+- Missing or expired provider credentials
 - Agent binary not found or permission denied
 - Provider-side rejection (rate limit, invalid token, service unavailable)
 
@@ -403,31 +403,27 @@ If a drought hook goroutine gets stuck and doesn't complete:
 
 Castellarius automatically detects expired or near-expiry credentials and handles them gracefully.
 
-**Claude OAuth token (auto-refresh):** If Castellarius detects that the OAuth token in `~/.claude/.credentials.json` is expired or expiring within 5 minutes, it automatically attempts to refresh it using the stored refresh token. Most expiries are handled transparently without manual intervention.
+**Opencode credentials:** If `ct doctor` reports agent CLI auth issues, verify your credentials and environment variables are set correctly.
 
-**Manual token refresh:** If you need to force a refresh (e.g., after an OAuth endpoint issue), run:
+**Manual credential refresh:** If you need to re-authenticate:
 
 ```bash
-ct doctor --fix     # Automatically refreshes expired Claude OAuth tokens
+ct doctor --fix     # Automatically refreshes credentials and generates missing config
 ```
 
-**Credential check:** `ct doctor` verifies both OAuth and API-key credentials:
+**Credential check:** `ct doctor` verifies credentials:
 
 ```bash
 ct doctor
-# When using claude provider:
-# ✓ Claude OAuth token: fresh (expires in 23h45m)
-# ✓ env: ANTHROPIC_API_KEY: (fallback available)
-
-# When using other providers:
-# ✗ env: OPENAI_API_KEY: not set (codex)
-# ✓ env: GEMINI_API_KEY: set
+# When using opencode provider:
+# ✓ agent CLI: opencode
+# ✓ env: (no provider-specific env vars required for opencode)
 ```
 
 **For API key authentication:** Update the respective API key in `~/.cistern/env` and restart the Castellarius:
 
 ```bash
-# Edit the ANTHROPIC_API_KEY (or other provider key) line:
+# Edit the relevant provider key line:
 nano ~/.cistern/env
 # Then restart:
 ct castellarius restart

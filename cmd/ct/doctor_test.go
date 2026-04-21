@@ -1927,8 +1927,8 @@ func TestFixCisternEnvFile_NewFile_ContainsCommentStub(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read env: %v", err)
 	}
-	if !strings.Contains(string(data), "OPENAI_API_KEY") {
-		t.Error("new env file does not contain OPENAI_API_KEY comment stub")
+	if !strings.Contains(string(data), "GH_TOKEN") {
+		t.Error("new env file does not contain GH_TOKEN comment stub")
 	}
 	if !strings.Contains(string(data), "#") {
 		t.Error("new env file does not contain comment lines")

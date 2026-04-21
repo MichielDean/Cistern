@@ -68,18 +68,18 @@ check_go() {
 check_deps() {
   local missing=()
 
-  # tmux is required to spawn Claude Code sessions.
+  # tmux is required to spawn agent sessions.
   if ! command -v tmux &>/dev/null; then
     missing+=("tmux")
   else
     info "tmux $(tmux -V | awk '{print $2}') ✓"
   fi
 
-  # claude CLI is required to run AI steps.
-  if ! command -v claude &>/dev/null; then
-    missing+=("claude (Claude Code CLI)")
+  # opencode CLI is required to run AI steps.
+  if ! command -v opencode &>/dev/null; then
+    missing+=("opencode")
   else
-    info "claude CLI ✓"
+    info "opencode CLI ✓"
   fi
 
   # git is required for sandbox management.
@@ -99,8 +99,8 @@ check_deps() {
     if [[ " ${missing[*]} " == *"tmux"* ]]; then
       printf "  Install tmux:  apt install tmux  /  brew install tmux\n" >&2
     fi
-    if [[ " ${missing[*]} " == *"claude"* ]]; then
-      printf "  Install Claude Code CLI:  npm install -g @anthropic-ai/claude-code\n" >&2
+    if [[ " ${missing[*]} " == *"opencode"* ]]; then
+      printf "  Install opencode:  go install github.com/opencode-ai/opencode@latest\n" >&2
     fi
     printf "\n"
     fatal "Install missing dependencies and re-run."

@@ -71,11 +71,11 @@ else
     fail "ct_binary_version" "${ct_out}"
 fi
 
-# ── Test 3: fakeagent (claude stub) responds to --print invocation ─────────────
-# Given: fakeagent installed as /usr/local/bin/claude
-# When:  invoking `claude --print -p "hello"` (non-interactive mode)
+# ── Test 3: fakeagent (opencode stub) responds to invocation ───────────
+# Given: fakeagent installed as /usr/local/bin/opencode
+# When:  invoking `opencode` (non-interactive mode)
 # Then:  exits 0 and outputs valid JSON proposal array
-if fa_out=$(claude --print -p "hello" 2>&1); then
+if fa_out=$(opencode 2>&1); then
     if echo "${fa_out}" | grep -q '"title":"mock proposal"'; then
         pass "fakeagent_print_output"
     else
@@ -85,14 +85,14 @@ else
     fail "fakeagent_print_output" "non-zero exit: ${fa_out}"
 fi
 
-# ── Test 4: claude resolves via exec.LookPath (on PATH) ───────────────────────
-# Given: fakeagent at /usr/local/bin/claude (on PATH)
-# When:  resolving the claude command
-# Then:  resolves to /usr/local/bin/claude
-if claude_path=$(command -v claude 2>&1); then
-    pass "claude_on_path"
+# ── Test 4: opencode resolves via exec.LookPath (on PATH) ─────────────────
+# Given: fakeagent at /usr/local/bin/opencode (on PATH)
+# When:  resolving the opencode command
+# Then:  resolves to /usr/local/bin/opencode
+if opencode_path=$(command -v opencode 2>&1); then
+    pass "opencode_on_path"
 else
-    fail "claude_on_path" "claude not found on PATH: ${claude_path}"
+    fail "opencode_on_path" "opencode not found on PATH: ${opencode_path}"
 fi
 
 # ── Test 5: pass password manager is NOT installed ────────────────────────────
@@ -121,13 +121,13 @@ else
 fi
 
 # ── Test 7: ct doctor recognises agent CLI ────────────────────────────────────
-# Given: fakeagent is on PATH as "claude" and ct init has run
+# Given: fakeagent is on PATH as "opencode" and ct init has run
 # When:  running `ct doctor`
-# Then:  doctor output contains "✓ agent CLI: claude" (success prefix only)
+# Then:  doctor output contains "✓ agent CLI: opencode" (success prefix only)
 # Note:  doctor exits non-zero when other checks fail (e.g. gh not authenticated);
 #        that is expected. We only care that the agent CLI check itself passes.
 doctor_out=$(ct doctor 2>&1 || true)
-if echo "${doctor_out}" | grep -q '✓.*agent CLI: claude'; then
+if echo "${doctor_out}" | grep -q '✓.*agent CLI: opencode'; then
     pass "ct_doctor_agent_cli_found"
 else
     fail "ct_doctor_agent_cli_found" "doctor did not report agent CLI found: ${doctor_out}"
@@ -153,7 +153,6 @@ _reset_scenario_state() {
     systemctl stop cistern-castellarius.service 2>/dev/null || true
     systemctl reset-failed cistern-castellarius.service 2>/dev/null || true
     rm -rf "${HOME}/.cistern"
-    rm -rf "${HOME}/.claude"
 }
 
 # _install_skill_stubs — create stub SKILL.md files for skills referenced in
@@ -229,7 +228,7 @@ else
         sleep 1
         pass "fresh_install_service_active"
 
-        # Then: ct doctor exits 0 — no ANTHROPIC_API_KEY required for claude provider.
+        # Then: ct doctor exits 0 — opencode is the default provider and requires no env vars.
         # OAuth token check skips silently when no credentials file is present.
         _doctor_out=$(ct doctor 2>&1) && _doctor_exit=0 || _doctor_exit=$?
         if [ "${_doctor_exit}" -eq 0 ]; then
@@ -245,7 +244,7 @@ else
 fi
 
 # ── Scenario 2: No OAuth credentials — service starts cleanly ─────────────────
-# Given: ct init has succeeded; no OAuth credentials file; no ANTHROPIC_API_KEY
+# Given: ct init has succeeded; no provider-specific env vars
 # When:  the castellarius service is started; ct doctor is run
 # Then:  service starts successfully — start-castellarius.sh no longer checks
 #        credentials at startup; ct doctor passes because the OAuth token check
@@ -274,61 +273,52 @@ else
             "service did not reach active state (state=${_svc_state}): ${_log}"
     fi
 
-    # Then: ct doctor exits 0 — OAuth check skips silently when no credentials file.
+    # Then: ct doctor exits 0 — no credential check fails.
     _doctor_out=$(ct doctor 2>&1) && _doctor_exit=0 || _doctor_exit=$?
     if [ "${_doctor_exit}" -eq 0 ]; then
         pass "no_creds_ct_doctor_passes"
     else
         fail "no_creds_ct_doctor_passes" \
-            "ct doctor should pass when no OAuth credentials file is present: ${_doctor_out}"
+            "ct doctor should pass when no credentials are required: ${_doctor_out}"
     fi
 fi
 
-# ── Scenario 3: Ignore stale OAuth credentials ───────────────────────────────
-# Given: ~/.claude/.credentials.json has stale/expired OAuth credentials
-# When:  the service starts; ct doctor runs
-# Then:  service starts successfully — credentials are no longer checked;
-#        ct doctor exits 0 — the new "claude CLI authenticated" check
-#        (analogous to gh auth status) is used instead of OAuth checks
+# ── Scenario 3: No API key — service still operational ─────────────────────────
+# Given: ct init has succeeded; no API key env vars are set
+# When:  the castellarius service is started; ct doctor runs
+# Then:  service starts successfully — opencode does not require API key at startup;
+#        ct doctor passes because the agent CLI is available and no credential check fails
 echo ""
-echo "=== Scenario: Ignore stale OAuth credentials ==="
+echo "=== Scenario: No API key — service operational ==="
 
 _reset_scenario_state
 
 if ! ct init >/dev/null; then
-    fail "expired_token_ct_init" "ct init failed"
+    fail "no_api_key_ct_init" "ct init failed"
 else
     _install_skill_stubs
 
-    # Given: stale OAuth credentials (expiresAt=1000ms — 1970-01-01, well in the past).
-    # These are no longer checked by ct doctor.
-    mkdir -p "${HOME}/.claude"
-    cat > "${HOME}/.claude/.credentials.json" <<'CREDS_EOF'
-{"claudeAiOauth":{"accessToken":"expired-token","refreshToken":"refresh-token","expiresAt":1000}}
-CREDS_EOF
+    # Given: no ~/.cistern/env credentials and no API key env vars (already absent).
 
     _start_castellarius_with_retry
 
     # Then: service reaches active state — no credential pre-check at startup.
     if _wait_service_state cistern-castellarius.service active 15; then
-        pass "expired_token_service_active"
+        pass "no_api_key_service_active"
     else
         _svc_state=$(systemctl is-active cistern-castellarius.service 2>/dev/null || true)
         _log=$(journalctl -u cistern-castellarius.service -n 10 --no-pager 2>/dev/null || true)
-        fail "expired_token_service_active" \
+        fail "no_api_key_service_active" \
             "service did not reach active state (state=${_svc_state}): ${_log}"
     fi
 
-    # Then: ct doctor exits 0 — stale OAuth credentials are ignored.
-    # The "claude CLI authenticated" check (using 'claude auth status') is used instead.
-    if ct doctor >/dev/null 2>&1; then
-        pass "expired_token_ct_doctor_surfaces_error"
-        pass "expired_token_ct_doctor_exits_nonzero"
+    # Then: ct doctor exits 0 — opencode provider requires no API key.
+    _doctor_out=$(ct doctor 2>&1) && _doctor_exit=0 || _doctor_exit=$?
+    if [ "${_doctor_exit}" -eq 0 ]; then
+        pass "no_api_key_ct_doctor_passes"
     else
-        fail "expired_token_ct_doctor_surfaces_error" \
-            "ct doctor should pass with stale OAuth credentials (now ignored)"
-        fail "expired_token_ct_doctor_exits_nonzero" \
-            "ct doctor should exit 0 — OAuth checks are replaced"
+        fail "no_api_key_ct_doctor_passes" \
+            "ct doctor should pass when no API key is required: ${_doctor_out}"
     fi
 fi
 
@@ -370,7 +360,7 @@ legacy_agent_timeout: 300
 STALE_CFG_EOF
 
 # Given: existing credentials that must survive the upgrade.
-echo "ANTHROPIC_API_KEY=sk-ant-test-upgrade-preserved" > "${HOME}/.cistern/env"
+echo "GH_TOKEN=ghp-test-upgrade-preserved" > "${HOME}/.cistern/env"
 
 # When: run ct init again (simulates upgrading cistern).
 # Since cistern.yaml already exists, writeFileIfAbsent skips it (no overwrite).
@@ -379,7 +369,7 @@ if ! ct init >/dev/null; then
     fail "upgrade_ct_init" "ct init failed during upgrade"
 else
     # Then: credentials must not have been overwritten.
-    if grep -q "ANTHROPIC_API_KEY=sk-ant-test-upgrade-preserved" \
+    if grep -q "GH_TOKEN=ghp-test-upgrade-preserved" \
             "${HOME}/.cistern/env" 2>/dev/null; then
         pass "upgrade_credentials_preserved"
     else
@@ -396,7 +386,7 @@ else
         sleep 1
         pass "upgrade_service_active"
 
-        # Then: ct doctor passes — no ANTHROPIC_API_KEY required for claude provider.
+        # Then: ct doctor passes — opencode provider requires no env vars by default.
         _doctor_out=$(ct doctor 2>&1) && _doctor_exit=0 || _doctor_exit=$?
         if [ "${_doctor_exit}" -eq 0 ]; then
             pass "upgrade_ct_doctor_passes"
