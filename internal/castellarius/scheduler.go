@@ -1740,8 +1740,11 @@ func WriteContext(dir string, notes []cistern.CataractaeNote) error {
 
 // parkWorktree detaches HEAD in a worker's sandbox so the feature branch is
 // ensureCataractaeIntegrity checks each agent cataractae's AGENTS.md for the
-// sentinel string that proves it was generated from the YAML (not corrupted).
-// If any file is missing or lacks the sentinel, it is regenerated automatically.
+// pipeline-generated sentinel comment. This verifies the file was produced by
+// GenerateCataractaeFiles (not corrupted, empty, or a manual edit that removed
+// the header). Note: this checks generation provenance, not whether the agent's
+// signaling instructions are complete — signaling is verified by the injected
+// skill file (cistern-signaling) and should be checked separately.
 // This runs at Castellarius startup so corrupted prompts never silently persist.
 func (s *Castellarius) ensureCataractaeIntegrity() {
 	home, err := os.UserHomeDir()
@@ -1749,7 +1752,11 @@ func (s *Castellarius) ensureCataractaeIntegrity() {
 		return
 	}
 	cataractaeDir := filepath.Join(home, ".cistern", "cataractae")
-	sentinel := "ct droplet pass" // present in every correctly-generated AGENTS.md
+	// Must match the sentinel embedded in the generatedHeader constant in
+	// aqueduct/parse.go. Using the comment form rather than the bare command
+	// avoids false positives from prose mentions and prevents LLM agents from
+	// interpreting the comment as an instruction.
+	sentinel := "cistern-integrity-sentinel: ct droplet pass"
 
 	needsRegen := false
 	// Collect all unique identities across all repo workflows.

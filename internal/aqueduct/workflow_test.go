@@ -1138,3 +1138,12 @@ func TestGenerateCataractaeFiles_SkipsProtocolSkill_WhenSourceMissing(t *testing
 		t.Error("skills directory should not be created when source skill is missing")
 	}
 }
+
+func TestGeneratedHeaderContainsIntegritySentinel(t *testing.T) {
+	if !strings.Contains(generatedHeader, "cistern-integrity-sentinel") {
+		t.Error("generatedHeader must contain the cistern-integrity-sentinel for ensureCataractaeIntegrity")
+	}
+	if !strings.Contains(generatedHeader, "ct droplet pass") {
+		t.Error("generatedHeader must contain 'ct droplet pass' within the sentinel comment")
+	}
+}

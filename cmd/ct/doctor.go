@@ -417,7 +417,8 @@ func inferLLMProviderFromPreset(presetName string) string {
 }
 
 // checkInstructionsFileIntegrity verifies that an instructions file exists and
-// contains the required sentinel string "ct droplet pass".
+// contains the required sentinel comment "cistern-integrity-sentinel: ct droplet pass"
+// embedded by GenerateCataractaeFiles.
 func checkInstructionsFileIntegrity(path string) error {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -426,7 +427,7 @@ func checkInstructionsFileIntegrity(path string) error {
 		}
 		return fmt.Errorf("unreadable (%w) — run: ct cataractae generate", err)
 	}
-	if !strings.Contains(string(data), "ct droplet pass") {
+	if !strings.Contains(string(data), "cistern-integrity-sentinel: ct droplet pass") {
 		return fmt.Errorf("corrupt (missing sentinel) — run: ct cataractae generate")
 	}
 	return nil

@@ -738,7 +738,7 @@ func TestCheckInstructionsFileIntegrity_FileMissingSentinel_ReturnsError(t *test
 func TestCheckInstructionsFileIntegrity_FileWithSentinel_ReturnsNil(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "AGENTS.md")
-	content := "# Role: Implementer\n\nct droplet pass <id> --notes \"...\"\n"
+	content := "<!-- cistern-integrity-sentinel: ct droplet pass -->\n# Role: Implementer\n\nct droplet pass <id> --notes \"...\"\n"
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		t.Fatalf("write file: %v", err)
 	}
@@ -1082,7 +1082,7 @@ func TestRunDoctorExtendedChecks_PassesWithValidSetup(t *testing.T) {
 	if err := os.MkdirAll(testerDir, 0o755); err != nil {
 		t.Fatalf("mkdir tester: %v", err)
 	}
-	agentsContent := "# Role: Tester\n\nct droplet pass <id> --notes \"...\"\n"
+	agentsContent := "<!-- cistern-integrity-sentinel: ct droplet pass -->\n# Role: Tester\n\nct droplet pass <id> --notes \"...\"\n"
 	if err := os.WriteFile(filepath.Join(testerDir, "AGENTS.md"), []byte(agentsContent), 0o644); err != nil {
 		t.Fatalf("write AGENTS.md: %v", err)
 	}
@@ -1230,7 +1230,7 @@ cataractae:
 	if err := os.MkdirAll(testerDir, 0o755); err != nil {
 		t.Fatalf("mkdir tester: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(testerDir, "AGENTS.md"), []byte("ct droplet pass"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(testerDir, "AGENTS.md"), []byte("<!-- cistern-integrity-sentinel: ct droplet pass -->"), 0o644); err != nil {
 		t.Fatalf("write AGENTS.md: %v", err)
 	}
 
@@ -1289,7 +1289,7 @@ max_cataractae: 1
 	if err := os.MkdirAll(testerDir, 0o755); err != nil {
 		t.Fatalf("mkdir tester: %v", err)
 	}
-	agentsContent := "# Role: Tester\n\nct droplet pass <id> --notes \"...\"\n"
+	agentsContent := "<!-- cistern-integrity-sentinel: ct droplet pass -->\n# Role: Tester\n\nct droplet pass <id> --notes \"...\"\n"
 	if err := os.WriteFile(filepath.Join(testerDir, "AGENTS.md"), []byte(agentsContent), 0o644); err != nil {
 		t.Fatalf("write AGENTS.md: %v", err)
 	}
@@ -1473,7 +1473,7 @@ func TestRunDoctorExtendedChecks_ProviderBinaryMissing_Fails(t *testing.T) {
 	if err := os.MkdirAll(testerDir, 0o755); err != nil {
 		t.Fatalf("mkdir tester: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(testerDir, "AGENTS.md"), []byte("ct droplet pass"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(testerDir, "AGENTS.md"), []byte("<!-- cistern-integrity-sentinel: ct droplet pass -->"), 0o644); err != nil {
 		t.Fatalf("write AGENTS.md: %v", err)
 	}
 
@@ -1540,7 +1540,7 @@ func TestRunDoctorExtendedChecks_AgentFileCorrect_Passes(t *testing.T) {
 		t.Fatalf("mkdir tester: %v", err)
 	}
 	// AGENTS.md — correct for opencode.
-	if err := os.WriteFile(filepath.Join(testerDir, "AGENTS.md"), []byte("ct droplet pass"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(testerDir, "AGENTS.md"), []byte("<!-- cistern-integrity-sentinel: ct droplet pass -->"), 0o644); err != nil {
 		t.Fatalf("write AGENTS.md: %v", err)
 	}
 
@@ -1587,7 +1587,7 @@ func TestRunDoctorExtendedChecks_LLMCustomWithoutBaseURL_Fails(t *testing.T) {
 	if err := os.MkdirAll(testerDir, 0o755); err != nil {
 		t.Fatalf("mkdir tester: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(testerDir, "AGENTS.md"), []byte("ct droplet pass"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(testerDir, "AGENTS.md"), []byte("<!-- cistern-integrity-sentinel: ct droplet pass -->"), 0o644); err != nil {
 		t.Fatalf("write AGENTS.md: %v", err)
 	}
 
@@ -1632,7 +1632,7 @@ func TestRunDoctorExtendedChecks_LLMCustomWithBaseURL_Passes(t *testing.T) {
 	if err := os.MkdirAll(testerDir, 0o755); err != nil {
 		t.Fatalf("mkdir tester: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(testerDir, "AGENTS.md"), []byte("ct droplet pass"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(testerDir, "AGENTS.md"), []byte("<!-- cistern-integrity-sentinel: ct droplet pass -->"), 0o644); err != nil {
 		t.Fatalf("write AGENTS.md: %v", err)
 	}
 
@@ -1680,7 +1680,7 @@ func TestRunDoctorExtendedChecks_ProviderLLMMismatch_Advisory_NoCrash(t *testing
 		t.Fatalf("mkdir tester: %v", err)
 	}
 	// opencode provider needs AGENTS.md.
-	if err := os.WriteFile(filepath.Join(testerDir, "AGENTS.md"), []byte("ct droplet pass"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(testerDir, "AGENTS.md"), []byte("<!-- cistern-integrity-sentinel: ct droplet pass -->"), 0o644); err != nil {
 		t.Fatalf("write AGENTS.md: %v", err)
 	}
 
