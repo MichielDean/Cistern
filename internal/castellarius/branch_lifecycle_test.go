@@ -9,6 +9,9 @@ import (
 	"strings"
 	"sync"
 	"testing"
+
+	"github.com/MichielDean/cistern/internal/aqueduct"
+	"github.com/MichielDean/cistern/internal/cistern"
 )
 
 // --- git helpers for branch lifecycle tests ---
@@ -426,4 +429,274 @@ func TestPrepareDropletWorktree_ConcurrentSameRepo(t *testing.T) {
 			t.Errorf("goroutine %d: worktree path does not exist: %v", i, statErr)
 		}
 	}
+}
+
+// --- purgeOrphanedWorktrees tests ---
+
+// worktreeExists reports whether the named directory exists under the repo sandbox.
+func worktreeExists(t *testing.T, sandboxRoot, repoName, dropletID string) bool {
+	t.Helper()
+	_, err := os.Stat(filepath.Join(sandboxRoot, repoName, dropletID))
+	return err == nil
+}
+
+// TestPurgeOrphanedWorktrees_RemovesDeliveredDropletWorktree verifies that
+// purgeOrphanedWorktrees removes a worktree whose droplet is in "delivered"
+// status, while leaving active droplet worktrees untouched.
+func TestPurgeOrphanedWorktrees_RemovesDeliveredDropletWorktree(t *testing.T) {
+	primaryDir := makeBareAndClone(t)
+	sandboxRoot := t.TempDir()
+	repoName := "test-repo"
+	prefix := "test-"
+
+	if err := os.MkdirAll(filepath.Join(sandboxRoot, repoName), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	dstPrimary := filepath.Join(sandboxRoot, repoName, "_primary")
+	branchMustRun(t, branchGitCmd(".", "clone", primaryDir, dstPrimary))
+	branchMustRun(t, branchGitCmd(dstPrimary, "config", "user.email", "test@test.com"))
+	branchMustRun(t, branchGitCmd(dstPrimary, "config", "user.name", "Test"))
+
+	_, err := prepareDropletWorktree(dstPrimary, sandboxRoot, repoName, prefix+"delivered")
+	if err != nil {
+		t.Fatalf("prepare worktree for delivered droplet: %v", err)
+	}
+	_, err = prepareDropletWorktree(dstPrimary, sandboxRoot, repoName, prefix+"active")
+	if err != nil {
+		t.Fatalf("prepare worktree for active droplet: %v", err)
+	}
+
+	if !worktreeExists(t, sandboxRoot, repoName, prefix+"delivered") {
+		t.Fatal("delivered worktree should exist before purge")
+	}
+	if !worktreeExists(t, sandboxRoot, repoName, prefix+"active") {
+		t.Fatal("active worktree should exist before purge")
+	}
+
+	client := newMockClient()
+	client.items[prefix+"delivered"] = &cistern.Droplet{ID: prefix + "delivered", Status: "delivered"}
+	client.items[prefix+"active"] = &cistern.Droplet{ID: prefix + "active", Status: "in_progress"}
+
+	s := &Castellarius{
+		config: aqueduct.AqueductConfig{
+			Repos: []aqueduct.RepoConfig{
+				{Name: repoName, Prefix: prefix, Names: []string{"alpha", "beta"}},
+			},
+		},
+		clients:     map[string]CisternClient{repoName: client},
+		pools:       map[string]*AqueductPool{repoName: NewAqueductPool(repoName, []string{"alpha", "beta"})},
+		sandboxRoot: sandboxRoot,
+		logger:      newBranchLifecycleLogger(io.Discard),
+	}
+
+	s.purgeOrphanedWorktrees()
+
+	if worktreeExists(t, sandboxRoot, repoName, prefix+"delivered") {
+		t.Error("delivered droplet worktree should have been removed")
+	}
+	if !worktreeExists(t, sandboxRoot, repoName, prefix+"active") {
+		t.Error("active droplet worktree should NOT have been removed")
+	}
+}
+
+// TestPurgeOrphanedWorktrees_RemovesDeletedDropletWorktree verifies that
+// purgeOrphanedWorktrees removes a worktree whose droplet has been purged
+// from the database entirely (Get returns not-found error).
+func TestPurgeOrphanedWorktrees_RemovesDeletedDropletWorktree(t *testing.T) {
+	primaryDir := makeBareAndClone(t)
+	sandboxRoot := t.TempDir()
+	repoName := "test-repo"
+	prefix := "test-"
+
+	if err := os.MkdirAll(filepath.Join(sandboxRoot, repoName), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	dstPrimary := filepath.Join(sandboxRoot, repoName, "_primary")
+	branchMustRun(t, branchGitCmd(".", "clone", primaryDir, dstPrimary))
+	branchMustRun(t, branchGitCmd(dstPrimary, "config", "user.email", "test@test.com"))
+	branchMustRun(t, branchGitCmd(dstPrimary, "config", "user.name", "Test"))
+
+	_, err := prepareDropletWorktree(dstPrimary, sandboxRoot, repoName, prefix+"purged")
+	if err != nil {
+		t.Fatalf("prepare worktree: %v", err)
+	}
+
+	if !worktreeExists(t, sandboxRoot, repoName, prefix+"purged") {
+		t.Fatal("worktree should exist before purge")
+	}
+
+	client := newMockClient()
+
+	s := &Castellarius{
+		config: aqueduct.AqueductConfig{
+			Repos: []aqueduct.RepoConfig{
+				{Name: repoName, Prefix: prefix, Names: []string{"alpha", "beta"}},
+			},
+		},
+		clients:     map[string]CisternClient{repoName: client},
+		pools:       map[string]*AqueductPool{repoName: NewAqueductPool(repoName, []string{"alpha", "beta"})},
+		sandboxRoot: sandboxRoot,
+		logger:      newBranchLifecycleLogger(io.Discard),
+	}
+
+	s.purgeOrphanedWorktrees()
+
+	if worktreeExists(t, sandboxRoot, repoName, prefix+"purged") {
+		t.Error("purged droplet worktree should have been removed")
+	}
+	if branchExists(t, dstPrimary, "feat/"+prefix+"purged") {
+		t.Error("feature branch for purged droplet should have been deleted")
+	}
+}
+
+// TestPurgeOrphanedWorktrees_SkipsAqueductWorkerDirs verifies that directories
+// matching aqueduct worker names (alpha, beta, etc.) are never removed even
+// though they don't match the droplet prefix.
+func TestPurgeOrphanedWorktrees_SkipsAqueductWorkerDirs(t *testing.T) {
+	primaryDir := makeBareAndClone(t)
+	sandboxRoot := t.TempDir()
+	repoName := "test-repo"
+	prefix := "test-"
+
+	if err := os.MkdirAll(filepath.Join(sandboxRoot, repoName), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	dstPrimary := filepath.Join(sandboxRoot, repoName, "_primary")
+	branchMustRun(t, branchGitCmd(".", "clone", primaryDir, dstPrimary))
+	branchMustRun(t, branchGitCmd(dstPrimary, "config", "user.email", "test@test.com"))
+	branchMustRun(t, branchGitCmd(dstPrimary, "config", "user.name", "Test"))
+
+	branchMustRun(t, branchGitCmd(dstPrimary, "worktree", "add", filepath.Join(sandboxRoot, repoName, "alpha"), "HEAD"))
+	branchMustRun(t, branchGitCmd(dstPrimary, "worktree", "add", filepath.Join(sandboxRoot, repoName, "beta"), "HEAD"))
+
+	client := newMockClient()
+
+	s := &Castellarius{
+		config: aqueduct.AqueductConfig{
+			Repos: []aqueduct.RepoConfig{
+				{Name: repoName, Prefix: prefix, Names: []string{"alpha", "beta"}},
+			},
+		},
+		clients:     map[string]CisternClient{repoName: client},
+		pools:       map[string]*AqueductPool{repoName: NewAqueductPool(repoName, []string{"alpha", "beta"})},
+		sandboxRoot: sandboxRoot,
+		logger:      newBranchLifecycleLogger(io.Discard),
+	}
+
+	s.purgeOrphanedWorktrees()
+
+	if !worktreeExists(t, sandboxRoot, repoName, "alpha") {
+		t.Error("alpha aqueduct worktree should NOT be removed")
+	}
+	if !worktreeExists(t, sandboxRoot, repoName, "beta") {
+		t.Error("beta aqueduct worktree should NOT be removed")
+	}
+}
+
+// TestPurgeOrphanedWorktrees_SkipsNonPrefixDirs verifies that directories
+// that don't match the droplet prefix (e.g. random dirs) are skipped.
+func TestPurgeOrphanedWorktrees_SkipsNonPrefixDirs(t *testing.T) {
+	primaryDir := makeBareAndClone(t)
+	sandboxRoot := t.TempDir()
+	repoName := "test-repo"
+	prefix := "test-"
+
+	if err := os.MkdirAll(filepath.Join(sandboxRoot, repoName), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	dstPrimary := filepath.Join(sandboxRoot, repoName, "_primary")
+	branchMustRun(t, branchGitCmd(".", "clone", primaryDir, dstPrimary))
+	branchMustRun(t, branchGitCmd(dstPrimary, "config", "user.email", "test@test.com"))
+	branchMustRun(t, branchGitCmd(dstPrimary, "config", "user.name", "Test"))
+
+	if err := os.MkdirAll(filepath.Join(sandboxRoot, repoName, "other-dir"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	client := newMockClient()
+
+	s := &Castellarius{
+		config: aqueduct.AqueductConfig{
+			Repos: []aqueduct.RepoConfig{
+				{Name: repoName, Prefix: prefix, Names: []string{"alpha"}},
+			},
+		},
+		clients:     map[string]CisternClient{repoName: client},
+		pools:       map[string]*AqueductPool{repoName: NewAqueductPool(repoName, []string{"alpha"})},
+		sandboxRoot: sandboxRoot,
+		logger:      newBranchLifecycleLogger(io.Discard),
+	}
+
+	s.purgeOrphanedWorktrees()
+
+	if _, err := os.Stat(filepath.Join(sandboxRoot, repoName, "other-dir")); err != nil {
+		t.Error("non-prefix directory should NOT be removed")
+	}
+}
+
+// TestPurgeOrphanedWorktrees_RemovesCancelledAndPooled verifies that
+// worktrees for cancelled and pooled droplets are also removed.
+func TestPurgeOrphanedWorktrees_RemovesCancelledAndPooled(t *testing.T) {
+	primaryDir := makeBareAndClone(t)
+	sandboxRoot := t.TempDir()
+	repoName := "test-repo"
+	prefix := "test-"
+
+	if err := os.MkdirAll(filepath.Join(sandboxRoot, repoName), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	dstPrimary := filepath.Join(sandboxRoot, repoName, "_primary")
+	branchMustRun(t, branchGitCmd(".", "clone", primaryDir, dstPrimary))
+	branchMustRun(t, branchGitCmd(dstPrimary, "config", "user.email", "test@test.com"))
+	branchMustRun(t, branchGitCmd(dstPrimary, "config", "user.name", "Test"))
+
+	_, err := prepareDropletWorktree(dstPrimary, sandboxRoot, repoName, prefix+"cancelled")
+	if err != nil {
+		t.Fatalf("prepare worktree: %v", err)
+	}
+	_, err = prepareDropletWorktree(dstPrimary, sandboxRoot, repoName, prefix+"pooled")
+	if err != nil {
+		t.Fatalf("prepare worktree: %v", err)
+	}
+
+	client := newMockClient()
+	client.items[prefix+"cancelled"] = &cistern.Droplet{ID: prefix + "cancelled", Status: "cancelled"}
+	client.items[prefix+"pooled"] = &cistern.Droplet{ID: prefix + "pooled", Status: "pooled"}
+
+	s := &Castellarius{
+		config: aqueduct.AqueductConfig{
+			Repos: []aqueduct.RepoConfig{
+				{Name: repoName, Prefix: prefix, Names: []string{"alpha"}},
+			},
+		},
+		clients:     map[string]CisternClient{repoName: client},
+		pools:       map[string]*AqueductPool{repoName: NewAqueductPool(repoName, []string{"alpha"})},
+		sandboxRoot: sandboxRoot,
+		logger:      newBranchLifecycleLogger(io.Discard),
+	}
+
+	s.purgeOrphanedWorktrees()
+
+	if worktreeExists(t, sandboxRoot, repoName, prefix+"cancelled") {
+		t.Error("cancelled droplet worktree should have been removed")
+	}
+	if worktreeExists(t, sandboxRoot, repoName, prefix+"pooled") {
+		t.Error("pooled droplet worktree should have been removed")
+	}
+}
+
+// TestPurgeOrphanedWorktrees_NoSandboxRoot_IsNoOp verifies that when
+// sandboxRoot is empty (e.g. test environments), the function returns
+// immediately without error.
+func TestPurgeOrphanedWorktrees_NoSandboxRoot_IsNoOp(t *testing.T) {
+	s := &Castellarius{
+		sandboxRoot: "",
+		logger:      newBranchLifecycleLogger(io.Discard),
+	}
+	s.purgeOrphanedWorktrees()
 }

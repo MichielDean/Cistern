@@ -136,3 +136,14 @@ func (p *AqueductPool) FindByName(name string) *Aqueduct {
 	}
 	return nil
 }
+
+// Names returns the names of all aqueducts in the pool.
+func (p *AqueductPool) Names() []string {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	names := make([]string, len(p.aqueducts))
+	for i, a := range p.aqueducts {
+		names[i] = a.Name
+	}
+	return names
+}

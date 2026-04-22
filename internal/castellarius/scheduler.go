@@ -613,6 +613,92 @@ func (s *Castellarius) purgeOldItems() {
 		total += n
 	}
 	s.logger.Info("purge complete", "total", total)
+
+	s.purgeOrphanedWorktrees()
+}
+
+// purgeOrphanedWorktrees removes per-droplet worktrees whose droplets are no
+// longer active (delivered, cancelled, pooled, or deleted from DB). This catches
+// worktrees that escaped the normal observe-path cleanup due to Castellarius
+// crashes, failed git worktree remove, or race conditions.
+//
+// Safe guards:
+//   - Skips _primary (shared object store for the repo)
+//   - Skips named aqueduct worker directories (alpha, virgo, etc.)
+//   - Skips directories that don't match the repo's droplet prefix
+//   - Only removes worktrees whose droplet is delivered/cancelled/pooled
+//     or entirely absent from the database
+func (s *Castellarius) purgeOrphanedWorktrees() {
+	if s.sandboxRoot == "" {
+		return
+	}
+
+	for _, repo := range s.config.Repos {
+		repoDir := filepath.Join(s.sandboxRoot, repo.Name)
+		entries, err := os.ReadDir(repoDir)
+		if err != nil {
+			if !os.IsNotExist(err) {
+				s.logger.Warn("orphan scan: read dir failed", "repo", repo.Name, "error", err)
+			}
+			continue
+		}
+
+		primaryDir := filepath.Join(repoDir, "_primary")
+		if _, err := os.Stat(filepath.Join(primaryDir, ".git")); err != nil {
+			continue
+		}
+
+		pool := s.pools[repo.Name]
+		knownDirs := map[string]bool{
+			"_primary": true,
+		}
+		for _, name := range pool.Names() {
+			knownDirs[name] = true
+		}
+
+		client := s.clients[repo.Name]
+		prefix := repo.Prefix
+		removed := 0
+
+		for _, e := range entries {
+			if !e.IsDir() {
+				continue
+			}
+			name := e.Name()
+			if knownDirs[name] {
+				continue
+			}
+			if !strings.HasPrefix(name, prefix) {
+				continue
+			}
+
+			remove := false
+			dropletStatus := "unknown"
+			droplet, err := client.Get(name)
+			if err != nil {
+				remove = true
+			} else {
+				dropletStatus = droplet.Status
+				switch droplet.Status {
+				case "delivered", "cancelled", "pooled":
+					remove = true
+				}
+			}
+
+			if remove {
+				removeDropletWorktree(primaryDir, s.sandboxRoot, repo.Name, name, false)
+				removed++
+				s.logger.Info("orphaned worktree removed",
+					"repo", repo.Name, "droplet", name,
+					"droplet_status", dropletStatus)
+			}
+		}
+
+		if removed > 0 {
+			s.logger.Info("orphaned worktree purge complete",
+				"repo", repo.Name, "removed", removed)
+		}
+	}
 }
 
 // Tick runs a single poll cycle across all repos. Exported for testing.
