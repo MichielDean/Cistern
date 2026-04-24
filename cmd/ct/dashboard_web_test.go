@@ -13,7 +13,6 @@ import (
 	"net/http/httptest"
 	"runtime"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -21,91 +20,20 @@ import (
 	"github.com/MichielDean/cistern/internal/cistern"
 )
 
-func TestDashboardWebMux_RootServesHTML(t *testing.T) {
+func TestDashboardWebMux_RootRedirectsToApp(t *testing.T) {
 	mux := newDashboardMux(tempCfg(t), tempDB(t))
 
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	w := httptest.NewRecorder()
 	mux.ServeHTTP(w, req)
 
-	if w.Code != http.StatusOK {
-		t.Errorf("GET / status = %d, want 200", w.Code)
+	if w.Code != http.StatusMovedPermanently {
+		t.Errorf("GET / status = %d, want 301", w.Code)
 	}
-	ct := w.Header().Get("Content-Type")
-	if !strings.Contains(ct, "text/html") {
-		t.Errorf("Content-Type = %q, want text/html", ct)
+	loc := w.Header().Get("Location")
+	if loc != "/app/" {
+		t.Errorf("Location = %q, want /app/", loc)
 	}
-	body := w.Body.String()
-	if !strings.Contains(body, "<!DOCTYPE html>") {
-		t.Error("body should contain <!DOCTYPE html>")
-	}
-	if !strings.Contains(body, "xterm") {
-		t.Error("body should contain xterm.js reference")
-	}
-}
-
-func TestDashboardWebMux_RootServesDefaultFontFamily_WhenNotConfigured(t *testing.T) {
-	mux := newDashboardMux(tempCfg(t), tempDB(t))
-
-	req := httptest.NewRequest(http.MethodGet, "/", nil)
-	w := httptest.NewRecorder()
-	mux.ServeHTTP(w, req)
-
-	body := w.Body.String()
-	if !strings.Contains(body, dashboardDefaultFontFamily) {
-		t.Errorf("body should contain default font family %q", dashboardDefaultFontFamily)
-	}
-}
-
-func TestDashboardWebMux_RootInjectsDashboardFontFamily_WhenConfigured(t *testing.T) {
-	customFont := "'Berkeley Mono', monospace"
-	mux := newDashboardMux(tempCfgWithFontFamily(t, customFont), tempDB(t))
-
-	req := httptest.NewRequest(http.MethodGet, "/", nil)
-	w := httptest.NewRecorder()
-	mux.ServeHTTP(w, req)
-
-	body := w.Body.String()
-	if !strings.Contains(body, customFont) {
-		t.Errorf("body should contain configured font family %q", customFont)
-	}
-	if strings.Contains(body, dashboardDefaultFontFamily) {
-		t.Error("body should not contain default font family when custom font is configured")
-	}
-}
-
-func TestDashboardWebMux_RootEscapesDashboardFontFamily_WhenContainsSpecialChars(t *testing.T) {
-	// Input contains double-quote and backslash — characters that require
-	// escaping inside a JS string literal.
-	customFont := "My \"Custom\" Font\\Path"
-	mux := newDashboardMux(tempCfgWithFontFamily(t, customFont), tempDB(t))
-
-	req := httptest.NewRequest(http.MethodGet, "/", nil)
-	w := httptest.NewRecorder()
-	mux.ServeHTTP(w, req)
-
-	body := w.Body.String()
-	// json.Marshal escapes " → \" and \ → \\, producing the JS-safe escaped form.
-	// The body must contain the escaped form, not the raw unescaped input.
-	wantEscaped := `My \"Custom\" Font\\Path`
-	if !strings.Contains(body, wantEscaped) {
-		t.Errorf("body should contain JS-escaped font family %q, got body snippet around fontFamily: %q",
-			wantEscaped, extractFontFamilyLine(body))
-	}
-	if strings.Contains(body, customFont) {
-		t.Error("body should not contain the raw unescaped font family value")
-	}
-}
-
-// extractFontFamilyLine returns the line in body containing "fontFamily" for
-// diagnostic output, or "<not found>" if absent.
-func extractFontFamilyLine(body string) string {
-	for _, line := range strings.Split(body, "\n") {
-		if strings.Contains(line, "fontFamily") {
-			return strings.TrimSpace(line)
-		}
-	}
-	return "<not found>"
 }
 
 func TestDashboardWebMux_NotFoundForUnknownPaths(t *testing.T) {
@@ -158,7 +86,6 @@ func TestDashboardWebMux_APIMethodNotAllowed(t *testing.T) {
 func TestDashboardWebMux_EventsSSEHeaders(t *testing.T) {
 	mux := newDashboardMux(tempCfg(t), tempDB(t))
 
-	// Pre-cancel the context so the SSE handler exits after sending the first event.
 	req := httptest.NewRequest(http.MethodGet, "/api/dashboard/events", nil)
 	ctx, cancel := context.WithCancel(req.Context())
 	cancel()
@@ -175,7 +102,6 @@ func TestDashboardWebMux_EventsSSEHeaders(t *testing.T) {
 	if !strings.HasPrefix(body, "data: ") {
 		t.Errorf("SSE body should start with 'data: ', got %q", truncateStr(body, 60))
 	}
-	// The first SSE line's payload must be valid JSON.
 	firstLine := strings.SplitN(body, "\n", 2)[0]
 	payload := strings.TrimPrefix(firstLine, "data: ")
 	var d DashboardData
@@ -188,7 +114,6 @@ func TestDashboardWebMux_APIReturnsCorrectCounts(t *testing.T) {
 	cfgPath := tempCfg(t)
 	dbPath := tempDB(t)
 
-	// Seed: 1 flowing (virgo/implement), 1 queued.
 	c, err := cistern.New(dbPath, "mr")
 	if err != nil {
 		t.Fatal(err)
@@ -277,7 +202,6 @@ func TestDashboardWebMux_NoteFieldsSnakeCaseJSON(t *testing.T) {
 	w := httptest.NewRecorder()
 	mux.ServeHTTP(w, req)
 
-	// Unmarshal into a generic map to verify raw JSON key names (not Go field names).
 	var raw map[string]interface{}
 	if err := json.Unmarshal(w.Body.Bytes(), &raw); err != nil {
 		t.Fatalf("unmarshal raw JSON: %v", err)
@@ -300,7 +224,6 @@ func TestDashboardWebMux_NoteFieldsSnakeCaseJSON(t *testing.T) {
 	}
 }
 
-// truncateStr returns at most n runes of s for safe display in test messages.
 func truncateStr(s string, n int) string {
 	r := []rune(s)
 	if len(r) <= n {
@@ -311,10 +234,7 @@ func truncateStr(s string, n int) string {
 
 // --- peek HTTP/WS tests ---
 
-// TestWsAcceptKey checks the RFC 6455 §4.2.2 accept-key derivation using the
-// standard test vector from the spec.
 func TestWsAcceptKey(t *testing.T) {
-	// RFC 6455 example: client key "dGhlIHNhbXBsZSBub25jZQ==" → accept "s3pPLMBiTxaQ9kYGzzhZRbK+xOo="
 	got := wsAcceptKey("dGhlIHNhbXBsZSBub25jZQ==")
 	want := "s3pPLMBiTxaQ9kYGzzhZRbK+xOo="
 	if got != want {
@@ -322,7 +242,6 @@ func TestWsAcceptKey(t *testing.T) {
 	}
 }
 
-// TestWsSendText_SmallPayload verifies frame header for a payload under 126 bytes.
 func TestWsSendText_SmallPayload(t *testing.T) {
 	var buf bytes.Buffer
 	bw := bufio.NewWriter(&buf)
@@ -341,7 +260,6 @@ func TestWsSendText_SmallPayload(t *testing.T) {
 	}
 }
 
-// TestWsSendText_MediumPayload verifies the 2-byte extended length frame (126–65535 bytes).
 func TestWsSendText_MediumPayload(t *testing.T) {
 	payload := strings.Repeat("x", 200)
 	var buf bytes.Buffer
@@ -365,9 +283,6 @@ func TestWsSendText_MediumPayload(t *testing.T) {
 	}
 }
 
-// TestWsSendText_LargePayload verifies the 8-byte extended length frame (>= 65536 bytes).
-// This is a regression test for the bug fixed in bdab760 where the high 32 bits
-// of the 8-byte payload length were silently discarded (RFC 6455 §5.2 non-compliance).
 func TestWsSendText_LargePayload(t *testing.T) {
 	payload := strings.Repeat("x", 65536)
 	var buf bytes.Buffer
@@ -391,8 +306,6 @@ func TestWsSendText_LargePayload(t *testing.T) {
 	}
 }
 
-// TestWsFrameRoundtrip_LargePayload verifies that wsSendText and readWSTextFrame
-// correctly encode and decode payloads >= 65536 bytes (RFC 6455 §5.2 case 127).
 func TestWsFrameRoundtrip_LargePayload(t *testing.T) {
 	payload := strings.Repeat("z", 65536)
 	var buf bytes.Buffer
@@ -410,7 +323,6 @@ func TestWsFrameRoundtrip_LargePayload(t *testing.T) {
 	}
 }
 
-// TestLookupAqueductSession_Empty returns false when the DB has no in_progress items.
 func TestLookupAqueductSession_Empty(t *testing.T) {
 	_, ok := lookupAqueductSession(tempDB(t), "virgo")
 	if ok {
@@ -418,7 +330,6 @@ func TestLookupAqueductSession_Empty(t *testing.T) {
 	}
 }
 
-// TestLookupAqueductSession_NoMatch returns false when no item is assigned to the named aqueduct.
 func TestLookupAqueductSession_NoMatch(t *testing.T) {
 	db := tempDB(t)
 	c, err := cistern.New(db, "mr")
@@ -436,8 +347,6 @@ func TestLookupAqueductSession_NoMatch(t *testing.T) {
 	}
 }
 
-// TestLookupAqueductSession_Found returns true and correct session info when
-// an in_progress item is assigned to the named aqueduct.
 func TestLookupAqueductSession_Found(t *testing.T) {
 	db := tempDB(t)
 	c, err := cistern.New(db, "mr")
@@ -464,7 +373,6 @@ func TestLookupAqueductSession_Found(t *testing.T) {
 	}
 }
 
-// TestPeekHTTP_MethodNotAllowed ensures POST /api/aqueducts/{name}/peek returns 405.
 func TestPeekHTTP_MethodNotAllowed(t *testing.T) {
 	mux := newDashboardMux(tempCfg(t), tempDB(t))
 	req := httptest.NewRequest(http.MethodPost, "/api/aqueducts/virgo/peek", nil)
@@ -475,7 +383,6 @@ func TestPeekHTTP_MethodNotAllowed(t *testing.T) {
 	}
 }
 
-// TestPeekHTTP_IdleAqueduct returns "session not active" when aqueduct is idle.
 func TestPeekHTTP_IdleAqueduct(t *testing.T) {
 	mux := newDashboardMux(tempCfg(t), tempDB(t))
 	req := httptest.NewRequest(http.MethodGet, "/api/aqueducts/virgo/peek", nil)
@@ -489,8 +396,6 @@ func TestPeekHTTP_IdleAqueduct(t *testing.T) {
 	}
 }
 
-// TestPeekHTTP_ActiveWithMockCapturer seeds an in_progress droplet, overrides
-// defaultCapturer with a mock, and verifies the pane content is returned.
 func TestPeekHTTP_ActiveWithMockCapturer(t *testing.T) {
 	db := tempDB(t)
 	c, err := cistern.New(db, "mr")
@@ -518,8 +423,6 @@ func TestPeekHTTP_ActiveWithMockCapturer(t *testing.T) {
 	}
 }
 
-// TestPeekHTTP_ActiveButSessionGone returns "session not active" when the
-// aqueduct has an in_progress droplet but tmux session no longer exists.
 func TestPeekHTTP_ActiveButSessionGone(t *testing.T) {
 	db := tempDB(t)
 	c, err := cistern.New(db, "mr")
@@ -547,20 +450,16 @@ func TestPeekHTTP_ActiveButSessionGone(t *testing.T) {
 	}
 }
 
-// TestPeekHTTP_LinesQueryParam verifies ?lines= is accepted without error.
 func TestPeekHTTP_LinesQueryParam(t *testing.T) {
 	mux := newDashboardMux(tempCfg(t), tempDB(t))
 	req := httptest.NewRequest(http.MethodGet, "/api/aqueducts/virgo/peek?lines=50", nil)
 	w := httptest.NewRecorder()
 	mux.ServeHTTP(w, req)
-	// Idle aqueduct — just verify no server error.
 	if w.Code >= 500 {
 		t.Errorf("status = %d, want < 500", w.Code)
 	}
 }
 
-// TestWsUpgrade_CrossOriginRejected verifies that wsUpgrade returns 403 Forbidden
-// for WebSocket requests with a non-localhost, non-LAN Origin header.
 func TestWsUpgrade_CrossOriginRejected(t *testing.T) {
 	cases := []struct {
 		name   string
@@ -587,10 +486,6 @@ func TestWsUpgrade_CrossOriginRejected(t *testing.T) {
 	}
 }
 
-// TestWsUpgrade_LocalhostOriginAllowed verifies that wsUpgrade permits WebSocket
-// requests from localhost, 127.0.0.1, and ::1 origins (the request proceeds past
-// Origin validation; httptest.ResponseRecorder does not support hijacking so it
-// terminates with 500, but the key assertion is that 403 is NOT returned).
 func TestWsUpgrade_LocalhostOriginAllowed(t *testing.T) {
 	cases := []struct {
 		name   string
@@ -619,9 +514,6 @@ func TestWsUpgrade_LocalhostOriginAllowed(t *testing.T) {
 	}
 }
 
-// TestWsUpgrade_LANOriginAllowed verifies that wsUpgrade permits WebSocket
-// requests from RFC 1918 LAN addresses (the dashboard is a local tool and
-// LAN access from e.g. 192.168.x.x is expected).
 func TestWsUpgrade_LANOriginAllowed(t *testing.T) {
 	cases := []struct {
 		name   string
@@ -647,14 +539,11 @@ func TestWsUpgrade_LANOriginAllowed(t *testing.T) {
 	}
 }
 
-// TestWsUpgrade_MissingOriginAllowed verifies that wsUpgrade allows requests
-// with no Origin header (non-browser clients such as native tools and tests).
 func TestWsUpgrade_MissingOriginAllowed(t *testing.T) {
 	mux := newDashboardMux(tempCfg(t), tempDB(t))
 	req := httptest.NewRequest(http.MethodGet, "/ws/aqueducts/virgo/peek", nil)
 	req.Header.Set("Upgrade", "websocket")
 	req.Header.Set("Sec-Websocket-Key", "dGhlIHNhbXBsZSBub25jZQ==")
-	// No Origin header set.
 	w := httptest.NewRecorder()
 	mux.ServeHTTP(w, req)
 	if w.Code == http.StatusForbidden {
@@ -662,8 +551,6 @@ func TestWsUpgrade_MissingOriginAllowed(t *testing.T) {
 	}
 }
 
-// TestWsPeek_NonWebSocketRejected verifies that a plain GET to the WS endpoint
-// returns 426 Upgrade Required.
 func TestWsPeek_NonWebSocketRejected(t *testing.T) {
 	mux := newDashboardMux(tempCfg(t), tempDB(t))
 	req := httptest.NewRequest(http.MethodGet, "/ws/aqueducts/virgo/peek", nil)
@@ -674,8 +561,6 @@ func TestWsPeek_NonWebSocketRejected(t *testing.T) {
 	}
 }
 
-// TestWsPeek_MissingKeyRejected verifies that a WS upgrade without
-// Sec-WebSocket-Key returns 400.
 func TestWsPeek_MissingKeyRejected(t *testing.T) {
 	mux := newDashboardMux(tempCfg(t), tempDB(t))
 	req := httptest.NewRequest(http.MethodGet, "/ws/aqueducts/virgo/peek", nil)
@@ -687,9 +572,6 @@ func TestWsPeek_MissingKeyRejected(t *testing.T) {
 	}
 }
 
-// wsDialPeek performs a WebSocket handshake to /ws/aqueducts/{name}/peek and
-// returns the buffered reader (for reading frames) and the connection (caller
-// must defer conn.Close). A 2s read deadline is set.
 func wsDialPeek(t *testing.T, srv *httptest.Server, aqName string) (*bufio.Reader, net.Conn) {
 	t.Helper()
 	conn, err := net.Dial("tcp", srv.Listener.Addr().String())
@@ -712,8 +594,6 @@ func wsDialPeek(t *testing.T, srv *httptest.Server, aqName string) (*bufio.Reade
 	return br, conn
 }
 
-// TestWsPeek_SuccessfulStreamIdle connects a real WebSocket to the WS peek
-// endpoint for an idle aqueduct and verifies "session not active" is streamed.
 func TestWsPeek_SuccessfulStreamIdle(t *testing.T) {
 	mux := newDashboardMux(tempCfg(t), tempDB(t))
 	srv := httptest.NewServer(mux)
@@ -731,8 +611,6 @@ func TestWsPeek_SuccessfulStreamIdle(t *testing.T) {
 	}
 }
 
-// TestWsPeek_SuccessfulStreamActive seeds an in_progress droplet with a mock
-// capturer and verifies the pane content is streamed over WebSocket.
 func TestWsPeek_SuccessfulStreamActive(t *testing.T) {
 	db := tempDB(t)
 	c, err := cistern.New(db, "mr")
@@ -764,123 +642,6 @@ func TestWsPeek_SuccessfulStreamActive(t *testing.T) {
 	}
 }
 
-// TestDashboardHTML_UsesXterm verifies the web dashboard embeds xterm.js
-// and the /ws/tui WebSocket endpoint.
-func TestDashboardHTML_UsesXterm(t *testing.T) {
-	html := dashboardHTML
-	checks := []struct {
-		want string
-		desc string
-	}{
-		{"xterm", "xterm.js reference"},
-		{"FitAddon", "xterm FitAddon"},
-		{"/ws/tui", "/ws/tui WebSocket path"},
-		{`name="viewport"`, "viewport meta tag"},
-		{"id=\"terminal\"", "terminal div"},
-	}
-	for _, c := range checks {
-		if !strings.Contains(html, c.want) {
-			t.Errorf("HTML must contain %s (%q)", c.desc, c.want)
-		}
-	}
-}
-
-// TestWsTui_WSReaderExitsOnConnClose verifies the shutdown propagation in the
-// /ws/tui handler: goroutine B (WS frame reader) must exit and call cancel()
-// when the underlying connection is closed without a WebSocket close frame.
-// This is the trigger for shutdown watchdog goroutine C, which closes ptmx
-// and unblocks the PTY reader goroutine A from ptmx.Read.
-func TestWsTui_WSReaderExitsOnConnClose(t *testing.T) {
-	// in-process pipe connection — simulates the hijacked net.Conn
-	server, client := net.Pipe()
-	defer server.Close()
-
-	br := bufio.NewReader(server)
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		defer cancel()
-		buf := make([]byte, 4096)
-		for {
-			_, _, nb, err := wsReadClientFrame(br, buf)
-			buf = nb
-			if err != nil {
-				return
-			}
-		}
-	}()
-
-	// Simulate abrupt client disconnect — no WebSocket close frame.
-	client.Close()
-
-	select {
-	case <-done:
-		// goroutine exited as expected
-	case <-time.After(1 * time.Second):
-		t.Fatal("WS reader goroutine did not exit after connection close")
-	}
-	select {
-	case <-ctx.Done():
-		// cancel() was called by goroutine's defer — watchdog would fire
-	default:
-		t.Error("cancel() was not called by WS reader goroutine on connection close")
-	}
-}
-
-// TestWsTui_WSReaderReadDeadlineExitsOnPartition verifies goroutine B exits
-// and calls cancel() when the read deadline fires with no client frames,
-// simulating a network partition with an idle PTY.
-func TestWsTui_WSReaderReadDeadlineExitsOnPartition(t *testing.T) {
-	server, client := net.Pipe()
-	defer server.Close()
-	// client is intentionally not closed — simulates a network partition
-	// where no TCP FIN arrives, so server cannot distinguish idle from dead.
-	// runtime.KeepAlive(client) at the end prevents the GC from finalizing the
-	// connection before the deadline fires, which would cause an early exit via
-	// a connection-close error instead of the read-deadline path under test.
-
-	br := bufio.NewReader(server)
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		defer cancel()
-		buf := make([]byte, wsMaxClientPayload)
-		for {
-			// Mirrors production read-deadline fix; shorter timeout for test speed.
-			server.SetReadDeadline(time.Now().Add(50 * time.Millisecond)) //nolint:errcheck
-			_, _, nb, err := wsReadClientFrame(br, buf)
-			buf = nb
-			if err != nil {
-				return
-			}
-		}
-	}()
-
-	select {
-	case <-done:
-	case <-time.After(500 * time.Millisecond):
-		t.Fatal("WS reader goroutine did not exit after read deadline (network partition case)")
-	}
-	select {
-	case <-ctx.Done():
-	default:
-		t.Error("cancel() was not called by WS reader goroutine on read deadline")
-	}
-	runtime.KeepAlive(client)
-}
-
-// TestWsPeek_InBandAuth_RejectsNoAuth verifies that when an API key is
-// configured, a WS peek connection that does not send a valid auth message
-// is closed. The server waits up to 5 seconds for the auth frame, then
-// closes with 4001.
 func TestWsPeek_InBandAuth_RejectsNoAuth(t *testing.T) {
 	mux := newDashboardMux(tempCfgWithAPIKey(t, "test-secret"), tempDB(t))
 	srv := httptest.NewServer(mux)
@@ -902,9 +663,8 @@ func TestWsPeek_InBandAuth_RejectsNoAuth(t *testing.T) {
 		t.Fatalf("expected 101, got %d", resp.StatusCode)
 	}
 
-	// Send a binary frame (not text) — the server expects a text auth message.
 	binaryFrame := maskedTextFrame([]byte("garbage"))
-	binaryFrame[0] = 0x82 // change opcode from text (0x81) to binary (0x82)
+	binaryFrame[0] = 0x82
 	if _, err := conn.Write(binaryFrame); err != nil {
 		t.Fatal(err)
 	}
@@ -920,8 +680,6 @@ func TestWsPeek_InBandAuth_RejectsNoAuth(t *testing.T) {
 	}
 }
 
-// TestWsPeek_InBandAuth_RejectsBadCredentials verifies that when an API key is
-// configured, a WS peek connection that sends a wrong token is closed with code 4001.
 func TestWsPeek_InBandAuth_RejectsBadCredentials(t *testing.T) {
 	mux := newDashboardMux(tempCfgWithAPIKey(t, "test-secret"), tempDB(t))
 	srv := httptest.NewServer(mux)
@@ -943,7 +701,6 @@ func TestWsPeek_InBandAuth_RejectsBadCredentials(t *testing.T) {
 		t.Fatalf("expected 101, got %d", resp.StatusCode)
 	}
 
-	// Send auth message with wrong token.
 	authMsg := `{"type":"auth","token":"wrong-key"}`
 	maskedFrame := maskedTextFrame([]byte(authMsg))
 	if _, err := conn.Write(maskedFrame); err != nil {
@@ -961,9 +718,6 @@ func TestWsPeek_InBandAuth_RejectsBadCredentials(t *testing.T) {
 	}
 }
 
-// TestWsPeek_InBandAuth_AcceptsValidToken verifies that when an API key is
-// configured, a WS peek connection that sends a correct auth token proceeds
-// to stream data.
 func TestWsPeek_InBandAuth_AcceptsValidToken(t *testing.T) {
 	mux := newDashboardMux(tempCfgWithAPIKey(t, "test-secret"), tempDB(t))
 	srv := httptest.NewServer(mux)
@@ -985,14 +739,12 @@ func TestWsPeek_InBandAuth_AcceptsValidToken(t *testing.T) {
 		t.Fatalf("expected 101, got %d", resp.StatusCode)
 	}
 
-	// Send auth message with correct token.
 	authMsg := `{"type":"auth","token":"test-secret"}`
 	maskedFrame := maskedTextFrame([]byte(authMsg))
 	if _, err := conn.Write(maskedFrame); err != nil {
 		t.Fatal(err)
 	}
 
-	// Server should now stream data (session not active message).
 	conn.SetReadDeadline(time.Now().Add(3 * time.Second))
 	payload, err := readWSTextFrame(br)
 	if err != nil {
@@ -1003,8 +755,6 @@ func TestWsPeek_InBandAuth_AcceptsValidToken(t *testing.T) {
 	}
 }
 
-// TestWsPeek_NoAuthRequired verifies that when no API key is configured, a WS
-// peek connection proceeds without sending an auth message.
 func TestWsPeek_NoAuthRequired(t *testing.T) {
 	mux := newDashboardMux(tempCfg(t), tempDB(t))
 	srv := httptest.NewServer(mux)
@@ -1022,22 +772,21 @@ func TestWsPeek_NoAuthRequired(t *testing.T) {
 	}
 }
 
-// maskedTextFrame constructs a masked WebSocket text frame with the given payload.
 func maskedTextFrame(payload []byte) []byte {
 	n := len(payload)
 	var frame []byte
-	frame = append(frame, 0x81) // FIN + text opcode
-	var maskKey [4]byte         // all zeros — no-op XOR, sufficient for testing
+	frame = append(frame, 0x81)
+	var maskKey [4]byte
 	switch {
 	case n < 126:
-		frame = append(frame, 0x80|byte(n)) // masked + length
+		frame = append(frame, 0x80|byte(n))
 	case n < 65536:
-		frame = append(frame, 0x80|0x7E) // masked + 126
+		frame = append(frame, 0x80|0x7E)
 		var ext [2]byte
 		binary.BigEndian.PutUint16(ext[:], uint16(n))
 		frame = append(frame, ext[:]...)
 	default:
-		frame = append(frame, 0x80|0x7F) // masked + 127
+		frame = append(frame, 0x80|0x7F)
 		var ext [8]byte
 		binary.BigEndian.PutUint64(ext[:], uint64(n))
 		frame = append(frame, ext[:]...)
@@ -1047,10 +796,6 @@ func maskedTextFrame(payload []byte) []byte {
 	return frame
 }
 
-// TestWsPeek_ReaderGoroutine_ExitsOnConnClose verifies that the peek handler's
-// reader goroutine exits and calls cancel() when the underlying connection is
-// closed without a WebSocket close frame, mirroring the /ws/tui behaviour in
-// TestWsTui_WSReaderExitsOnConnClose.
 func TestWsPeek_ReaderGoroutine_ExitsOnConnClose(t *testing.T) {
 	server, client := net.Pipe()
 	defer server.Close()
@@ -1077,7 +822,6 @@ func TestWsPeek_ReaderGoroutine_ExitsOnConnClose(t *testing.T) {
 		}
 	}()
 
-	// Simulate abrupt client disconnect — no WebSocket close frame.
 	client.Close()
 
 	select {
@@ -1092,16 +836,9 @@ func TestWsPeek_ReaderGoroutine_ExitsOnConnClose(t *testing.T) {
 	}
 }
 
-// TestWsPeek_ReaderGoroutine_ExitsOnReadDeadline verifies that the peek handler's
-// reader goroutine exits and calls cancel() when the read deadline fires with no
-// client frames, simulating a network partition with stable tmux output (no diffs).
-// This is the leak scenario fixed by the reader goroutine: without it the ticker
-// loop never writes, never fires a write deadline, and loops forever.
 func TestWsPeek_ReaderGoroutine_ExitsOnReadDeadline(t *testing.T) {
 	server, client := net.Pipe()
 	defer server.Close()
-	// client is intentionally not closed — simulates a network partition where
-	// no TCP FIN arrives; server cannot distinguish idle from silently dead.
 
 	br := bufio.NewReader(server)
 
@@ -1114,7 +851,6 @@ func TestWsPeek_ReaderGoroutine_ExitsOnReadDeadline(t *testing.T) {
 		defer cancel()
 		buf := make([]byte, wsMaxClientPayload)
 		for {
-			// Mirrors production read-deadline fix; shorter timeout for test speed.
 			server.SetReadDeadline(time.Now().Add(50 * time.Millisecond)) //nolint:errcheck
 			opcode, _, nb, err := wsReadClientFrame(br, buf)
 			buf = nb
@@ -1141,25 +877,21 @@ func TestWsPeek_ReaderGoroutine_ExitsOnReadDeadline(t *testing.T) {
 	runtime.KeepAlive(client)
 }
 
-// TestWsReadClientFrame_PayloadSizeLimit verifies wsMaxClientPayload enforcement:
-// frames with payload > 4096 must be rejected, payload == 4096 must be accepted.
 func TestWsReadClientFrame_PayloadSizeLimit(t *testing.T) {
-	// buildFrame constructs a masked client text frame with rawLen=126 and
-	// the given extended payload length. The payload itself is zero-filled.
 	buildFrame := func(extLen uint16) []byte {
 		var frame []byte
-		frame = append(frame, 0x81)      // FIN + text opcode
-		frame = append(frame, 0x80|0x7E) // masked + rawLen=126
+		frame = append(frame, 0x81)
+		frame = append(frame, 0x80|0x7E)
 		var ext [2]byte
 		binary.BigEndian.PutUint16(ext[:], extLen)
 		frame = append(frame, ext[:]...)
-		frame = append(frame, 0, 0, 0, 0) // mask key (all zeros — no-op XOR)
+		frame = append(frame, 0, 0, 0, 0)
 		frame = append(frame, make([]byte, extLen)...)
 		return frame
 	}
 
 	t.Run("rejects_payload_exceeding_max", func(t *testing.T) {
-		frame := buildFrame(5000) // > wsMaxClientPayload (4096)
+		frame := buildFrame(5000)
 		br := bufio.NewReader(bytes.NewReader(frame))
 		_, _, _, err := wsReadClientFrame(br, make([]byte, 128))
 		if err == nil {
@@ -1171,7 +903,7 @@ func TestWsReadClientFrame_PayloadSizeLimit(t *testing.T) {
 	})
 
 	t.Run("accepts_payload_at_max", func(t *testing.T) {
-		frame := buildFrame(4096) // == wsMaxClientPayload
+		frame := buildFrame(4096)
 		br := bufio.NewReader(bytes.NewReader(frame))
 		_, payload, _, err := wsReadClientFrame(br, make([]byte, 128))
 		if err != nil {
@@ -1183,12 +915,7 @@ func TestWsReadClientFrame_PayloadSizeLimit(t *testing.T) {
 	})
 }
 
-// TestWsReadClientFrame_RejectsUnmaskedFrame verifies that wsReadClientFrame
-// returns an error for unmasked client frames, as required by RFC 6455 §5.1.
-// Browsers always mask frames; a forged unmasked frame indicates a non-browser
-// client or a protocol violation.
 func TestWsReadClientFrame_RejectsUnmaskedFrame(t *testing.T) {
-	// Unmasked text frame: FIN+text (0x81), no mask bit, payload "hello".
 	frame := []byte{0x81, 0x05, 'h', 'e', 'l', 'l', 'o'}
 	br := bufio.NewReader(bytes.NewReader(frame))
 	_, _, _, err := wsReadClientFrame(br, make([]byte, 128))
@@ -1200,731 +927,6 @@ func TestWsReadClientFrame_RejectsUnmaskedFrame(t *testing.T) {
 	}
 }
 
-// TestHandleTuiTextFrame_ResizeMessage_CallsResize verifies that a well-formed
-// resize JSON frame calls the resize function with the correct dimensions and
-// does not write any bytes to the PTY.
-func TestHandleTuiTextFrame_ResizeMessage_CallsResize(t *testing.T) {
-	payload := []byte(`{"resize":{"cols":120,"rows":40}}`)
-	var buf bytes.Buffer
-	var gotCols, gotRows uint16
-
-	handleTuiTextFrame(payload, &buf, func(cols, rows uint16) {
-		gotCols = cols
-		gotRows = rows
-	})
-
-	if gotCols != 120 {
-		t.Errorf("resize cols = %d, want 120", gotCols)
-	}
-	if gotRows != 40 {
-		t.Errorf("resize rows = %d, want 40", gotRows)
-	}
-	if buf.Len() != 0 {
-		t.Errorf("PTY should not receive data on resize, got %d bytes", buf.Len())
-	}
-}
-
-// TestHandleTuiTextFrame_NonJSONForwardedToPTY verifies that a non-JSON payload
-// (e.g. a raw escape sequence from xterm.js onData) is written verbatim to the
-// PTY and does not trigger the resize callback.
-func TestHandleTuiTextFrame_NonJSONForwardedToPTY(t *testing.T) {
-	payload := []byte("\x1b[A") // up arrow
-	var buf bytes.Buffer
-	resizeCalled := false
-
-	handleTuiTextFrame(payload, &buf, func(cols, rows uint16) {
-		resizeCalled = true
-	})
-
-	if resizeCalled {
-		t.Error("resize should not be called for non-JSON payload")
-	}
-	if got := buf.Bytes(); !bytes.Equal(got, payload) {
-		t.Errorf("PTY received %q, want %q", got, payload)
-	}
-}
-
-// TestHandleTuiTextFrame_JSONWithoutResizeField_ForwardedToPTY verifies that a
-// valid JSON frame whose top-level object has no "resize" key is treated as raw
-// keystroke data and forwarded to the PTY unchanged.
-func TestHandleTuiTextFrame_JSONWithoutResizeField_ForwardedToPTY(t *testing.T) {
-	payload := []byte(`{"other":"value"}`)
-	var buf bytes.Buffer
-	resizeCalled := false
-
-	handleTuiTextFrame(payload, &buf, func(cols, rows uint16) {
-		resizeCalled = true
-	})
-
-	if resizeCalled {
-		t.Error("resize should not be called for JSON without resize field")
-	}
-	if got := buf.Bytes(); !bytes.Equal(got, payload) {
-		t.Errorf("PTY received %q, want %q", got, payload)
-	}
-}
-
-// TestHandleTuiTextFrame_TableDriven exercises handleTuiTextFrame across
-// multiple keystroke sequences to confirm each is forwarded to the PTY.
-func TestHandleTuiTextFrame_TableDriven(t *testing.T) {
-	cases := []struct {
-		name    string
-		payload []byte
-	}{
-		{"up_arrow", []byte("\x1b[A")},
-		{"down_arrow", []byte("\x1b[B")},
-		{"enter", []byte("\r")},
-		{"q_key", []byte("q")},
-		{"ctrl_c", []byte("\x03")},
-		{"r_key", []byte("r")},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			var buf bytes.Buffer
-			handleTuiTextFrame(tc.payload, &buf, func(cols, rows uint16) {
-				t.Error("resize should not be called for keystroke payload")
-			})
-			if got := buf.Bytes(); !bytes.Equal(got, tc.payload) {
-				t.Errorf("PTY received %q, want %q", got, tc.payload)
-			}
-		})
-	}
-}
-
-// TestDashboardHTML_OnDataForwardsKeystrokes verifies that the web dashboard
-// HTML includes a term.onData handler that sends keystroke data to the server
-// via WebSocket, enabling interactive TUI control in the browser.
-func TestDashboardHTML_OnDataForwardsKeystrokes(t *testing.T) {
-	if !strings.Contains(dashboardHTML, "term.onData") {
-		t.Error("dashboardHTML must contain term.onData handler for keystroke forwarding")
-	}
-	if !strings.Contains(dashboardHTML, "ws.send(data)") {
-		t.Error("dashboardHTML term.onData handler must forward keystrokes via ws.send(data)")
-	}
-}
-
-// TestDashboardHTML_EscHint verifies that the ESC hint button and capture-phase
-// keydown listener are present and correctly wired in the web dashboard HTML.
-func TestDashboardHTML_EscHint(t *testing.T) {
-	checks := []struct {
-		want string
-		desc string
-	}{
-		{`id="esc-hint"`, "esc-hint element"},
-		{`onclick="sendEsc()"`, "onclick calls sendEsc"},
-		{"function sendEsc()", "sendEsc function"},
-		{`ws.send('\x1b')`, "ESC byte forwarding"},
-		{`addEventListener('keydown'`, "capture-phase keydown listener"},
-		{`e.key === 'Escape'`, "Escape key check"},
-		{"preventDefault()", "preventDefault to suppress browser default Escape behavior"},
-		{"stopPropagation()", "stopPropagation to prevent double-send"},
-		{"capture", "capture:true to intercept before xterm.js"},
-	}
-	for _, c := range checks {
-		if !strings.Contains(dashboardHTML, c.want) {
-			t.Errorf("dashboardHTML must contain %s (%q)", c.desc, c.want)
-		}
-	}
-}
-
-// TestDashboardHTML_NewUILink verifies that the "New UI" link to /app/ is
-// present in the xterm.js TUI dashboard HTML.
-func TestDashboardHTML_NewUILink(t *testing.T) {
-	checks := []struct {
-		want string
-		desc string
-	}{
-		{`id="new-ui-hint"`, "new-ui-hint element"},
-		{`href="/app/"`, "link target /app/"},
-		{"New UI", "link label"},
-	}
-	for _, c := range checks {
-		if !strings.Contains(dashboardHTML, c.want) {
-			t.Errorf("dashboardHTML must contain %s (%q)", c.desc, c.want)
-		}
-	}
-}
-
-// TestDashboardTUI_ReconnectDoesNotRestartChild asserts that disconnecting and
-// reconnecting a WebSocket client does not cause the child process to restart.
-//
-// Given: a running DashboardTUI with a mock spawner backed by an in-process pipe
-// When:  a WS client attaches then detaches (simulating disconnect)
-// Then:  spawnCount remains 1 — the child continues running
-// When:  a second WS client attaches (simulating reconnect)
-// Then:  spawnCount is still 1
-func TestDashboardTUI_ReconnectDoesNotRestartChild(t *testing.T) {
-	// ptyA is the "PTY master" seen by DashboardTUI; ptyB is the other end.
-	// Keeping ptyB open means runOnce stays blocked in Read (simulates running process).
-	ptyA, ptyB := net.Pipe()
-	t.Cleanup(func() { ptyA.Close(); ptyB.Close() })
-
-	var spawnMu sync.Mutex
-	spawnCalls := 0
-
-	tui := newDashboardTUI("", "", "")
-	tui.spawnFn = func() (io.ReadWriteCloser, func(uint16, uint16), func(), error) {
-		spawnMu.Lock()
-		spawnCalls++
-		spawnMu.Unlock()
-		return ptyA, nil, nil, nil
-	}
-	tui.Start()
-
-	// Wait for the initial spawn.
-	deadline := time.Now().Add(500 * time.Millisecond)
-	for time.Now().Before(deadline) {
-		spawnMu.Lock()
-		n := spawnCalls
-		spawnMu.Unlock()
-		if n >= 1 {
-			break
-		}
-		time.Sleep(5 * time.Millisecond)
-	}
-
-	spawnMu.Lock()
-	got := spawnCalls
-	spawnMu.Unlock()
-	if got != 1 {
-		tui.Stop()
-		t.Fatalf("expected 1 initial spawn, got %d", got)
-	}
-
-	// Simulate WebSocket connect: attach a client.
-	clientA, _ := tui.attach()
-	// Simulate WebSocket disconnect: detach without touching the child process.
-	tui.detach(clientA)
-
-	// Allow time for a buggy implementation to trigger a restart.
-	time.Sleep(50 * time.Millisecond)
-
-	spawnMu.Lock()
-	got = spawnCalls
-	spawnMu.Unlock()
-	if got != 1 {
-		tui.Stop()
-		t.Errorf("spawnCount after WS disconnect = %d, want 1 — child must survive WS disconnect", got)
-		return
-	}
-
-	// Simulate WebSocket reconnect: attach a second client.
-	clientB, _ := tui.attach()
-	defer tui.detach(clientB)
-
-	spawnMu.Lock()
-	got = spawnCalls
-	spawnMu.Unlock()
-	if got != 1 {
-		tui.Stop()
-		t.Errorf("spawnCount after WS reconnect = %d, want 1 — child must survive WS reconnect", got)
-		return
-	}
-
-	tui.Stop()
-}
-
-// TestDashboardTUI_LastFrame_NoRepaintMarker_AttachReturnsNil verifies that
-// attach() returns a nil lastFrame when no repaint marker has been broadcast yet.
-//
-// Given: a fresh DashboardTUI with no running child
-// When:  chunks without a repaint marker are broadcast
-// Then:  attach() returns nil — no complete frame to show
-func TestDashboardTUI_LastFrame_NoRepaintMarker_AttachReturnsNil(t *testing.T) {
-	tui := newDashboardTUI("", "", "")
-	tui.broadcast([]byte("no-marker-chunk-1"))
-	tui.broadcast([]byte("no-marker-chunk-2"))
-
-	_, frame := tui.attach()
-	if frame != nil {
-		t.Errorf("attach() lastFrame = %q, want nil (no repaint marker seen)", frame)
-	}
-}
-
-// TestDashboardTUI_LastFrame_RepaintBoundaryCommitsFrame verifies that when a
-// second repaint marker arrives the accumulated frame is committed as lastFrame,
-// and the committed frame starts with the repaint marker.
-//
-// Given: a DashboardTUI with broadcast driven directly (no Start)
-// When:  two repaint frames are broadcast
-// Then:  attach() returns lastFrame == first frame (starts with repaint marker)
-// And:   lastFrame contains the content from the first frame
-func TestDashboardTUI_LastFrame_RepaintBoundaryCommitsFrame(t *testing.T) {
-	tui := newDashboardTUI("", "", "")
-	marker := string(repaintMarker)
-
-	// First repaint: opens frame 1.
-	tui.broadcast([]byte(marker + "frame-one-content"))
-	// Second repaint: commits frame 1 and opens frame 2.
-	tui.broadcast([]byte(marker + "frame-two-content"))
-
-	_, frame := tui.attach()
-
-	if frame == nil {
-		t.Fatal("attach() lastFrame is nil, want committed frame")
-	}
-	if !bytes.Equal(frame[:len(repaintMarker)], repaintMarker) {
-		t.Errorf("lastFrame does not start with repaint marker: %q", frame)
-	}
-	if !bytes.Contains(frame, []byte("frame-one-content")) {
-		t.Errorf("lastFrame = %q, want it to contain %q", frame, "frame-one-content")
-	}
-}
-
-// TestDashboardTUI_LastFrame_ReconnectGetsCleanFrame verifies that a client
-// reconnecting after a disconnect receives a snapshot that begins with the repaint
-// marker — i.e., a clean, complete frame with no mid-sequence corruption.
-//
-// Given: a running DashboardTUI with a mock PTY pipe
-// When:  two full repaint frames are written through the PTY
-// Then:  attach() returns lastFrame starting with \033[2J\033[H
-// And:   lastFrame contains content from the first (committed) frame
-func TestDashboardTUI_LastFrame_ReconnectGetsCleanFrame(t *testing.T) {
-	ptyA, ptyB := net.Pipe()
-	t.Cleanup(func() { ptyA.Close(); ptyB.Close() })
-
-	tui := newDashboardTUI("", "", "")
-	tui.spawnFn = func() (io.ReadWriteCloser, func(uint16, uint16), func(), error) {
-		return ptyA, nil, nil, nil
-	}
-	tui.Start()
-
-	marker := string(repaintMarker)
-	clientA, _ := tui.attach()
-
-	// Write frame 1 through the mock PTY. net.Pipe is synchronous: Write blocks
-	// until the corresponding Read completes, so after Write returns the data is
-	// already in the broadcast pipeline.
-	if _, err := ptyB.Write([]byte(marker + "frame-one-body")); err != nil {
-		t.Fatalf("write frame1: %v", err)
-	}
-	select {
-	case <-clientA.ch:
-	case <-time.After(500 * time.Millisecond):
-		t.Fatal("clientA did not receive frame1 broadcast")
-	}
-
-	// Write frame 2 — its repaint marker commits frame 1 as lastFrame.
-	if _, err := ptyB.Write([]byte(marker + "frame-two-body")); err != nil {
-		t.Fatalf("write frame2: %v", err)
-	}
-	select {
-	case <-clientA.ch:
-	case <-time.After(500 * time.Millisecond):
-		t.Fatal("clientA did not receive frame2 broadcast")
-	}
-
-	tui.detach(clientA)
-
-	// Simulate reconnect: the new snapshot must be a clean frame.
-	_, snapshot := tui.attach()
-	tui.Stop()
-
-	if snapshot == nil {
-		t.Fatal("snapshot is nil; want committed frame starting with repaint marker")
-	}
-	if !bytes.Equal(snapshot[:len(repaintMarker)], repaintMarker) {
-		t.Errorf("snapshot does not start with repaint marker; got %q", snapshot)
-	}
-	if !bytes.Contains(snapshot, []byte("frame-one-body")) {
-		t.Errorf("snapshot = %q, want it to contain frame-one-body", snapshot)
-	}
-}
-
-// TestDashboardTUI_LastFrame_FlushTimer_CommitsOnIdle verifies that when no
-// second repaint marker arrives the flush timer commits the pending frame so
-// that an idle TUI still exposes a snapshot to new connections.
-//
-// Given: a DashboardTUI with one repaint frame broadcast (no second marker)
-// When:  tuiFrameFlushDelay elapses
-// Then:  attach() returns a non-nil lastFrame starting with the repaint marker
-func TestDashboardTUI_LastFrame_FlushTimer_CommitsOnIdle(t *testing.T) {
-	tui := newDashboardTUI("", "", "")
-	marker := string(repaintMarker)
-
-	tui.broadcast([]byte(marker + "idle-frame-content"))
-
-	// Wait for the flush timer to fire.
-	time.Sleep(tuiFrameFlushDelay + 50*time.Millisecond)
-
-	_, frame := tui.attach()
-
-	if frame == nil {
-		t.Fatal("attach() lastFrame is nil after flush timer; want committed frame")
-	}
-	if !bytes.Equal(frame[:len(repaintMarker)], repaintMarker) {
-		t.Errorf("lastFrame does not start with repaint marker: %q", frame)
-	}
-	if !bytes.Contains(frame, []byte("idle-frame-content")) {
-		t.Errorf("lastFrame = %q, want it to contain %q", frame, "idle-frame-content")
-	}
-}
-
-// TestDashboardTUI_FlushTimer_StaleCallbackDoesNotCorruptLastFrame verifies that
-// a flush timer callback carrying a stale generation does not overwrite a lastFrame
-// that was properly committed by the marker path after the timer was armed.
-//
-// Given: two repaint markers broadcast in sequence, committing frame-one via the marker path
-// When:  a stale flush callback (old generation) fires after the second marker committed frame-one
-// Then:  lastFrame remains frame-one — the stale callback is a no-op
-func TestDashboardTUI_FlushTimer_StaleCallbackDoesNotCorruptLastFrame(t *testing.T) {
-	tui := newDashboardTUI("", "", "")
-	marker := string(repaintMarker)
-
-	// Broadcast frame 1 — arms flush timer gen=1, pending = marker+"frame-one-content".
-	tui.broadcast([]byte(marker + "frame-one-content"))
-	// Broadcast frame 2 with marker — commits frame-one to lastFrame via marker path,
-	// increments flushGen to 2, and starts pending accumulation for frame-two.
-	tui.broadcast([]byte(marker + "frame-two-partial"))
-
-	// Stop the live gen=2 timer so it does not fire during the assertion.
-	tui.mu.Lock()
-	if tui.flushTimer != nil {
-		tui.flushTimer.Stop()
-		tui.flushTimer = nil
-	}
-	tui.mu.Unlock()
-
-	// Simulate the stale gen=1 callback (timer that fired between the two broadcasts).
-	// It must not overwrite lastFrame with the partial frame-two pending data.
-	tui.flushPendingFrame(1)
-
-	_, frame := tui.attach()
-
-	if frame == nil {
-		t.Fatal("attach() lastFrame is nil; want frame-one committed by marker path")
-	}
-	if !bytes.Contains(frame, []byte("frame-one-content")) {
-		t.Errorf("lastFrame = %q; stale callback must not corrupt the committed frame-one", frame)
-	}
-	if bytes.Contains(frame, []byte("frame-two-partial")) {
-		t.Errorf("lastFrame = %q; stale callback overwrote lastFrame with partial frame-two", frame)
-	}
-}
-
-// TestDashboardTUI_FrameAccumulate_MidChunkMarkerCommitsPendingAsLastFrame verifies
-// that when a single broadcast chunk contains trailing bytes from the previous frame
-// followed by a repaint marker, the accumulated pending data plus the trailing bytes
-// are committed as lastFrame and a new pending frame begins.
-//
-// Given: a DashboardTUI with inFrame=true and pending = marker+"frame-one-content"
-//
-//	(established by broadcasting marker+"frame-one-content")
-//
-// When:  a single chunk "previous-frame-tail"+marker+"next-frame-start" is broadcast
-// Then:  lastFrame == marker+"frame-one-content"+"previous-frame-tail"
-// And:   pending == marker+"next-frame-start"
-func TestDashboardTUI_FrameAccumulate_MidChunkMarkerCommitsPendingAsLastFrame(t *testing.T) {
-	tui := newDashboardTUI("", "", "")
-	marker := string(repaintMarker)
-
-	// Establish inFrame=true with pending = marker+"frame-one-content".
-	tui.broadcast([]byte(marker + "frame-one-content"))
-
-	// Stop the flush timer to prevent it from committing pending during the test.
-	tui.mu.Lock()
-	if tui.flushTimer != nil {
-		tui.flushTimer.Stop()
-		tui.flushTimer = nil
-	}
-	tui.mu.Unlock()
-
-	// Single chunk: trailing bytes from frame-one + repaint marker + start of frame-two.
-	// The marker is at idx > 0, exercising the d.pending = append(d.pending, rest[:idx]...) branch.
-	tui.broadcast([]byte("previous-frame-tail" + marker + "next-frame-start"))
-
-	tui.mu.Lock()
-	gotLastFrame := bytes.Clone(tui.lastFrame)
-	gotPending := bytes.Clone(tui.pending)
-	if tui.flushTimer != nil {
-		tui.flushTimer.Stop()
-		tui.flushTimer = nil
-	}
-	tui.mu.Unlock()
-
-	wantLastFrame := []byte(marker + "frame-one-content" + "previous-frame-tail")
-	if !bytes.Equal(gotLastFrame, wantLastFrame) {
-		t.Errorf("lastFrame = %q, want %q", gotLastFrame, wantLastFrame)
-	}
-	wantPending := []byte(marker + "next-frame-start")
-	if !bytes.Equal(gotPending, wantPending) {
-		t.Errorf("pending = %q, want %q", gotPending, wantPending)
-	}
-}
-
-// TestDashboardTUI_FrameAccumulate_TwoMarkersInOneChunkCommitsBothFrames verifies
-// that when a single broadcast chunk contains two repaintMarkers, frameAccumulate
-// correctly commits the first frame as lastFrame and begins accumulating the second.
-//
-// Given: a DashboardTUI with inFrame=true and pending = marker+"frame-one-content"
-//
-//	(established by broadcasting marker+"frame-one-content"), flush timer stopped
-//
-// When:  a single chunk marker+"frame-two-content"+marker+"frame-three-start" is broadcast
-// Then:  lastFrame == marker+"frame-two-content"
-// And:   pending  == marker+"frame-three-start"
-//
-// This exercises the loop in frameAccumulate running through a second iteration
-// with idx>=0, verifying that bytes.Clone(repaintMarker) isolates the new pending
-// backing from the committed lastFrame across loop iterations.
-func TestDashboardTUI_FrameAccumulate_TwoMarkersInOneChunkCommitsBothFrames(t *testing.T) {
-	tui := newDashboardTUI("", "", "")
-	marker := string(repaintMarker)
-
-	// Establish inFrame=true with pending = marker+"frame-one-content".
-	tui.broadcast([]byte(marker + "frame-one-content"))
-
-	// Stop the flush timer so it cannot commit pending during the test.
-	tui.mu.Lock()
-	if tui.flushTimer != nil {
-		tui.flushTimer.Stop()
-		tui.flushTimer = nil
-	}
-	tui.mu.Unlock()
-
-	// Single chunk with two repaint markers: frame-two is fully enclosed between
-	// the first and second marker, so frameAccumulate must commit it as lastFrame
-	// and leave frame-three-start accumulating in pending.
-	tui.broadcast([]byte(marker + "frame-two-content" + marker + "frame-three-start"))
-
-	tui.mu.Lock()
-	gotLastFrame := bytes.Clone(tui.lastFrame)
-	gotPending := bytes.Clone(tui.pending)
-	if tui.flushTimer != nil {
-		tui.flushTimer.Stop()
-		tui.flushTimer = nil
-	}
-	tui.mu.Unlock()
-
-	wantLastFrame := []byte(marker + "frame-two-content")
-	if !bytes.Equal(gotLastFrame, wantLastFrame) {
-		t.Errorf("lastFrame = %q, want %q", gotLastFrame, wantLastFrame)
-	}
-	wantPending := []byte(marker + "frame-three-start")
-	if !bytes.Equal(gotPending, wantPending) {
-		t.Errorf("pending = %q, want %q", gotPending, wantPending)
-	}
-}
-
-// TestDashboardTUI_Resize_InjectsRepaintMarkerBeforeResize verifies that resize()
-// injects a repaintMarker into frameAccumulate before calling the PTY resize callback,
-// forcing the current pending frame to be committed as lastFrame so the upcoming
-// Bubble Tea redraw triggered by SIGWINCH starts from a clean frame boundary.
-//
-// Given: a DashboardTUI with inFrame=true and pending = marker+"frame-one-content"
-//
-//	(flush timer stopped so no background commit occurs)
-//
-// When:  resize(80, 24) is called
-// Then:  lastFrame == marker+"frame-one-content"  (pending committed via injected marker)
-// And:   pending starts with repaintMarker         (fresh boundary for upcoming redraw)
-// And:   the resize callback is called with cols=80, rows=24
-func TestDashboardTUI_Resize_InjectsRepaintMarkerBeforeResize(t *testing.T) {
-	tui := newDashboardTUI("", "", "")
-	marker := string(repaintMarker)
-
-	// Establish inFrame=true with pending = marker+"frame-one-content".
-	tui.broadcast([]byte(marker + "frame-one-content"))
-
-	// Stop the flush timer so no background commit races with the assertion.
-	tui.mu.Lock()
-	if tui.flushTimer != nil {
-		tui.flushTimer.Stop()
-		tui.flushTimer = nil
-	}
-
-	// Inject a resize callback so resize() has a non-nil fn to call.
-	var resizeCols, resizeRows uint16
-	var resizeCalled bool
-	tui.resizeFn = func(cols, rows uint16) {
-		resizeCalled = true
-		resizeCols, resizeRows = cols, rows
-	}
-	tui.mu.Unlock()
-
-	tui.resize(80, 24)
-
-	tui.mu.Lock()
-	gotLastFrame := bytes.Clone(tui.lastFrame)
-	gotPending := bytes.Clone(tui.pending)
-	if tui.flushTimer != nil {
-		tui.flushTimer.Stop()
-		tui.flushTimer = nil
-	}
-	tui.mu.Unlock()
-
-	if !resizeCalled {
-		t.Error("resize callback was not called")
-	}
-	if resizeCols != 80 || resizeRows != 24 {
-		t.Errorf("resize called with cols=%d rows=%d, want 80 24", resizeCols, resizeRows)
-	}
-	wantLastFrame := []byte(marker + "frame-one-content")
-	if !bytes.Equal(gotLastFrame, wantLastFrame) {
-		t.Errorf("lastFrame = %q, want %q", gotLastFrame, wantLastFrame)
-	}
-	if !bytes.HasPrefix(gotPending, repaintMarker) {
-		t.Errorf("pending after resize does not start with repaint marker: %q", gotPending)
-	}
-}
-
-// TestDashboardTUI_Resize_NoCallbackWhenNoChildRunning verifies that resize()
-// does not inject a repaintMarker or call frameAccumulate when there is no
-// active PTY (resizeFn is nil), leaving lastFrame and pending unchanged.
-//
-// Given: a DashboardTUI with inFrame=true and pending = marker+"frame-one-content"
-//
-//	and no PTY running (resizeFn is nil by default)
-//
-// When:  resize(80, 24) is called
-// Then:  lastFrame is unchanged (nil)
-// And:   pending is unchanged (marker+"frame-one-content")
-func TestDashboardTUI_Resize_NoCallbackWhenNoChildRunning(t *testing.T) {
-	tui := newDashboardTUI("", "", "")
-	marker := string(repaintMarker)
-
-	tui.broadcast([]byte(marker + "frame-one-content"))
-
-	tui.mu.Lock()
-	if tui.flushTimer != nil {
-		tui.flushTimer.Stop()
-		tui.flushTimer = nil
-	}
-	tui.mu.Unlock()
-
-	// resizeFn is nil — no PTY running.
-	tui.resize(80, 24)
-
-	tui.mu.Lock()
-	gotLastFrame := bytes.Clone(tui.lastFrame)
-	gotPending := bytes.Clone(tui.pending)
-	if tui.flushTimer != nil {
-		tui.flushTimer.Stop()
-		tui.flushTimer = nil
-	}
-	tui.mu.Unlock()
-
-	if gotLastFrame != nil {
-		t.Errorf("lastFrame = %q, want nil (resize with no PTY must not commit frame)", gotLastFrame)
-	}
-	wantPending := []byte(marker + "frame-one-content")
-	if !bytes.Equal(gotPending, wantPending) {
-		t.Errorf("pending = %q, want %q (resize with no PTY must not modify pending)", gotPending, wantPending)
-	}
-}
-
-// TestDashboardTUI_Resize_DoesNotDeliverSyntheticMarkerToClients verifies that
-// the repaintMarker injected by resize() goes through frameAccumulate only and
-// is NOT broadcast to connected clients. A regression to broadcast() would send
-// the synthetic clear-screen to every active WebSocket connection on each resize.
-//
-// Given: a DashboardTUI with a frame in progress and an attached client,
-//
-//	resizeFn set to a non-nil callback
-//
-// When:  resize(80, 24) is called
-// Then:  the client's channel remains empty (no bytes delivered)
-func TestDashboardTUI_Resize_DoesNotDeliverSyntheticMarkerToClients(t *testing.T) {
-	tui := newDashboardTUI("", "", "")
-	marker := string(repaintMarker)
-
-	// Establish inFrame=true with some pending content.
-	// broadcast() sends the chunk to all registered clients — none are attached yet,
-	// so this only sets up the internal frame state.
-	tui.broadcast([]byte(marker + "frame-one-content"))
-
-	// Stop the flush timer to prevent background commits during the test.
-	tui.mu.Lock()
-	if tui.flushTimer != nil {
-		tui.flushTimer.Stop()
-		tui.flushTimer = nil
-	}
-	tui.mu.Unlock()
-
-	// Attach a client. attach() acquires d.mu internally; do not hold it here.
-	// lastFrame is nil at this point (pending not yet committed), so attach()
-	// returns a nil snapshot — nothing is queued on client.ch.
-	client, _ := tui.attach()
-
-	// Set a non-nil resizeFn so resize() actually injects the marker.
-	tui.mu.Lock()
-	tui.resizeFn = func(cols, rows uint16) {}
-	tui.mu.Unlock()
-
-	tui.resize(80, 24)
-
-	// The client channel must be empty — the synthetic repaintMarker injected
-	// into frameAccumulate must not have been broadcast to connected clients.
-	if len(client.ch) != 0 {
-		t.Errorf("client received %d unexpected chunk(s) from resize(); synthetic repaintMarker must not be broadcast", len(client.ch))
-	}
-}
-
-// TestDashboardTUI_Attach_SnapshotAlwaysPrependsRepaintMarker verifies that
-// attach() prepends repaintMarker to the snapshot unconditionally — even when
-// lastFrame already starts with one — so xterm.js always begins from a clean
-// erase+cursor-home state regardless of prior render history.
-//
-// Given: a DashboardTUI where two repaint frames have been committed
-//
-//	(so lastFrame starts with repaintMarker)
-//
-// When:  attach() is called
-// Then:  snapshot == repaintMarker + lastFrame
-//
-//	(repaintMarker is prepended even though lastFrame already starts with it)
-func TestDashboardTUI_Attach_SnapshotAlwaysPrependsRepaintMarker(t *testing.T) {
-	tui := newDashboardTUI("", "", "")
-	marker := string(repaintMarker)
-
-	// Broadcast two frames so lastFrame is committed via the marker boundary path.
-	// After this: lastFrame = marker+"frame-one-content".
-	tui.broadcast([]byte(marker + "frame-one-content"))
-	tui.broadcast([]byte(marker + "frame-two-content"))
-
-	tui.mu.Lock()
-	if tui.flushTimer != nil {
-		tui.flushTimer.Stop()
-		tui.flushTimer = nil
-	}
-	lastFrame := bytes.Clone(tui.lastFrame)
-	tui.mu.Unlock()
-
-	_, snapshot := tui.attach()
-
-	if snapshot == nil {
-		t.Fatal("snapshot is nil; want repaintMarker+lastFrame")
-	}
-
-	// snapshot must start with repaintMarker.
-	if !bytes.HasPrefix(snapshot, repaintMarker) {
-		t.Errorf("snapshot does not start with repaint marker: %q", snapshot)
-	}
-
-	// snapshot must equal repaintMarker + lastFrame (marker prepended even though
-	// lastFrame already begins with one).
-	wantSnapshot := append(bytes.Clone(repaintMarker), lastFrame...)
-	if !bytes.Equal(snapshot, wantSnapshot) {
-		t.Errorf("snapshot = %q, want %q", snapshot, wantSnapshot)
-	}
-}
-
-// TestDashboardTUI_Attach_NilSnapshotWhenNoFrameCommitted verifies that attach()
-// returns nil when no frame has been committed yet, preserving the existing
-// behaviour that new clients wait for the first real frame before rendering.
-//
-// Given: a DashboardTUI with no broadcast data
-// When:  attach() is called
-// Then:  snapshot is nil
-func TestDashboardTUI_Attach_NilSnapshotWhenNoFrameCommitted(t *testing.T) {
-	tui := newDashboardTUI("", "", "")
-	_, snapshot := tui.attach()
-	if snapshot != nil {
-		t.Errorf("snapshot = %q, want nil (no frame committed)", snapshot)
-	}
-}
-
-// readWSTextFrame reads one unmasked WebSocket text frame from br and returns the payload.
 func readWSTextFrame(br *bufio.Reader) (string, error) {
 	header := make([]byte, 2)
 	if _, err := io.ReadFull(br, header); err != nil {
@@ -1960,14 +962,6 @@ func readWSTextFrame(br *bufio.Reader) (string, error) {
 
 // --- TestDashboardWebMux_EventsSSE_AdaptiveBackoff ---
 
-// TestDashboardWebMux_EventsSSE_AdaptiveBackoff_PollCountDropsWhenIdle asserts
-// that the SSE event stream backs off to the slow interval after observing a
-// consistently idle state — mirroring the assertion in
-// TestRunDashboard_AdaptiveRate_PollCountDropsWhenIdle.
-//
-// Given: a fetcher that always returns idle state (FlowingCount=0, hash unchanged)
-// When:  a client connects to /api/dashboard/events for ~600ms with fast=50ms, slow=250ms
-// Then:  total fetch count is well below window/fastInterval (adaptive backoff working)
 func TestDashboardWebMux_EventsSSE_AdaptiveBackoff_PollCountDropsWhenIdle(t *testing.T) {
 	var callCount int32
 	idleFetcher := func(cfg, db string) (*DashboardData, error) {
@@ -1994,11 +988,8 @@ func TestDashboardWebMux_EventsSSE_AdaptiveBackoff_PollCountDropsWhenIdle(t *tes
 	}
 
 	n := int(atomic.LoadInt32(&callCount))
-	// Without backoff: initial (1) + ~12 fast polls = ~13 calls.
-	// With backoff:    initial (1) + 1 fast + ~2 slow = ~4 calls.
-	// Assert strictly fewer than half the "no-backoff" count.
-	maxFastPolls := int(window/(50*time.Millisecond)) + 1 // 13
-	halfMax := maxFastPolls / 2                           // 6
+	maxFastPolls := int(window/(50*time.Millisecond)) + 1
+	halfMax := maxFastPolls / 2
 	if n >= halfMax {
 		t.Errorf("SSE fetch count = %d, want < %d (SSE adaptive backoff not working)", n, halfMax)
 	}

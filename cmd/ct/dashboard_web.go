@@ -2,26 +2,22 @@ package main
 
 import (
 	"bufio"
-	"bytes"
-	"cmp"
 	"context"
 	"crypto/sha1"
 	"crypto/subtle"
-	"embed"
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/csv"
 	"encoding/json"
 	"fmt"
 	"io"
-	"io/fs"
 	"log"
 	"net"
 	"net/http"
 	"net/url"
 	"os"
-	"os/exec"
 	"os/signal"
+	"cmp"
 	"path/filepath"
 	"slices"
 	"strconv"
@@ -36,11 +32,7 @@ import (
 	"github.com/MichielDean/cistern/internal/cistern"
 	"github.com/MichielDean/cistern/internal/skills"
 	"github.com/MichielDean/cistern/internal/tracker"
-	"github.com/creack/pty"
 )
-
-//go:embed assets/static
-var staticAssets embed.FS
 
 // wsWriteTimeout is the per-frame write deadline set on the hijacked net.Conn
 // before each wsSendText call. Without this, a client that disappears via a
@@ -48,22 +40,18 @@ var staticAssets embed.FS
 // inside bufio.Writer.Flush.
 const wsWriteTimeout = 10 * time.Second
 
-// wsTuiReadTimeout is the read deadline applied in the /ws/tui WS handler's
-// frame-reader goroutine (B). It is reset after each received frame to keep
-// active sessions alive. Without a deadline, a network partition + idle PTY
-// leaks goroutines A (ptmx.Read) and B (io.ReadFull) — neither gets an error,
-// and cancel() is never called. Five minutes allows long idle-but-connected
-// sessions while still reaping silently-partitioned ones.
-const wsTuiReadTimeout = 5 * time.Minute
+// wsReadTimeout is the read deadline applied in WS handler frame-reader
+// goroutines. It is reset after each received frame to keep active sessions
+// alive. Without a deadline, a network partition leaks goroutines — neither
+// gets an error, and cancel() is never called. Five minutes allows long
+// idle-but-connected sessions while still reaping silently-partitioned ones.
+const wsReadTimeout = 5 * time.Minute
 
 // wsMaxClientPayload is the maximum payload size accepted from a client frame.
 // Client→server frames carry only resize JSON (~40 bytes) or close frames,
 // so 4 KiB is generous. This prevents a malicious client from triggering
 // unbounded memory allocation via a forged frame length header.
 const wsMaxClientPayload = 4096
-
-// ptyReadBufSize is the read buffer for forwarding PTY output to WebSocket.
-const ptyReadBufSize = 4096
 
 // Field length limits for input validation.
 const (
@@ -98,9 +86,6 @@ var currentDropletSSEConnections int64
 // currentLogSSEConnections tracks the number of active log SSE connections.
 var currentLogSSEConnections int64
 
-// dashboardDefaultFontFamily is the CSS font-family fallback used when
-// dashboard_font_family is not set in cistern.yaml.
-const dashboardDefaultFontFamily = "'Cascadia Code','JetBrains Mono','DejaVu Sans Mono','Fira Code','Menlo','Consolas','Liberation Mono',monospace"
 
 // WebSocket opcodes (RFC 6455 §5.2).
 const (
@@ -245,25 +230,7 @@ func wsSendFrame(w *bufio.Writer, opcode byte, payload []byte) error {
 	return w.Flush()
 }
 
-// handleTuiTextFrame processes a WebSocket text frame received by the /ws/tui
-// handler. If payload decodes to a resize JSON message the resize callback is
-// invoked with the requested dimensions. For any other payload (non-JSON, JSON
-// without a "resize" key, etc.) the raw bytes are forwarded verbatim to ptmx as
-// keystroke input — this is how xterm.js onData sequences (e.g. "\x1b[A" for
-// up arrow) reach the running TUI subprocess.
-func handleTuiTextFrame(payload []byte, ptmx io.Writer, resize func(cols, rows uint16)) {
-	var msg struct {
-		Resize *struct {
-			Cols uint16 `json:"cols"`
-			Rows uint16 `json:"rows"`
-		} `json:"resize"`
-	}
-	if json.Unmarshal(payload, &msg) == nil && msg.Resize != nil {
-		resize(msg.Resize.Cols, msg.Resize.Rows)
-		return
-	}
-	_, _ = ptmx.Write(payload)
-}
+
 
 // wsReadClientFrame reads one WebSocket frame from a client (potentially masked).
 // It returns the opcode, payload, and any read error. buf is reused across calls
@@ -400,349 +367,15 @@ func wsUpgrade(w http.ResponseWriter, r *http.Request) (net.Conn, *bufio.ReadWri
 	return conn, brw, nil
 }
 
-// repaintMarker is the escape sequence Bubble Tea emits at the start of every
-// full-screen repaint when running with WithAltScreen: erase display (\033[2J)
-// followed by cursor home (\033[H). broadcast() uses it to detect frame boundaries.
-var repaintMarker = []byte("\033[2J\033[H")
-
-// tuiFrameFlushDelay is how long broadcast() waits after the most recent PTY
-// chunk before committing the pending frame as lastFrame. This ensures that an
-// idle TUI still exposes a fresh snapshot to new connections even when no second
-// repaint marker arrives to trigger the normal commit path.
-const tuiFrameFlushDelay = 200 * time.Millisecond
-
-// tuiClientChanSize is the per-client send-channel depth. Excess frames are
-// dropped for slow clients so one lagging consumer cannot stall the broadcast loop.
-const tuiClientChanSize = 64
-
-// tuiRestartDelay is the pause between child process exit and automatic restart.
-const tuiRestartDelay = 500 * time.Millisecond
-
-// tuiMaxBackoff is the maximum delay between retries when spawn fails repeatedly.
-// Spawn failures (missing binary, PTY allocation error) use exponential backoff
-// starting at tuiRestartDelay and capping here, preventing a busy-wait loop.
-const tuiMaxBackoff = 30 * time.Second
-
-// tuiClient is one active WebSocket consumer of DashboardTUI's broadcast.
-type tuiClient struct {
-	ch chan []byte
-}
-
-// DashboardTUI manages a singleton ct-dashboard child process, tracks the last
-// complete repaint frame, and fans out to all connected WebSocket clients.
-// The child process survives WebSocket disconnects; only explicit Stop shuts it down.
-type DashboardTUI struct {
-	exe     string
-	cfgPath string
-	dbPath  string
-
-	// spawnFn creates a new PTY session. If nil, defaultSpawn is used.
-	// Override in tests to inject a controllable in-process connection.
-	spawnFn func() (rwc io.ReadWriteCloser, resizeFn func(cols, rows uint16), waitFn func(), err error)
-
-	mu         sync.Mutex
-	rwc        io.ReadWriteCloser      // current PTY/pipe master (protected by mu)
-	resizeFn   func(cols, rows uint16) // current resize callback (protected by mu)
-	clients    map[*tuiClient]struct{} // active WS consumers (protected by mu)
-	lastFrame  []byte                  // last committed complete repaint frame (protected by mu)
-	pending    []byte                  // frame being accumulated since last repaint marker (protected by mu)
-	inFrame    bool                    // true once the first repaint marker has been seen (protected by mu)
-	flushTimer *time.Timer             // commits pending to lastFrame after idle period (protected by mu)
-	flushGen   uint64                  // generation counter; stale timer callbacks compare and abort (protected by mu)
-
-	stopCh chan struct{} // closed by Stop to terminate run loop
-	doneCh chan struct{} // closed when run loop has fully exited
-}
-
-// newDashboardTUI creates a DashboardTUI. Call Start to begin the child process lifecycle.
-func newDashboardTUI(exe, cfgPath, dbPath string) *DashboardTUI {
-	return &DashboardTUI{
-		exe:     exe,
-		cfgPath: cfgPath,
-		dbPath:  dbPath,
-		clients: make(map[*tuiClient]struct{}),
-		stopCh:  make(chan struct{}),
-		doneCh:  make(chan struct{}),
-	}
-}
-
-// Start begins the child process lifecycle goroutine.
-func (d *DashboardTUI) Start() {
-	go d.run()
-}
-
-// Stop terminates the run loop and the current child process, blocking until done.
-func (d *DashboardTUI) Stop() {
-	close(d.stopCh)
-	<-d.doneCh
-}
-
-// run is the main lifecycle loop: spawn → read → restart.
-// Successful spawns restart with tuiRestartDelay. Spawn failures use exponential
-// backoff (starting at tuiRestartDelay, doubling each failure, capped at tuiMaxBackoff)
-// to avoid a busy-wait goroutine when the binary is missing or PTY allocation fails.
-func (d *DashboardTUI) run() {
-	defer close(d.doneCh)
-	backoff := tuiRestartDelay
-	for {
-		select {
-		case <-d.stopCh:
-			return
-		default:
-		}
-		var delay time.Duration
-		if d.runOnce() {
-			// Child spawned and ran (exited naturally or was stopped). Restart quickly.
-			delay = tuiRestartDelay
-			backoff = tuiRestartDelay // reset exponential backoff
-		} else {
-			// Spawn failed. Apply exponential backoff.
-			delay = backoff
-			backoff *= 2
-			if backoff > tuiMaxBackoff {
-				backoff = tuiMaxBackoff
-			}
-		}
-		// Pause before restart, or exit immediately if stopped.
-		select {
-		case <-d.stopCh:
-			return
-		case <-time.After(delay):
-		}
-	}
-}
-
-// runOnce spawns the child process once and reads its PTY output until it exits.
-// It returns true if the spawn succeeded (child ran until exit), or false if
-// spawn itself failed, so the caller can apply appropriate retry backoff.
-func (d *DashboardTUI) runOnce() bool {
-	spawn := d.spawnFn
-	if spawn == nil {
-		spawn = d.defaultSpawn
-	}
-	rwc, resizeFn, waitFn, err := spawn()
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "ct dashboard: spawn error: %v\n", err)
-		return false
-	}
-
-	d.mu.Lock()
-	d.rwc = rwc
-	d.resizeFn = resizeFn
-	d.mu.Unlock()
-
-	// onceDone is closed when runOnce returns; the watchdog goroutine uses it to
-	// distinguish natural process exit from an explicit Stop call.
-	onceDone := make(chan struct{})
-	defer close(onceDone)
-
-	defer func() {
-		rwc.Close() //nolint:errcheck
-		if waitFn != nil {
-			waitFn()
-		}
-		d.mu.Lock()
-		if d.rwc == rwc {
-			d.rwc = nil
-			d.resizeFn = nil
-		}
-		d.mu.Unlock()
-	}()
-
-	// Watchdog: when Stop is called, close rwc to unblock the Read below.
-	go func() {
-		select {
-		case <-d.stopCh:
-			rwc.Close() //nolint:errcheck
-		case <-onceDone:
-		}
-	}()
-
-	buf := make([]byte, ptyReadBufSize)
-	for {
-		n, err := rwc.Read(buf)
-		if n > 0 {
-			d.broadcast(bytes.Clone(buf[:n]))
-		}
-		if err != nil {
-			return true
-		}
-	}
-}
-
-// defaultSpawn starts a ct-dashboard child process in a PTY and returns the PTY
-// master, a resize callback, a cleanup function, and any error.
-func (d *DashboardTUI) defaultSpawn() (io.ReadWriteCloser, func(cols, rows uint16), func(), error) {
-	if d.exe == "" {
-		return nil, nil, nil, fmt.Errorf("no executable")
-	}
-	cmd := exec.Command(d.exe, "dashboard", "--db", d.dbPath)
-	// Force true-color environment so Bubble Tea renders with full ANSI colors.
-	// The web server inherits TERM=dumb from systemd; without these overrides
-	// lipgloss strips all colors and the TUI renders black and white.
-	cmd.Env = append(os.Environ(),
-		"CT_CISTERN_CONFIG="+d.cfgPath,
-		"TERM=xterm-256color",
-		"COLORTERM=truecolor",
-	)
-	ptmx, err := pty.Start(cmd)
-	if err != nil {
-		return nil, nil, nil, err
-	}
-	_ = pty.Setsize(ptmx, &pty.Winsize{Rows: 24, Cols: 80})
-	resizeFn := func(cols, rows uint16) {
-		_ = pty.Setsize(ptmx, &pty.Winsize{Rows: rows, Cols: cols})
-	}
-	waitFn := func() {
-		cmd.Process.Kill() //nolint:errcheck
-		cmd.Wait()         //nolint:errcheck
-	}
-	return ptmx, resizeFn, waitFn, nil
-}
-
-// broadcast updates the lastFrame state and sends chunk to all registered clients.
-// Slow clients have frames dropped rather than blocking the broadcast loop.
-func (d *DashboardTUI) broadcast(chunk []byte) {
-	d.mu.Lock()
-	d.frameAccumulate(chunk)
-	// Snapshot client list under lock to avoid holding the lock during sends.
-	clients := make([]*tuiClient, 0, len(d.clients))
-	for c := range d.clients {
-		clients = append(clients, c)
-	}
-	d.mu.Unlock()
-
-	for _, c := range clients {
-		select {
-		case c.ch <- chunk:
-		default:
-			// Slow client: drop frame.
-		}
-	}
-}
-
-// frameAccumulate detects repaint boundaries in chunk and updates lastFrame.
-// A repaint boundary is marked by repaintMarker (\033[2J\033[H). When a marker
-// is found, the accumulated pending frame is committed as lastFrame and a new
-// pending frame begins at the marker. An idle-flush timer commits the current
-// pending frame if no second marker arrives within tuiFrameFlushDelay.
-// Must be called with d.mu held.
-func (d *DashboardTUI) frameAccumulate(chunk []byte) {
-	rest := chunk
-	for len(rest) > 0 {
-		idx := bytes.Index(rest, repaintMarker)
-		if idx < 0 {
-			if d.inFrame {
-				d.pending = append(d.pending, rest...)
-				d.scheduleFlush()
-			}
-			return
-		}
-		if d.inFrame {
-			d.lastFrame = append(d.pending, rest[:idx]...)
-		}
-		d.pending = bytes.Clone(repaintMarker)
-		d.inFrame = true
-		rest = rest[idx+len(repaintMarker):]
-	}
-	// Chunk ended at a repaint marker; arm the flush timer so an idle TUI
-	// still exposes a snapshot to new connections.
-	if d.inFrame {
-		d.scheduleFlush()
-	}
-}
-
-// scheduleFlush arms (or resets) the idle-flush timer. Must be called with d.mu held.
-func (d *DashboardTUI) scheduleFlush() {
-	if d.flushTimer != nil {
-		d.flushTimer.Stop()
-	}
-	d.flushGen++
-	gen := d.flushGen
-	d.flushTimer = time.AfterFunc(tuiFrameFlushDelay, func() { d.flushPendingFrame(gen) })
-}
-
-// flushPendingFrame commits the current pending frame as lastFrame. It is called
-// by the flush timer when no second repaint marker has arrived within tuiFrameFlushDelay.
-// gen is the generation at the time the timer was armed; if d.flushGen has advanced
-// the callback is stale and must not overwrite a properly committed lastFrame.
-func (d *DashboardTUI) flushPendingFrame(gen uint64) {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	if d.flushGen != gen {
-		return
-	}
-	if d.inFrame && len(d.pending) > 0 {
-		d.lastFrame = d.pending
-	}
-	d.flushTimer = nil
-}
-
-// attach registers a new WebSocket client. It returns the client handle and the
-// initial snapshot to send on connect or reconnect. The snapshot is repaintMarker
-// prepended to lastFrame (nil if no frame has been committed yet). The leading
-// marker is injected unconditionally — even when lastFrame already starts with one
-// — so xterm.js always begins from a clean erase+cursor-home state regardless of
-// prior render history.
-// The caller must call detach when the WebSocket closes.
-func (d *DashboardTUI) attach() (*tuiClient, []byte) {
-	c := &tuiClient{ch: make(chan []byte, tuiClientChanSize)}
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	d.clients[c] = struct{}{}
-	var snapshot []byte
-	if len(d.lastFrame) > 0 {
-		snapshot = append(bytes.Clone(repaintMarker), d.lastFrame...)
-	}
-	return c, snapshot
-}
-
-// detach unregisters the client. The child process continues running.
-func (d *DashboardTUI) detach(c *tuiClient) {
-	d.mu.Lock()
-	delete(d.clients, c)
-	d.mu.Unlock()
-}
-
-// resize updates the PTY dimensions if the child process is running.
-// It injects a repaintMarker into frameAccumulate before calling the PTY resize
-// callback so the current pending frame is committed as lastFrame. This ensures
-// the Bubble Tea redraw triggered by SIGWINCH starts from a fresh frame boundary,
-// preventing stale compound frames from being delivered to new clients.
-func (d *DashboardTUI) resize(cols, rows uint16) {
-	d.mu.Lock()
-	fn := d.resizeFn
-	if fn != nil {
-		d.frameAccumulate(repaintMarker)
-	}
-	d.mu.Unlock()
-	if fn != nil {
-		fn(cols, rows)
-	}
-}
-
-// Write forwards keystroke bytes to the PTY. Implements io.Writer for
-// handleTuiTextFrame. Drops silently if no child process is running.
-func (d *DashboardTUI) Write(p []byte) (int, error) {
-	d.mu.Lock()
-	rwc := d.rwc
-	d.mu.Unlock()
-	if rwc == nil {
-		return len(p), nil
-	}
-	return rwc.Write(p)
-}
-
 // newDashboardMux returns an http.Handler for the web dashboard.
-// Exposed for testing. The /ws/tui endpoint is disabled (tui=nil).
 func newDashboardMux(cfgPath, dbPath string) http.Handler {
-	return newDashboardMuxInternal(cfgPath, dbPath, nil)
+	return newDashboardMuxInternal(cfgPath, dbPath)
 }
 
 // newDashboardMuxWith returns an http.Handler for the web dashboard with custom
 // fetcher and refresh intervals. Exposed for testing.
 func newDashboardMuxWith(cfgPath, dbPath string, fetcher func(cfg, db string) (*DashboardData, error), fastInterval, slowInterval time.Duration) http.Handler {
-	return newDashboardMuxInternalWith(cfgPath, dbPath, nil, fetcher, fastInterval, slowInterval)
+	return newDashboardMuxInternalWith(cfgPath, dbPath, fetcher, fastInterval, slowInterval)
 }
 
 // makeDashboardEventsHandler returns an http.HandlerFunc for the SSE dashboard events
@@ -797,30 +430,19 @@ func makeDashboardEventsHandler(cfgPath, dbPath string, fetcher func(string, str
 }
 
 // newDashboardMuxInternal returns an http.Handler for the web dashboard.
-// tui may be nil; if so the /ws/tui endpoint closes connections immediately.
-func newDashboardMuxInternal(cfgPath, dbPath string, tui *DashboardTUI) http.Handler {
-	return newDashboardMuxInternalWith(cfgPath, dbPath, tui, fetchDashboardData, refreshInterval, idleRefreshInterval)
+func newDashboardMuxInternal(cfgPath, dbPath string) http.Handler {
+	return newDashboardMuxInternalWith(cfgPath, dbPath, fetchDashboardData, refreshInterval, idleRefreshInterval)
 }
 
 // newDashboardMuxInternalWith returns an http.Handler for the web dashboard with custom
 // fetcher and refresh intervals. Exposed for testing.
-func newDashboardMuxInternalWith(cfgPath, dbPath string, tui *DashboardTUI, fetcher func(cfg, db string) (*DashboardData, error), fastInterval, slowInterval time.Duration) http.Handler {
+func newDashboardMuxInternalWith(cfgPath, dbPath string, fetcher func(cfg, db string) (*DashboardData, error), fastInterval, slowInterval time.Duration) http.Handler {
 	// Read dashboard config fresh at server start so a cistern.yaml edit
 	// followed by restarting ct dashboard --web takes effect without recompiling.
 	// This is the supported update path: edit cistern.yaml, restart the server.
 	var cfg *aqueduct.AqueductConfig
 	if parsedCfg, err := aqueduct.ParseAqueductConfig(cfgPath); err == nil {
 		cfg = parsedCfg
-	}
-
-	fontFamily := dashboardDefaultFontFamily
-	if cfg != nil && cfg.DashboardFontFamily != "" {
-		// Use json.Marshal to produce a fully JS-safe escaped string (handles
-		// backslash, double-quote, newlines, </script> sequences, and Unicode
-		// line/paragraph separators). Trim the surrounding JSON quotes since the
-		// template already wraps the value in double-quotes.
-		b, _ := json.Marshal(cfg.DashboardFontFamily)
-		fontFamily = string(b[1 : len(b)-1])
 	}
 
 	// Resolve API key: env var takes precedence over config file.
@@ -841,16 +463,7 @@ func newDashboardMuxInternalWith(cfgPath, dbPath string, tui *DashboardTUI, fetc
 		allowedOrigins = defaultAllowedOrigins()
 	}
 
-	html := strings.Replace(dashboardHTML, "__DASHBOARD_FONT_FAMILY__", fontFamily, 1)
-
 	mux := http.NewServeMux()
-
-	// Serve bundled xterm.js assets so the dashboard works in airgapped environments.
-	staticSub, err := fs.Sub(staticAssets, "assets/static")
-	if err != nil {
-		panic("embedded static assets not found: " + err.Error())
-	}
-	mux.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.FS(staticSub))))
 
 	spa := newSPAHandler(apiKey)
 	mux.Handle("/app/", spa)
@@ -858,13 +471,13 @@ func newDashboardMuxInternalWith(cfgPath, dbPath string, tui *DashboardTUI, fetc
 		http.Redirect(w, r, "/app/", http.StatusMovedPermanently)
 	})
 
+	// Root path redirects to the SPA dashboard.
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/" {
-			http.NotFound(w, r)
+		if r.URL.Path == "/" {
+			http.Redirect(w, r, "/app/", http.StatusMovedPermanently)
 			return
 		}
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		fmt.Fprint(w, html)
+		http.NotFound(w, r)
 	})
 
 	mux.HandleFunc("/api/dashboard", func(w http.ResponseWriter, r *http.Request) {
@@ -957,21 +570,21 @@ func newDashboardMuxInternalWith(cfgPath, dbPath string, tui *DashboardTUI, fetc
 		defer cancel()
 
 		// Reader goroutine: detects client close frames and network partitions.
-		// Sets wsTuiReadTimeout on the connection so a silently-partitioned client
+		// Sets wsReadTimeout on the connection so a silently-partitioned client
 		// (no TCP FIN, no frames) is reaped after 5 minutes. Without this, when
 		// tmux output is stable (no diffs) the ticker loop never writes and never
 		// sets a write deadline — the goroutine and TCP connection leak indefinitely.
 		go func() {
 			defer cancel()
 			buf := make([]byte, wsMaxClientPayload)
-			conn.SetReadDeadline(time.Now().Add(wsTuiReadTimeout)) //nolint:errcheck
+			conn.SetReadDeadline(time.Now().Add(wsReadTimeout)) //nolint:errcheck
 			for {
 				opcode, _, nb, err := wsReadClientFrame(brw.Reader, buf)
 				buf = nb
 				if err != nil {
 					return
 				}
-				conn.SetReadDeadline(time.Now().Add(wsTuiReadTimeout)) //nolint:errcheck
+				conn.SetReadDeadline(time.Now().Add(wsReadTimeout)) //nolint:errcheck
 				if opcode == wsOpcodeClose {
 					return
 				}
@@ -1002,82 +615,6 @@ func newDashboardMuxInternalWith(cfgPath, dbPath string, tui *DashboardTUI, fetc
 						return
 					}
 					prev = next
-				}
-			}
-		}
-	})
-
-	// WS /ws/tui — attaches to the singleton DashboardTUI and streams raw ANSI
-	// to xterm.js. The child process is NOT per-connection; it is owned by tui
-	// and survives WebSocket disconnects.
-	//
-	// Protocol (client → server): JSON text frames for control messages.
-	//   {"resize":{"cols":N,"rows":N}}  — resize PTY to match xterm.js viewport
-	//
-	// Protocol (server → client): binary frames containing raw PTY output bytes.
-	// Binary frames are required because PTY output may contain non-UTF-8 byte
-	// sequences; text frames with invalid UTF-8 cause browsers to close the WS.
-	mux.HandleFunc("/ws/tui", func(w http.ResponseWriter, r *http.Request) {
-		conn, brw, err := wsUpgrade(w, r)
-		if err != nil {
-			return
-		}
-		defer conn.Close()
-
-		if tui == nil {
-			return
-		}
-
-		// Attach to the singleton; receive the last complete repaint frame.
-		client, lastFrame := tui.attach()
-		defer tui.detach(client) // child process continues running on detach
-
-		// Send the last complete frame so a connecting client sees a clean, current
-		// TUI state before any new live frames arrive — no replay flicker.
-		if len(lastFrame) > 0 {
-			conn.SetWriteDeadline(time.Now().Add(wsWriteTimeout)) //nolint:errcheck
-			if wsSendBinary(brw.Writer, lastFrame) != nil {
-				return
-			}
-		}
-
-		ctx, cancel := context.WithCancel(context.Background())
-		defer cancel()
-
-		// Goroutine B: read incoming WebSocket frames from the client.
-		// Exits on read error, read deadline, or close frame; calls cancel().
-		go func() {
-			defer cancel()
-			buf := make([]byte, wsMaxClientPayload)
-			conn.SetReadDeadline(time.Now().Add(wsTuiReadTimeout)) //nolint:errcheck
-			for {
-				opcode, payload, nb, err := wsReadClientFrame(brw.Reader, buf)
-				buf = nb
-				if err != nil {
-					return
-				}
-				conn.SetReadDeadline(time.Now().Add(wsTuiReadTimeout)) //nolint:errcheck
-				switch opcode {
-				case wsOpcodeText:
-					handleTuiTextFrame(payload, tui, tui.resize)
-				case wsOpcodeClose:
-					return
-				}
-			}
-		}()
-
-		// Goroutine A (this goroutine): forward broadcast chunks to WebSocket.
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case chunk, ok := <-client.ch:
-				if !ok {
-					return
-				}
-				conn.SetWriteDeadline(time.Now().Add(wsWriteTimeout)) //nolint:errcheck
-				if wsSendBinary(brw.Writer, chunk) != nil {
-					return
 				}
 			}
 		}
@@ -1166,7 +703,7 @@ func newDashboardMuxInternalWith(cfgPath, dbPath string, tui *DashboardTUI, fetc
 
 	// Wrap the API mux with CORS and body-size middleware.
 	// Auth is applied to the entire mux below so that pre-existing endpoints
-	// (/api/dashboard, /ws/tui, etc.) are also protected.
+	// (/api/dashboard, etc.) are also protected.
 	var apiHandler http.Handler = apiMux
 	apiHandler = corsMiddleware(apiHandler, allowedOrigins)
 	apiHandler = apiBodyLimitMiddleware(apiHandler)
@@ -2866,13 +2403,9 @@ func handleDropletEvents(cfgPath, dbPath string) http.HandlerFunc {
 // RunDashboardWeb starts the HTTP web dashboard on addr and blocks until
 // SIGINT/SIGTERM is received or the server fails.
 func RunDashboardWeb(cfgPath, dbPath, addr string) error {
-	exe, _ := os.Executable()
-	tui := newDashboardTUI(exe, cfgPath, dbPath)
-	tui.Start()
-
 	srv := &http.Server{
 		Addr:              addr,
-		Handler:           newDashboardMuxInternal(cfgPath, dbPath, tui),
+		Handler:           newDashboardMuxInternal(cfgPath, dbPath),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       10 * time.Second,
 		WriteTimeout:      0, // SSE streams are long-lived
@@ -2895,259 +2428,11 @@ func RunDashboardWeb(cfgPath, dbPath, addr string) error {
 	case <-ctx.Done():
 		shutCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		err := srv.Shutdown(shutCtx)
-		tui.Stop()
-		return err
+		return srv.Shutdown(shutCtx)
 	case err := <-errCh:
-		tui.Stop()
 		return err
 	}
 }
-
-// dashboardHTML is the single-page web dashboard. The aqueduct arch section
-// uses CSS-based rendering (flexbox, CSS animations) for responsive mobile
-// support. The remaining sections (current flow, cistern, recent flow) use
-// pre-formatted HTML identical to the TUI colour palette.
-const dashboardHTML = `<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Cistern</title>
-<style>
-*{box-sizing:border-box;margin:0;padding:0}
-html,body{width:100%;height:100%;background:#0d1117;overflow:hidden}
-/* Outer scroll container — pans the scaled terminal */
-#scroll{
-  width:100%;height:100%;
-  overflow:auto;
-  -webkit-overflow-scrolling:touch;
-}
-/* Terminal wrapper — transform-origin top-left so scale grows right/down */
-#wrap{
-  display:inline-block;
-  transform-origin:top left;
-  /* width/height set by JS to match scaled canvas size */
-}
-/* xterm.js scrollbar styling */
-.xterm-viewport::-webkit-scrollbar{width:6px}
-.xterm-viewport::-webkit-scrollbar-track{background:#0d1117}
-.xterm-viewport::-webkit-scrollbar-thumb{background:#30363d;border-radius:3px}
-.xterm-viewport{scrollbar-color:#30363d #0d1117;scrollbar-width:thin}
-/* ESC = back hint — fixed corner overlay, always visible, subtle */
-#esc-hint{position:fixed;bottom:10px;right:14px;z-index:9999;background:rgba(13,17,23,0.82);border:1px solid #30363d;border-radius:4px;padding:3px 8px;font-family:monospace;font-size:11px;color:#8b949e;cursor:pointer;user-select:none;-webkit-user-select:none;outline:none}
-#esc-hint:hover{color:#e6edf3;border-color:#58a6ff}
-/* New UI link — sits left of ESC hint */
-#new-ui-hint{position:fixed;bottom:10px;right:110px;z-index:9999;background:rgba(13,17,23,0.82);border:1px solid #30363d;border-radius:4px;padding:3px 8px;font-family:monospace;font-size:11px;color:#58a6ff;text-decoration:none;user-select:none;-webkit-user-select:none}
-#new-ui-hint:hover{color:#e6edf3;border-color:#58a6ff}
-</style>
-<link rel="stylesheet" href="/static/xterm.min.css"/>
-</head>
-<body>
-<div id="scroll"><div id="wrap"><div id="terminal"></div></div></div>
-<a id="new-ui-hint" href="/app/" title="Open the new web UI">New UI</a>
-<button id="esc-hint" onclick="sendEsc()" title="Send Esc to terminal (back / close overlay)">ESC = back</button>
-<script src="/static/xterm.min.js"></script>
-<script src="/static/addon-fit.min.js"></script>
-<script>
-var term = new Terminal({
-  theme: {
-    background:          '#0d1117',
-    foreground:          '#e6edf3',
-    cursor:              '#58a6ff',
-    cursorAccent:        '#0d1117',
-    selectionBackground: '#264f78',
-    black:   '#484f58', red:     '#ff7b72', green:   '#3fb950', yellow:  '#d29922',
-    blue:    '#58a6ff', magenta: '#bc8cff', cyan:    '#39c5cf', white:   '#b1bac4',
-    brightBlack:   '#6e7681', brightRed:     '#ffa198', brightGreen:   '#56d364',
-    brightYellow:  '#e3b341', brightBlue:    '#79c0ff', brightMagenta: '#d2a8ff',
-    brightCyan:    '#56d4dd', brightWhite:   '#f0f6fc'
-  },
-  /* Font stack injected from dashboard_font_family in cistern.yaml at server
-     start. Falls back to dashboardDefaultFontFamily when the field is unset. */
-  fontFamily: "__DASHBOARD_FONT_FAMILY__",
-  fontSize: 13,
-  lineHeight: 1.2,
-  letterSpacing: 0,
-  cursorBlink: false,
-  scrollback: 1000,
-  scrollOnUserInput: false,
-  /* Allow Bubble Tea to use the full palette */
-  allowProposedApi: true
-});
-
-var fitAddon = new FitAddon.FitAddon();
-term.loadAddon(fitAddon);
-term.open(document.getElementById('terminal'));
-
-/* Forward all keystrokes to the PTY via WebSocket. xterm.js fires onData
-   for every keypress with the raw terminal escape sequence (e.g. "\x1b[A"
-   for up arrow). The server writes these bytes directly to the PTY stdin. */
-term.onData(function(data) {
-  if (ws && ws.readyState === WebSocket.OPEN) {
-    ws.send(data);
-  }
-});
-
-/* sendEsc forwards the Escape byte (\x1b) to the PTY. Called by the ESC hint
-   button (onclick) and by the keydown capture listener below. */
-function sendEsc() {
-  if (ws && ws.readyState === WebSocket.OPEN) {
-    ws.send('\x1b');
-  }
-}
-
-/* Intercept Esc at the capture phase so the PTY receives it reliably even
-   when xterm.js does not have keyboard focus or the browser would otherwise
-   swallow it (e.g. to close a dialog or auto-complete dropdown).
-   stopPropagation() prevents xterm.js from also firing term.onData for the
-   same event, which would cause a double-send of \x1b to the PTY. */
-document.addEventListener('keydown', function(e) {
-  if (e.key === 'Escape') {
-    e.preventDefault();
-    e.stopPropagation();
-    sendEsc();
-  }
-}, {capture:true});
-
-var ws = null;
-var scale = 0.75; /* default: render ~133% more content, scaled down to fit */
-var minScale = 0.3;
-var maxScale = 3.0;
-var wrap = document.getElementById('wrap');
-var scroll = document.getElementById('scroll');
-
-/* Send resize to server when PTY dimensions change */
-term.onResize(function(e) {
-  if (ws && ws.readyState === WebSocket.OPEN) {
-    ws.send(JSON.stringify({resize: {cols: e.cols, rows: e.rows}}));
-  }
-});
-
-/* Fit terminal to the virtual (unscaled) area.
-   By sizing the terminal element to viewport/scale before fitting, FitAddon
-   calculates cols/rows for a larger area than the screen. Bubble Tea renders
-   more content at higher detail; CSS scale then shrinks it to fit physically.
-   At scale=0.6 (60%): terminal sees 167% of viewport → ~1.7x more content. */
-function fitTerminal() {
-  var termEl = document.getElementById('terminal');
-  termEl.style.width  = Math.round(scroll.clientWidth  / scale) + 'px';
-  termEl.style.height = Math.round(scroll.clientHeight / scale) + 'px';
-  fitAddon.fit();
-}
-
-/* Apply CSS scale transform and update wrap dimensions so scroll container
-   knows the actual (scaled) size of the content */
-function applyScale() {
-  var termEl = document.getElementById('terminal');
-  var w = termEl.offsetWidth;
-  var h = termEl.offsetHeight;
-  wrap.style.transform = 'scale(' + scale + ')';
-  /* Wrap must report scaled dimensions to outer scroll container */
-  wrap.style.width  = Math.round(w * scale) + 'px';
-  wrap.style.height = Math.round(h * scale) + 'px';
-}
-
-function initView() {
-  fitTerminal();
-  applyScale();
-}
-
-window.addEventListener('resize', function() {
-  fitTerminal();
-  applyScale();
-});
-
-requestAnimationFrame(initView);
-
-/* ── Zoom controls ─────────────────────────────────────────────────────── */
-var pinchStartDist = 0;
-var pinchStartScale = 1;
-
-function setScale(s) {
-  scale = Math.max(minScale, Math.min(maxScale, s));
-  fitTerminal();  /* recalculate cols/rows for new virtual area */
-  applyScale();   /* update CSS transform and wrap dimensions */
-}
-
-/* Pinch-to-zoom (mobile touch) */
-scroll.addEventListener('touchstart', function(e) {
-  if (e.touches.length === 2) {
-    var dx = e.touches[0].clientX - e.touches[1].clientX;
-    var dy = e.touches[0].clientY - e.touches[1].clientY;
-    pinchStartDist  = Math.sqrt(dx*dx + dy*dy);
-    pinchStartScale = scale;
-    e.preventDefault();
-  }
-}, {passive: false});
-
-scroll.addEventListener('touchmove', function(e) {
-  if (e.touches.length === 2) {
-    var dx = e.touches[0].clientX - e.touches[1].clientX;
-    var dy = e.touches[0].clientY - e.touches[1].clientY;
-    var dist = Math.sqrt(dx*dx + dy*dy);
-    if (pinchStartDist > 0) {
-      setScale(pinchStartScale * (dist / pinchStartDist));
-    }
-    e.preventDefault();
-  }
-}, {passive: false});
-
-scroll.addEventListener('touchend', function(e) {
-  if (e.touches.length < 2) pinchStartDist = 0;
-}, {passive: false});
-
-/* Safari gesture events (trackpad pinch on Mac/iPad) */
-scroll.addEventListener('gesturestart', function(e) {
-  pinchStartScale = scale;
-  e.preventDefault();
-}, {passive: false});
-
-scroll.addEventListener('gesturechange', function(e) {
-  setScale(pinchStartScale * e.scale);
-  e.preventDefault();
-}, {passive: false});
-
-/* Ctrl/Cmd + scroll wheel zoom (desktop) */
-scroll.addEventListener('wheel', function(e) {
-  if (e.ctrlKey || e.metaKey) {
-    e.preventDefault();
-    var factor = e.deltaY > 0 ? 0.9 : 1.1;
-    setScale(scale * factor);
-  }
-}, {passive: false});
-
-function connect() {
-  var proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-  ws = new WebSocket(proto + '//' + location.host + '/ws/tui');
-  ws.binaryType = 'arraybuffer';
-
-  ws.onopen = function() {
-    term.clear();
-    /* Send current size immediately on connect */
-    ws.send(JSON.stringify({resize: {cols: term.cols, rows: term.rows}}));
-  };
-
-  ws.onmessage = function(e) {
-    if (e.data instanceof ArrayBuffer) {
-      term.write(new Uint8Array(e.data));
-    } else {
-      term.write(e.data);
-    }
-  };
-
-  ws.onclose = function() {
-    term.write('\r\n\x1b[2m\u2500\u2500\u2500 disconnected \u2014 reconnecting in 3s \u2500\u2500\u2500\x1b[0m\r\n');
-    setTimeout(connect, 3000);
-  };
-
-  ws.onerror = function() { ws.close(); };
-}
-
-connect();
-</script>
-</body>
-</html>`
 
 // ── Filter session handlers ──
 
