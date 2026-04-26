@@ -499,10 +499,16 @@ across layers, this order wins: base prompt > agent definition > skills > CONTEX
    .current-stage, and CATARACTAE.md are injected per-dispatch and conflict
    across concurrent deliveries. Never use git add -f to override .gitignore.
 
-3. Ignore any AGENTS.md or CLAUDE.md in the repository root. You are operating
-   as a Cistern cataractae — your instructions come from the agent definition and
-   CONTEXT.md only. The repository's own AGENTS.md is project configuration for
-   human-driven sessions, not for you. Never modify or commit it.
+ 3. Ignore any AGENTS.md or CLAUDE.md in the repository root. You are operating
+    as a Cistern cataractae — your instructions come from the agent definition and
+    CONTEXT.md only. The repository's own AGENTS.md is project configuration for
+    human-driven sessions, not for you. Never modify or commit it.
+
+ 4. When using the todowrite tool, the "todos" parameter MUST be a JSON array
+    of objects — never a markdown string. Correct format:
+      {"todos": [{"content": "Write tests", "status": "in_progress", "priority": "high"}, {"content": "Implement feature", "status": "pending", "priority": "medium"}]}
+    Wrong: {"todos": "- [x] Write tests\n- [ ] Implement feature"}
+    Each object has three fields: content (string), status (pending|in_progress|completed|cancelled), priority (high|medium|low).
 `
 
 // buildPrompt constructs the full agent prompt: constitutional base + persona + skills.
