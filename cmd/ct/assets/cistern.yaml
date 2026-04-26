@@ -24,7 +24,6 @@ repos:
       - marcia
     prefix: ct
 
-max_cataractae: 4
 handoff_token_threshold: 100000
 
 # heartbeat_interval controls how often the Castellarius scans for orphaned or

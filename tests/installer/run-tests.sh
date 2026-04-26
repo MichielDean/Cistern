@@ -353,7 +353,6 @@ repos:
     cataractae: 2
     names: [virgo, marcia]
     prefix: ct
-max_cataractae: 4
 # Stale keys from a prior version — must not break parsing or startup.
 old_binary_path: /opt/cistern-v0/bin/ct
 legacy_agent_timeout: 300

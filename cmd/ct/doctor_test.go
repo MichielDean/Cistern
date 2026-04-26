@@ -82,7 +82,6 @@ cataractae:
     workflow_path: aqueduct/workflow.yaml
     cataractae: 1
     prefix: ct
-max_cataractae: 1
 `
 	cfgPath := filepath.Join(cisternDir, "cistern.yaml")
 	if err := os.WriteFile(cfgPath, []byte(cfgContent), 0o644); err != nil {
@@ -165,7 +164,6 @@ cataractae:
     workflow_path: aqueduct/workflow2.yaml
     cataractae: 1
     prefix: r2
-max_cataractae: 2
 `
 	cfgPath := filepath.Join(cisternDir, "cistern.yaml")
 	if err := os.WriteFile(cfgPath, []byte(cfgContent), 0o644); err != nil {
@@ -229,7 +227,6 @@ cataractae:
     workflow_path: aqueduct/workflow.yaml
     cataractae: 1
     prefix: ct
-max_cataractae: 1
 `
 	cfgPath := filepath.Join(cisternDir, "cistern.yaml")
 	if err := os.WriteFile(cfgPath, []byte(cfgContent), 0o644); err != nil {
@@ -273,7 +270,6 @@ func TestRunDoctorSkillsCheck_InvalidWorkflow_SkipsRepo(t *testing.T) {
     workflow_path: aqueduct/workflow.yaml
     cataractae: 1
     prefix: ct
-max_cataractae: 1
 `
 	cfgPath := filepath.Join(cisternDir, "cistern.yaml")
 	if err := os.WriteFile(cfgPath, []byte(cfgContent), 0o644); err != nil {
@@ -332,7 +328,6 @@ cataractae:
     workflow_path: aqueduct/workflow.yaml
     cataractae: 1
     prefix: ct
-max_cataractae: 1
 `
 	cfgPath := filepath.Join(cisternDir, "cistern.yaml")
 	if err := os.WriteFile(cfgPath, []byte(cfgContent), 0o644); err != nil {
@@ -385,7 +380,6 @@ cataractae:
     workflow_path: aqueduct/workflow.yaml
     cataractae: 1
     prefix: ct
-max_cataractae: 1
 `
 	altCfgPath := filepath.Join(altDir, "cistern.yaml")
 	if err := os.WriteFile(altCfgPath, []byte(cfgContent), 0o644); err != nil {
@@ -459,7 +453,6 @@ cataractae:
     workflow_path: %s
     cataractae: 1
     prefix: ct
-max_cataractae: 1
 `, absWfPath)
 	cfgPath := filepath.Join(cisternDir, "cistern.yaml")
 	if err := os.WriteFile(cfgPath, []byte(cfgContent), 0o644); err != nil {
@@ -513,7 +506,6 @@ cataractae:
     workflow_path: aqueduct/workflow.yaml
     cataractae: 1
     prefix: ct
-max_cataractae: 1
 `
 	cfgPath := filepath.Join(cisternDir, "cistern.yaml")
 	if err := os.WriteFile(cfgPath, []byte(cfgContent), 0o644); err != nil {
@@ -978,7 +970,6 @@ const minimalCisternConfigYAML = `repos:
     workflow_path: aqueduct/workflow.yaml
     cataractae: 1
     prefix: ct
-max_cataractae: 1
 `
 
 // minimalCisternConfigWithOpencodeYAML is a valid config using the opencode provider (InstructionsFile=AGENTS.md).
@@ -990,7 +981,6 @@ const minimalCisternConfigWithOpencodeYAML = `repos:
     prefix: ct
 provider:
   name: opencode
-max_cataractae: 1
 `
 
 // minimalCisternConfigWithCustomLLMYAML is a config with llm.provider=custom and no base_url set.
@@ -1000,7 +990,6 @@ const minimalCisternConfigWithCustomLLMYAML = `repos:
     workflow_path: aqueduct/workflow.yaml
     cataractae: 1
     prefix: ct
-max_cataractae: 1
 llm:
   provider: custom
 `
@@ -1012,7 +1001,6 @@ const minimalCisternConfigWithCustomLLMAndBaseURLYAML = `repos:
     workflow_path: aqueduct/workflow.yaml
     cataractae: 1
     prefix: ct
-max_cataractae: 1
 llm:
   provider: custom
   base_url: https://llm.example.com
@@ -1029,7 +1017,6 @@ provider:
   name: opencode
 llm:
   provider: anthropic
-max_cataractae: 1
 `
 
 // setupFakeBinAndAPIKey creates a fake binary named binName in a temp dir,
@@ -1277,7 +1264,6 @@ func TestRunDoctorExtendedChecks_ProviderInstructionsFile(t *testing.T) {
     prefix: ct
 provider:
   name: opencode
-max_cataractae: 1
 `
 	cfgPath := filepath.Join(cisternDir, "cistern.yaml")
 	if err := os.WriteFile(cfgPath, []byte(opencodeConfigYAML), 0o644); err != nil {
@@ -1335,7 +1321,6 @@ func TestRunDoctorExtendedChecks_ProviderInstructionsFile_MissingFails(t *testin
     prefix: ct
 provider:
   name: opencode
-max_cataractae: 1
 `
 	cfgPath := filepath.Join(cisternDir, "cistern.yaml")
 	if err := os.WriteFile(cfgPath, []byte(opencodeConfigYAML), 0o644); err != nil {
@@ -1387,7 +1372,6 @@ func TestRunDoctorExtendedChecks_UnknownProvider_FailsProviderCheck(t *testing.T
     prefix: ct
 provider:
   name: unknownprovider
-max_cataractae: 1
 `
 	cfgPath := filepath.Join(cisternDir, "cistern.yaml")
 	if err := os.WriteFile(cfgPath, []byte(unknownProviderConfigYAML), 0o644); err != nil {
@@ -1734,7 +1718,6 @@ func TestRunDoctorProviderChecks_OpencodeProvider_ChecksOpencodeOnly(t *testing.
     prefix: ct
 provider:
   name: opencode
-max_cataractae: 1
 `
 	cfgPath := filepath.Join(cisternDir, "cistern.yaml")
 	if err := os.WriteFile(cfgPath, []byte(opencodeConfigYAML), 0o644); err != nil {
@@ -2263,7 +2246,6 @@ func TestRunDoctorExtendedChecks_DefaultWorkflow_InstallerStubs_Passes(t *testin
     workflow_path: aqueduct/aqueduct.yaml
     cataractae: 1
     prefix: ct
-max_cataractae: 1
 `
 	cfgPath := filepath.Join(cisternDir, "cistern.yaml")
 	if err := os.WriteFile(cfgPath, []byte(cfgContent), 0o644); err != nil {

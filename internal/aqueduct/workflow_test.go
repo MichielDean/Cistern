@@ -160,7 +160,6 @@ func TestValidateCisternConfig_Valid(t *testing.T) {
 			{Name: "ScaledTest", Cataractae: 2, Names: []string{"cascade", "tributary"}, Prefix: "st"},
 			{Name: "cistern", Cataractae: 1, Names: []string{"confluence"}, Prefix: "ct"},
 		},
-		MaxCataractae: 3,
 	}
 	if err := ValidateAqueductConfig(cfg); err != nil {
 		t.Fatalf("expected valid config, got: %v", err)
@@ -168,22 +167,10 @@ func TestValidateCisternConfig_Valid(t *testing.T) {
 }
 
 func TestValidateCisternConfig_NoRepos(t *testing.T) {
-	cfg := &AqueductConfig{MaxCataractae: 1}
+	cfg := &AqueductConfig{}
 	err := ValidateAqueductConfig(cfg)
 	if err == nil || !strings.Contains(err.Error(), "at least one repo") {
 		t.Errorf("expected at least one repo error, got %v", err)
-	}
-}
-
-func TestValidateCisternConfig_MaxCataractaeIsNoOp(t *testing.T) {
-	// max_cataractae is deprecated — setting it to 0 should not cause a validation error.
-	// Capping is per-repo via pool size.
-	cfg := &AqueductConfig{
-		Repos:         []RepoConfig{{Name: "r1", Cataractae: 1, Prefix: "r1"}},
-		MaxCataractae: 0,
-	}
-	if err := ValidateAqueductConfig(cfg); err != nil {
-		t.Errorf("expected no error with max_cataractae=0 (deprecated), got %v", err)
 	}
 }
 
@@ -193,7 +180,6 @@ func TestValidateCisternConfig_DuplicateRepoName(t *testing.T) {
 			{Name: "dup", Cataractae: 1, Prefix: "a"},
 			{Name: "dup", Cataractae: 1, Prefix: "b"},
 		},
-		MaxCataractae: 2,
 	}
 	err := ValidateAqueductConfig(cfg)
 	if err == nil || !strings.Contains(err.Error(), "duplicate repo name") {
@@ -207,7 +193,6 @@ func TestValidateCisternConfig_DuplicatePrefix(t *testing.T) {
 			{Name: "r1", Cataractae: 1, Prefix: "shared"},
 			{Name: "r2", Cataractae: 1, Prefix: "shared"},
 		},
-		MaxCataractae: 2,
 	}
 	err := ValidateAqueductConfig(cfg)
 	if err == nil || !strings.Contains(err.Error(), "share prefix") {
@@ -220,7 +205,6 @@ func TestValidateCisternConfig_WorkersNamesMismatch(t *testing.T) {
 		Repos: []RepoConfig{
 			{Name: "r1", Cataractae: 3, Names: []string{"a", "b"}},
 		},
-		MaxCataractae: 3,
 	}
 	err := ValidateAqueductConfig(cfg)
 	if err == nil || !strings.Contains(err.Error(), "cataractae=3 but names has 2") {
@@ -230,8 +214,7 @@ func TestValidateCisternConfig_WorkersNamesMismatch(t *testing.T) {
 
 func TestValidateCisternConfig_ZeroWorkers(t *testing.T) {
 	cfg := &AqueductConfig{
-		Repos:         []RepoConfig{{Name: "r1", Cataractae: 0}},
-		MaxCataractae: 1,
+		Repos: []RepoConfig{{Name: "r1", Cataractae: 0}},
 	}
 	err := ValidateAqueductConfig(cfg)
 	if err == nil || !strings.Contains(err.Error(), "cataractae must be > 0") {
@@ -240,12 +223,10 @@ func TestValidateCisternConfig_ZeroWorkers(t *testing.T) {
 }
 
 func TestValidateCisternConfig_NamesOnly(t *testing.T) {
-	// Names specified, workers omitted — should infer worker count from names.
 	cfg := &AqueductConfig{
 		Repos: []RepoConfig{
 			{Name: "r1", Names: []string{"a", "b"}},
 		},
-		MaxCataractae: 2,
 	}
 	if err := ValidateAqueductConfig(cfg); err != nil {
 		t.Fatalf("names-only config should be valid, got: %v", err)
@@ -254,8 +235,7 @@ func TestValidateCisternConfig_NamesOnly(t *testing.T) {
 
 func TestValidateCisternConfig_MissingRepoName(t *testing.T) {
 	cfg := &AqueductConfig{
-		Repos:         []RepoConfig{{Cataractae: 1}},
-		MaxCataractae: 1,
+		Repos: []RepoConfig{{Cataractae: 1}},
 	}
 	err := ValidateAqueductConfig(cfg)
 	if err == nil || !strings.Contains(err.Error(), "name is required") {

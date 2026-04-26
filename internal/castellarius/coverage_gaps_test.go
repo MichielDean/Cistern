@@ -659,7 +659,6 @@ cataractae:
 		Repos: []aqueduct.RepoConfig{
 			{Name: "test-repo", WorkflowPath: wfPath, Cataractae: 1, Names: []string{"alpha"}, Prefix: "test"},
 		},
-		MaxCataractae: 1,
 	}
 	client := newMockClient()
 	sched := NewFromParts(config,
@@ -692,7 +691,6 @@ func TestDoReloadWorkflows_InvalidFile_KeepsOldWorkflow(t *testing.T) {
 		Repos: []aqueduct.RepoConfig{
 			{Name: "test-repo", WorkflowPath: wfPath, Cataractae: 1, Names: []string{"alpha"}, Prefix: "test"},
 		},
-		MaxCataractae: 1,
 	}
 	original := testWorkflow()
 	client := newMockClient()

@@ -312,7 +312,6 @@ func smokeConfig() aqueduct.AqueductConfig {
 				Prefix:     "ct",
 			},
 		},
-		MaxCataractae: 1,
 	}
 }
 

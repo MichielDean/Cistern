@@ -505,7 +505,6 @@ func writeMinimalConfig(t *testing.T, dir, providerName string) string {
     prefix: ct
 provider:
   name: ` + providerName + `
-max_cataractae: 1
 `
 	cfgPath := filepath.Join(cisternDir, "cistern.yaml")
 	if err := os.WriteFile(cfgPath, []byte(yaml), 0o644); err != nil {

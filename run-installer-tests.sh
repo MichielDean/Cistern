@@ -213,7 +213,7 @@ test_upgrade() {
     exec_in_container bash -c "
         rm -rf '${home_dir}' &&
         mkdir -p '${cistern_dir}/aqueduct' '${cistern_dir}/cataractae' &&
-        printf 'repos:\n  - name: TestRepo\n    url: https://github.com/example/TestRepo\n    workflow_path: aqueduct/aqueduct.yaml\n    cataractae: 1\n    names: [test]\n    prefix: tr\nmax_cataractae: 2\nstale_old_key: removed_in_v2\n' \
+        printf 'repos:\n  - name: TestRepo\n    url: https://github.com/example/TestRepo\n    workflow_path: aqueduct/aqueduct.yaml\n    cataractae: 1\n    names: [test]\n    prefix: tr\nstale_old_key: removed_in_v2\n' \
             > '${cistern_dir}/cistern.yaml' &&
         printf 'GH_TOKEN=ghp-test-old-key\n' \
             > '${cistern_dir}/env' &&

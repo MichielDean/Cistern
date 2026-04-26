@@ -432,7 +432,6 @@ func testConfig() aqueduct.AqueductConfig {
 				Prefix:     "test",
 			},
 		},
-		MaxCataractae: 4,
 	}
 }
 
@@ -1176,7 +1175,6 @@ func multiRepoConfig() aqueduct.AqueductConfig {
 			{Name: "ScaledTest", Cataractae: 2, Names: []string{"cascade", "tributary"}, Prefix: "st"},
 			{Name: "cistern", Cataractae: 1, Names: []string{"confluence"}, Prefix: "ct"},
 		},
-		MaxCataractae: 3,
 	}
 }
 
@@ -1212,7 +1210,7 @@ func TestMultiRepo_ItemsGoToCorrectWorkers(t *testing.T) {
 	sched.Tick(context.Background())
 
 	// ScaledTest has 2 workers and 2 items; cistern has 1 worker and 1 item.
-	// All 3 should be assigned (total 3 = MaxCataractae).
+	// All 3 should be assigned (2 + 1 per repo config).
 	if !runner.waitCalls(3, 2*time.Second) {
 		t.Fatal("timed out waiting for 3 runner calls")
 	}
@@ -1422,7 +1420,6 @@ func TestTick_PerRepoIsolation(t *testing.T) {
 			{Name: "repo1", Cataractae: 1, Names: []string{"w1"}, Prefix: "r1"},
 			{Name: "repo2", Cataractae: 1, Names: []string{"w2"}, Prefix: "r2"},
 		},
-		MaxCataractae: 10,
 	}
 	wf := testWorkflow()
 	clients := map[string]CisternClient{"repo1": client1, "repo2": client2}

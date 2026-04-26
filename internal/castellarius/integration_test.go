@@ -273,7 +273,6 @@ func intConfig(prefix string) aqueduct.AqueductConfig {
 				Prefix:     "it",
 			},
 		},
-		MaxCataractae: 1,
 	}
 }
 

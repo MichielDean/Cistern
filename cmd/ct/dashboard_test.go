@@ -63,7 +63,6 @@ cataractae:
       - virgo
       - marcia
     prefix: mr
-max_cataractae: 4
 dashboard_api_key: "` + apiKey + `"
 `
 	cfgPath := filepath.Join(dir, "cistern.yaml")
@@ -104,7 +103,6 @@ cataractae:
       - virgo
       - marcia
     prefix: mr
-max_cataractae: 4
 `
 	if fontFamily != "" {
 		// Wrap in YAML double-quoted string; escape backslash and double-quote.

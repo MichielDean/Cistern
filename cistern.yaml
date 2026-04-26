@@ -24,7 +24,6 @@ repos:
       - confluence
     prefix: ct
 
-max_cataractae: 4
 handoff_token_threshold: 100000
 
 # rate_limit configures the delivery cataractae API endpoint.

@@ -148,7 +148,6 @@ type LLMConfig struct {
 // AqueductConfig is the top-level configuration for a Cistern instance.
 type AqueductConfig struct {
 	Repos                 []RepoConfig `yaml:"repos"`
-	MaxCataractae         int          `yaml:"max_cataractae,omitempty"` // deprecated: no-op, cap is per-repo (pool size)
 	HandoffTokenThreshold int          `yaml:"handoff_token_threshold"`
 	RetentionDays         int          `yaml:"retention_days"`
 	CleanupInterval       string       `yaml:"cleanup_interval"`

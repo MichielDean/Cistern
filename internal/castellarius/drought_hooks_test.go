@@ -195,7 +195,6 @@ cataractae:
 		Repos: []aqueduct.RepoConfig{
 			{Name: "test", WorkflowPath: wfPath, Cataractae: 1, Prefix: "t"},
 		},
-		MaxCataractae: 1,
 	}
 
 	logger := discardLogger()
@@ -253,7 +252,6 @@ cataractae:
 		Repos: []aqueduct.RepoConfig{
 			{Name: "test", WorkflowPath: wfPath, Cataractae: 1, Prefix: "t"},
 		},
-		MaxCataractae: 1,
 	}
 
 	logger := discardLogger()
@@ -284,7 +282,6 @@ func TestWorktreePrune_HandlesErrorGracefully(t *testing.T) {
 		Repos: []aqueduct.RepoConfig{
 			{Name: "fakerepo", Cataractae: 1, Prefix: "f"},
 		},
-		MaxCataractae: 1,
 	}
 
 	logger := discardLogger()
@@ -619,7 +616,6 @@ cataractae:
 
 	cfg := &aqueduct.AqueductConfig{
 		Repos:         []aqueduct.RepoConfig{{Name: "testrepo", WorkflowPath: "aqueduct/aqueduct.yaml", Cataractae: 1, Prefix: "t"}},
-		MaxCataractae: 1,
 	}
 
 	if _, err := hookGitSync(cfg, sandboxRoot, 30*time.Second, discardLogger()); err != nil {
@@ -683,7 +679,6 @@ cataractae:
 
 	cfg := &aqueduct.AqueductConfig{
 		Repos:         []aqueduct.RepoConfig{{Name: "testrepo", WorkflowPath: "aqueduct/aqueduct.yaml", Cataractae: 1, Prefix: "t"}},
-		MaxCataractae: 1,
 	}
 
 	if _, err := hookGitSync(cfg, sandboxRoot, 30*time.Second, discardLogger()); err != nil {
@@ -1169,7 +1164,6 @@ cataractae:
 
 	cfg := &aqueduct.AqueductConfig{
 		Repos:         []aqueduct.RepoConfig{{Name: "testrepo", WorkflowPath: "aqueduct/aqueduct.yaml", Cataractae: 1, Prefix: "t"}},
-		MaxCataractae: 1,
 	}
 
 	// Must not error when cataractae source files are absent from the remote.
