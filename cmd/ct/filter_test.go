@@ -457,7 +457,7 @@ func TestFilterCmd_PromptAlwaysHasContextHeader(t *testing.T) {
 	dir := t.TempDir()
 
 	cfgPath := filepath.Join(dir, "cistern.yaml")
-	cfgContent := fmt.Sprintf("provider:\n  command: %s\nrepos:\n  - name: testRepo\n    cataractae: 1\n", fakeagentBin)
+	cfgContent := fmt.Sprintf("aqueducts:\n  - name: default\n    cataractae:\n      - name: implement\n        type: agent\n        on_pass: done\nprovider:\n  command: %s\nrepos:\n  - name: testRepo\n    aqueduct: default\n    cataractae: 1\n", fakeagentBin)
 	if err := os.WriteFile(cfgPath, []byte(cfgContent), 0o644); err != nil {
 		t.Fatalf("WriteFile config: %v", err)
 	}

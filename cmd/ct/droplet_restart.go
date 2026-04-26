@@ -112,10 +112,7 @@ func findWorkflowForRepo(cfg *aqueduct.AqueductConfig, repo string) *aqueduct.Wo
 		if !strings.EqualFold(r.Name, repo) {
 			continue
 		}
-		if r.WorkflowPath == "" {
-			return nil
-		}
-		wf, err := aqueduct.ParseWorkflow(r.WorkflowPath)
+		wf, err := cfg.ResolveAqueductForRepo(r)
 		if err != nil {
 			return nil
 		}

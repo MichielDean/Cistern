@@ -1,13 +1,28 @@
 # Cistern configuration
 # Water is life. Code is water. The Cistern keeps it moving.
 #
-# Repos flow through aqueducts. Cataractae operators process droplets along the way.
+# Aqueducts define the pipeline stages. Repos reference them by name.
 # Work items are droplets. The cistern holds them until they flow free.
+
+aqueducts:
+  - name: default
+    cataractae:
+      - name: implement
+        type: agent
+        identity: virgo
+        on_pass: review
+      - name: review
+        type: agent
+        identity: marcia
+        on_pass: merge
+      - name: merge
+        type: automated
+        on_pass: done
 
 repos:
   - name: ScaledTest
     url: https://github.com/example/ScaledTest
-    workflow_path: aqueduct/aqueduct.yaml
+    aqueduct: default
     cataractae: 2
     # Cataractae operator names — who processes the droplets
     names:
@@ -17,7 +32,7 @@ repos:
 
   - name: cistern
     url: https://github.com/example/cistern
-    workflow_path: aqueduct/aqueduct.yaml
+    aqueduct: default
     cataractae: 2
     names:
       - virgo
@@ -35,7 +50,7 @@ heartbeat_interval: 30s
 # Drought protocols — run automatically when the Cistern is idle
 drought_hooks:
   - name: sync-cataractae
-    action: cataractae_generate # Regenerate role files when workflow YAML is newer
+    action: cataractae_generate # Regenerate role files from inline aqueduct config
 
   - name: prune-worktrees
     action: worktree_prune # Prune stale aqueduct registrations

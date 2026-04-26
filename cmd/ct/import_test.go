@@ -44,6 +44,26 @@ func TestImportCmd_AddsDropletDirectly(t *testing.T) {
 	db := filepath.Join(dir, "test.db")
 	t.Setenv("CT_DB", db)
 
+	// Write a valid config so resolveCanonicalRepo can validate the repo name.
+	cfgPath := filepath.Join(dir, "cistern.yaml")
+	t.Setenv("CT_CONFIG", cfgPath)
+	cfgContent := `aqueducts:
+  - name: default
+    cataractae:
+      - name: implement
+        type: agent
+        on_pass: done
+repos:
+  - name: cistern
+    url: https://github.com/example/cistern
+    aqueduct: default
+    cataractae: 1
+    prefix: ci
+`
+	if err := os.WriteFile(cfgPath, []byte(cfgContent), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
 	// Seed the DB with a known repo so resolveCanonicalRepo accepts it.
 	c, err := cistern.New(db, "ci")
 	if err != nil {
@@ -92,6 +112,25 @@ func TestImportCmd_OverridesPriorityWhenFlagSet(t *testing.T) {
 	db := filepath.Join(dir, "test.db")
 	t.Setenv("CT_DB", db)
 
+	cfgPath := filepath.Join(dir, "cistern.yaml")
+	t.Setenv("CT_CONFIG", cfgPath)
+	cfgContent := `aqueducts:
+  - name: default
+    cataractae:
+      - name: implement
+        type: agent
+        on_pass: done
+repos:
+  - name: cistern
+    url: https://github.com/example/cistern
+    aqueduct: default
+    cataractae: 1
+    prefix: ci
+`
+	if err := os.WriteFile(cfgPath, []byte(cfgContent), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
 	c, err := cistern.New(db, "ci")
 	if err != nil {
 		t.Fatal(err)
@@ -131,6 +170,26 @@ func TestImportCmd_OverridesPriorityWhenFlagSet(t *testing.T) {
 }
 
 func TestImportCmd_ErrorsOnUnknownProvider(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "cistern.yaml")
+	t.Setenv("CT_CONFIG", cfgPath)
+	cfgContent := `aqueducts:
+  - name: default
+    cataractae:
+      - name: implement
+        type: agent
+        on_pass: done
+repos:
+  - name: cistern
+    url: https://github.com/example/cistern
+    aqueduct: default
+    cataractae: 1
+    prefix: ci
+`
+	if err := os.WriteFile(cfgPath, []byte(cfgContent), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
 	importRepo = "cistern"
 	err := importCmd.RunE(importCmd, []string{"no-such-provider-zzz", "ISSUE-1"})
 	if err == nil {
@@ -174,10 +233,17 @@ func TestLoadTrackerConfig_ReturnsMatchingEntry(t *testing.T) {
 	// Write a minimal cistern.yaml with a trackers section.
 	dir := t.TempDir()
 	yamlContent := `
+aqueducts:
+  - name: default
+    cataractae:
+      - name: implement
+        type: agent
+        identity: default
+        on_pass: done
 repos:
   - name: myrepo
     url: https://github.com/example/myrepo
-    workflow_path: aqueduct/aqueduct.yaml
+    aqueduct: default
     cataractae: 1
     prefix: mr
 
@@ -216,10 +282,17 @@ func TestLoadTrackerConfig_ReturnsDefaultWhenNotFound(t *testing.T) {
 	cfgPath := filepath.Join(dir, "cistern.yaml")
 	// Write a config with no trackers section.
 	yamlContent := `
+aqueducts:
+  - name: default
+    cataractae:
+      - name: implement
+        type: agent
+        identity: default
+        on_pass: done
 repos:
   - name: repo1
     url: https://github.com/example/repo1
-    workflow_path: aqueduct/aqueduct.yaml
+    aqueduct: default
     cataractae: 1
     prefix: r1
 `
@@ -291,10 +364,17 @@ func TestImportCmd_JiraProvider_E2E(t *testing.T) {
 	// Write a cistern.yaml with a jira tracker entry.
 	cfgPath := filepath.Join(dir, "cistern.yaml")
 	yamlContent := fmt.Sprintf(`
+aqueducts:
+  - name: default
+    cataractae:
+      - name: implement
+        type: agent
+        identity: default
+        on_pass: done
 repos:
   - name: myproject
     url: https://github.com/example/myproject
-    workflow_path: aqueduct/aqueduct.yaml
+    aqueduct: default
     cataractae: 1
     prefix: mp
 

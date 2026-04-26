@@ -65,19 +65,23 @@ func makeWorkflowDir(t *testing.T, content string) (string, string) {
 	return tmpDir, wfPath
 }
 
-// makeCataractaeDir creates a cataractae/<name>/ dir with PERSONA.md and INSTRUCTIONS.md.
-func makeCataractaeDir(t *testing.T, tmpDir, name string) {
+// makeCataractaeDir creates <home>/.cistern/cataractae/<name>/ with PERSONA.md and INSTRUCTIONS.md.
+// It also sets HOME to a temp dir so defaultCataractaeDir() resolves correctly.
+func makeCataractaeDir(t *testing.T, name string) string {
 	t.Helper()
-	dir := filepath.Join(tmpDir, "cataractae", name)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	catDir := filepath.Join(home, ".cistern", "cataractae", name)
+	if err := os.MkdirAll(catDir, 0o755); err != nil {
 		t.Fatalf("mkdir cataractae/%s: %v", name, err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, "PERSONA.md"), []byte("# Role: "+aqueduct.TitleCaseName(name)+"\n\nA role."), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(catDir, "PERSONA.md"), []byte("# Role: "+aqueduct.TitleCaseName(name)+"\n\nA role."), 0o644); err != nil {
 		t.Fatalf("write PERSONA.md: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, "INSTRUCTIONS.md"), []byte(`Do work. ct droplet pass <id> --notes "done"`), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(catDir, "INSTRUCTIONS.md"), []byte(`Do work. ct droplet pass <id> --notes "done"`), 0o644); err != nil {
 		t.Fatalf("write INSTRUCTIONS.md: %v", err)
 	}
+	return home
 }
 
 // replaceStdin temporarily replaces os.Stdin with a pipe containing the given input.
@@ -109,23 +113,16 @@ func TestResolveInstructionsFile_DefaultsToAgentsMdWhenNoConfig(t *testing.T) {
 	}
 }
 
-// --- cisternCataractaeDir ---
+// --- defaultCataractaeDir ---
 
-func TestCisternCataractaeDir_DerivedFromWorkflowPath(t *testing.T) {
-	wfPath := "/home/user/.cistern/aqueduct/workflow.yaml"
-	got := cisternCataractaeDir(wfPath)
-	want := "/home/user/.cistern/cataractae"
-	if got != want {
-		t.Errorf("cisternCataractaeDir(%q) = %q, want %q", wfPath, got, want)
-	}
-}
+func TestDefaultCataractaeDir_UsesHomeDotCistern(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
 
-func TestCisternCataractaeDir_NestedAqueductDir(t *testing.T) {
-	wfPath := "/repo/aqueduct/workflow.yaml"
-	got := cisternCataractaeDir(wfPath)
-	want := "/repo/cataractae"
+	got := defaultCataractaeDir()
+	want := filepath.Join(home, ".cistern", "cataractae")
 	if got != want {
-		t.Errorf("cisternCataractaeDir(%q) = %q, want %q", wfPath, got, want)
+		t.Errorf("defaultCataractaeDir() = %q, want %q", got, want)
 	}
 }
 
@@ -149,15 +146,15 @@ func TestCataractaeCmd_WorkflowFlagRegistered(t *testing.T) {
 // --- runCataractaeGenerate ---
 
 func TestRunCataractaeGenerate_GeneratesAgentsMd(t *testing.T) {
-	tmpDir, wfPath := makeWorkflowDir(t, testWorkflowYAML)
+	_, wfPath := makeWorkflowDir(t, testWorkflowYAML)
 	setWorkflow(t, wfPath)
-	makeCataractaeDir(t, tmpDir, "tester")
+	home := makeCataractaeDir(t, "tester")
 
 	if err := runCataractaeGenerate(cataractaeGenerateCmd, nil); err != nil {
 		t.Fatalf("runCataractaeGenerate: %v", err)
 	}
 
-	agentsPath := filepath.Join(tmpDir, "cataractae", "tester", "AGENTS.md")
+	agentsPath := filepath.Join(home, ".cistern", "cataractae", "tester", "AGENTS.md")
 	if _, err := os.Stat(agentsPath); os.IsNotExist(err) {
 		t.Error("AGENTS.md was not created")
 	}
@@ -166,6 +163,7 @@ func TestRunCataractaeGenerate_GeneratesAgentsMd(t *testing.T) {
 func TestRunCataractaeGenerate_NoOpWhenNoCataractaeDirs(t *testing.T) {
 	_, wfPath := makeWorkflowDir(t, testWorkflowYAML)
 	setWorkflow(t, wfPath)
+	t.Setenv("HOME", t.TempDir())
 	// No cataractae dirs — should succeed with "no cataractae" message, zero files.
 	if err := runCataractaeGenerate(cataractaeGenerateCmd, nil); err != nil {
 		t.Fatalf("runCataractaeGenerate: %v", err)
@@ -173,13 +171,11 @@ func TestRunCataractaeGenerate_NoOpWhenNoCataractaeDirs(t *testing.T) {
 }
 
 func TestRunCataractaeGenerate_ContentIncludesPersonaAndInstructions(t *testing.T) {
-	tmpDir, wfPath := makeWorkflowDir(t, testWorkflowYAML)
+	_, wfPath := makeWorkflowDir(t, testWorkflowYAML)
 	setWorkflow(t, wfPath)
+	home := makeCataractaeDir(t, "tester")
 
-	testerDir := filepath.Join(tmpDir, "cataractae", "tester")
-	if err := os.MkdirAll(testerDir, 0o755); err != nil {
-		t.Fatal(err)
-	}
+	testerDir := filepath.Join(home, ".cistern", "cataractae", "tester")
 	if err := os.WriteFile(filepath.Join(testerDir, "PERSONA.md"), []byte("# Role: Tester\n\nA careful tester."), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -239,14 +235,16 @@ func TestRunCataractaeList_MultipleIdentities(t *testing.T) {
 // --- runCataractaeAdd ---
 
 func TestRunCataractaeAdd_ScaffoldsFiles(t *testing.T) {
-	tmpDir, wfPath := makeWorkflowDir(t, testWorkflowYAML)
+	_, wfPath := makeWorkflowDir(t, testWorkflowYAML)
 	setWorkflow(t, wfPath)
+	home := t.TempDir()
+	t.Setenv("HOME", home)
 
 	if err := runCataractaeAdd(cataractaeAddCmd, []string{"my_role"}); err != nil {
 		t.Fatalf("runCataractaeAdd: %v", err)
 	}
 
-	roleDir := filepath.Join(tmpDir, "cataractae", "my_role")
+	roleDir := filepath.Join(home, ".cistern", "cataractae", "my_role")
 	if _, err := os.Stat(filepath.Join(roleDir, "PERSONA.md")); os.IsNotExist(err) {
 		t.Error("PERSONA.md not created")
 	}
@@ -258,6 +256,7 @@ func TestRunCataractaeAdd_ScaffoldsFiles(t *testing.T) {
 func TestRunCataractaeAdd_ErrorOnDuplicate(t *testing.T) {
 	_, wfPath := makeWorkflowDir(t, testWorkflowYAML)
 	setWorkflow(t, wfPath)
+	t.Setenv("HOME", t.TempDir())
 
 	if err := runCataractaeAdd(cataractaeAddCmd, []string{"my_role"}); err != nil {
 		t.Fatalf("first add: %v", err)
@@ -268,14 +267,16 @@ func TestRunCataractaeAdd_ErrorOnDuplicate(t *testing.T) {
 }
 
 func TestRunCataractaeAdd_PersonaMdHasRoleHeader(t *testing.T) {
-	tmpDir, wfPath := makeWorkflowDir(t, testWorkflowYAML)
+	_, wfPath := makeWorkflowDir(t, testWorkflowYAML)
 	setWorkflow(t, wfPath)
+	home := t.TempDir()
+	t.Setenv("HOME", home)
 
 	if err := runCataractaeAdd(cataractaeAddCmd, []string{"doc_writer"}); err != nil {
 		t.Fatalf("runCataractaeAdd: %v", err)
 	}
 
-	data, err := os.ReadFile(filepath.Join(tmpDir, "cataractae", "doc_writer", "PERSONA.md"))
+	data, err := os.ReadFile(filepath.Join(home, ".cistern", "cataractae", "doc_writer", "PERSONA.md"))
 	if err != nil {
 		t.Fatalf("read PERSONA.md: %v", err)
 	}
@@ -325,9 +326,9 @@ func TestRunCataractaeEdit_InvalidSelectionOutOfRange(t *testing.T) {
 }
 
 func TestRunCataractaeEdit_UpdatesAgentsMdAfterEdit(t *testing.T) {
-	tmpDir, wfPath := makeWorkflowDir(t, testWorkflowYAML)
+	_, wfPath := makeWorkflowDir(t, testWorkflowYAML)
 	setWorkflow(t, wfPath)
-	makeCataractaeDir(t, tmpDir, "tester")
+	home := makeCataractaeDir(t, "tester")
 	replaceStdin(t, "1\n")
 	t.Setenv("EDITOR", "true") // 'true' succeeds without modifying the file
 
@@ -335,7 +336,7 @@ func TestRunCataractaeEdit_UpdatesAgentsMdAfterEdit(t *testing.T) {
 		t.Fatalf("runCataractaeEdit: %v", err)
 	}
 
-	if _, err := os.Stat(filepath.Join(tmpDir, "cataractae", "tester", "AGENTS.md")); os.IsNotExist(err) {
+	if _, err := os.Stat(filepath.Join(home, ".cistern", "cataractae", "tester", "AGENTS.md")); os.IsNotExist(err) {
 		t.Error("AGENTS.md was not regenerated after edit")
 	}
 }
@@ -432,13 +433,14 @@ func TestRunCataractaeRender_NoIdentity_ReturnsError(t *testing.T) {
 // TestRunCataractaeRender_HappyPath_RendersTemplate verifies that a valid step
 // with an identity renders template markers in the AGENTS.md file.
 func TestRunCataractaeRender_HappyPath_RendersTemplate(t *testing.T) {
-	tmpDir, wfPath := makeWorkflowDir(t, testWorkflowYAML)
+	_, wfPath := makeWorkflowDir(t, testWorkflowYAML)
 	setWorkflow(t, wfPath)
 	setRenderStep(t, "implement")
 
-	t.Setenv("HOME", t.TempDir())
+	home := t.TempDir()
+	t.Setenv("HOME", home)
 
-	identityDir := filepath.Join(tmpDir, "cataractae", "tester")
+	identityDir := filepath.Join(home, ".cistern", "cataractae", "tester")
 	if err := os.MkdirAll(identityDir, 0o755); err != nil {
 		t.Fatal(err)
 	}

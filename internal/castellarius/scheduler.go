@@ -186,7 +186,7 @@ func WithHeartbeatInterval(d time.Duration) Option {
 }
 
 // New creates a Castellarius from an AqueductConfig.
-// Workflows are loaded from each RepoConfig.WorkflowPath.
+// Workflows are resolved from the inline Aqueducts list in the config.
 // Each repo gets its own cistern.Client scoped by prefix.
 func New(config aqueduct.AqueductConfig, dbPath string, runner CataractaeRunner, opts ...Option) (*Castellarius, error) {
 	// Capture binary mtime at construction time for update detection.
@@ -259,7 +259,7 @@ func New(config aqueduct.AqueductConfig, dbPath string, runner CataractaeRunner,
 	}
 
 	for _, repo := range config.Repos {
-		wf, err := aqueduct.ParseWorkflow(repo.WorkflowPath)
+		wf, err := config.ResolveAqueductForRepo(repo)
 		if err != nil {
 			return nil, fmt.Errorf("load workflow for %s: %w", repo.Name, err)
 		}
@@ -709,26 +709,20 @@ func (s *Castellarius) Tick(ctx context.Context) {
 	s.tick(ctx)
 }
 
-// doReloadWorkflows re-parses workflow YAMLs from disk and updates the in-memory
-// map. Called on the main goroutine so no locking is needed.
+// doReloadWorkflows resolves aqueduct definitions from the config and updates the
+// in-memory map. Called on the main goroutine so no locking is needed.
+// Since aqueducts are defined inline in cistern.yaml (not in separate files),
+// this is a no-op — the config is already parsed. Kept as a placeholder for
+// future config-reload support.
 func (s *Castellarius) doReloadWorkflows() {
 	for _, repo := range s.config.Repos {
-		wfPath := repo.WorkflowPath
-		if !filepath.IsAbs(wfPath) {
-			home, err := os.UserHomeDir()
-			if err != nil {
-				s.logger.Error("hot-reload: home dir", "error", err)
-				continue
-			}
-			wfPath = filepath.Join(home, ".cistern", wfPath)
-		}
-		wf, err := aqueduct.ParseWorkflow(wfPath)
+		wf, err := s.config.ResolveAqueductForRepo(repo)
 		if err != nil {
-			s.logger.Error("hot-reload: failed to load workflow", "repo", repo.Name, "path", wfPath, "error", err)
+			s.logger.Error("hot-reload: failed to resolve aqueduct", "repo", repo.Name, "error", err)
 			continue
 		}
 		s.workflows[repo.Name] = wf
-		s.logger.Info("hot-reload: workflow reloaded", "repo", repo.Name, "cataractae", len(wf.Cataractae))
+		s.logger.Info("hot-reload: aqueduct resolved", "repo", repo.Name, "aqueduct", repo.Aqueduct, "cataractae", len(wf.Cataractae))
 	}
 }
 

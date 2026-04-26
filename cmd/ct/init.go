@@ -14,9 +14,6 @@ import (
 //go:embed assets/cistern.yaml
 var defaultCisternConfig []byte
 
-//go:embed assets/aqueduct/aqueduct.yaml
-var defaultAqueductWorkflow []byte
-
 //go:embed assets/start-castellarius.sh
 var defaultStartCastellarius []byte
 
@@ -35,11 +32,10 @@ func runInit(cmd *cobra.Command, args []string) error {
 	}
 
 	cisternDir := filepath.Join(home, ".cistern")
-	aqueductDir := filepath.Join(cisternDir, "aqueduct")
 	cataractaeDir := filepath.Join(cisternDir, "cataractae")
 
 	// 1. Create directory structure.
-	for _, dir := range []string{cisternDir, aqueductDir, cataractaeDir} {
+	for _, dir := range []string{cisternDir, cataractaeDir} {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			return fmt.Errorf("create directory %s: %w", dir, err)
 		}
@@ -51,39 +47,38 @@ func runInit(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	// 3. Copy default workflow file.
-	aqueductDst := filepath.Join(aqueductDir, "aqueduct.yaml")
-	if err := writeFileIfAbsent(aqueductDst, defaultAqueductWorkflow, initForce); err != nil {
-		return err
+	// 3. Parse the config to extract aqueducts and generate role files.
+	// If the config file already exists and was skipped (no --force), or if
+	// parsing fails because the user hasn't edited it yet, just skip this step.
+	cfg, err := aqueduct.ParseAqueductConfig(configDst)
+	if err == nil && len(cfg.Aqueducts) > 0 {
+		for _, wf := range cfg.Aqueducts {
+			if err := initCataractaeDir(&wf, cataractaeDir); err != nil {
+				return fmt.Errorf("init cataractae dir: %w", err)
+			}
+			preset, _ := cfg.ResolveProvider("")
+			if len(cfg.Repos) > 0 {
+				preset, _ = cfg.ResolveProvider(cfg.Repos[0].Name)
+			}
+			if _, err := aqueduct.GenerateCataractaeFiles(&wf, cataractaeDir, preset.InstrFile()); err != nil {
+				return fmt.Errorf("generate cataractae: %w", err)
+			}
+		}
 	}
 
-	// 4. Generate role files from the aqueduct workflow.
-	w, err := aqueduct.ParseWorkflow(aqueductDst)
-	if err != nil {
-		return fmt.Errorf("parse aqueduct workflow: %w", err)
-	}
-	// Seed PERSONA.md + INSTRUCTIONS.md for each identity in the workflow so
-	// GenerateCataractaeFiles can write AGENTS.md.
-	if err := initCataractaeDir(w, cataractaeDir); err != nil {
-		return fmt.Errorf("init cataractae dir: %w", err)
-	}
-	if _, err := aqueduct.GenerateCataractaeFiles(w, cataractaeDir, ""); err != nil {
-		return fmt.Errorf("generate cataractae: %w", err)
-	}
-
-	// 5. Create ~/.cistern/env credential file (chmod 600) if absent.
+	// 4. Create ~/.cistern/env credential file (chmod 600) if absent.
 	envFilePath := filepath.Join(cisternDir, "env")
 	if err := fixCisternEnvFile(envFilePath); err != nil {
 		return fmt.Errorf("create env file: %w", err)
 	}
 
-	// 6. Add "env" to ~/.cistern/.gitignore so the credential file is never committed.
+	// 5. Add "env" to ~/.cistern/.gitignore so the credential file is never committed.
 	gitignorePath := filepath.Join(cisternDir, ".gitignore")
 	if err := addLineToGitignore(gitignorePath, "env"); err != nil {
 		return fmt.Errorf("update .gitignore: %w", err)
 	}
 
-	// 7. Write start-castellarius.sh from embedded template.
+	// 6. Write start-castellarius.sh from embedded template.
 	startScriptDst := filepath.Join(cisternDir, "start-castellarius.sh")
 	if err := writeFileIfAbsent(startScriptDst, defaultStartCastellarius, initForce); err != nil {
 		return err
@@ -92,16 +87,15 @@ func runInit(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("chmod start-castellarius.sh: %w", err)
 	}
 
-	// 8. Print next-steps message.
+	// 7. Print next-steps message.
 	fmt.Printf(`Cistern initialized.
   Config          : ~/.cistern/cistern.yaml
-  Aqueduct        : ~/.cistern/aqueduct/aqueduct.yaml
   Cataractae      : ~/.cistern/cataractae/
   Credentials     : ~/.cistern/env  (chmod 600)
   Startup script  : ~/.cistern/start-castellarius.sh
 
 Next:
-  1. Edit ~/.cistern/cistern.yaml — add your repos
+  1. Edit ~/.cistern/cistern.yaml — add your repos and aqueducts
   2. Authenticate with your AI provider
   3. ct droplet add --title "Your first droplet" --repo yourrepo
   4. ct castellarius start

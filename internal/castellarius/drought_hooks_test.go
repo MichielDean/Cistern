@@ -166,34 +166,35 @@ func TestDroughtHook_DoesNotFireWhileWorkInProgress(t *testing.T) {
 
 // --- Built-in hook tests ---
 
-func TestRolesGenerate_NoOpWhenYAMLOlder(t *testing.T) {
+func TestRolesGenerate_NoOpWhenAllIdentitiesExist(t *testing.T) {
 	tmpDir := t.TempDir()
 
-	// Create a workflow YAML file.
-	wfPath := filepath.Join(tmpDir, "aqueduct.yaml")
-	wfContent := `name: test
-cataractae:
-  - name: impl
-    type: agent
-    identity: implementer
-    on_pass: done
-`
-	os.WriteFile(wfPath, []byte(wfContent), 0o644)
+	// Override home dir.
+	origHome := os.Getenv("HOME")
+	origUserProfile := os.Getenv("USERPROFILE")
+	os.Setenv("HOME", tmpDir)
+	os.Setenv("USERPROFILE", tmpDir)
+	defer func() {
+		os.Setenv("HOME", origHome)
+		os.Setenv("USERPROFILE", origUserProfile)
+	}()
 
-	// Create a roles dir with an AGENTS.md that is newer than the workflow YAML.
-	cataractaeDir := filepath.Join(tmpDir, "cataractae")
-	implDir := filepath.Join(cataractaeDir, "implementer")
+	// Pre-create the identity directory with AGENTS.md — all identities already exist.
+	implDir := filepath.Join(tmpDir, ".cistern", "cataractae", "implementer")
 	os.MkdirAll(implDir, 0o755)
-	agentsPath := filepath.Join(implDir, "AGENTS.md")
-	os.WriteFile(agentsPath, []byte("existing role content"), 0o644)
-
-	// Make the AGENTS.md newer than the workflow YAML by touching it.
-	future := time.Now().Add(time.Hour)
-	os.Chtimes(agentsPath, future, future)
+	os.WriteFile(filepath.Join(implDir, "AGENTS.md"), []byte("existing role content"), 0o644)
 
 	cfg := &aqueduct.AqueductConfig{
+		Aqueducts: []aqueduct.Workflow{
+			{
+				Name: "default",
+				Cataractae: []aqueduct.WorkflowCataractae{
+					{Name: "impl", Type: aqueduct.CataractaeTypeAgent, Identity: "implementer", OnPass: "done"},
+				},
+			},
+		},
 		Repos: []aqueduct.RepoConfig{
-			{Name: "test", WorkflowPath: wfPath, Cataractae: 1, Prefix: "t"},
+			{Name: "test", Aqueduct: "default", Cataractae: 1, Prefix: "t"},
 		},
 	}
 
@@ -204,29 +205,14 @@ cataractae:
 	}
 
 	// The role file should NOT have been regenerated (content unchanged).
-	data, _ := os.ReadFile(agentsPath)
+	data, _ := os.ReadFile(filepath.Join(implDir, "AGENTS.md"))
 	if string(data) != "existing role content" {
 		t.Error("roles_generate should have been a no-op but content changed")
 	}
 }
 
-func TestRolesGenerate_RegeneratesWhenYAMLNewer(t *testing.T) {
+func TestRolesGenerate_RegeneratesWhenIdentityMissing(t *testing.T) {
 	tmpDir := t.TempDir()
-
-	// Create a workflow YAML file with an agent step that has an identity.
-	wfPath := filepath.Join(tmpDir, "aqueduct.yaml")
-	wfContent := `name: test
-cataractae:
-  - name: impl
-    type: agent
-    identity: implementer
-    on_pass: done
-`
-	os.WriteFile(wfPath, []byte(wfContent), 0o644)
-
-	// Make the YAML file newer than roles.
-	future := time.Now().Add(time.Hour)
-	os.Chtimes(wfPath, future, future)
 
 	// Override home dir so hookCataractaeGenerate uses tmpDir as HOME.
 	origHome := os.Getenv("HOME")
@@ -238,19 +224,24 @@ cataractae:
 		os.Setenv("USERPROFILE", origUserProfile)
 	}()
 
-	// Create ~/.cistern/cataractae/implementer/ with PERSONA.md, INSTRUCTIONS.md, and an old AGENTS.md.
-	cisternRoles := filepath.Join(tmpDir, ".cistern", "cataractae", "implementer")
-	os.MkdirAll(cisternRoles, 0o755)
-	os.WriteFile(filepath.Join(cisternRoles, "PERSONA.md"), []byte("# Role: Implementer\n\nA new persona."), 0o644)
-	os.WriteFile(filepath.Join(cisternRoles, "INSTRUCTIONS.md"), []byte("New instructions. ct droplet pass <id>"), 0o644)
-	cisternAgents := filepath.Join(cisternRoles, "AGENTS.md")
-	os.WriteFile(cisternAgents, []byte("old"), 0o644)
-	past := time.Now().Add(-time.Hour)
-	os.Chtimes(cisternAgents, past, past)
+	// Pre-create the identity directory with PERSONA.md and INSTRUCTIONS.md
+	// but NOT AGENTS.md — this triggers regeneration.
+	implDir := filepath.Join(tmpDir, ".cistern", "cataractae", "implementer")
+	os.MkdirAll(implDir, 0o755)
+	os.WriteFile(filepath.Join(implDir, "PERSONA.md"), []byte("# Role: Implementer\n\nA persona."), 0o644)
+	os.WriteFile(filepath.Join(implDir, "INSTRUCTIONS.md"), []byte("Instructions. ct droplet pass <id>"), 0o644)
 
 	cfg := &aqueduct.AqueductConfig{
+		Aqueducts: []aqueduct.Workflow{
+			{
+				Name: "default",
+				Cataractae: []aqueduct.WorkflowCataractae{
+					{Name: "impl", Type: aqueduct.CataractaeTypeAgent, Identity: "implementer", OnPass: "done"},
+				},
+			},
+		},
 		Repos: []aqueduct.RepoConfig{
-			{Name: "test", WorkflowPath: wfPath, Cataractae: 1, Prefix: "t"},
+			{Name: "test", Aqueduct: "default", Cataractae: 1, Prefix: "t"},
 		},
 	}
 
@@ -260,14 +251,14 @@ cataractae:
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	// The role file should have been regenerated from PERSONA.md + INSTRUCTIONS.md.
-	data, _ := os.ReadFile(cisternAgents)
-	content := string(data)
-	if content == "old" {
-		t.Error("roles_generate should have regenerated but didn't")
+	// The AGENTS.md should have been generated from PERSONA.md + INSTRUCTIONS.md.
+	agentsPath := filepath.Join(implDir, "AGENTS.md")
+	data, err := os.ReadFile(agentsPath)
+	if err != nil {
+		t.Fatalf("AGENTS.md should have been created: %v", err)
 	}
-	if len(content) == 0 {
-		t.Error("regenerated file is empty")
+	if len(data) == 0 {
+		t.Error("regenerated AGENTS.md is empty")
 	}
 }
 
@@ -398,7 +389,7 @@ func TestHookGitSync_DeploysSkillsToSkillsDir(t *testing.T) {
 
 	cfg := &aqueduct.AqueductConfig{
 		Repos: []aqueduct.RepoConfig{
-			{Name: "myrepo", WorkflowPath: "aqueduct/workflow.yaml", Cataractae: 1, Prefix: "t"},
+			{Name: "myrepo", Aqueduct: "default", Cataractae: 1, Prefix: "t"},
 		},
 	}
 
@@ -434,7 +425,7 @@ func TestHookGitSync_SkillsDeployIsIdempotent(t *testing.T) {
 
 	cfg := &aqueduct.AqueductConfig{
 		Repos: []aqueduct.RepoConfig{
-			{Name: "repo", WorkflowPath: "aqueduct/workflow.yaml", Cataractae: 1, Prefix: "t"},
+			{Name: "repo", Aqueduct: "default", Cataractae: 1, Prefix: "t"},
 		},
 	}
 	logger := discardLogger()
@@ -490,7 +481,7 @@ func TestHookGitSync_SkillsSyncGracefulWhenNoSkillsDir(t *testing.T) {
 
 	cfg := &aqueduct.AqueductConfig{
 		Repos: []aqueduct.RepoConfig{
-			{Name: "noskills-repo", WorkflowPath: "aqueduct/workflow.yaml", Cataractae: 1, Prefix: "t"},
+			{Name: "noskills-repo", Aqueduct: "default", Cataractae: 1, Prefix: "t"},
 		},
 	}
 
@@ -592,109 +583,12 @@ func setHomeForTest(t *testing.T, dir string) {
 	})
 }
 
-func TestGitSync_DeploysCataractaeFiles_WhenPresentInRemote(t *testing.T) {
-	tmpDir := t.TempDir()
+// TestGitSync_DeploysCataractaeFiles_WhenPresentInRemote removed:
+// cataractae PERSONA.md/INSTRUCTIONS.md sync from repos was removed;
+// these are now managed locally, not synced from repos.
 
-	wfContent := `name: test
-cataractae:
-  - name: impl
-    type: agent
-    identity: implementer
-    on_pass: done
-`
-	personaContent := "# Role: Implementer\n\nThis is the implementer persona.\n"
-	instrContent := "## Protocol\n\nFollow these instructions.\n"
-
-	sandboxRoot := setupGitSyncEnv(t, tmpDir, "testrepo", map[string]string{
-		"aqueduct/aqueduct.yaml":                 wfContent,
-		"cataractae/implementer/PERSONA.md":      personaContent,
-		"cataractae/implementer/INSTRUCTIONS.md": instrContent,
-	})
-
-	setHomeForTest(t, tmpDir)
-	os.MkdirAll(filepath.Join(tmpDir, ".cistern", "aqueduct"), 0o755)
-
-	cfg := &aqueduct.AqueductConfig{
-		Repos:         []aqueduct.RepoConfig{{Name: "testrepo", WorkflowPath: "aqueduct/aqueduct.yaml", Cataractae: 1, Prefix: "t"}},
-	}
-
-	if _, err := hookGitSync(cfg, sandboxRoot, 30*time.Second, discardLogger()); err != nil {
-		t.Fatalf("hookGitSync: %v", err)
-	}
-
-	// PERSONA.md must be deployed with correct content.
-	personaPath := filepath.Join(tmpDir, ".cistern", "cataractae", "implementer", "PERSONA.md")
-	got, err := os.ReadFile(personaPath)
-	if err != nil {
-		t.Fatalf("PERSONA.md not deployed: %v", err)
-	}
-	if string(got) != personaContent {
-		t.Errorf("PERSONA.md content mismatch:\ngot:  %q\nwant: %q", string(got), personaContent)
-	}
-
-	// INSTRUCTIONS.md must be deployed with correct content.
-	instrPath := filepath.Join(tmpDir, ".cistern", "cataractae", "implementer", "INSTRUCTIONS.md")
-	got, err = os.ReadFile(instrPath)
-	if err != nil {
-		t.Fatalf("INSTRUCTIONS.md not deployed: %v", err)
-	}
-	if string(got) != instrContent {
-		t.Errorf("INSTRUCTIONS.md content mismatch:\ngot:  %q\nwant: %q", string(got), instrContent)
-	}
-}
-
-func TestGitSync_SkipsCataractaeFile_WhenUpToDate(t *testing.T) {
-	tmpDir := t.TempDir()
-
-	wfContent := `name: test
-cataractae:
-  - name: impl
-    type: agent
-    identity: implementer
-    on_pass: done
-`
-	personaContent := "# Role: Implementer\n\nNo changes.\n"
-	instrContent := "## Protocol\n\nNo changes.\n"
-
-	sandboxRoot := setupGitSyncEnv(t, tmpDir, "testrepo", map[string]string{
-		"aqueduct/aqueduct.yaml":                 wfContent,
-		"cataractae/implementer/PERSONA.md":      personaContent,
-		"cataractae/implementer/INSTRUCTIONS.md": instrContent,
-	})
-
-	setHomeForTest(t, tmpDir)
-
-	// Pre-populate deployed files with identical content.
-	implDeployDir := filepath.Join(tmpDir, ".cistern", "cataractae", "implementer")
-	os.MkdirAll(implDeployDir, 0o755)
-	personaPath := filepath.Join(implDeployDir, "PERSONA.md")
-	os.WriteFile(personaPath, []byte(personaContent), 0o644)
-	os.WriteFile(filepath.Join(implDeployDir, "INSTRUCTIONS.md"), []byte(instrContent), 0o644)
-
-	// Set mtime to a known past time so we can detect any rewrite.
-	past := time.Now().Add(-time.Hour)
-	os.Chtimes(personaPath, past, past)
-
-	os.MkdirAll(filepath.Join(tmpDir, ".cistern", "aqueduct"), 0o755)
-
-	cfg := &aqueduct.AqueductConfig{
-		Repos:         []aqueduct.RepoConfig{{Name: "testrepo", WorkflowPath: "aqueduct/aqueduct.yaml", Cataractae: 1, Prefix: "t"}},
-	}
-
-	if _, err := hookGitSync(cfg, sandboxRoot, 30*time.Second, discardLogger()); err != nil {
-		t.Fatalf("hookGitSync: %v", err)
-	}
-
-	// If the file was skipped, its mtime should still be approximately past (~1 hour ago).
-	// If it was rewritten, mtime would be very recent (within last few seconds).
-	info, err := os.Stat(personaPath)
-	if err != nil {
-		t.Fatalf("stat PERSONA.md: %v", err)
-	}
-	if time.Since(info.ModTime()) < 30*time.Second {
-		t.Error("PERSONA.md was rewritten even though content was identical (mtime is very recent)")
-	}
-}
+// TestGitSync_SkipsCataractaeFile_WhenUpToDate removed:
+// cataractae file sync from repos was removed; these are now managed locally.
 
 // --- git fetch timeout tests ---
 
@@ -737,7 +631,7 @@ func TestHookGitSync_FetchTimeout_SkipsRepoAndContinues(t *testing.T) {
 
 	cfg := &aqueduct.AqueductConfig{
 		Repos: []aqueduct.RepoConfig{
-			{Name: repoName, WorkflowPath: "aqueduct/workflow.yaml", Cataractae: 1, Prefix: "t"},
+			{Name: repoName, Aqueduct: "default", Cataractae: 1, Prefix: "t"},
 		},
 	}
 
@@ -965,26 +859,20 @@ func TestWarnMissingSkills_LogsWhenSkillMissing(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Setenv("HOME", tmpDir)
 
-	wfPath := filepath.Join(tmpDir, "aqueduct.yaml")
-	wfContent := `name: test
-cataractae:
-  - name: impl
-    type: agent
-    identity: implementer
-    skills:
-      - name: missing-skill
-    on_pass: done
-`
-	if err := os.WriteFile(wfPath, []byte(wfContent), 0o644); err != nil {
-		t.Fatalf("write workflow: %v", err)
-	}
-
 	var buf bytes.Buffer
 	logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn}))
 
 	cfg := &aqueduct.AqueductConfig{
+		Aqueducts: []aqueduct.Workflow{
+			{
+				Name: "default",
+				Cataractae: []aqueduct.WorkflowCataractae{
+					{Name: "impl", Type: aqueduct.CataractaeTypeAgent, Identity: "implementer", Skills: []aqueduct.SkillRef{{Name: "missing-skill"}}, OnPass: "done"},
+				},
+			},
+		},
 		Repos: []aqueduct.RepoConfig{
-			{Name: "test", WorkflowPath: wfPath, Cataractae: 1, Prefix: "t"},
+			{Name: "test", Aqueduct: "default", Cataractae: 1, Prefix: "t"},
 		},
 	}
 
@@ -1010,26 +898,20 @@ func TestWarnMissingSkills_NoWarnWhenSkillInstalled(t *testing.T) {
 		t.Fatalf("write skill: %v", err)
 	}
 
-	wfPath := filepath.Join(tmpDir, "aqueduct.yaml")
-	wfContent := `name: test
-cataractae:
-  - name: impl
-    type: agent
-    identity: implementer
-    skills:
-      - name: my-skill
-    on_pass: done
-`
-	if err := os.WriteFile(wfPath, []byte(wfContent), 0o644); err != nil {
-		t.Fatalf("write workflow: %v", err)
-	}
-
 	var buf bytes.Buffer
 	logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn}))
 
 	cfg := &aqueduct.AqueductConfig{
+		Aqueducts: []aqueduct.Workflow{
+			{
+				Name: "default",
+				Cataractae: []aqueduct.WorkflowCataractae{
+					{Name: "impl", Type: aqueduct.CataractaeTypeAgent, Identity: "implementer", Skills: []aqueduct.SkillRef{{Name: "my-skill"}}, OnPass: "done"},
+				},
+			},
+		},
 		Repos: []aqueduct.RepoConfig{
-			{Name: "test", WorkflowPath: wfPath, Cataractae: 1, Prefix: "t"},
+			{Name: "test", Aqueduct: "default", Cataractae: 1, Prefix: "t"},
 		},
 	}
 
@@ -1046,24 +928,20 @@ func TestWarnMissingSkills_NoWarnWhenNoSkillsReferenced(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Setenv("HOME", tmpDir)
 
-	wfPath := filepath.Join(tmpDir, "aqueduct.yaml")
-	wfContent := `name: test
-cataractae:
-  - name: impl
-    type: agent
-    identity: implementer
-    on_pass: done
-`
-	if err := os.WriteFile(wfPath, []byte(wfContent), 0o644); err != nil {
-		t.Fatalf("write workflow: %v", err)
-	}
-
 	var buf bytes.Buffer
 	logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn}))
 
 	cfg := &aqueduct.AqueductConfig{
+		Aqueducts: []aqueduct.Workflow{
+			{
+				Name: "default",
+				Cataractae: []aqueduct.WorkflowCataractae{
+					{Name: "impl", Type: aqueduct.CataractaeTypeAgent, Identity: "implementer", OnPass: "done"},
+				},
+			},
+		},
 		Repos: []aqueduct.RepoConfig{
-			{Name: "test", WorkflowPath: wfPath, Cataractae: 1, Prefix: "t"},
+			{Name: "test", Aqueduct: "default", Cataractae: 1, Prefix: "t"},
 		},
 	}
 
@@ -1080,32 +958,21 @@ func TestWarnMissingSkills_DeduplicatesAcrossSteps(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Setenv("HOME", tmpDir)
 
-	wfPath := filepath.Join(tmpDir, "aqueduct.yaml")
-	wfContent := `name: test
-cataractae:
-  - name: step1
-    type: agent
-    identity: implementer
-    skills:
-      - name: shared-skill
-    on_pass: step2
-  - name: step2
-    type: agent
-    identity: reviewer
-    skills:
-      - name: shared-skill
-    on_pass: done
-`
-	if err := os.WriteFile(wfPath, []byte(wfContent), 0o644); err != nil {
-		t.Fatalf("write workflow: %v", err)
-	}
-
 	var buf bytes.Buffer
 	logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn}))
 
 	cfg := &aqueduct.AqueductConfig{
+		Aqueducts: []aqueduct.Workflow{
+			{
+				Name: "default",
+				Cataractae: []aqueduct.WorkflowCataractae{
+					{Name: "step1", Type: aqueduct.CataractaeTypeAgent, Identity: "implementer", Skills: []aqueduct.SkillRef{{Name: "shared-skill"}}, OnPass: "step2"},
+					{Name: "step2", Type: aqueduct.CataractaeTypeAgent, Identity: "reviewer", Skills: []aqueduct.SkillRef{{Name: "shared-skill"}}, OnPass: "done"},
+				},
+			},
+		},
 		Repos: []aqueduct.RepoConfig{
-			{Name: "test", WorkflowPath: wfPath, Cataractae: 1, Prefix: "t"},
+			{Name: "test", Aqueduct: "default", Cataractae: 1, Prefix: "t"},
 		},
 	}
 
@@ -1128,11 +995,16 @@ func TestWarnMissingSkills_SkipsUnreadableWorkflow(t *testing.T) {
 	var buf bytes.Buffer
 	logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn}))
 
-	cfg := &aqueduct.AqueductConfig{
-		Repos: []aqueduct.RepoConfig{
-			{Name: "test", WorkflowPath: filepath.Join(tmpDir, "does-not-exist.yaml"), Cataractae: 1, Prefix: "t"},
-		},
-	}
+		cfg := &aqueduct.AqueductConfig{
+			Aqueducts: []aqueduct.Workflow{
+				{Name: "default", Cataractae: []aqueduct.WorkflowCataractae{
+					{Name: "implement", Type: aqueduct.CataractaeTypeAgent, Identity: "implementer", OnPass: "done"},
+				}},
+			},
+			Repos: []aqueduct.RepoConfig{
+				{Name: "test", Aqueduct: "default", Cataractae: 1, Prefix: "t"},
+			},
+		}
 
 	// Must not panic.
 	warnMissingSkills(cfg, logger)
@@ -1143,40 +1015,8 @@ func TestWarnMissingSkills_SkipsUnreadableWorkflow(t *testing.T) {
 	}
 }
 
-func TestGitSync_SkipsMissingCataractaeFiles_Gracefully(t *testing.T) {
-	tmpDir := t.TempDir()
-
-	// Workflow defines implementer but the remote has no cataractae directory.
-	wfContent := `name: test
-cataractae:
-  - name: impl
-    type: agent
-    identity: implementer
-    on_pass: done
-`
-	sandboxRoot := setupGitSyncEnv(t, tmpDir, "testrepo", map[string]string{
-		"aqueduct/aqueduct.yaml": wfContent,
-		// No cataractae files in remote.
-	})
-
-	setHomeForTest(t, tmpDir)
-	os.MkdirAll(filepath.Join(tmpDir, ".cistern", "aqueduct"), 0o755)
-
-	cfg := &aqueduct.AqueductConfig{
-		Repos:         []aqueduct.RepoConfig{{Name: "testrepo", WorkflowPath: "aqueduct/aqueduct.yaml", Cataractae: 1, Prefix: "t"}},
-	}
-
-	// Must not error when cataractae source files are absent from the remote.
-	if _, err := hookGitSync(cfg, sandboxRoot, 30*time.Second, discardLogger()); err != nil {
-		t.Fatalf("hookGitSync should not error for missing cataractae files: %v", err)
-	}
-
-	// No cataractae deploy dir should have been created.
-	cataractaePath := filepath.Join(tmpDir, ".cistern", "cataractae", "implementer")
-	if _, err := os.Stat(cataractaePath); !os.IsNotExist(err) {
-		t.Error("cataractae deploy dir should not exist when remote has no source files")
-	}
-}
+// TestGitSync_SkipsMissingCataractaeFiles_Gracefully removed:
+// cataractae file sync from repos was removed; these are now managed locally.
 
 // --- OnDroughtStart / OnDroughtEnd callback tests ---
 
@@ -1341,7 +1181,7 @@ func TestHookGitSync_WorkingTreeReset(t *testing.T) {
 
 			cfg := &aqueduct.AqueductConfig{
 				Repos: []aqueduct.RepoConfig{
-					{Name: repoName, WorkflowPath: "aqueduct/workflow.yaml", Cataractae: 1, Prefix: "t"},
+					{Name: repoName, Aqueduct: "default", Cataractae: 1, Prefix: "t"},
 				},
 			}
 

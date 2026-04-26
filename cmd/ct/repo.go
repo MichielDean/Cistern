@@ -54,7 +54,7 @@ var (
 	repoAddPrefix     string
 	repoAddNames      []string
 	repoAddCataractae int
-	repoAddWorkflow   string
+	repoAddAqueduct   string
 	repoAddYes        bool
 	repoAddClone      bool
 )
@@ -112,19 +112,18 @@ Examples:
 			repoAddCataractae = 2
 		}
 
-		// Default workflow — share Cistern's deployed workflow.
-		if repoAddWorkflow == "" {
-			home, _ := os.UserHomeDir()
-			repoAddWorkflow = filepath.Join(home, ".cistern", "aqueduct", "aqueduct.yaml")
+		// Aqueduct name is required.
+		if repoAddAqueduct == "" {
+			return fmt.Errorf("--aqueduct is required (must match a named aqueduct in cistern.yaml)")
 		}
 
 		newRepo := aqueduct.RepoConfig{
-			Name:         repoAddName,
-			URL:          repoAddURL,
-			WorkflowPath: repoAddWorkflow,
-			Cataractae:   repoAddCataractae,
-			Names:        repoAddNames,
-			Prefix:       repoAddPrefix,
+			Name:       repoAddName,
+			URL:        repoAddURL,
+			Aqueduct:   repoAddAqueduct,
+			Cataractae: repoAddCataractae,
+			Names:      repoAddNames,
+			Prefix:     repoAddPrefix,
 		}
 
 		// Show summary and confirm.
@@ -136,8 +135,8 @@ Examples:
 		fmt.Printf("  Name:      %s\n", newRepo.Name)
 		fmt.Printf("  URL:       %s\n", newRepo.URL)
 		fmt.Printf("  Prefix:    %s\n", newRepo.Prefix)
+		fmt.Printf("  Aqueduct:  %s\n", newRepo.Aqueduct)
 		fmt.Printf("  Aqueducts: %s\n", names)
-		fmt.Printf("  Workflow:  %s\n", newRepo.WorkflowPath)
 		fmt.Println()
 
 		if !repoAddYes {
@@ -265,7 +264,7 @@ func init() {
 	repoAddCmd.Flags().StringVar(&repoAddPrefix, "prefix", "", "Droplet ID prefix, e.g. 'st' (default: derived from name)")
 	repoAddCmd.Flags().StringSliceVar(&repoAddNames, "names", nil, "Aqueduct names, e.g. julia,appia")
 	repoAddCmd.Flags().IntVar(&repoAddCataractae, "cataractae", 2, "Number of aqueducts (concurrent workers)")
-	repoAddCmd.Flags().StringVar(&repoAddWorkflow, "workflow", "", "Workflow file path (default: shared ~/.cistern/aqueduct/aqueduct.yaml)")
+	repoAddCmd.Flags().StringVar(&repoAddAqueduct, "aqueduct", "", "Aqueduct name from cistern.yaml (required)")
 	repoAddCmd.Flags().BoolVar(&repoAddYes, "yes", false, "Skip confirmation prompt")
 	repoAddCmd.Flags().BoolVar(&repoAddClone, "clone", true, "Pre-clone sandboxes after adding")
 

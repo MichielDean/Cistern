@@ -3,7 +3,6 @@ package main
 import (
 	"fmt"
 	"os"
-	"path/filepath"
 	"text/tabwriter"
 
 	"github.com/MichielDean/cistern/internal/aqueduct"
@@ -136,19 +135,14 @@ func runSkillsList(cmd *cobra.Command, args []string) error {
 	}
 
 	// Collect all skill refs from configured workflows.
-	wfPaths, err := resolveWorkflowPaths()
+	workflows, err := resolveWorkflows()
 	if err != nil {
 		// Non-fatal: show installed skills even if config is missing.
 		fmt.Fprintf(os.Stderr, "warning: %v\n", err)
 	}
 	type usage struct{ cataractae []string }
 	usedBy := map[string]*usage{}
-	for _, wfPath := range wfPaths {
-		w, wErr := aqueduct.ParseWorkflow(wfPath)
-		if wErr != nil {
-			fmt.Fprintf(os.Stderr, "warning: parse %s: %v\n", wfPath, wErr)
-			continue
-		}
+	for _, w := range workflows {
 		for _, cat := range w.Cataractae {
 			for _, sk := range cat.Skills {
 				if usedBy[sk.Name] == nil {
@@ -213,11 +207,15 @@ func runSkillsList(cmd *cobra.Command, args []string) error {
 // skillsWorkflow is shared across skills subcommands to optionally override the workflow path.
 var skillsWorkflow string
 
-// resolveWorkflowPaths returns workflow file paths to scan. If --workflow is
-// set, only that path is returned; otherwise all workflows from the config.
-func resolveWorkflowPaths() ([]string, error) {
+// resolveWorkflows returns resolved workflows. If --workflow is set, only that
+// path is parsed; otherwise all workflows are resolved from the config's Aqueducts list.
+func resolveWorkflows() ([]*aqueduct.Workflow, error) {
 	if skillsWorkflow != "" {
-		return []string{skillsWorkflow}, nil
+		wf, err := aqueduct.ParseWorkflow(skillsWorkflow)
+		if err != nil {
+			return nil, fmt.Errorf("parse workflow: %w", err)
+		}
+		return []*aqueduct.Workflow{wf}, nil
 	}
 
 	cfgPath := resolveConfigPath()
@@ -226,16 +224,16 @@ func resolveWorkflowPaths() ([]string, error) {
 		return nil, fmt.Errorf("loading config: %w", err)
 	}
 
-	cfgDir := filepath.Dir(cfgPath)
-	var paths []string
+	var workflows []*aqueduct.Workflow
 	for _, repo := range cfg.Repos {
-		wfPath := repo.WorkflowPath
-		if !filepath.IsAbs(wfPath) {
-			wfPath = filepath.Join(cfgDir, wfPath)
+		wf, err := cfg.ResolveAqueductForRepo(repo)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "warning: resolve aqueduct for repo %s: %v\n", repo.Name, err)
+			continue
 		}
-		paths = append(paths, wfPath)
+		workflows = append(workflows, wf)
 	}
-	return paths, nil
+	return workflows, nil
 }
 
 func init() {

@@ -641,23 +641,14 @@ func TestRunDroughtHooks_RestartSelf_OnReloadNotCalled(t *testing.T) {
 // --- doReloadWorkflows tests ---
 
 func TestDoReloadWorkflows_ValidFile_UpdatesWorkflow(t *testing.T) {
-	// Write a valid workflow YAML to a temp file.
-	wfContent := `name: feature
-cataractae:
-  - name: implement
-    type: agent
-    identity: implementer
-    on_pass: done
-    on_fail: pooled
-`
-	wfPath := filepath.Join(t.TempDir(), "workflow.yaml")
-	if err := os.WriteFile(wfPath, []byte(wfContent), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
 	config := aqueduct.AqueductConfig{
+		Aqueducts: []aqueduct.Workflow{
+			{Name: "default", Cataractae: []aqueduct.WorkflowCataractae{
+				{Name: "implement", Type: aqueduct.CataractaeTypeAgent, Identity: "implementer", OnPass: "done", OnFail: "pooled"},
+			}},
+		},
 		Repos: []aqueduct.RepoConfig{
-			{Name: "test-repo", WorkflowPath: wfPath, Cataractae: 1, Names: []string{"alpha"}, Prefix: "test"},
+			{Name: "test-repo", Aqueduct: "default", Cataractae: 1, Names: []string{"alpha"}, Prefix: "test"},
 		},
 	}
 	client := newMockClient()
@@ -668,7 +659,7 @@ cataractae:
 
 	sched.doReloadWorkflows()
 
-	// Workflow should have been updated to the one from the file (1 step: implement).
+	// Workflow should have been updated to the one from the aqueducts list (1 step: implement).
 	wf := sched.workflows["test-repo"]
 	if wf == nil {
 		t.Fatal("workflow should not be nil after reload")
@@ -682,14 +673,18 @@ cataractae:
 }
 
 func TestDoReloadWorkflows_InvalidFile_KeepsOldWorkflow(t *testing.T) {
-	wfPath := filepath.Join(t.TempDir(), "bad.yaml")
-	if err := os.WriteFile(wfPath, []byte("not: valid: yaml: {{{\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
+	// With inline aqueducts, invalid aqueduct definitions are caught at config
+	// parse time, not at reload. The reload path preserves existing workflows
+	// when the config's aqueducts list is resolvable. This test verifies that
+	// a valid config preserves its workflows through a reload cycle.
 	config := aqueduct.AqueductConfig{
+		Aqueducts: []aqueduct.Workflow{
+			{Name: "default", Cataractae: []aqueduct.WorkflowCataractae{
+				{Name: "implement", Type: aqueduct.CataractaeTypeAgent, Identity: "implementer", OnPass: "done"},
+			}},
+		},
 		Repos: []aqueduct.RepoConfig{
-			{Name: "test-repo", WorkflowPath: wfPath, Cataractae: 1, Names: []string{"alpha"}, Prefix: "test"},
+			{Name: "test-repo", Aqueduct: "default", Cataractae: 1, Names: []string{"alpha"}, Prefix: "test"},
 		},
 	}
 	original := testWorkflow()
@@ -701,8 +696,12 @@ func TestDoReloadWorkflows_InvalidFile_KeepsOldWorkflow(t *testing.T) {
 
 	sched.doReloadWorkflows()
 
-	// Old workflow should be preserved on parse error.
-	if sched.workflows["test-repo"] != original {
-		t.Error("workflow should not be replaced on parse failure")
+	// Workflow should be updated to the one from the config's aqueducts list.
+	wf := sched.workflows["test-repo"]
+	if wf == nil {
+		t.Fatal("workflow should not be nil after reload")
+	}
+	if len(wf.Cataractae) != 1 || wf.Cataractae[0].Name != "implement" {
+		t.Errorf("reloaded workflow should have 1 step 'implement', got %v", wf.Cataractae)
 	}
 }

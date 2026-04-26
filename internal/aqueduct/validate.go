@@ -105,8 +105,24 @@ func isTerminal(name string) bool {
 	return false
 }
 
-// ValidateAqueductConfig checks a AqueductConfig for structural errors.
+// ValidateAqueductConfig checks an AqueductConfig for structural errors.
 func ValidateAqueductConfig(cfg *AqueductConfig) error {
+	if len(cfg.Aqueducts) == 0 {
+		return fmt.Errorf("cistern config: at least one aqueduct is required")
+	}
+
+	// Check for duplicate aqueduct names.
+	aqueductNames := make(map[string]bool, len(cfg.Aqueducts))
+	for _, a := range cfg.Aqueducts {
+		if a.Name == "" {
+			return fmt.Errorf("cistern config: aqueduct name is required")
+		}
+		if aqueductNames[a.Name] {
+			return fmt.Errorf("cistern config: duplicate aqueduct name %q", a.Name)
+		}
+		aqueductNames[a.Name] = true
+	}
+
 	if len(cfg.Repos) == 0 {
 		return fmt.Errorf("cistern config: at least one repo is required")
 	}
@@ -122,6 +138,13 @@ func ValidateAqueductConfig(cfg *AqueductConfig) error {
 			return fmt.Errorf("cistern config: duplicate repo name %q", repo.Name)
 		}
 		repoNames[repo.Name] = true
+
+		if repo.Aqueduct == "" {
+			return fmt.Errorf("cistern config: repo %q: aqueduct name is required", repo.Name)
+		}
+		if !aqueductNames[repo.Aqueduct] {
+			return fmt.Errorf("cistern config: repo %q references unknown aqueduct %q (available: %v)", repo.Name, repo.Aqueduct, sortedKeys(aqueductNames))
+		}
 
 		if repo.Prefix != "" {
 			if other, ok := prefixes[repo.Prefix]; ok {
@@ -144,6 +167,14 @@ func ValidateAqueductConfig(cfg *AqueductConfig) error {
 	}
 
 	return nil
+}
+
+func sortedKeys(m map[string]bool) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	return keys
 }
 
 // checkCircularRoutes detects dead-end cycles: groups of steps where no step

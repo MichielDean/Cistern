@@ -234,7 +234,6 @@ func fixCisternDB(dbFile string) error {
 // 13. Stalled in_progress droplets (warnings only, does not fail the check)
 func runDoctorExtendedChecks(cfg *aqueduct.AqueductConfig, cfgPath, home, dbPath string) bool {
 	ok := true
-	cfgDir := filepath.Dir(cfgPath)
 	cataractaeDir := filepath.Join(home, ".cistern", "cataractae")
 	skillsDir := filepath.Join(home, ".cistern", "skills")
 
@@ -244,9 +243,10 @@ func runDoctorExtendedChecks(cfg *aqueduct.AqueductConfig, cfgPath, home, dbPath
 	seenEnvVars := map[string]bool{}
 
 	for _, repo := range cfg.Repos {
-		wfPath := repo.WorkflowPath
-		if !filepath.IsAbs(wfPath) {
-			wfPath = filepath.Join(cfgDir, wfPath)
+		wf, err := cfg.ResolveAqueductForRepo(repo)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "warning: resolve aqueduct for repo %s: %v\n", repo.Name, err)
+			continue
 		}
 
 		// Resolve the effective provider preset for this repo.
@@ -285,14 +285,9 @@ func runDoctorExtendedChecks(cfg *aqueduct.AqueductConfig, cfgPath, home, dbPath
 			}
 		}
 
-		// Check 8: aqueduct YAML valid.
-		wf, wfErr := aqueduct.ParseWorkflow(wfPath)
-		wfLabel := fmt.Sprintf("aqueduct: %s", wfPath)
-		if wfErr == nil {
-			wfLabel = fmt.Sprintf("aqueduct: %s (%d cataractae)", wfPath, len(wf.Cataractae))
-		}
-		errCopy := wfErr
-		ok = checkWithFix(wfLabel, func() error { return errCopy }, nil) && ok
+		// Check 8: aqueduct valid (already resolved above — this labels it in output).
+		wfLabel := fmt.Sprintf("aqueduct: %s → %s (%d cataractae)", repo.Aqueduct, wf.Name, len(wf.Cataractae))
+		ok = checkWithFix(wfLabel, func() error { return nil }, nil) && ok
 		if wf == nil {
 			continue
 		}
@@ -930,7 +925,6 @@ func fixCisternEnvAddKey(envPath, key string) error {
 // configured repos and reports whether each is installed. When --skills is set,
 // this replaces the normal doctor check suite.
 func runDoctorSkillsCheck(cfg *aqueduct.AqueductConfig) {
-	cfgDir := filepath.Dir(resolveConfigPath())
 
 	type skillInfo struct {
 		usedBySet map[string]struct{}
@@ -938,13 +932,9 @@ func runDoctorSkillsCheck(cfg *aqueduct.AqueductConfig) {
 
 	seen := map[string]*skillInfo{}
 	for _, repo := range cfg.Repos {
-		wfPath := repo.WorkflowPath
-		if !filepath.IsAbs(wfPath) {
-			wfPath = filepath.Join(cfgDir, wfPath)
-		}
-		wf, err := aqueduct.ParseWorkflow(wfPath)
+		wf, err := cfg.ResolveAqueductForRepo(repo)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "warning: parse %s: %v\n", wfPath, err)
+			fmt.Fprintf(os.Stderr, "warning: resolve aqueduct for repo %s: %v\n", repo.Name, err)
 			continue
 		}
 		for _, step := range wf.Cataractae {

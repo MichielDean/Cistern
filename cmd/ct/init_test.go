@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/MichielDean/cistern/internal/aqueduct"
 )
 
 func TestInit_CreatesDirectoryStructure(t *testing.T) {
@@ -21,7 +23,6 @@ func TestInit_CreatesDirectoryStructure(t *testing.T) {
 	cisternDir := filepath.Join(home, ".cistern")
 	for _, dir := range []string{
 		cisternDir,
-		filepath.Join(cisternDir, "aqueduct"),
 		filepath.Join(cisternDir, "cataractae"),
 	} {
 		if _, err := os.Stat(dir); os.IsNotExist(err) {
@@ -54,7 +55,7 @@ func TestInit_WritesCisternYAML(t *testing.T) {
 	}
 }
 
-func TestInit_CopiesWorkflowFiles(t *testing.T) {
+func TestInit_ParsesInlineAqueducts(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
@@ -64,19 +65,19 @@ func TestInit_CopiesWorkflowFiles(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	aqueductDir := filepath.Join(home, ".cistern", "aqueduct")
-	aqueductYAML := filepath.Join(aqueductDir, "aqueduct.yaml")
-	if _, err := os.Stat(aqueductYAML); os.IsNotExist(err) {
-		t.Errorf("expected workflow file to exist: aqueduct.yaml")
-	}
-
-	// Verify aqueduct.yaml content matches embedded template.
-	aqueductData, err := os.ReadFile(aqueductYAML)
+	configFile := filepath.Join(home, ".cistern", "cistern.yaml")
+	cfg, err := aqueduct.ParseAqueductConfig(configFile)
 	if err != nil {
-		t.Fatalf("read aqueduct.yaml: %v", err)
+		t.Fatalf("parse cistern.yaml: %v", err)
 	}
-	if string(aqueductData) != string(defaultAqueductWorkflow) {
-		t.Error("aqueduct.yaml content does not match embedded template")
+	if len(cfg.Aqueducts) == 0 {
+		t.Fatal("expected at least one aqueduct in cistern.yaml")
+	}
+	if cfg.Aqueducts[0].Name == "" {
+		t.Error("expected aqueduct to have a name")
+	}
+	if len(cfg.Aqueducts[0].Cataractae) == 0 {
+		t.Error("expected aqueduct to have cataractae steps")
 	}
 }
 

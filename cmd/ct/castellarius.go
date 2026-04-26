@@ -54,23 +54,13 @@ keep dispatching droplets into aqueducts automatically.`,
 			return fmt.Errorf("loading config: %w", err)
 		}
 
-		// Resolve relative workflow paths against the config file's directory so
-		// that both the adapter and the scheduler see consistent absolute paths.
-		cfgDir := filepath.Dir(cfgPath)
-		for i := range cfg.Repos {
-			if !filepath.IsAbs(cfg.Repos[i].WorkflowPath) {
-				cfg.Repos[i].WorkflowPath = filepath.Join(cfgDir, cfg.Repos[i].WorkflowPath)
-			}
-		}
-
+		// Resolve aqueduct references — each repo must reference a named aqueduct
+		// defined in the top-level aqueducts list.
 		workflows := make(map[string]*aqueduct.Workflow, len(cfg.Repos))
 		for _, repo := range cfg.Repos {
-			if repo.WorkflowPath == "" {
-				return fmt.Errorf("repo %q: workflow_path is required", repo.Name)
-			}
-			w, err := aqueduct.ParseWorkflow(repo.WorkflowPath)
+			w, err := cfg.ResolveAqueductForRepo(repo)
 			if err != nil {
-				return fmt.Errorf("repo %q workflow %q: %w", repo.Name, repo.WorkflowPath, err)
+				return err
 			}
 			workflows[repo.Name] = w
 		}
@@ -280,26 +270,21 @@ var aqueductStatusCmd = &cobra.Command{
 			return fmt.Errorf("loading config: %w", err)
 		}
 
-		cfgDir := filepath.Dir(cfgPath)
 		fmt.Printf("Aqueducts (%d configured)\n\n", len(cfg.Repos))
 
 		for _, repo := range cfg.Repos {
 			fmt.Printf("  %s\n", repo.Name)
 			fmt.Printf("    URL         : %s\n", repo.URL)
-			fmt.Printf("    Aqueduct    : %s\n", repo.WorkflowPath)
+			fmt.Printf("    Aqueduct    : %s\n", repo.Aqueduct)
 
-			wfPath := repo.WorkflowPath
-			if !filepath.IsAbs(wfPath) {
-				wfPath = filepath.Join(cfgDir, wfPath)
-			}
-			if wf, err := aqueduct.ParseWorkflow(wfPath); err == nil {
+			if wf, err := cfg.ResolveAqueductForRepo(repo); err == nil {
 				steps := make([]string, len(wf.Cataractae))
 				for i, s := range wf.Cataractae {
 					steps[i] = s.Name
 				}
 				fmt.Printf("    Cataractae  : %s\n", strings.Join(steps, " → "))
 			} else {
-				fmt.Printf("    Cataractae  : (could not load: %v)\n", err)
+				fmt.Printf("    Cataractae  : (could not resolve: %v)\n", err)
 			}
 
 			names := repoWorkerNames(repo)
@@ -328,7 +313,6 @@ var aqueductValidateCmd = &cobra.Command{
 			return err
 		}
 
-		cfgDir := filepath.Dir(path)
 		var errs []error
 		for _, repo := range cfg.Repos {
 			if repo.Name == "" {
@@ -337,20 +321,15 @@ var aqueductValidateCmd = &cobra.Command{
 				errs = append(errs, e)
 				continue
 			}
-			if repo.WorkflowPath == "" {
-				e := fmt.Errorf("repo %q: workflow_path is required", repo.Name)
+			if repo.Aqueduct == "" {
+				e := fmt.Errorf("repo %q: aqueduct name is required", repo.Name)
 				fmt.Fprintf(os.Stderr, "  error: %v\n", e)
 				errs = append(errs, e)
 				continue
 			}
 
-			wfPath := repo.WorkflowPath
-			if !filepath.IsAbs(wfPath) {
-				wfPath = filepath.Join(cfgDir, wfPath)
-			}
-
-			if _, err := aqueduct.ParseWorkflow(wfPath); err != nil {
-				e := fmt.Errorf("repo %q workflow %q: %w", repo.Name, repo.WorkflowPath, err)
+			if _, err := cfg.ResolveAqueductForRepo(repo); err != nil {
+				e := fmt.Errorf("repo %q aqueduct %q: %w", repo.Name, repo.Aqueduct, err)
 				fmt.Fprintf(os.Stderr, "  error: %v\n", e)
 				errs = append(errs, e)
 			}
@@ -461,14 +440,9 @@ var statusCmd = &cobra.Command{
 			fmt.Printf("Castellarius  watching\n")
 
 			// Pre-load workflow step counts for progress indicators.
-			cfgDir := filepath.Dir(cfgPath)
 			wfSteps := map[string][]aqueduct.WorkflowCataractae{}
 			for _, repo := range cfg.Repos {
-				wfPath := repo.WorkflowPath
-				if !filepath.IsAbs(wfPath) {
-					wfPath = filepath.Join(cfgDir, wfPath)
-				}
-				if wf, wfErr := aqueduct.ParseWorkflow(wfPath); wfErr == nil {
+				if wf, wfErr := cfg.ResolveAqueductForRepo(repo); wfErr == nil {
 					wfSteps[repo.Name] = wf.Cataractae
 				}
 			}
@@ -513,7 +487,7 @@ var statusCmd = &cobra.Command{
 				if len(steps) > 0 {
 					stepCount = fmt.Sprintf("%d", len(steps))
 				}
-				fmt.Printf("  %-20s  %s  (%s cataractae)\n", repo.Name, repo.WorkflowPath, stepCount)
+				fmt.Printf("  %-20s  %s  (%s cataractae)\n", repo.Name, repo.Aqueduct, stepCount)
 			}
 
 			return nil

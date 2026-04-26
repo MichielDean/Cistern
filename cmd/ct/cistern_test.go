@@ -306,9 +306,11 @@ func writeTestConfig(t *testing.T, repoNames ...string) string {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "cistern.yaml")
 	var sb strings.Builder
-	sb.WriteString("repos:\n")
+	sb.WriteString("aqueducts:\n  - name: default\n    cataractae:\n      - name: implement\n        type: agent\nrepos:\n")
 	for _, name := range repoNames {
 		sb.WriteString("  - name: " + name + "\n")
+		sb.WriteString("    url: https://example.com/" + name + ".git\n")
+		sb.WriteString("    aqueduct: default\n")
 		sb.WriteString("    cataractae: 1\n")
 	}
 	if err := os.WriteFile(path, []byte(sb.String()), 0o644); err != nil {

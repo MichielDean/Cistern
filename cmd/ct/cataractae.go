@@ -37,14 +37,9 @@ func runCataractaeRender(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("--step is required")
 	}
 
-	wfPath, err := resolveWorkflowPath()
+	wf, err := resolveWorkflow()
 	if err != nil {
 		return err
-	}
-
-	wf, err := aqueduct.ParseWorkflow(wfPath)
-	if err != nil {
-		return fmt.Errorf("parse aqueduct: %w", err)
 	}
 
 	var step *aqueduct.WorkflowCataractae
@@ -90,7 +85,7 @@ func runCataractaeRender(cmd *cobra.Command, args []string) error {
 	}
 
 	// Locate and render the identity's instructions file.
-	cataractaeDir := cisternCataractaeDir(wfPath)
+	cataractaeDir := defaultCataractaeDir()
 	if step.Identity == "" {
 		return fmt.Errorf("step %q has no identity — only agent steps have AGENTS.md files", cataractaeRenderStep)
 	}
@@ -140,13 +135,13 @@ var cataractaeAddCmd = &cobra.Command{
 func runCataractaeAdd(cmd *cobra.Command, args []string) error {
 	name := args[0]
 
-	wfPath, err := resolveWorkflowPath()
+	_, err := resolveWorkflow()
 	if err != nil {
 		return err
 	}
 
-	// Derive cataractae dir from the workflow location (same as generate).
-	cataractaeDir := cisternCataractaeDir(wfPath)
+	// Derive cataractae dir (same as generate).
+	cataractaeDir := defaultCataractaeDir()
 
 	// Scaffold PERSONA.md and INSTRUCTIONS.md.
 	personaPath, instrPath, err := aqueduct.ScaffoldCataractaeDir(cataractaeDir, name)
@@ -171,19 +166,12 @@ var cataractaeGenerateCmd = &cobra.Command{
 }
 
 func runCataractaeGenerate(cmd *cobra.Command, args []string) error {
-	wfPath, err := resolveWorkflowPath()
+	w, err := resolveWorkflow()
 	if err != nil {
 		return err
 	}
 
-	w, err := aqueduct.ParseWorkflow(wfPath)
-	if err != nil {
-		return fmt.Errorf("parse aqueduct: %w", err)
-	}
-
-	// Derive cataractae dir from the workflow location: <repo>/cataractae/ sits one level
-	// above the aqueduct dir that contains the workflow file.
-	cataractaeDir := cisternCataractaeDir(wfPath)
+	cataractaeDir := defaultCataractaeDir()
 	instrFile := resolveInstructionsFile()
 	written, err := aqueduct.GenerateCataractaeFiles(w, cataractaeDir, instrFile)
 	if err != nil {
@@ -211,14 +199,9 @@ var cataractaeListCmd = &cobra.Command{
 }
 
 func runCataractaeList(cmd *cobra.Command, args []string) error {
-	wfPath, err := resolveWorkflowPath()
+	w, err := resolveWorkflow()
 	if err != nil {
 		return err
-	}
-
-	w, err := aqueduct.ParseWorkflow(wfPath)
-	if err != nil {
-		return fmt.Errorf("parse aqueduct: %w", err)
 	}
 
 	identities := w.UniqueIdentities()
@@ -229,7 +212,7 @@ func runCataractaeList(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	cataractaeDir := cisternCataractaeDir(wfPath)
+	cataractaeDir := defaultCataractaeDir()
 	for _, id := range identities {
 		displayName := readPersonaName(filepath.Join(cataractaeDir, id, "PERSONA.md"), id)
 		fmt.Printf("  %-20s %-40s → ct cataractae edit %s\n", id, displayName, id)
@@ -260,14 +243,9 @@ var cataractaeEditCmd = &cobra.Command{
 }
 
 func runCataractaeEdit(cmd *cobra.Command, args []string) error {
-	wfPath, err := resolveWorkflowPath()
+	w, err := resolveWorkflow()
 	if err != nil {
 		return err
-	}
-
-	w, err := aqueduct.ParseWorkflow(wfPath)
-	if err != nil {
-		return fmt.Errorf("parse aqueduct: %w", err)
 	}
 
 	identities := w.UniqueIdentities()
@@ -293,7 +271,7 @@ func runCataractaeEdit(cmd *cobra.Command, args []string) error {
 	}
 
 	selectedKey := identities[idx-1]
-	cataractaeDir := cisternCataractaeDir(wfPath)
+	cataractaeDir := defaultCataractaeDir()
 	instrPath := filepath.Join(cataractaeDir, selectedKey, "INSTRUCTIONS.md")
 
 	// Open in $EDITOR.
@@ -357,13 +335,8 @@ var cataractaeStatusCmd = &cobra.Command{
 			active[stepKey{item.Repo, item.CurrentCataractae}] = item
 		}
 
-		cfgDir := filepath.Dir(cfgPath)
-		for _, repo := range cfg.Repos {
-			wfPath := repo.WorkflowPath
-			if !filepath.IsAbs(wfPath) {
-				wfPath = filepath.Join(cfgDir, wfPath)
-			}
-			wf, err := aqueduct.ParseWorkflow(wfPath)
+			for _, repo := range cfg.Repos {
+			wf, err := cfg.ResolveAqueductForRepo(repo)
 			if err != nil {
 				fmt.Printf("%s  (workflow could not be loaded: %v)\n\n", repo.Name, err)
 				continue
@@ -395,32 +368,35 @@ var cataractaeStatusCmd = &cobra.Command{
 	},
 }
 
-// resolveWorkflowPath returns the absolute path to the workflow YAML.
-// If --workflow was passed it is used directly; otherwise the first repo's
-// WorkflowPath from the aqueduct config is resolved.
-func resolveWorkflowPath() (string, error) {
+// resolveWorkflow returns the workflow for the given (or first) repo.
+// If --workflow was passed, it is parsed directly; otherwise the config's
+// Aqueducts list is used to resolve the repo's aqueduct.
+func resolveWorkflow() (*aqueduct.Workflow, error) {
 	if cataractaeGenerateWorkflow != "" {
-		return cataractaeGenerateWorkflow, nil
+		wf, err := aqueduct.ParseWorkflow(cataractaeGenerateWorkflow)
+		if err != nil {
+			return nil, fmt.Errorf("parse workflow: %w", err)
+		}
+		return wf, nil
 	}
 	cfgPath := resolveConfigPath()
 	cfg, err := aqueduct.ParseAqueductConfig(cfgPath)
 	if err != nil {
-		return "", fmt.Errorf("loading config: %w (use --workflow to specify an aqueduct file directly)", err)
+		return nil, fmt.Errorf("loading config: %w (use --workflow to specify an aqueduct file directly)", err)
 	}
 	if len(cfg.Repos) == 0 {
-		return "", fmt.Errorf("no repos configured")
+		return nil, fmt.Errorf("no repos configured")
 	}
-	wfPath := cfg.Repos[0].WorkflowPath
-	if !filepath.IsAbs(wfPath) {
-		wfPath = filepath.Join(filepath.Dir(cfgPath), wfPath)
-	}
-	return wfPath, nil
+	return cfg.ResolveAqueductForRepo(cfg.Repos[0])
 }
 
-// cisternCataractaeDir returns the cataractae directory derived from a workflow file path.
-// The cataractae directory lives one level above the aqueduct directory containing the workflow.
-func cisternCataractaeDir(wfPath string) string {
-	return filepath.Clean(filepath.Join(filepath.Dir(wfPath), "..", "cataractae"))
+// defaultCataractaeDir returns the cataractae directory under ~/.cistern.
+func defaultCataractaeDir() string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return filepath.Join(os.Getenv("HOME"), ".cistern", "cataractae")
+	}
+	return filepath.Join(home, ".cistern", "cataractae")
 }
 
 func init() {

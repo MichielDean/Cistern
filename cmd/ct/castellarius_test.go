@@ -497,10 +497,17 @@ func writeMinimalConfig(t *testing.T, dir, providerName string) string {
 	if err := os.MkdirAll(cisternDir, 0o755); err != nil {
 		t.Fatalf("mkdir .cistern: %v", err)
 	}
-	yaml := `repos:
+	yaml := `aqueducts:
+  - name: default
+    cataractae:
+      - name: implement
+        type: agent
+        identity: default
+        on_pass: done
+repos:
   - name: testrepo
     url: https://github.com/example/testrepo
-    workflow_path: aqueduct/workflow.yaml
+    aqueduct: default
     cataractae: 1
     prefix: ct
 provider:

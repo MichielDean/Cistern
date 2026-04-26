@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
 	"slices"
 	"sort"
 	"strings"
@@ -101,7 +100,6 @@ func fetchDashboardData(cfgPath, dbPath string) (*DashboardData, error) {
 	}
 	var configCataractae []cataractaeEntry
 	allSteps := map[string][]aqueduct.WorkflowCataractae{}
-	cfgDir := filepath.Dir(cfgPath)
 	for _, repo := range cfg.Repos {
 		names := repoWorkerNames(repo)
 		for _, name := range names {
@@ -109,11 +107,7 @@ func fetchDashboardData(cfgPath, dbPath string) (*DashboardData, error) {
 		}
 		data.CataractaeCount += len(names)
 
-		wfPath := repo.WorkflowPath
-		if !filepath.IsAbs(wfPath) {
-			wfPath = filepath.Join(cfgDir, wfPath)
-		}
-		if wf, wfErr := aqueduct.ParseWorkflow(wfPath); wfErr == nil {
+		if wf, wfErr := cfg.ResolveAqueductForRepo(repo); wfErr == nil {
 			allSteps[repo.Name] = wf.Cataractae
 		}
 	}

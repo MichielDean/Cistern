@@ -1,7 +1,6 @@
 package castellarius
 
 import (
-	"bytes"
 	"context"
 	"database/sql"
 	"fmt"
@@ -192,23 +191,15 @@ func mtimeAdvanced(path string, baseline time.Time) bool {
 	return err == nil && info.ModTime().After(baseline)
 }
 
-// hookGitSync fetches the latest workflow YAML and skills from origin/main for
-// each repo and deploys them locally. Workflow changes are tracked for restart
-// purposes; skills sync is independent and never triggers a restart.
-// Uses `git fetch` + `git show origin/main:<path>`. Safe for active agent worktrees
-// (those not named `_primary`) because it never resets them. The `_primary` clone is
-// additionally reset to `origin/main` so new worktrees always branch from a clean base.
-// Must run before cataractae_generate so roles are rebuilt from the freshest YAML.
+// hookGitSync fetches the latest refs from origin/main for each repo sandbox
+// and deploys skills. The aqueduct workflow is defined inline in cistern.yaml —
+// no separate file sync is needed. Skills are still deployed from each repo's
+// skills/ tree. Uses `git fetch` + `git show origin/main:<path>`. Safe for active
+// agent worktrees (those not named `_primary`) because it never resets them.
+// The `_primary` clone is additionally reset to `origin/main` so new worktrees
+// always branch from a clean base.
 func hookGitSync(cfg *aqueduct.AqueductConfig, sandboxRoot string, gitFetchTimeout time.Duration, logger *slog.Logger) (changed bool, err error) {
-	home, hErr := os.UserHomeDir()
-	if hErr != nil {
-		return false, fmt.Errorf("git_sync: home dir: %w", hErr)
-	}
 	for _, repo := range cfg.Repos {
-		if repo.WorkflowPath == "" {
-			continue
-		}
-
 		// Find any sandbox clone for this repo (first one with a .git dir).
 		repoSandboxDir := filepath.Join(sandboxRoot, repo.Name)
 		entries, err := os.ReadDir(repoSandboxDir)
@@ -260,46 +251,7 @@ func hookGitSync(cfg *aqueduct.AqueductConfig, sandboxRoot string, gitFetchTimeo
 			}
 		}
 
-		// Repo-relative workflow path: aqueduct/<filename>.
-		wfFilename := filepath.Base(repo.WorkflowPath)
-		repoRelPath := "aqueduct/" + wfFilename
-
-		// Extract the file from origin/main — does NOT modify the working tree.
-		newContent, err := exec.Command("git", "-C", cloneDir, "show", "origin/main:"+repoRelPath).Output()
-		if err != nil {
-			logger.Warn("git_sync: cannot read from origin/main", "repo", repo.Name, "path", repoRelPath, "error", err)
-			// Don't continue — still attempt skills sync below.
-		} else {
-			// Resolve deployed path (may be absolute or relative to ~/.cistern/).
-			deployedPath := repo.WorkflowPath
-			if !filepath.IsAbs(deployedPath) {
-				deployedPath = filepath.Join(home, ".cistern", deployedPath)
-			}
-
-			// Skip write if content is identical.
-			existing, _ := os.ReadFile(deployedPath)
-			if !bytes.Equal(existing, newContent) {
-				if err := os.MkdirAll(filepath.Dir(deployedPath), 0o755); err != nil {
-					logger.Warn("git_sync: mkdir failed", "path", deployedPath, "error", err)
-				} else if err := os.WriteFile(deployedPath, newContent, 0o644); err != nil {
-					logger.Warn("git_sync: write failed", "path", deployedPath, "error", err)
-				} else {
-					logger.Info("git_sync: workflow updated", "repo", repo.Name, "path", deployedPath)
-					changed = true
-				}
-			} else {
-				logger.Info("git_sync: workflow up to date", "repo", repo.Name)
-			}
-		}
-
-		// Deploy cataractae source files for each role defined in the workflow.
-		if newContent != nil {
-			syncCataractaeFiles(cloneDir, home, repo.Name, newContent, logger)
-		}
-
 		// Sync skills from the skills/ tree in origin/main into ~/.cistern/skills/.
-		// This runs independently of the workflow sync — skills are deployed even if
-		// the workflow YAML is missing or unchanged.
 		syncSkillsFromRepo(cloneDir, repo.Name, logger)
 	}
 	return changed, nil
@@ -335,52 +287,9 @@ func syncSkillsFromRepo(cloneDir, repoName string, logger *slog.Logger) {
 	}
 }
 
-// syncCataractaeFiles deploys PERSONA.md and INSTRUCTIONS.md for each role
-// defined in wfContent from origin/main (via cloneDir) to ~/.cistern/cataractae/<roleKey>/.
-// Missing files and parse errors are logged but do not halt the sync.
-func syncCataractaeFiles(cloneDir, home, repoName string, wfContent []byte, logger *slog.Logger) {
-	w, err := aqueduct.ParseWorkflowBytes(wfContent)
-	if err != nil {
-		logger.Warn("git_sync: cannot parse workflow for cataractae extraction", "repo", repoName, "error", err)
-		return
-	}
-
-	cataractaeDeployDir := filepath.Join(home, ".cistern", "cataractae")
-	seen := map[string]bool{}
-	for _, step := range w.Cataractae {
-		roleKey := step.Identity
-		if roleKey == "" || seen[roleKey] {
-			continue
-		}
-		seen[roleKey] = true
-		roleDir := filepath.Join(cataractaeDeployDir, roleKey)
-		for _, fname := range []string{"PERSONA.md", "INSTRUCTIONS.md"} {
-			relPath := "cataractae/" + roleKey + "/" + fname
-			content, err := exec.Command("git", "-C", cloneDir, "show", "origin/main:"+relPath).Output()
-			if err != nil {
-				logger.Info("git_sync: cataractae file not in origin/main", "repo", repoName, "path", relPath)
-				continue
-			}
-			destPath := filepath.Join(roleDir, fname)
-			old, _ := os.ReadFile(destPath)
-			if bytes.Equal(old, content) {
-				continue
-			}
-			if err := os.MkdirAll(roleDir, 0o755); err != nil {
-				logger.Warn("git_sync: mkdir failed", "path", destPath, "error", err)
-				continue
-			}
-			if err := os.WriteFile(destPath, content, 0o644); err != nil {
-				logger.Warn("git_sync: write failed", "path", destPath, "error", err)
-				continue
-			}
-			logger.Info("git_sync: cataractae file updated", "repo", repoName, "path", destPath)
-		}
-	}
-}
-
-// hookCataractaeGenerate checks if any workflow YAML mtime is newer than the oldest
-// role file in ~/.cistern/cataractae/ and regenerates if needed.
+// hookCataractaeGenerate regenerates AGENTS.md files for each aqueduct defined
+// in the config if they are missing or stale. The aqueduct definitions are read
+// from the inline config (no separate file).
 func hookCataractaeGenerate(cfg *aqueduct.AqueductConfig, logger *slog.Logger) error {
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -388,54 +297,43 @@ func hookCataractaeGenerate(cfg *aqueduct.AqueductConfig, logger *slog.Logger) e
 	}
 	cataractaeDir := filepath.Join(home, ".cistern", "cataractae")
 
-	// Find the oldest role file mtime.
-	oldestRole := time.Now()
-	hasRoles := false
-	entries, _ := os.ReadDir(cataractaeDir)
-	for _, e := range entries {
-		if !e.IsDir() {
-			continue
-		}
-		agentsPath := filepath.Join(cataractaeDir, e.Name(), "AGENTS.md")
-		info, err := os.Stat(agentsPath)
-		if err != nil {
-			continue
-		}
-		hasRoles = true
-		if info.ModTime().Before(oldestRole) {
-			oldestRole = info.ModTime()
+	// Check if any role directories are missing or stale.
+	// Since the aqueduct is defined inline in config (not a file), we check
+	// whether all expected identity directories exist with AGENTS.md files.
+	needsGeneration := false
+	allIdentities := map[string]bool{}
+	for _, wf := range cfg.Aqueducts {
+		for _, id := range wf.UniqueIdentities() {
+			allIdentities[id] = true
+			agentsPath := filepath.Join(cataractaeDir, id, "AGENTS.md")
+			if _, err := os.Stat(agentsPath); err != nil {
+				needsGeneration = true
+			}
 		}
 	}
 
-	regenerated := false
-	for _, repo := range cfg.Repos {
-		if repo.WorkflowPath == "" {
-			continue
-		}
-		wfPath := repo.WorkflowPath
-		info, err := os.Stat(wfPath)
-		if err != nil {
-			logger.Warn("cataractae_generate: cannot stat workflow", "path", wfPath, "error", err)
-			continue
-		}
+	if !needsGeneration {
+		logger.Info("cataractae_generate: roles up to date")
+		return nil
+	}
 
-		if !hasRoles || info.ModTime().After(oldestRole) {
-			w, err := aqueduct.ParseWorkflow(wfPath)
-			if err != nil {
-				logger.Warn("cataractae_generate: parse workflow failed", "path", wfPath, "error", err)
-				continue
-			}
-			preset, err := cfg.ResolveProvider(repo.Name)
-			if err != nil {
-				logger.Warn("cataractae_generate: resolve provider failed, defaulting to AGENTS.md", "repo", repo.Name, "error", err)
-			}
-			written, err := aqueduct.GenerateCataractaeFiles(w, cataractaeDir, preset.InstrFile())
-			if err != nil {
-				return fmt.Errorf("generate role files: %w", err)
-			}
-			for _, path := range written {
-				logger.Info("cataractae_generate: regenerated", "path", path)
-			}
+	regenerated := false
+	for _, wf := range cfg.Aqueducts {
+		preset, err := cfg.ResolveProvider("")
+		if len(cfg.Repos) > 0 {
+			preset, err = cfg.ResolveProvider(cfg.Repos[0].Name)
+		}
+		if err != nil {
+			logger.Warn("cataractae_generate: resolve provider failed, defaulting to AGENTS.md", "error", err)
+		}
+		written, err := aqueduct.GenerateCataractaeFiles(&wf, cataractaeDir, preset.InstrFile())
+		if err != nil {
+			return fmt.Errorf("generate role files: %w", err)
+		}
+		for _, path := range written {
+			logger.Info("cataractae_generate: regenerated", "path", path)
+		}
+		if len(written) > 0 {
 			regenerated = true
 		}
 	}
@@ -572,22 +470,14 @@ func hookTmpCleanup(logger *slog.Logger) error {
 	return nil
 }
 
-// warnMissingSkills checks each workflow in cfg for skill references that are not
+// warnMissingSkills checks each aqueduct in cfg for skill references that are not
 // installed locally. Called after the drought hook loop so git_sync-deployed skills
 // are already on disk. Logs a prominent warning for every missing skill so drift is
 // visible in the log during every drought cycle, not only when an agent tries to spawn.
 func warnMissingSkills(cfg *aqueduct.AqueductConfig, logger *slog.Logger) {
 	seen := map[string]bool{}
-	for _, repo := range cfg.Repos {
-		if repo.WorkflowPath == "" {
-			continue
-		}
-		w, err := aqueduct.ParseWorkflow(repo.WorkflowPath)
-		if err != nil {
-			// Workflow may be absent or invalid — other hooks already report this.
-			continue
-		}
-		for _, step := range w.Cataractae {
+	for _, wf := range cfg.Aqueducts {
+		for _, step := range wf.Cataractae {
 			for _, skill := range step.Skills {
 				if skill.Name == "" || seen[skill.Name] {
 					continue
@@ -596,7 +486,7 @@ func warnMissingSkills(cfg *aqueduct.AqueductConfig, logger *slog.Logger) {
 				if !skills.IsInstalled(skill.Name) {
 					logger.Warn("SKILL MISSING: workflow references a skill not installed locally — agent spawn will fail",
 						"skill", skill.Name,
-						"repo", repo.Name,
+						"workflow", wf.Name,
 						"hint", "Run: ct skills install "+skill.Name+" <url>  or add skills/ to the repo for git_sync to deploy")
 				}
 			}

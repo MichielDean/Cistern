@@ -1,6 +1,7 @@
 package aqueduct
 
 import (
+	"fmt"
 	"sort"
 
 	"github.com/MichielDean/cistern/internal/tracker"
@@ -66,7 +67,8 @@ func (wf *Workflow) UniqueIdentities() []string {
 	return ids
 }
 
-// Workflow is a named sequence of cataractae parsed from a YAML file.
+// Workflow is a named sequence of cataractae. Used both for standalone
+// aqueduct YAML files and as inline aqueduct definitions in cistern.yaml.
 type Workflow struct {
 	Name       string               `yaml:"name"`
 	Cataractae []WorkflowCataractae `yaml:"cataractae"`
@@ -93,12 +95,15 @@ type ProviderConfig struct {
 
 // RepoConfig defines a repository managed by the Castellarius.
 type RepoConfig struct {
-	Name         string   `yaml:"name"`
-	URL          string   `yaml:"url"`
-	WorkflowPath string   `yaml:"workflow_path"`
-	Cataractae   int      `yaml:"cataractae"`
-	Names        []string `yaml:"names,omitempty"`
-	Prefix       string   `yaml:"prefix"`
+	Name       string   `yaml:"name"`
+	URL        string   `yaml:"url"`
+	Cataractae int      `yaml:"cataractae"`
+	Names      []string `yaml:"names,omitempty"`
+	Prefix     string   `yaml:"prefix"`
+	// Aqueduct is the name of the aqueduct (workflow) this repo uses.
+	// Required — every repo must reference a named aqueduct defined in the
+	// top-level aqueducts list in cistern.yaml.
+	Aqueduct string `yaml:"aqueduct"`
 	// Provider overrides the top-level provider config for this repo only.
 	Provider *ProviderConfig `yaml:"provider,omitempty"`
 }
@@ -147,7 +152,12 @@ type LLMConfig struct {
 
 // AqueductConfig is the top-level configuration for a Cistern instance.
 type AqueductConfig struct {
-	Repos                 []RepoConfig `yaml:"repos"`
+	// Aqueducts defines the named workflows available to repos.
+	// Each repo references one by name via the Aqueduct field.
+	// This is the single source of truth for pipeline definitions —
+	// no separate YAML file is needed.
+	Aqueducts []Workflow `yaml:"aqueducts"`
+	Repos     []RepoConfig `yaml:"repos"`
 	HandoffTokenThreshold int          `yaml:"handoff_token_threshold"`
 	RetentionDays         int          `yaml:"retention_days"`
 	CleanupInterval       string       `yaml:"cleanup_interval"`
@@ -199,4 +209,33 @@ type AqueductConfig struct {
 	// Each entry maps a provider name (e.g. "jira") to its connection parameters.
 	// Use ct import <provider> <issue-key> --repo <repo> to import issues.
 	Trackers []tracker.TrackerConfig `yaml:"trackers,omitempty"`
+}
+
+// ResolveAqueduct returns the named aqueduct from the config's Aqueducts list.
+// Returns an error if the name is not found.
+func (cfg *AqueductConfig) ResolveAqueduct(name string) (*Workflow, error) {
+	for i := range cfg.Aqueducts {
+		if cfg.Aqueducts[i].Name == name {
+			return &cfg.Aqueducts[i], nil
+		}
+	}
+	return nil, fmt.Errorf("aqueduct %q not found in config (available: %v)", name, aqueductNames(cfg))
+}
+
+// ResolveAqueductForRepo returns the workflow for a repo by looking up the
+// repo's Aqueduct name in the config's Aqueducts list.
+func (cfg *AqueductConfig) ResolveAqueductForRepo(repo RepoConfig) (*Workflow, error) {
+	if repo.Aqueduct == "" {
+		return nil, fmt.Errorf("repo %q: aqueduct name is required", repo.Name)
+	}
+	return cfg.ResolveAqueduct(repo.Aqueduct)
+}
+
+// aqueductNames returns the list of aqueduct names defined in the config.
+func aqueductNames(cfg *AqueductConfig) []string {
+	names := make([]string, 0, len(cfg.Aqueducts))
+	for _, a := range cfg.Aqueducts {
+		names = append(names, a.Name)
+	}
+	return names
 }

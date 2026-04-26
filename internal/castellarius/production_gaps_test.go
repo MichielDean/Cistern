@@ -249,8 +249,9 @@ func newTestSchedulerWithRunner(buf *bytes.Buffer, client *mockClient, runner Ca
 		},
 	}
 	cfg := aqueduct.AqueductConfig{
+		Aqueducts: []aqueduct.Workflow{*wf},
 		Repos: []aqueduct.RepoConfig{
-			{Name: "repo", Prefix: "r", WorkflowPath: "test", Names: []string{"alpha"}},
+			{Name: "repo", Prefix: "r", Aqueduct: wf.Name, Names: []string{"alpha"}},
 		},
 	}
 	return NewFromParts(cfg,

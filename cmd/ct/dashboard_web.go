@@ -2435,14 +2435,9 @@ func handleGetAqueduct(cfgPath, dbPath string) http.HandlerFunc {
 		cfg, cfgErr := aqueduct.ParseAqueductConfig(cfgPath)
 		var wfSteps []workflowStep
 		if cfgErr == nil {
-			cfgDir := filepath.Dir(cfgPath)
 			for _, repo := range cfg.Repos {
 				if repo.Name == catInfo.RepoName {
-					wfPath := repo.WorkflowPath
-					if !filepath.IsAbs(wfPath) {
-						wfPath = filepath.Join(cfgDir, wfPath)
-					}
-					if wf, wfErr := aqueduct.ParseWorkflow(wfPath); wfErr == nil {
+					if wf, wfErr := cfg.ResolveAqueductForRepo(repo); wfErr == nil {
 						wfSteps = make([]workflowStep, len(wf.Cataractae))
 						for i, s := range wf.Cataractae {
 							wfSteps[i] = workflowStep{
@@ -2551,11 +2546,7 @@ func handleGetRepoSteps(cfgPath string) http.HandlerFunc {
 		}
 		for _, repo := range cfg.Repos {
 			if repo.Name == repoName {
-				wfPath := repo.WorkflowPath
-				if !filepath.IsAbs(wfPath) {
-					wfPath = filepath.Join(filepath.Dir(cfgPath), wfPath)
-				}
-				wf, wfErr := aqueduct.ParseWorkflow(wfPath)
+				wf, wfErr := cfg.ResolveAqueductForRepo(repo)
 				if wfErr != nil || wf == nil {
 					writeAPIJSON(w, http.StatusOK, []string{})
 					return

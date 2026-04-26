@@ -40,24 +40,19 @@ func tempCfgWithAPIKey(t *testing.T, apiKey string) string {
 	t.Helper()
 	dir := t.TempDir()
 
-	wfContent := `name: test
-cataractae:
-  - name: implement
-    type: agent
-  - name: review
-    type: agent
-  - name: merge
-    type: automated
-`
-	wfPath := filepath.Join(dir, "aqueduct.yaml")
-	if err := os.WriteFile(wfPath, []byte(wfContent), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	cfgContent := `repos:
+	cfgContent := `aqueducts:
+  - name: test
+    cataractae:
+      - name: implement
+        type: agent
+      - name: review
+        type: agent
+      - name: merge
+        type: automated
+repos:
   - name: myrepo
     url: https://example.com/repo
-    workflow_path: aqueduct.yaml
+    aqueduct: test
     cataractae: 2
     names:
       - virgo
@@ -78,26 +73,20 @@ func tempCfgWithFontFamily(t *testing.T, fontFamily string) string {
 	t.Helper()
 	dir := t.TempDir()
 
-	// Minimal workflow YAML.
-	wfContent := `name: test
-cataractae:
-  - name: implement
-    type: agent
-  - name: review
-    type: agent
-  - name: merge
-    type: automated
-`
-	wfPath := filepath.Join(dir, "aqueduct.yaml")
-	if err := os.WriteFile(wfPath, []byte(wfContent), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	// Config referencing two operators named "virgo" and "marcia".
-	cfgContent := `repos:
+	// Config with inline aqueduct and two operators named "virgo" and "marcia".
+	cfgContent := `aqueducts:
+  - name: test
+    cataractae:
+      - name: implement
+        type: agent
+      - name: review
+        type: agent
+      - name: merge
+        type: automated
+repos:
   - name: myrepo
     url: https://example.com/repo
-    workflow_path: aqueduct.yaml
+    aqueduct: test
     cataractae: 2
     names:
       - virgo
@@ -982,30 +971,25 @@ func TestStepIndexInWorkflow_ReturnsCorrectIndex(t *testing.T) {
 
 // --- TestFetchDashboardData ---
 
-// tempCfg3Steps writes a cistern.yaml referencing a minimal 3-step workflow.
+// tempCfg3Steps writes a cistern.yaml with a minimal 3-step workflow.
 // Returns the path to the config file.
 func tempCfg3Steps(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
 
-	wfContent := `name: test
-cataractae:
-  - name: implement
-    type: agent
-  - name: adv-review
-    type: agent
-  - name: merge
-    type: automated
-`
-	wfPath := filepath.Join(dir, "aqueduct.yaml")
-	if err := os.WriteFile(wfPath, []byte(wfContent), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	cfgContent := `repos:
+	cfgContent := `aqueducts:
+  - name: test
+    cataractae:
+      - name: implement
+        type: agent
+      - name: adv-review
+        type: agent
+      - name: merge
+        type: automated
+repos:
   - name: myrepo
     url: https://example.com/repo
-    workflow_path: aqueduct.yaml
+    aqueduct: test
     cataractae: 1
     names:
       - virgo

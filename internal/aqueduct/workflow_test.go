@@ -156,9 +156,14 @@ func TestValidateDuplicateStepName(t *testing.T) {
 
 func TestValidateCisternConfig_Valid(t *testing.T) {
 	cfg := &AqueductConfig{
+		Aqueducts: []Workflow{
+			{Name: "default", Cataractae: []WorkflowCataractae{
+				{Name: "implement", Type: CataractaeTypeAgent, Identity: "impl", OnPass: "done"},
+			}},
+		},
 		Repos: []RepoConfig{
-			{Name: "ScaledTest", Cataractae: 2, Names: []string{"cascade", "tributary"}, Prefix: "st"},
-			{Name: "cistern", Cataractae: 1, Names: []string{"confluence"}, Prefix: "ct"},
+			{Name: "ScaledTest", Aqueduct: "default", Cataractae: 2, Names: []string{"cascade", "tributary"}, Prefix: "st"},
+			{Name: "cistern", Aqueduct: "default", Cataractae: 1, Names: []string{"confluence"}, Prefix: "ct"},
 		},
 	}
 	if err := ValidateAqueductConfig(cfg); err != nil {
@@ -167,7 +172,13 @@ func TestValidateCisternConfig_Valid(t *testing.T) {
 }
 
 func TestValidateCisternConfig_NoRepos(t *testing.T) {
-	cfg := &AqueductConfig{}
+	cfg := &AqueductConfig{
+		Aqueducts: []Workflow{
+			{Name: "default", Cataractae: []WorkflowCataractae{
+				{Name: "implement", Type: CataractaeTypeAgent, OnPass: "done"},
+			}},
+		},
+	}
 	err := ValidateAqueductConfig(cfg)
 	if err == nil || !strings.Contains(err.Error(), "at least one repo") {
 		t.Errorf("expected at least one repo error, got %v", err)
@@ -176,9 +187,14 @@ func TestValidateCisternConfig_NoRepos(t *testing.T) {
 
 func TestValidateCisternConfig_DuplicateRepoName(t *testing.T) {
 	cfg := &AqueductConfig{
+		Aqueducts: []Workflow{
+			{Name: "default", Cataractae: []WorkflowCataractae{
+				{Name: "implement", Type: CataractaeTypeAgent, OnPass: "done"},
+			}},
+		},
 		Repos: []RepoConfig{
-			{Name: "dup", Cataractae: 1, Prefix: "a"},
-			{Name: "dup", Cataractae: 1, Prefix: "b"},
+			{Name: "dup", Aqueduct: "default", Cataractae: 1, Prefix: "a"},
+			{Name: "dup", Aqueduct: "default", Cataractae: 1, Prefix: "b"},
 		},
 	}
 	err := ValidateAqueductConfig(cfg)
@@ -189,9 +205,14 @@ func TestValidateCisternConfig_DuplicateRepoName(t *testing.T) {
 
 func TestValidateCisternConfig_DuplicatePrefix(t *testing.T) {
 	cfg := &AqueductConfig{
+		Aqueducts: []Workflow{
+			{Name: "default", Cataractae: []WorkflowCataractae{
+				{Name: "implement", Type: CataractaeTypeAgent, OnPass: "done"},
+			}},
+		},
 		Repos: []RepoConfig{
-			{Name: "r1", Cataractae: 1, Prefix: "shared"},
-			{Name: "r2", Cataractae: 1, Prefix: "shared"},
+			{Name: "r1", Aqueduct: "default", Cataractae: 1, Prefix: "shared"},
+			{Name: "r2", Aqueduct: "default", Cataractae: 1, Prefix: "shared"},
 		},
 	}
 	err := ValidateAqueductConfig(cfg)
@@ -202,8 +223,13 @@ func TestValidateCisternConfig_DuplicatePrefix(t *testing.T) {
 
 func TestValidateCisternConfig_WorkersNamesMismatch(t *testing.T) {
 	cfg := &AqueductConfig{
+		Aqueducts: []Workflow{
+			{Name: "default", Cataractae: []WorkflowCataractae{
+				{Name: "implement", Type: CataractaeTypeAgent, OnPass: "done"},
+			}},
+		},
 		Repos: []RepoConfig{
-			{Name: "r1", Cataractae: 3, Names: []string{"a", "b"}},
+			{Name: "r1", Aqueduct: "default", Cataractae: 3, Names: []string{"a", "b"}},
 		},
 	}
 	err := ValidateAqueductConfig(cfg)
@@ -214,7 +240,12 @@ func TestValidateCisternConfig_WorkersNamesMismatch(t *testing.T) {
 
 func TestValidateCisternConfig_ZeroWorkers(t *testing.T) {
 	cfg := &AqueductConfig{
-		Repos: []RepoConfig{{Name: "r1", Cataractae: 0}},
+		Aqueducts: []Workflow{
+			{Name: "default", Cataractae: []WorkflowCataractae{
+				{Name: "implement", Type: CataractaeTypeAgent, OnPass: "done"},
+			}},
+		},
+		Repos: []RepoConfig{{Name: "r1", Aqueduct: "default", Cataractae: 0}},
 	}
 	err := ValidateAqueductConfig(cfg)
 	if err == nil || !strings.Contains(err.Error(), "cataractae must be > 0") {
@@ -224,8 +255,13 @@ func TestValidateCisternConfig_ZeroWorkers(t *testing.T) {
 
 func TestValidateCisternConfig_NamesOnly(t *testing.T) {
 	cfg := &AqueductConfig{
+		Aqueducts: []Workflow{
+			{Name: "default", Cataractae: []WorkflowCataractae{
+				{Name: "implement", Type: CataractaeTypeAgent, OnPass: "done"},
+			}},
+		},
 		Repos: []RepoConfig{
-			{Name: "r1", Names: []string{"a", "b"}},
+			{Name: "r1", Aqueduct: "default", Names: []string{"a", "b"}},
 		},
 	}
 	if err := ValidateAqueductConfig(cfg); err != nil {
@@ -235,7 +271,12 @@ func TestValidateCisternConfig_NamesOnly(t *testing.T) {
 
 func TestValidateCisternConfig_MissingRepoName(t *testing.T) {
 	cfg := &AqueductConfig{
-		Repos: []RepoConfig{{Cataractae: 1}},
+		Aqueducts: []Workflow{
+			{Name: "default", Cataractae: []WorkflowCataractae{
+				{Name: "implement", Type: CataractaeTypeAgent, OnPass: "done"},
+			}},
+		},
+		Repos: []RepoConfig{{Aqueduct: "default", Cataractae: 1}},
 	}
 	err := ValidateAqueductConfig(cfg)
 	if err == nil || !strings.Contains(err.Error(), "name is required") {
@@ -668,8 +709,15 @@ func TestScaffoldCataractaeDir_ErrorIfInstructionsExists(t *testing.T) {
 // parsed correctly from a cistern.yaml config.
 func TestAqueductConfig_Trackers_ParsedFromYAML(t *testing.T) {
 	yaml := `
+aqueducts:
+  - name: default
+    cataractae:
+      - name: implement
+        type: agent
+        on_pass: done
 repos:
   - name: myrepo
+    aqueduct: default
     cataractae: 1
     prefix: mr
 trackers:
@@ -723,8 +771,15 @@ trackers:
 // is nil when the trackers: key is absent from the config.
 func TestAqueductConfig_Trackers_OmittedWhenAbsent(t *testing.T) {
 	yaml := `
+aqueducts:
+  - name: default
+    cataractae:
+      - name: implement
+        type: agent
+        on_pass: done
 repos:
   - name: myrepo
+    aqueduct: default
     cataractae: 1
     prefix: mr
 `
