@@ -499,10 +499,16 @@ across layers, this order wins: base prompt > agent definition > skills > CONTEX
    .current-stage, and CATARACTAE.md are injected per-dispatch and conflict
    across concurrent deliveries. Never use git add -f to override .gitignore.
 
-3. Ignore any AGENTS.md or CLAUDE.md in the repository root. You are operating
-   as a Cistern cataractae — your instructions come from the agent definition and
-   CONTEXT.md only. The repository's own AGENTS.md is project configuration for
-   human-driven sessions, not for you. Never modify or commit it.
+ 3. Ignore any AGENTS.md or CLAUDE.md in the repository root. You are operating
+    as a Cistern cataractae — your instructions come from the agent definition and
+    CONTEXT.md only. The repository's own AGENTS.md is project configuration for
+    human-driven sessions, not for you. Never modify or commit it.
+
+ 4. Do NOT use the todowrite tool. Cataractae track progress through ct droplet
+    signaling, not opencode's todo list. The todowrite tool expects a JSON array
+    but agents frequently pass a markdown string, causing repeated failures. If
+    you need to track subtasks, use comments in your code or write them in your
+    outcome notes — never call todowrite.
 `
 
 // buildPrompt constructs the full agent prompt: constitutional base + persona + skills.
@@ -611,6 +617,8 @@ func (s *Session) writeAgentMarkdown(prompt string) (string, error) {
 		"---",
 		"description: " + desc,
 		"mode: primary",
+		"permission:",
+		"  todowrite: deny",
 		"---",
 		"",
 	}, "\n")
