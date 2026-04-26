@@ -1140,6 +1140,9 @@ func newDashboardMuxInternalWith(cfgPath, dbPath string, tui *DashboardTUI, fetc
 	// Doctor
 	apiMux.HandleFunc("GET /api/doctor", handleDoctor(cfgPath))
 
+	// Aqueducts
+	apiMux.HandleFunc("GET /api/aqueducts/{name}", handleGetAqueduct(cfgPath, dbPath))
+
 	// Repos & Skills
 	apiMux.HandleFunc("GET /api/repos", handleGetRepos(cfgPath))
 	apiMux.HandleFunc("GET /api/repos/{name}/steps", handleGetRepoSteps(cfgPath))
@@ -2386,6 +2389,109 @@ func handleCastellariusStop() http.HandlerFunc {
 func handleCastellariusRestart() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, http.StatusNotImplemented, "castellarius restart via API is not yet supported; use 'ct castellarius restart'")
+	}
+}
+
+// ── Aqueduct detail handler ──
+
+func handleGetAqueduct(cfgPath, dbPath string) http.HandlerFunc {
+	type workflowStep struct {
+		Name     string `json:"name"`
+		Type     string `json:"type"`
+		Identity string `json:"identity,omitempty"`
+	}
+	type aqueductDetail struct {
+		Name            string                   `json:"name"`
+		RepoName        string                   `json:"repo_name"`
+		Status          string                   `json:"status"`
+		DropletID       string                   `json:"droplet_id,omitempty"`
+		DropletTitle    string                   `json:"droplet_title,omitempty"`
+		CurrentStep     string                   `json:"current_step,omitempty"`
+		Steps           []workflowStep           `json:"steps"`
+		Elapsed         int64                    `json:"elapsed"`
+		StageElapsed    int64                    `json:"stage_elapsed"`
+		CataractaeIndex int                      `json:"cataractae_index"`
+		TotalCataractae int                      `json:"total_cataractae"`
+		Notes           []cistern.CataractaeNote `json:"notes"`
+	}
+
+	return func(w http.ResponseWriter, r *http.Request) {
+		name := r.PathValue("name")
+
+		data, _ := fetchDashboardData(cfgPath, dbPath)
+
+		var catInfo *CataractaeInfo
+		for i := range data.Cataractae {
+			if data.Cataractae[i].Name == name {
+				catInfo = &data.Cataractae[i]
+				break
+			}
+		}
+		if catInfo == nil {
+			writeAPIError(w, http.StatusNotFound, "aqueduct not found")
+			return
+		}
+
+		cfg, cfgErr := aqueduct.ParseAqueductConfig(cfgPath)
+		var wfSteps []workflowStep
+		if cfgErr == nil {
+			cfgDir := filepath.Dir(cfgPath)
+			for _, repo := range cfg.Repos {
+				if repo.Name == catInfo.RepoName {
+					wfPath := repo.WorkflowPath
+					if !filepath.IsAbs(wfPath) {
+						wfPath = filepath.Join(cfgDir, wfPath)
+					}
+					if wf, wfErr := aqueduct.ParseWorkflow(wfPath); wfErr == nil {
+						wfSteps = make([]workflowStep, len(wf.Cataractae))
+						for i, s := range wf.Cataractae {
+							wfSteps[i] = workflowStep{
+								Name:     s.Name,
+								Type:      string(s.Type),
+								Identity: s.Identity,
+							}
+						}
+					}
+					break
+				}
+			}
+		}
+		if wfSteps == nil {
+			wfSteps = []workflowStep{}
+		}
+
+		var notes []cistern.CataractaeNote
+		if catInfo.DropletID != "" {
+			c, err := cistern.New(dbPath, "")
+			if err == nil {
+				notes, _ = c.GetNotes(catInfo.DropletID)
+				c.Close()
+			}
+		}
+		if notes == nil {
+			notes = []cistern.CataractaeNote{}
+		}
+
+		status := "idle"
+		if catInfo.DropletID != "" {
+			status = "flowing"
+		}
+
+		detail := aqueductDetail{
+			Name:            catInfo.Name,
+			RepoName:        catInfo.RepoName,
+			Status:          status,
+			DropletID:       catInfo.DropletID,
+			DropletTitle:    catInfo.Title,
+			CurrentStep:     catInfo.Step,
+			Steps:           wfSteps,
+			Elapsed:         int64(catInfo.Elapsed),
+			StageElapsed:    int64(catInfo.StageElapsed),
+			CataractaeIndex: catInfo.CataractaeIndex,
+			TotalCataractae: catInfo.TotalCataractae,
+			Notes:           notes,
+		}
+		writeAPIJSON(w, http.StatusOK, detail)
 	}
 }
 

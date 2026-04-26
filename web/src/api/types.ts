@@ -133,6 +133,27 @@ export interface AqueductBrief {
   steps: string[];
 }
 
+export interface AqueductWorkflowStep {
+  name: string;
+  type: string;
+  identity?: string;
+}
+
+export interface AqueductDetail {
+  name: string;
+  repo_name: string;
+  status: 'idle' | 'flowing';
+  droplet_id?: string;
+  droplet_title?: string;
+  current_step?: string;
+  steps: AqueductWorkflowStep[];
+  elapsed: number;
+  stage_elapsed: number;
+  cataractae_index: number;
+  total_cataractae: number;
+  notes: CataractaeNote[];
+}
+
 export interface AqueductStatus {
   name: string;
   status: 'idle' | 'flowing';

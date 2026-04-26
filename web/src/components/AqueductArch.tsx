@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
+import { useNavigate } from 'react-router-dom';
 import type { CataractaeInfo, FlowActivity } from '../api/types';
 import { formatElapsed } from '../utils/formatElapsed';
 
@@ -10,6 +11,7 @@ interface AqueductArchProps {
 }
 
 export function AqueductArch({ cataractae, activity, isFlowing, onPeek }: AqueductArchProps) {
+  const navigate = useNavigate();
   const [elapsed, setElapsed] = useState(formatElapsed(cataractae.elapsed));
   const startTimeRef = useRef(Date.now() - cataractae.elapsed / 1e6);
   const prevIsFlowing = useRef(isFlowing);
@@ -46,7 +48,7 @@ export function AqueductArch({ cataractae, activity, isFlowing, onPeek }: Aquedu
           ? 'border-cistern-accent/40 bg-cistern-surface/80 hover:border-cistern-accent pulse-glow'
           : 'border-cistern-border bg-cistern-surface/40 opacity-60 hover:opacity-80'
       }`}
-      onClick={() => onPeek(cataractae.name)}
+      onClick={() => navigate(`/app/aqueducts/${encodeURIComponent(cataractae.name)}`)}
     >
       <div className="flex items-center justify-between mb-3">
         <div className="flex items-center gap-2">

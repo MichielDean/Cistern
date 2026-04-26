@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { StatusIndicator } from '../components/StatusIndicator';
 import { ActionButton } from '../components/ActionButton';
 import { LogViewer } from '../components/LogViewer';
@@ -9,6 +10,7 @@ import { fetchLogHistory, createLogEventSource } from '../api/logs';
 import type { LogEntry } from '../api/types';
 
 export function CastellariusPage() {
+  const navigate = useNavigate();
   const { status, loading, error, refresh } = useCastellariusStatus(5000);
   const { addToast } = useToast();
   const [logEntries, setLogEntries] = useState<LogEntry[]>([]);
@@ -125,7 +127,7 @@ export function CastellariusPage() {
             <div className="text-cistern-muted text-sm font-mono">No aqueducts configured</div>
           )}
           {status.aqueducts.map((aq) => (
-            <AqueductRow key={aq.name} aqueduct={aq} />
+            <AqueductRow key={aq.name} aqueduct={aq} navigate={navigate} />
           ))}
         </div>
       </section>
@@ -172,7 +174,7 @@ export function CastellariusPage() {
   );
 }
 
-function AqueductRow({ aqueduct }: { aqueduct: { name: string; status: string; droplet_id: string | null; droplet_title: string | null; current_step: string | null; elapsed: number } }) {
+function AqueductRow({ aqueduct, navigate }: { aqueduct: { name: string; status: string; droplet_id: string | null; droplet_title: string | null; current_step: string | null; elapsed: number }; navigate: ReturnType<typeof useNavigate> }) {
   const elapsedSec = Math.floor(aqueduct.elapsed / 1e9);
   const elapsedStr = elapsedSec >= 3600
     ? `${Math.floor(elapsedSec / 3600)}h${Math.floor((elapsedSec % 3600) / 60).toString().padStart(2, '0')}m`
@@ -183,7 +185,7 @@ function AqueductRow({ aqueduct }: { aqueduct: { name: string; status: string; d
       aqueduct.status === 'flowing' ? 'border-cistern-accent/40' : 'border-cistern-border'
     }`}>
       <div className="flex items-center justify-between mb-2">
-        <a href="/app/" className="font-mono font-bold text-cistern-fg hover:text-cistern-accent">
+        <a href={`/app/aqueducts/${encodeURIComponent(aqueduct.name)}`} onClick={(e) => { e.preventDefault(); navigate(`/app/aqueducts/${encodeURIComponent(aqueduct.name)}`); }} className="font-mono font-bold text-cistern-fg hover:text-cistern-accent">
           {aqueduct.name}
         </a>
         <span className={`text-xs font-mono px-2 py-0.5 rounded-full ${

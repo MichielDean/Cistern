@@ -14,6 +14,7 @@ import type {
   ResolveIssueRequest,
   EditDropletRequest,
   CreateDropletRequest,
+  AqueductDetail,
 } from '../api/types';
 
 export function useDroplets(filters: {
@@ -364,4 +365,36 @@ export function useRepoSteps(repoName: string | null) {
   }, [repoName]);
 
   return { steps, loading, error };
+}
+
+export function useAqueductDetail(name: string | null) {
+  const [detail, setDetail] = useState<AqueductDetail | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<Error | null>(null);
+  const fetchCounter = useRef(0);
+
+  const refetch = useCallback(() => {
+    fetchCounter.current += 1;
+    const current = fetchCounter.current;
+    if (!name) return;
+    let cancelled = false;
+    setLoading(true);
+    apiFetch<AqueductDetail>(`/api/aqueducts/${encodeURIComponent(name)}`)
+      .then((res) => { if (!cancelled && fetchCounter.current === current) { setDetail(res); setError(null); } })
+      .catch((err) => { if (!cancelled && fetchCounter.current === current) { setError(err); } })
+      .finally(() => { if (!cancelled && fetchCounter.current === current) setLoading(false); });
+  }, [name]);
+
+  useEffect(() => {
+    if (!name) { setLoading(false); return; }
+    let cancelled = false;
+    setLoading(true);
+    apiFetch<AqueductDetail>(`/api/aqueducts/${encodeURIComponent(name)}`)
+      .then((res) => { if (!cancelled) { setDetail(res); setError(null); } })
+      .catch((err) => { if (!cancelled) { setError(err); } })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [name]);
+
+  return { detail, loading, error, refetch };
 }

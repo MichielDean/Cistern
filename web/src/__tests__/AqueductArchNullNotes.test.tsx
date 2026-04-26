@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { render } from '@testing-library/react';
+import { MemoryRouter } from 'react-router-dom';
 import { AqueductArch } from '../components/AqueductArch';
 import type { CataractaeInfo, FlowActivity } from '../api/types';
 
@@ -27,24 +28,28 @@ describe('AqueductArch null-array regression', () => {
   it('renders without crashing when activity.recent_notes is null', () => {
     expect(() =>
       render(
-        <AqueductArch
-          cataractae={baseCataractae}
-          activity={activityWithNullNotes}
-          isFlowing={true}
-          onPeek={() => {}}
-        />
+        <MemoryRouter>
+          <AqueductArch
+            cataractae={baseCataractae}
+            activity={activityWithNullNotes}
+            isFlowing={true}
+            onPeek={() => {}}
+          />
+        </MemoryRouter>
       )
     ).not.toThrow();
   });
 
   it('renders cataractae name when activity.recent_notes is null', () => {
     const { container } = render(
-      <AqueductArch
-        cataractae={baseCataractae}
-        activity={activityWithNullNotes}
-        isFlowing={true}
-        onPeek={() => {}}
-      />
+      <MemoryRouter>
+        <AqueductArch
+          cataractae={baseCataractae}
+          activity={activityWithNullNotes}
+          isFlowing={true}
+          onPeek={() => {}}
+        />
+      </MemoryRouter>
     );
     expect(container.textContent).toContain('test-aqueduct');
   });

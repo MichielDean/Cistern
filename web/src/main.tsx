@@ -5,6 +5,7 @@ import { AppLayout } from './App';
 import { Dashboard } from './pages/Dashboard';
 import { DropletsList } from './pages/DropletsList';
 import { DropletDetail } from './pages/DropletDetail';
+import { AqueductDetail } from './pages/AqueductDetail';
 import { CastellariusPage } from './pages/CastellariusPage';
 import { DoctorPage } from './pages/DoctorPage';
 import { LogsPage } from './pages/LogsPage';
@@ -25,6 +26,7 @@ const router = createBrowserRouter([
       { path: 'droplets', element: <DropletsList /> },
       { path: 'droplets/new', element: <CreateDroplet /> },
       { path: 'droplets/:id', element: <DropletDetail /> },
+      { path: 'aqueducts/:name', element: <AqueductDetail /> },
       { path: 'castellarius', element: <CastellariusPage /> },
       { path: 'doctor', element: <DoctorPage /> },
       { path: 'logs', element: <LogsPage /> },
