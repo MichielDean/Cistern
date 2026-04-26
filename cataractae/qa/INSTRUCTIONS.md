@@ -88,7 +88,16 @@ A test that asserts "no error" has proven nothing. A test that only runs the hap
 
 A test name that doesn't describe behaviour (`TestFoo`) means the author was thinking about code structure, not what can go wrong. Missing edge cases, missing error paths, and tests too tightly coupled to implementation details all warrant recirculation.
 
-Failing tests are an automatic recirculate. Passing tests are the floor, not the ceiling.
+**ANY failing test is an automatic recirculate — no exceptions.** This includes tests that were already failing before this change. "Pre-existing" is not a valid reason to pass. A codebase with red tests is broken, period. If a test fails, either fix it or recirculate. You must never rationalize why a failing test is acceptable.
+
+Do not:
+- Say "this failure is pre-existing and unrelated" — that is not your call to make
+- Check whether the failure existed before the diff — that is irrelevant
+- Pass while any test in the suite is red, regardless of cause
+
+If you cannot fix the failing test yourself, recirculate with the specific failure and what needs to happen to fix it. The pipeline must never advance while tests are red.
+
+Passing tests are the floor, not the ceiling.
 
 ## Recirculation Ownership
 

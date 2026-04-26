@@ -44,5 +44,5 @@ Check for these files in the repo root:
 
 1. Always run build before tests
 2. Run the full test suite (no `-run` filtering) unless diagnosing a specific failure
-3. Signal pass only after all tests pass
-4. Failing tests = automatic recirculate (for review/QA cataractae) or must-fix (for implementer)
+3. Signal pass only after all tests pass — zero failures, zero exceptions
+4. Failing tests = automatic recirculate (for review/QA cataractae) or must-fix (for implementer). This is unconditional — "pre-existing" failures are still failures. A red test suite means the codebase is broken. Fix it or recirculate; never pass with failing tests.

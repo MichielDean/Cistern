@@ -71,10 +71,10 @@ If after 3 attempts you cannot make progress:
 - **FORBIDDEN**: pool — findings go upstream to the implementer, not to humans
 
 ### QA
-- **Pass**: tests pass, coverage is solid, no quality gaps
-- **Recirculate**: quality insufficient — name the exact missing cases
+- **Pass**: ALL tests pass (zero failures, including pre-existing ones), coverage is solid, no quality gaps
+- **Recirculate**: ANY failing test (including pre-existing failures), or quality insufficient — name the exact missing cases
 - **Pool**: genuine external blocker requiring human input
-- **FORBIDDEN**: advisory/non-blocking findings — every finding is either needs-fixing or doesn't-exist
+- **FORBIDDEN**: advisory/non-blocking findings — every finding is either needs-fixing or doesn't-exist. "Pre-existing failure" is not a valid reason to pass — a red test suite is always a recirculate.
 
 ### Security
 - **Pass**: no blocking or required severity issues
