@@ -86,8 +86,8 @@ export function CastellariusPage() {
     : null;
 
   return (
-    <div className="flex-1 overflow-y-auto p-4 md:p-6 space-y-6">
-      <section className="bg-cistern-surface border border-cistern-border rounded-lg p-4">
+    <div className="flex-1 flex flex-col min-h-0 overflow-y-auto p-4 md:p-6 space-y-4">
+      <section className="bg-cistern-surface border border-cistern-border rounded-lg p-4 shrink-0">
         <div className="flex items-center justify-between mb-4">
           <StatusIndicator status={indicatorStatus} label="Castellarius" size="lg" />
           <div className="flex items-center gap-2">
@@ -118,20 +118,8 @@ export function CastellariusPage() {
         </div>
       </section>
 
-      <section>
-        <h2 className="text-sm font-mono text-cistern-muted uppercase tracking-wider mb-3">Aqueducts</h2>
-        <div className="space-y-3">
-          {status.aqueducts.length === 0 && (
-            <div className="text-cistern-muted text-sm font-mono">No aqueducts configured</div>
-          )}
-          {status.aqueducts.map((aq) => (
-            <AqueductRow key={aq.name} aqueduct={aq} />
-          ))}
-        </div>
-      </section>
-
-      <section>
-        <div className="flex items-center justify-between mb-3">
+      <section className="flex-1 flex flex-col min-h-0">
+        <div className="flex items-center justify-between mb-3 shrink-0">
           <h2 className="text-sm font-mono text-cistern-muted uppercase tracking-wider">Castellarius Log</h2>
           <div className="flex items-center gap-2">
             <input
@@ -139,7 +127,7 @@ export function CastellariusPage() {
               placeholder="Filter..."
               value={searchQuery}
               onChange={e => setSearchQuery(e.target.value)}
-              className="bg-cistern-bg border border-cistern-border text-cististern-fg font-mono text-xs px-2 py-1 rounded-md w-32"
+              className="bg-cistern-bg border border-cistern-border text-cistern-fg font-mono text-xs px-2 py-1 rounded-md w-32"
             />
             <label className="flex items-center gap-1 text-xs font-mono text-cistern-muted cursor-pointer">
               <input
@@ -152,7 +140,7 @@ export function CastellariusPage() {
             </label>
           </div>
         </div>
-        <div className="bg-cistern-surface border border-cistern-border rounded-lg h-64">
+        <div className="flex-1 min-h-0 bg-cistern-surface border border-cistern-border rounded-lg">
           {logError && logEntries.length === 0 ? (
             <div className="flex items-center justify-center h-full text-cistern-muted text-sm font-mono">{logError.message}</div>
           ) : logLoading && logEntries.length === 0 ? (
@@ -168,51 +156,6 @@ export function CastellariusPage() {
           )}
         </div>
       </section>
-    </div>
-  );
-}
-
-function AqueductRow({ aqueduct }: { aqueduct: { name: string; status: string; droplet_id: string | null; droplet_title: string | null; current_step: string | null; elapsed: number } }) {
-  const elapsedSec = Math.floor(aqueduct.elapsed / 1e9);
-  const elapsedStr = elapsedSec >= 3600
-    ? `${Math.floor(elapsedSec / 3600)}h${Math.floor((elapsedSec % 3600) / 60).toString().padStart(2, '0')}m`
-    : `${Math.floor(elapsedSec / 60)}:${(elapsedSec % 60).toString().padStart(2, '0')}`;
-
-  return (
-    <div className={`bg-cistern-surface border rounded-lg p-4 ${
-      aqueduct.status === 'flowing' ? 'border-cistern-accent/40' : 'border-cistern-border'
-    }`}>
-      <div className="flex items-center justify-between mb-2">
-        <a href="/app/" className="font-mono font-bold text-cistern-fg hover:text-cistern-accent">
-          {aqueduct.name}
-        </a>
-        <span className={`text-xs font-mono px-2 py-0.5 rounded-full ${
-          aqueduct.status === 'flowing'
-            ? 'bg-cistern-green/20 text-cistern-green'
-            : 'bg-cistern-muted/20 text-cistern-muted'
-        }`}>
-          {aqueduct.status}
-        </span>
-      </div>
-      {aqueduct.droplet_id && aqueduct.status === 'flowing' && (
-        <div className="text-sm font-mono">
-          <span className="text-cistern-green">{aqueduct.droplet_id}</span>
-          {aqueduct.droplet_title && (
-            <>
-              <span className="text-cistern-muted mx-2">&middot;</span>
-              <span className="text-cistern-fg">{aqueduct.droplet_title}</span>
-            </>
-          )}
-          {aqueduct.current_step && (
-            <>
-              <span className="text-cistern-muted mx-2">&middot;</span>
-              <span className="text-cistern-accent">{aqueduct.current_step}</span>
-            </>
-          )}
-          <span className="text-cistern-muted mx-2">&middot;</span>
-          <span className="text-cistern-muted">{elapsedStr}</span>
-        </div>
-      )}
     </div>
   );
 }
