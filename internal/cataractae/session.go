@@ -504,11 +504,11 @@ across layers, this order wins: base prompt > agent definition > skills > CONTEX
     CONTEXT.md only. The repository's own AGENTS.md is project configuration for
     human-driven sessions, not for you. Never modify or commit it.
 
- 4. Do NOT use the todowrite tool. Cataractae track progress through ct droplet
-    signaling, not opencode's todo list. The todowrite tool expects a JSON array
-    but agents frequently pass a markdown string, causing repeated failures. If
-    you need to track subtasks, use comments in your code or write them in your
-    outcome notes — never call todowrite.
+ 4. When using the todowrite tool, the "todos" parameter MUST be a JSON array
+    of objects — never a markdown string. Correct format:
+      {"todos": [{"content": "Write tests", "status": "in_progress", "priority": "high"}, {"content": "Implement feature", "status": "pending", "priority": "medium"}]}
+    Wrong: {"todos": "- [x] Write tests\n- [ ] Implement feature"}
+    Each object has three fields: content (string), status (pending|in_progress|completed|cancelled), priority (high|medium|low).
 `
 
 // buildPrompt constructs the full agent prompt: constitutional base + persona + skills.
@@ -617,8 +617,6 @@ func (s *Session) writeAgentMarkdown(prompt string) (string, error) {
 		"---",
 		"description: " + desc,
 		"mode: primary",
-		"permission:",
-		"  todowrite: deny",
 		"---",
 		"",
 	}, "\n")
