@@ -117,7 +117,7 @@ function SummarySection({
     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
       <CisternCountCard data={data} />
       <QueueSection items={data.cistern_items ?? []} blockedByMap={data.blocked_by_map ?? {}} />
-      <PooledSection items={data.pooled_items ?? []} />
+      <PooledSection items={data.pooled_items ?? []} poolReasons={data.pool_reasons ?? {}} />
       <UnassignedSection items={data.unassigned_items ?? []} />
       <RecentSection items={data.recent_items ?? []} />
     </div>
@@ -182,9 +182,12 @@ function QueueSection({
 
 function PooledSection({
   items,
+  poolReasons,
 }: {
   items: Droplet[];
+  poolReasons: Record<string, string>;
 }) {
+  const [expanded, setExpanded] = useState<string | null>(null);
   if (items.length === 0) return null;
   return (
     <div className="bg-cistern-surface border border-cistern-border rounded-lg p-4">
@@ -192,9 +195,29 @@ function PooledSection({
         Pooled ({items.length})
       </h3>
       <div className="space-y-1 max-h-64 overflow-y-auto">
-        {items.map((d) => (
-          <DropletRow key={d.id} droplet={d} />
-        ))}
+        {items.map((d) => {
+          const reason = poolReasons[d.id];
+          const isExpanded = expanded === d.id;
+          return (
+            <div key={d.id}>
+              <DropletRow
+                droplet={d}
+                onClick={() => setExpanded(isExpanded ? null : d.id)}
+                expanded={isExpanded}
+              />
+              {isExpanded && reason && (
+                <div className="ml-8 mr-2 mb-1 px-3 py-2 bg-cistern-red/10 border border-cistern-red/20 rounded text-sm text-cistern-fg whitespace-pre-wrap">
+                  {reason}
+                </div>
+              )}
+              {isExpanded && !reason && (
+                <div className="ml-8 mr-2 mb-1 px-3 py-2 bg-cistern-border/20 rounded text-sm text-cistern-muted italic">
+                  No reason recorded
+                </div>
+              )}
+            </div>
+          );
+        })}
       </div>
     </div>
   );

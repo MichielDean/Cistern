@@ -212,6 +212,13 @@ export function DropletDetail() {
         </section>
       )}
 
+      {isPooled && d.pool_reason && (
+        <section className="bg-cistern-red/10 border border-cistern-red/30 rounded-lg p-4">
+          <h2 className="text-sm font-mono text-cistern-red uppercase tracking-wider mb-2">Pool Reason</h2>
+          <div className="text-sm text-cistern-fg whitespace-pre-wrap">{d.pool_reason}</div>
+        </section>
+      )}
+
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         <section className="bg-cistern-surface border border-cistern-border rounded-lg p-4">
           <div className="flex items-center justify-between mb-3">

@@ -24,6 +24,7 @@ const dataWithNullArrays = {
   recent_items: null as unknown as DashboardData['recent_items'],
   blocked_by_map: null as unknown as DashboardData['blocked_by_map'],
   flow_activities: null as unknown as DashboardData['flow_activities'],
+  pool_reasons: null as unknown as DashboardData['pool_reasons'],
   castellarius_running: true,
   fetched_at: '2026-04-21T00:00:00Z',
 };
@@ -40,6 +41,7 @@ const dataWithEmptyArrays: DashboardData = {
   recent_items: [],
   blocked_by_map: {},
   flow_activities: [],
+  pool_reasons: {},
   castellarius_running: true,
   fetched_at: '2026-04-21T00:00:00Z',
 };

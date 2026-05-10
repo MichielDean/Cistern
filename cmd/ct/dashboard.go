@@ -67,6 +67,7 @@ type DashboardData struct {
 	RecentItems     []*cistern.Droplet `json:"recent_items"`     // recently closed/pooled
 	BlockedByMap    map[string]string  `json:"blocked_by_map"`   // droplet ID -> first blocking dep ID
 	FlowActivities  []FlowActivity     `json:"flow_activities"`  // live narrative for in-progress droplets
+	PoolReasons     map[string]string  `json:"pool_reasons"`     // droplet ID → pool reason for pooled items
 	CastellariusRunning bool               `json:"castellarius_running"`
 	FetchedAt       time.Time          `json:"fetched_at"`
 }
@@ -85,6 +86,7 @@ func fetchDashboardData(cfgPath, dbPath string) (*DashboardData, error) {
 		RecentItems:     []*cistern.Droplet{},
 		BlockedByMap:    map[string]string{},
 		FlowActivities:  []FlowActivity{},
+		PoolReasons:     map[string]string{},
 		FetchedAt:       time.Now(),
 	}
 
@@ -211,6 +213,13 @@ func fetchDashboardData(cfgPath, dbPath string) (*DashboardData, error) {
 	sort.Slice(data.PooledItems, func(i, j int) bool {
 		return data.PooledItems[i].UpdatedAt.After(data.PooledItems[j].UpdatedAt)
 	})
+
+	// Pool reasons: look up why each pooled droplet was pooled.
+	if len(data.PooledItems) > 0 {
+		if reasons, err := c.GetPoolReasons(); err == nil {
+			data.PoolReasons = reasons
+		}
+	}
 
 	// Recent flow: most recently updated delivered/pooled items.
 	for _, item := range allItems {

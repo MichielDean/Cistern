@@ -16,6 +16,7 @@ export interface Droplet {
   created_at: string;
   updated_at: string;
   stage_dispatched_at?: string;
+  pool_reason?: string;
 }
 
 export interface CataractaeNote {
@@ -124,6 +125,7 @@ export interface DashboardData {
   recent_items: Droplet[];
   blocked_by_map: Record<string, string>;
   flow_activities: FlowActivity[];
+  pool_reasons: Record<string, string>;
   castellarius_running: boolean;
   fetched_at: string;
 }
