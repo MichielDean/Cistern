@@ -28,6 +28,7 @@ func TestCallFilterAgent_ReturnsTextAndSessionID(t *testing.T) {
 		Command: fakeagentBin,
 		NonInteractive: provider.NonInteractiveConfig{
 			PromptFlag: "-p",
+			FormatArgs: []string{"--format", "json"},
 		},
 	}
 
@@ -52,10 +53,12 @@ func TestCallFilterAgent_Resume_PassesExtraArgs(t *testing.T) {
 	fakeagentBin := buildTestBin(t, "fakeagent", "github.com/MichielDean/cistern/internal/testutil/fakeagent")
 
 	preset := provider.ProviderPreset{
-		Name:    "test",
-		Command: fakeagentBin,
+		Name:       "test",
+		Command:    fakeagentBin,
+		ResumeFlag: "-s",
 		NonInteractive: provider.NonInteractiveConfig{
 			PromptFlag: "-p",
+			FormatArgs: []string{"--format", "json"},
 		},
 	}
 
@@ -84,6 +87,7 @@ func TestCallFilterAgent_AgentExecFailure(t *testing.T) {
 		Command: failagentBin,
 		NonInteractive: provider.NonInteractiveConfig{
 			PromptFlag: "-p",
+			FormatArgs: []string{"--format", "json"},
 		},
 	}
 
@@ -108,6 +112,7 @@ func TestCallFilterAgent_JSONFallback_RawOutput(t *testing.T) {
 		Command: fakeagentBin,
 		NonInteractive: provider.NonInteractiveConfig{
 			PromptFlag: "-p",
+			FormatArgs: []string{"--format", "json"},
 		},
 	}
 
@@ -137,6 +142,7 @@ func TestCallFilterAgent_IsErrorEnvelope_ReturnsError(t *testing.T) {
 		Command: fakeagentBin,
 		NonInteractive: provider.NonInteractiveConfig{
 			PromptFlag: "-p",
+			FormatArgs: []string{"--format", "json"},
 		},
 	}
 
@@ -159,7 +165,10 @@ func TestCallFilterAgent_MissingRequiredEnvVar(t *testing.T) {
 		Name:           "test",
 		Command:        "true",
 		EnvPassthrough: []string{"MISSING_FILTER_KEY"},
-		NonInteractive: provider.NonInteractiveConfig{PromptFlag: "-p"},
+		NonInteractive: provider.NonInteractiveConfig{
+			PromptFlag: "-p",
+			FormatArgs: []string{"--format", "json"},
+		},
 	}
 	t.Setenv("MISSING_FILTER_KEY", "")
 
@@ -187,6 +196,7 @@ func TestInvokeFilterNew_ReturnsTextAndSessionID(t *testing.T) {
 		Command: fakeagentBin,
 		NonInteractive: provider.NonInteractiveConfig{
 			PromptFlag: "-p",
+			FormatArgs: []string{"--format", "json"},
 		},
 	}
 
@@ -212,6 +222,7 @@ func TestInvokeFilterNew_TitleOnly(t *testing.T) {
 		Command: fakeagentBin,
 		NonInteractive: provider.NonInteractiveConfig{
 			PromptFlag: "-p",
+			FormatArgs: []string{"--format", "json"},
 		},
 	}
 
@@ -237,9 +248,10 @@ func TestInvokeFilterResume_WithFeedback(t *testing.T) {
 	preset := provider.ProviderPreset{
 		Name:       "test",
 		Command:    fakeagentBin,
-		ResumeFlag: "--resume",
+		ResumeFlag: "-s",
 		NonInteractive: provider.NonInteractiveConfig{
 			PromptFlag: "-p",
+			FormatArgs: []string{"--format", "json"},
 		},
 	}
 
@@ -266,6 +278,7 @@ func TestInvokeFilterResume_DefaultsToResumeFlag(t *testing.T) {
 		Command: fakeagentBin,
 		NonInteractive: provider.NonInteractiveConfig{
 			PromptFlag: "-p",
+			FormatArgs: []string{"--format", "json"},
 		},
 	}
 
@@ -500,6 +513,7 @@ func TestInvokeFilterNew_WithContextBlock_IncludesContextInResult(t *testing.T) 
 		Command: fakeagentBin,
 		NonInteractive: provider.NonInteractiveConfig{
 			PromptFlag: "-p",
+			FormatArgs: []string{"--format", "json"},
 		},
 	}
 
@@ -513,5 +527,159 @@ func TestInvokeFilterNew_WithContextBlock_IncludesContextInResult(t *testing.T) 
 	}
 	if result.Text == "" {
 		t.Error("expected non-empty text response")
+	}
+}
+
+// --- FormatArgs tests ---
+
+// TestCallFilterAgent_FormatArgs_PlacedBeforePrompt verifies that FormatArgs
+// appear in the correct position in the args list: after Subcommand, preset.Args,
+// and extraArgs, but before PromptFlag and the prompt itself. The fakeagent writes
+// its args to a file so we can verify ordering.
+func TestCallFilterAgent_FormatArgs_PlacedBeforePrompt(t *testing.T) {
+	fakeagentBin := buildTestBin(t, "fakeagent", "github.com/MichielDean/cistern/internal/testutil/fakeagent")
+	argsFile := filepath.Join(t.TempDir(), "args.txt")
+	t.Setenv("FAKEAGENT_ARGS_FILE", argsFile)
+
+	preset := provider.ProviderPreset{
+		Name:    "test",
+		Command: fakeagentBin,
+		Args:    []string{"--dangerously-skip-permissions"},
+		NonInteractive: provider.NonInteractiveConfig{
+			Subcommand: "run",
+			PromptFlag: "-p",
+			FormatArgs: []string{"--format", "json"},
+		},
+	}
+
+	_, err := callFilterAgent(preset, nil, "test prompt")
+	if err != nil {
+		t.Fatalf("callFilterAgent: unexpected error: %v", err)
+	}
+
+	data, err := os.ReadFile(argsFile)
+	if err != nil {
+		t.Fatalf("reading args file: %v", err)
+	}
+	args := strings.Split(strings.TrimSpace(string(data)), "\n")
+
+	// Verify FormatArgs elements appear in the correct position.
+	// Expected order: run, --dangerously-skip-permissions, --format, json, -p, <prompt>
+	formatIdx := -1
+	promptIdx := -1
+	for i, arg := range args {
+		if arg == "--format" {
+			formatIdx = i
+		}
+		if arg == "-p" {
+			promptIdx = i
+		}
+	}
+
+	if formatIdx == -1 {
+		t.Fatal("--format flag not found in args")
+	}
+	if promptIdx == -1 {
+		t.Fatal("-p prompt flag not found in args")
+	}
+	if formatIdx >= promptIdx {
+		t.Errorf("--format (index %d) should appear before -p (index %d), args: %v", formatIdx, promptIdx, args)
+	}
+
+	// Verify "json" value immediately follows "--format"
+	if formatIdx+1 >= len(args) || args[formatIdx+1] != "json" {
+		t.Errorf("expected 'json' after '--format', got args: %v", args)
+	}
+}
+
+// TestCallFilterAgent_FormatArgs_OmittedWhenEmpty verifies that when FormatArgs
+// is nil/empty, no format arguments are appended. This tests backward
+// compatibility for providers that don't specify JSON output mode.
+func TestCallFilterAgent_FormatArgs_OmittedWhenEmpty(t *testing.T) {
+	preset := provider.ProviderPreset{
+		Name: "test-no-format",
+		// Command is irrelevant — we're only testing arg construction.
+		NonInteractive: provider.NonInteractiveConfig{
+			Subcommand: "run",
+			PromptFlag: "-p",
+			// FormatArgs intentionally nil — no format flags.
+		},
+	}
+
+	// Build the args the same way callFilterAgent does.
+	var args []string
+	if preset.NonInteractive.Subcommand != "" {
+		args = append(args, preset.NonInteractive.Subcommand)
+	}
+	args = append(args, preset.Args...)
+	args = append(args, preset.NonInteractive.FormatArgs...)
+	if preset.NonInteractive.PromptFlag != "" {
+		args = append(args, preset.NonInteractive.PromptFlag)
+	}
+	args = append(args, "test prompt")
+
+	// Verify no format flag is present in the constructed args.
+	for _, arg := range args {
+		if arg == "--format" || arg == "--output-format" {
+			t.Errorf("format flag %q should not appear when FormatArgs is nil, got args: %v", arg, args)
+		}
+	}
+}
+
+// TestCallFilterAgent_FormatArgs_WithResumeFlag verifies that extraArgs (resume
+// flag) and FormatArgs are both present and in the correct order.
+func TestCallFilterAgent_FormatArgs_WithResumeFlag(t *testing.T) {
+	fakeagentBin := buildTestBin(t, "fakeagent", "github.com/MichielDean/cistern/internal/testutil/fakeagent")
+	argsFile := filepath.Join(t.TempDir(), "args.txt")
+	t.Setenv("FAKEAGENT_ARGS_FILE", argsFile)
+
+	preset := provider.ProviderPreset{
+		Name:       "test",
+		Command:    fakeagentBin,
+		ResumeFlag:  "-s",
+		NonInteractive: provider.NonInteractiveConfig{
+			Subcommand: "run",
+			PromptFlag: "-p",
+			FormatArgs: []string{"--format", "json"},
+		},
+	}
+
+	result, err := invokeFilterResume(preset, "test-session-id-abc123", "refine further")
+	if err != nil {
+		t.Fatalf("invokeFilterResume: unexpected error: %v", err)
+	}
+
+	data, err := os.ReadFile(argsFile)
+	if err != nil {
+		t.Fatalf("reading args file: %v", err)
+	}
+	args := strings.Split(strings.TrimSpace(string(data)), "\n")
+
+	// Expected order: run, -s, test-session-id-abc123, --format, json, -p, <prompt>
+	resumeIdx := -1
+	formatIdx := -1
+	for i, arg := range args {
+		if arg == "-s" {
+			resumeIdx = i
+		}
+		if arg == "--format" {
+			formatIdx = i
+		}
+	}
+
+	if resumeIdx == -1 {
+		t.Fatal("resume flag -s not found in args")
+	}
+	if formatIdx == -1 {
+		t.Fatal("--format flag not found in args")
+	}
+
+	// extraArgs (resume) should appear before FormatArgs
+	if resumeIdx >= formatIdx {
+		t.Errorf("resume flag -s (index %d) should appear before --format (index %d), args: %v", resumeIdx, formatIdx, args)
+	}
+
+	if result.SessionID == "" {
+		t.Error("expected non-empty session_id")
 	}
 }

@@ -13,9 +13,10 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// agentJSONOutput is the envelope returned by the agent's --output-format json
-// mode. The Result field contains the assistant's raw text response; SessionID
-// identifies the conversation so it can be resumed.
+// agentJSONOutput is the envelope returned by the agent's JSON output
+// mode (triggered by FormatArgs like --format json). The Result field
+// contains the assistant's raw text response; SessionID identifies the
+// conversation so it can be resumed.
 type agentJSONOutput struct {
 	Type      string `json:"type"`
 	Subtype   string `json:"subtype"`
@@ -107,11 +108,11 @@ func invokeFilterResume(preset provider.ProviderPreset, sessionID, message strin
 	return callFilterAgent(preset, extraArgs, message)
 }
 
-// callFilterAgent invokes the preset command with --output-format json,
+// callFilterAgent invokes the preset command with the configured FormatArgs,
 // optional extraArgs (e.g. --resume <id>), and the given prompt.
 // It returns the raw text response and the session_id from the JSON envelope.
-// If the agent does not support --output-format json, the raw stdout becomes the text
-// (session_id will be empty in that case).
+// If the agent does not produce parseable JSON output, the raw stdout becomes
+// the text (session_id will be empty in that case).
 func callFilterAgent(preset provider.ProviderPreset, extraArgs []string, prompt string) (filterSessionResult, error) {
 	for _, key := range preset.EnvPassthrough {
 		if os.Getenv(key) == "" {
@@ -119,14 +120,14 @@ func callFilterAgent(preset provider.ProviderPreset, extraArgs []string, prompt 
 		}
 	}
 
-	// Build args: [Subcommand] [preset.Args...] [extraArgs...] [PromptFlag|--output-format json prompt]
+	// Build args: [Subcommand] [preset.Args...] [extraArgs...] [FormatArgs...] [PromptFlag] [prompt]
 	var args []string
 	if preset.NonInteractive.Subcommand != "" {
 		args = append(args, preset.NonInteractive.Subcommand)
 	}
 	args = append(args, preset.Args...)
 	args = append(args, extraArgs...)
-	args = append(args, "--output-format", "json")
+	args = append(args, preset.NonInteractive.FormatArgs...)
 	if preset.NonInteractive.PromptFlag != "" {
 		args = append(args, preset.NonInteractive.PromptFlag)
 	}

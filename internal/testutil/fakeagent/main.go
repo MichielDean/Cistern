@@ -5,21 +5,23 @@
 //
 //	--dangerously-skip-permissions (ignored)
 //	--model <model>                (ignored)
-//	--output-format <format>       (when "json", triggers non-interactive mode)
+//	--format json                  (when present, triggers non-interactive mode)
+//	--output-format <format>       (legacy: also triggers non-interactive mode)
 //	--resume <session-id>          (ignored; accepted for flag compatibility)
 //
-// Non-interactive mode (when --output-format is present in os.Args):
+// Non-interactive mode (when --format or --output-format is present in os.Args):
 //
-//	When --output-format is "json", prints a JSON envelope containing a
-//	hardcoded proposal array and a test session_id. This is the behaviour
-//	expected by callFilterAgent() in filter.go.
+//	When --format or --output-format is present, the agent prints a JSON envelope
+//	containing a hardcoded proposal array and a test session_id. This is the
+//	behaviour expected by callFilterAgent() in filter.go.
 //
 //	When FAKEAGENT_MODE=raw_fallback is set, prints the hardcoded proposal array
 //	directly. This exercises the JSON-fallback path in callFilterAgent().
 //
 //	We scan os.Args directly because flag.Parse stops at the first positional
 //	arg (e.g. a subcommand like "run"), which would otherwise prevent
-//	--output-format from being parsed when it appears after the subcommand.
+//	--format/--output-format from being parsed when it appears after the
+//	subcommand.
 //
 // Interactive mode (when --output-format is absent):
 //
@@ -58,13 +60,15 @@ const hardcodedJSONEnvelope = `{"type":"result","subtype":"success","is_error":f
 const hardcodedErrorEnvelope = `{"type":"result","subtype":"error","is_error":true,"result":"agent encountered an error","session_id":"error-session-id"}`
 
 func main() {
-	// Pre-scan os.Args for --output-format before calling flag.Parse.
+	// Pre-scan os.Args for format-related flags before calling flag.Parse.
 	// flag.Parse stops at the first positional arg (e.g. a subcommand such as
 	// "run"), so these flags could appear later in the arg list without
-	// being registered by the flag package.
+	// being registered by the flag package. We check for both --output-format
+	// (legacy flag) and --format (opencode's current flag) to maintain
+	// backward compatibility.
 	hasOutputFormat := false
 	for _, arg := range os.Args[1:] {
-		if arg == "--output-format" {
+		if arg == "--output-format" || arg == "--format" {
 			hasOutputFormat = true
 		}
 	}
@@ -97,8 +101,10 @@ func main() {
 	flag.Bool("dangerously-skip-permissions", false, "")
 	flag.String("model", "", "")
 	flag.String("p", "", "")
+	flag.String("format", "", "")
 	flag.String("output-format", "", "")
 	flag.String("resume", "", "")
+	flag.String("s", "", "")
 	flag.Parse()
 
 	mode := os.Getenv("FAKEAGENT_MODE")
