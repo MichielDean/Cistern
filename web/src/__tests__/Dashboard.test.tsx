@@ -1,8 +1,13 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, fireEvent } from '@testing-library/react';
+import { MemoryRouter } from 'react-router-dom';
 import { Dashboard } from '../pages/Dashboard';
 import * as DashboardContext from '../context/DashboardContext';
 import type { DashboardData } from '../api/types';
+
+function renderWithRouter(ui: React.ReactElement) {
+  return render(<MemoryRouter>{ui}</MemoryRouter>);
+}
 
 function mockUseDashboard(data: DashboardData | null, error: Error | null = null) {
   vi.spyOn(DashboardContext, 'useDashboard').mockReturnValue({
@@ -58,27 +63,95 @@ describe('Dashboard null-array regression', () => {
   it('renders without crashing when API returns null arrays', () => {
     mockUseDashboard(dataWithNullArrays);
 
-    expect(() => render(<Dashboard />)).not.toThrow();
+    expect(() => renderWithRouter(<Dashboard />)).not.toThrow();
   });
 
   it('renders without crashing when API returns empty arrays', () => {
     mockUseDashboard(dataWithEmptyArrays);
 
-    expect(() => render(<Dashboard />)).not.toThrow();
+    expect(() => renderWithRouter(<Dashboard />)).not.toThrow();
   });
 
   it('shows the Aqueducts heading for empty data', () => {
     mockUseDashboard(dataWithEmptyArrays);
 
-    render(<Dashboard />);
+    renderWithRouter(<Dashboard />);
     expect(screen.getByText('Aqueducts')).toBeDefined();
   });
 
   it('shows pooled count as 0 when pooled_items is null', () => {
     mockUseDashboard(dataWithNullArrays);
 
-    const { container } = render(<Dashboard />);
+    const { container } = renderWithRouter(<Dashboard />);
     const pooledText = container.querySelector('.text-cistern-red');
     expect(pooledText?.textContent).toBe('0');
+  });
+});
+
+describe('PooledSection expandable rows', () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('shows pool reason when pooled item row is clicked', async () => {
+    const pooledItem = {
+      id: 'ci-abc123',
+      repo: 'myrepo',
+      title: 'Stuck droplet',
+      description: '',
+      priority: 1,
+      complexity: 1,
+      status: 'pooled' as const,
+      assignee: '',
+      current_cataractae: '',
+      created_at: '2026-04-21T00:00:00Z',
+      updated_at: '2026-04-21T00:00:00Z',
+    };
+    const dataWithPooled: DashboardData = {
+      ...dataWithEmptyArrays,
+      pooled_items: [pooledItem],
+      pool_reasons: { 'ci-abc123': 'blocked by upstream dependency' },
+    };
+
+    mockUseDashboard(dataWithPooled);
+    renderWithRouter(<Dashboard />);
+
+    const row = screen.getByText('Stuck droplet');
+    await fireEvent.click(row);
+
+    expect(screen.getByText('blocked by upstream dependency')).toBeDefined();
+  });
+
+  it('shows no reason recorded when pool reason is missing', async () => {
+    const pooledItem = {
+      id: 'ci-def456',
+      repo: 'myrepo',
+      title: 'No reason droplet',
+      description: '',
+      priority: 1,
+      complexity: 1,
+      status: 'pooled' as const,
+      assignee: '',
+      current_cataractae: '',
+      created_at: '2026-04-21T00:00:00Z',
+      updated_at: '2026-04-21T00:00:00Z',
+    };
+    const dataWithPooledNoReason: DashboardData = {
+      ...dataWithEmptyArrays,
+      pooled_items: [pooledItem],
+      pool_reasons: {},
+    };
+
+    mockUseDashboard(dataWithPooledNoReason);
+    renderWithRouter(<Dashboard />);
+
+    const row = screen.getByText('No reason droplet');
+    await fireEvent.click(row);
+
+    expect(screen.getByText('No reason recorded')).toBeDefined();
   });
 });
