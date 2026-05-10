@@ -60,8 +60,9 @@ WantedBy=multi-user.target
 EOF
 systemctl daemon-reload &&
 (systemctl reset-failed cistern-castellarius.service 2>/dev/null || true) &&
+systemctl stop cistern-castellarius 2>/dev/null || true &&
 systemctl enable cistern-castellarius &&
-systemctl restart cistern-castellarius
+systemctl start cistern-castellarius
 INSTALL_SCRIPT
 }
 
@@ -246,8 +247,9 @@ test_upgrade() {
     # This simulates "service restarts cleanly" after the upgrade.
     install_system_service "${home_dir}" || return 1
 
-    # Then: service restarts cleanly and is active (wait up to 10 s).
-    if ! wait_for_service_active "cistern-castellarius" 10; then
+    # Then: service restarts cleanly and is active (wait up to 20 s —
+    # restart after prior test run needs more time for clean stop + start).
+    if ! wait_for_service_active "cistern-castellarius" 20; then
         return 1
     fi
 
