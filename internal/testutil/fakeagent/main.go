@@ -23,7 +23,7 @@
 //	--format/--output-format from being parsed when it appears after the
 //	subcommand.
 //
-// Interactive mode (when --output-format is absent):
+// Interactive mode (when --format and --output-format are both absent):
 //
 //	Environment variables read:
 //	  CT_CATARACTA_NAME   identity passed by the session runner (ignored)
