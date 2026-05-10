@@ -155,7 +155,7 @@ func callFilterAgent(preset provider.ProviderPreset, extraArgs []string, prompt 
 
 	var envelope agentJSONOutput
 	if err := json.Unmarshal(out, &envelope); err != nil {
-		// Fallback: the preset may not support --output-format json; use raw output as text.
+		// Fallback: the agent may not produce parseable JSON; use raw output as text.
 		return filterSessionResult{Text: strings.TrimSpace(string(out))}, nil
 	}
 	if envelope.IsError {
@@ -169,8 +169,8 @@ func callFilterAgent(preset provider.ProviderPreset, extraArgs []string, prompt 
 }
 
 // printFilterResult writes the filtration result to stdout. Human format prints
-// the agent's text directly. --output-format json emits a JSON object with
-// session_id and text.
+// the agent's text directly. --output-format json (user-facing ct filter flag)
+// emits a JSON object with session_id and text.
 func printFilterResult(result filterSessionResult, outputFormat string) error {
 	if outputFormat == "json" {
 		type jsonOut struct {

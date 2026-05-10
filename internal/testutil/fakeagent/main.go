@@ -50,7 +50,7 @@ import (
 // becomes filterSessionResult.Text directly.
 const hardcodedProposals = `[{"title":"mock proposal","description":"test description","depends_on":[]}]`
 
-// hardcodedJSONEnvelope is returned when --output-format is present in
+// hardcodedJSONEnvelope is returned when --format or --output-format is present in
 // non-interactive mode. The result field becomes filterSessionResult.Text;
 // session_id is a stable test value used to verify session_id extraction.
 const hardcodedJSONEnvelope = `{"type":"result","subtype":"success","is_error":false,"result":"[{\"title\":\"mock proposal\",\"description\":\"test description\",\"depends_on\":[]}]","session_id":"test-session-id-abc123"}`

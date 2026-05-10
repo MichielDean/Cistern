@@ -15,7 +15,7 @@ import (
 // --- callFilterAgent tests ---
 
 // TestCallFilterAgent_ReturnsTextAndSessionID verifies that callFilterAgent
-// correctly invokes the agent with --output-format json and returns both the
+// correctly invokes the agent with FormatArgs (--format json) and returns both the
 // text response and the session_id from the JSON envelope.
 // Given a preset pointing at fakeagent,
 // When callFilterAgent is called with nil extraArgs,
@@ -100,7 +100,7 @@ func TestCallFilterAgent_AgentExecFailure(t *testing.T) {
 // TestCallFilterAgent_JSONFallback_RawOutput verifies the fallback path where the
 // agent exits 0 but returns non-JSON-envelope output.
 // callFilterAgent must return the raw output as text with an empty session_id.
-// Given a fakeagent in raw_fallback mode (returns raw text despite --output-format),
+// Given a fakeagent in raw_fallback mode (returns raw text without a JSON envelope),
 // When callFilterAgent is called,
 // Then non-empty text is returned and session_id is empty.
 func TestCallFilterAgent_JSONFallback_RawOutput(t *testing.T) {
