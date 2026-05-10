@@ -636,7 +636,7 @@ func TestCallFilterAgent_FormatArgs_WithResumeFlag(t *testing.T) {
 	preset := provider.ProviderPreset{
 		Name:       "test",
 		Command:    fakeagentBin,
-		ResumeFlag: "-s",
+		ResumeFlag:  "-s",
 		NonInteractive: provider.NonInteractiveConfig{
 			Subcommand: "run",
 			PromptFlag: "-p",

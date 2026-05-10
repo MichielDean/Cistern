@@ -98,19 +98,19 @@ func (p ProviderPreset) InstrFile() string {
 }
 
 // builtins is the canonical set of provider presets shipped with Cistern.
-var builtins = []ProviderPreset{
+var 	builtins = []ProviderPreset{
 	{
-		Name:             "opencode",
-		Command:          "opencode",
-		Subcommand:       "run",
-		Args:             []string{"--dangerously-skip-permissions"},
-		ModelFlag:        "--model",
-		DefaultModel:     "ollama/glm-5.1:cloud",
-		PromptPositional: true,
-		InstructionsFile: "AGENTS.md",
-		AgentFlag:        "--agent",
-		ResumeFlag:       "-s",
-		NonInteractive: NonInteractiveConfig{
+		Name:               "opencode",
+		Command:            "opencode",
+		Subcommand:         "run",
+		Args:               []string{"--dangerously-skip-permissions"},
+		ModelFlag:          "--model",
+		DefaultModel:       "ollama/glm-5.1:cloud",
+		PromptPositional:   true,
+		InstructionsFile:   "AGENTS.md",
+		AgentFlag:          "--agent",
+		ResumeFlag:         "-s",
+		NonInteractive:     NonInteractiveConfig{
 			Subcommand: "run",
 			FormatArgs: []string{"--format", "json"},
 		},
