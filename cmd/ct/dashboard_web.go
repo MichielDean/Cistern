@@ -1550,6 +1550,24 @@ func handleGetDroplet(dbPath string) http.HandlerFunc {
 			if err != nil {
 				return err
 			}
+			if d.Status == "pooled" {
+				reason, rErr := c.GetPoolReason(id)
+				if rErr == nil && reason != "" {
+					b, mErr := json.Marshal(d)
+					if mErr != nil {
+						writeAPIError(w, http.StatusInternalServerError, "internal error")
+						return nil
+					}
+					var obj map[string]any
+					if jErr := json.Unmarshal(b, &obj); jErr != nil {
+						writeAPIError(w, http.StatusInternalServerError, "internal error")
+						return nil
+					}
+					obj["pool_reason"] = reason
+					writeAPIJSON(w, http.StatusOK, obj)
+					return nil
+				}
+			}
 			writeAPIJSON(w, http.StatusOK, d)
 			return nil
 		})
@@ -3362,24 +3380,13 @@ func handleFilterResume(cfgPath, dbPath string) http.HandlerFunc {
 					return err
 				}
 			} else {
+				// No LLM session ID — treat as a new session with history context.
 				contextBlock := gatherFilterContext(filterContextConfig{
 					DBPath: dbPath,
 					Title:  session.Title,
 					Desc:   session.Description,
 				})
-				fullPrompt := buildFilterPrompt(contextBlock, session.Title)
-				if session.Description != "" {
-					fullPrompt += "\nDescription: " + session.Description
-				}
-				for _, msg := range existingMessages {
-					if msg.Role == "user" {
-						fullPrompt += "\n\nUser: " + msg.Content
-					} else if msg.Role == "assistant" {
-						fullPrompt += "\n\nAssistant: " + msg.Content
-					}
-				}
-				fullPrompt += "\n\nUser: " + req.Message
-				result, err = callFilterAgent(preset, nil, fullPrompt)
+				result, err = invokeFilterNew(preset, session.Title, session.Description, contextBlock)
 				if err != nil {
 					return err
 				}

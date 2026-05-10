@@ -1320,6 +1320,61 @@ func (c *Client) GetDropletChanges(id string, limit int) ([]DropletChange, error
 	return changes, rows.Err()
 }
 
+// GetPoolReasons returns a map from droplet ID to pool reason for all
+// currently-pooled droplets. It queries the most recent "pool" event for each
+// pooled droplet to extract the reason field from the JSON payload.
+func (c *Client) GetPoolReasons() (map[string]string, error) {
+	rows, err := c.db.Query(`
+		SELECT e.droplet_id, e.payload
+		FROM events e
+		INNER JOIN (
+			SELECT droplet_id, MAX(rowid) AS max_rowid
+			FROM events
+			WHERE event_type = 'pool'
+			GROUP BY droplet_id
+		) latest ON e.rowid = latest.max_rowid
+		INNER JOIN droplets d ON d.id = e.droplet_id
+		WHERE d.status = 'pooled'`)
+	if err != nil {
+		return nil, fmt.Errorf("cistern: get pool reasons: %w", err)
+	}
+	defer rows.Close()
+
+	reasons := make(map[string]string)
+	for rows.Next() {
+		var dropletID, payload string
+		if err := rows.Scan(&dropletID, &payload); err != nil {
+			return nil, fmt.Errorf("cistern: scan pool reason: %w", err)
+		}
+		m := parsePayload(payload)
+		if reason, ok := m["reason"]; ok && reason != nil {
+			reasons[dropletID] = fmt.Sprintf("%v", reason)
+		}
+	}
+	return reasons, rows.Err()
+}
+
+// GetPoolReason returns the pool reason for a single droplet by querying its
+// most recent "pool" event. Returns an empty string if no pool event exists.
+func (c *Client) GetPoolReason(id string) (string, error) {
+	var payload string
+	err := c.db.QueryRow(`
+		SELECT payload FROM events
+		WHERE droplet_id = ? AND event_type = 'pool'
+		ORDER BY rowid DESC LIMIT 1`, id).Scan(&payload)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return "", nil
+		}
+		return "", fmt.Errorf("cistern: get pool reason for %s: %w", id, err)
+	}
+	m := parsePayload(payload)
+	if reason, ok := m["reason"]; ok && reason != nil {
+		return fmt.Sprintf("%v", reason), nil
+	}
+	return "", nil
+}
+
 // DropletStats holds counts of droplets grouped by display status.
 type DropletStats struct {
 	Flowing   int // status=in_progress
