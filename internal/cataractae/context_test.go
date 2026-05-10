@@ -31,8 +31,8 @@ func initTestRepo(t *testing.T) string {
 	dir := t.TempDir()
 
 	runGit(t, dir, "init")
-	runGit(t, dir, "config", "user.email", "test@test.com")
-	runGit(t, dir, "config", "user.name", "Test")
+	runGit(t, dir, "config", "user.email", "noreply@lobsterdog.dev")
+	runGit(t, dir, "config", "user.name", "Lobsterdog Contributors")
 
 	if err := os.WriteFile(filepath.Join(dir, "README.md"), []byte("init\n"), 0o644); err != nil {
 		t.Fatal(err)

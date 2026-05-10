@@ -44,17 +44,17 @@ type mockClient struct {
 	events              []recordedEvent
 	closed              map[string]bool
 	lastReviewedCommits map[string]string
-	addNoteErr          error             // if set, AddNote returns this error
-	getNotesErr         error             // if set, GetNotes returns this error
-	getReadyErr         error             // if set, GetReady returns this error once then clears
-	listErr             error             // if set, List returns this error
-	listIssuesErr       error             // if set, ListIssues returns this error
-	poolErr             error             // if set, Pool returns this error
-	assignErr           error             // if set, Assign returns this error
-	cancelled           map[string]string // id → cancel reason
-	filed               []filedDroplet    // FileDroplet calls
-	assignCalls         int               // total Assign call count
-	eventCounts         map[string]int     // "dropletID:eventType" → pre-configured count
+	addNoteErr          error                // if set, AddNote returns this error
+	getNotesErr         error                // if set, GetNotes returns this error
+	getReadyErr         error                // if set, GetReady returns this error once then clears
+	listErr             error                // if set, List returns this error
+	listIssuesErr       error                // if set, ListIssues returns this error
+	poolErr             error                // if set, Pool returns this error
+	assignErr           error                // if set, Assign returns this error
+	cancelled           map[string]string    // id → cancel reason
+	filed               []filedDroplet       // FileDroplet calls
+	assignCalls         int                  // total Assign call count
+	eventCounts         map[string]int       // "dropletID:eventType" → pre-configured count
 	lastEventTimes      map[string]time.Time // "dropletID:eventType" → pre-configured last event time
 }
 
@@ -1650,8 +1650,8 @@ func makeGitSandbox(t *testing.T, dir string) string {
 	t.Helper()
 	cmds := [][]string{
 		{"git", "init"},
-		{"git", "config", "user.email", "test@test.com"},
-		{"git", "config", "user.name", "Test"},
+		{"git", "config", "user.email", "noreply@lobsterdog.dev"},
+		{"git", "config", "user.name", "Lobsterdog Contributors"},
 	}
 	for _, args := range cmds {
 		cmd := exec.Command(args[0], args[1:]...)
