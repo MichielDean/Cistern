@@ -60,8 +60,9 @@ WantedBy=multi-user.target
 EOF
 systemctl daemon-reload &&
 (systemctl reset-failed cistern-castellarius.service 2>/dev/null || true) &&
+systemctl stop cistern-castellarius 2>/dev/null || true &&
 systemctl enable cistern-castellarius &&
-systemctl restart cistern-castellarius
+systemctl start cistern-castellarius
 INSTALL_SCRIPT
 }
 
@@ -210,7 +211,7 @@ test_upgrade() {
     # Given: pre-populated ~/.cistern simulating a prior-version installation.
     # The cistern.yaml includes a real repo (so ValidateAqueductConfig passes)
     # plus a stale key from the prior version that ct init must not remove.
-    exec_in_container bash -c "
+    if ! exec_in_container bash -c "
         rm -rf '${home_dir}' &&
         mkdir -p '${cistern_dir}/aqueduct' '${cistern_dir}/cataractae' &&
         printf 'repos:\n  - name: TestRepo\n    url: https://github.com/example/TestRepo\n    workflow_path: aqueduct/aqueduct.yaml\n    cataractae: 1\n    names: [test]\n    prefix: tr\nstale_old_key: removed_in_v2\n' \
@@ -218,25 +219,36 @@ test_upgrade() {
         printf 'GH_TOKEN=ghp-test-old-key\n' \
             > '${cistern_dir}/env' &&
         chmod 600 '${cistern_dir}/env'
-    " || return 1
+    "; then
+        echo "upgrade: failed to set up cistern config" >&2
+        return 1
+    fi
 
     # When: ct init runs over the existing installation.
     # writeFileIfAbsent skips cistern.yaml (already present) but creates any
     # missing files (aqueduct.yaml, start-castellarius.sh, cataractae files).
-    exec_in_container env HOME="${home_dir}" ct init \
-        >/dev/null 2>&1 || return 1
+    if ! exec_in_container env HOME="${home_dir}" ct init >/dev/null 2>&1; then
+        echo "upgrade: ct init failed" >&2
+        return 1
+    fi
 
     # Then: stale_old_key must still be present — ct init must not overwrite
     # the existing cistern.yaml (writeFileIfAbsent preserves prior-version keys).
-    exec_in_container grep -q 'stale_old_key' "${cistern_dir}/cistern.yaml" || return 1
+    if ! exec_in_container grep -q 'stale_old_key' "${cistern_dir}/cistern.yaml"; then
+        echo "upgrade: stale_old_key not found in cistern.yaml" >&2
+        return 1
+    fi
 
     # Create skill stubs so ct castellarius start passes validateWorkflowSkills.
-    exec_in_container bash -c "
+    if ! exec_in_container bash -c "
         for skill in cistern-signaling cistern-git cistern-github cistern-diff-reader cistern-test-runner code-simplifier critical-code-reviewer; do
             mkdir -p ${cistern_dir}/skills/\${skill}
             printf '# stub\\n' > ${cistern_dir}/skills/\${skill}/SKILL.md
         done
-    " || return 1
+    "; then
+        echo "upgrade: failed to create skill stubs" >&2
+        return 1
+    fi
 
     # Create cistern.db via ct doctor --fix so the service can open it.
     exec_in_container env HOME="${home_dir}" GH_TOKEN=ghp-test-old-key \
@@ -244,10 +256,17 @@ test_upgrade() {
 
     # (Re-)install the service unit pointing at the upgrade home and restart it.
     # This simulates "service restarts cleanly" after the upgrade.
-    install_system_service "${home_dir}" || return 1
+    if ! install_system_service "${home_dir}"; then
+        echo "upgrade: install_system_service failed" >&2
+        return 1
+    fi
 
-    # Then: service restarts cleanly and is active (wait up to 10 s).
-    if ! wait_for_service_active "cistern-castellarius" 10; then
+    # Then: service restarts cleanly and is active (wait up to 20 s —
+    # restart after prior test run needs more time for clean stop + start).
+    if ! wait_for_service_active "cistern-castellarius" 20; then
+        echo "upgrade: service did not become active within 20s" >&2
+        exec_in_container systemctl status cistern-castellarius.service >&2 || true
+        exec_in_container journalctl -u cistern-castellarius.service --no-pager -n 20 >&2 || true
         return 1
     fi
 

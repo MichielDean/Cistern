@@ -357,7 +357,7 @@ func setupGitOriginWithSkills(t *testing.T, tmpDir string, skillName, skillConte
 	workDir := filepath.Join(tmpDir, "work")
 	mustGit(t, "", "clone", originDir, workDir)
 	mustGit(t, workDir, "config", "user.email", "test@example.com")
-	mustGit(t, workDir, "config", "user.name", "Test")
+	mustGit(t, workDir, "config", "user.name", "Lobsterdog Contributors")
 
 	skillPath := filepath.Join(workDir, "skills", skillName, "SKILL.md")
 	if err := os.MkdirAll(filepath.Dir(skillPath), 0o755); err != nil {
@@ -465,7 +465,7 @@ func TestHookGitSync_SkillsSyncGracefulWhenNoSkillsDir(t *testing.T) {
 	workDir := filepath.Join(tmpDir, "work")
 	mustGit(t, "", "clone", originDir, workDir)
 	mustGit(t, workDir, "config", "user.email", "test@example.com")
-	mustGit(t, workDir, "config", "user.name", "Test")
+	mustGit(t, workDir, "config", "user.name", "Lobsterdog Contributors")
 
 	// Add a README so we have something to commit.
 	if err := os.WriteFile(filepath.Join(workDir, "README.md"), []byte("hello\n"), 0o644); err != nil {
@@ -537,8 +537,8 @@ func setupGitSyncEnv(t *testing.T, tmpDir, repoName string, files map[string]str
 		t.Fatalf("mkdir remote: %v", err)
 	}
 	mustGit(t, remoteDir, "init")
-	mustGit(t, remoteDir, "config", "user.email", "test@test.com")
-	mustGit(t, remoteDir, "config", "user.name", "Test")
+	mustGit(t, remoteDir, "config", "user.email", "noreply@lobsterdog.dev")
+	mustGit(t, remoteDir, "config", "user.name", "Lobsterdog Contributors")
 
 	for relPath, content := range files {
 		fullPath := filepath.Join(remoteDir, relPath)
@@ -564,8 +564,8 @@ func setupGitSyncEnv(t *testing.T, tmpDir, repoName string, files map[string]str
 	if out, err := exec.Command("git", "clone", remoteDir, cloneDir).CombinedOutput(); err != nil {
 		t.Fatalf("git clone: %v\n%s", err, out)
 	}
-	mustGit(t, cloneDir, "config", "user.email", "test@test.com")
-	mustGit(t, cloneDir, "config", "user.name", "Test")
+	mustGit(t, cloneDir, "config", "user.email", "noreply@lobsterdog.dev")
+	mustGit(t, cloneDir, "config", "user.name", "Lobsterdog Contributors")
 
 	return sandboxRoot
 }
@@ -995,16 +995,16 @@ func TestWarnMissingSkills_SkipsUnreadableWorkflow(t *testing.T) {
 	var buf bytes.Buffer
 	logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn}))
 
-		cfg := &aqueduct.AqueductConfig{
-			Aqueducts: []aqueduct.Workflow{
-				{Name: "default", Cataractae: []aqueduct.WorkflowCataractae{
-					{Name: "implement", Type: aqueduct.CataractaeTypeAgent, Identity: "implementer", OnPass: "done"},
-				}},
-			},
-			Repos: []aqueduct.RepoConfig{
-				{Name: "test", Aqueduct: "default", Cataractae: 1, Prefix: "t"},
-			},
-		}
+	cfg := &aqueduct.AqueductConfig{
+		Aqueducts: []aqueduct.Workflow{
+			{Name: "default", Cataractae: []aqueduct.WorkflowCataractae{
+				{Name: "implement", Type: aqueduct.CataractaeTypeAgent, Identity: "implementer", OnPass: "done"},
+			}},
+		},
+		Repos: []aqueduct.RepoConfig{
+			{Name: "test", Aqueduct: "default", Cataractae: 1, Prefix: "t"},
+		},
+	}
 
 	// Must not panic.
 	warnMissingSkills(cfg, logger)
@@ -1155,8 +1155,8 @@ func TestHookGitSync_WorkingTreeReset(t *testing.T) {
 				t.Fatal(err)
 			}
 			mustGit(t, remoteDir, "init")
-			mustGit(t, remoteDir, "config", "user.email", "test@test.com")
-			mustGit(t, remoteDir, "config", "user.name", "Test")
+			mustGit(t, remoteDir, "config", "user.email", "noreply@lobsterdog.dev")
+			mustGit(t, remoteDir, "config", "user.name", "Lobsterdog Contributors")
 			if err := os.WriteFile(filepath.Join(remoteDir, trackedFile), []byte(originalContent), 0o644); err != nil {
 				t.Fatal(err)
 			}
@@ -1171,8 +1171,8 @@ func TestHookGitSync_WorkingTreeReset(t *testing.T) {
 				t.Fatal(err)
 			}
 			mustGit(t, "", "clone", remoteDir, cloneDir)
-			mustGit(t, cloneDir, "config", "user.email", "test@test.com")
-			mustGit(t, cloneDir, "config", "user.name", "Test")
+			mustGit(t, cloneDir, "config", "user.email", "noreply@lobsterdog.dev")
+			mustGit(t, cloneDir, "config", "user.name", "Lobsterdog Contributors")
 
 			// Dirty the working tree.
 			if err := os.WriteFile(filepath.Join(cloneDir, trackedFile), []byte(tc.dirty), 0o644); err != nil {

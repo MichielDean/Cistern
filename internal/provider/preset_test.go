@@ -58,6 +58,20 @@ func TestBuiltins_NonInteractiveConfig(t *testing.T) {
 	}
 }
 
+// TestBuiltins_OpencodeFormatArgs verifies the opencode builtin preset has
+// NonInteractive.FormatArgs set to ["--format", "json"].
+func TestBuiltins_OpencodeFormatArgs(t *testing.T) {
+	p := builtinByName(t, "opencode")
+	assertStrs(t, "NonInteractive.FormatArgs", []string{"--format", "json"}, p.NonInteractive.FormatArgs)
+}
+
+// TestBuiltins_OpencodeResumeFlag verifies the opencode builtin preset has
+// ResumeFlag set to "-s".
+func TestBuiltins_OpencodeResumeFlag(t *testing.T) {
+	p := builtinByName(t, "opencode")
+	assertStr(t, "ResumeFlag", "-s", p.ResumeFlag)
+}
+
 // TestBuiltins_ReturnsCopy verifies that mutating the returned slice does not affect the built-ins.
 func TestBuiltins_ReturnsCopy(t *testing.T) {
 	t.Run("string field mutation is isolated", func(t *testing.T) {
@@ -88,6 +102,23 @@ func TestBuiltins_ReturnsCopy(t *testing.T) {
 		second := Builtins()
 		if second[0].ExtraEnv != nil {
 			t.Error("Builtins() ExtraEnv is not isolated — mutation leaked into global state")
+		}
+	})
+
+	t.Run("NonInteractive.FormatArgs mutation is isolated", func(t *testing.T) {
+		first := Builtins()
+		if len(first[0].NonInteractive.FormatArgs) == 0 {
+			t.Skip("preset has no FormatArgs to test isolation")
+		}
+		original := first[0].NonInteractive.FormatArgs[0]
+		first[0].NonInteractive.FormatArgs[0] = "mutated"
+
+		second := Builtins()
+		if second[0].NonInteractive.FormatArgs[0] == "mutated" {
+			t.Error("Builtins() NonInteractive.FormatArgs is not isolated — mutation leaked into global state")
+		}
+		if second[0].NonInteractive.FormatArgs[0] != original {
+			t.Errorf("Builtins() FormatArgs[0] = %q after mutation, want %q", second[0].NonInteractive.FormatArgs[0], original)
 		}
 	})
 }

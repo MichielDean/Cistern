@@ -481,8 +481,8 @@ func TestPrepareContext_DiffOnly_Isolation(t *testing.T) {
 
 	// Set up a git repo with origin/main and a change.
 	mustRun(t, gitCmd(sandbox, "init"))
-	mustRun(t, gitCmd(sandbox, "config", "user.email", "test@test.com"))
-	mustRun(t, gitCmd(sandbox, "config", "user.name", "Test"))
+	mustRun(t, gitCmd(sandbox, "config", "user.email", "noreply@lobsterdog.dev"))
+	mustRun(t, gitCmd(sandbox, "config", "user.name", "Lobsterdog Contributors"))
 
 	// Initial commit.
 	if err := os.WriteFile(filepath.Join(sandbox, "main.go"), []byte("package main\n"), 0644); err != nil {
@@ -837,8 +837,8 @@ func TestCurrentHead(t *testing.T) {
 	dir := t.TempDir()
 
 	mustRun(t, gitCmd(dir, "init"))
-	mustRun(t, gitCmd(dir, "config", "user.email", "test@test.com"))
-	mustRun(t, gitCmd(dir, "config", "user.name", "Test"))
+	mustRun(t, gitCmd(dir, "config", "user.email", "noreply@lobsterdog.dev"))
+	mustRun(t, gitCmd(dir, "config", "user.name", "Lobsterdog Contributors"))
 
 	if err := os.WriteFile(filepath.Join(dir, "README.md"), []byte("init\n"), 0644); err != nil {
 		t.Fatal(err)
@@ -979,8 +979,8 @@ func TestPrepareDiffOnly_SetLastReviewedCommitError_LogsWarn(t *testing.T) {
 
 	// Set up a minimal git repo so currentHead succeeds.
 	mustRun(t, gitCmd(sandbox, "init"))
-	mustRun(t, gitCmd(sandbox, "config", "user.email", "test@test.com"))
-	mustRun(t, gitCmd(sandbox, "config", "user.name", "Test"))
+	mustRun(t, gitCmd(sandbox, "config", "user.email", "noreply@lobsterdog.dev"))
+	mustRun(t, gitCmd(sandbox, "config", "user.name", "Lobsterdog Contributors"))
 	if err := os.WriteFile(filepath.Join(sandbox, "main.go"), []byte("package main\n"), 0644); err != nil {
 		t.Fatal(err)
 	}

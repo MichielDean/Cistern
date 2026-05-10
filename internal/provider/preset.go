@@ -19,6 +19,11 @@ type NonInteractiveConfig struct {
 	Subcommand string `json:"subcommand,omitempty"`
 	// PromptFlag is the flag used to pass the combined prompt (e.g. "-p").
 	PromptFlag string `json:"prompt_flag,omitempty"`
+	// FormatArgs are the flag arguments that request JSON output from the agent
+	// (e.g. ["--format", "json"]). When empty/nil, callFilterAgent omits format
+	// arguments entirely — no implicit fallback. The elements are appended to the
+	// args list after preset.Args and extraArgs but before PromptFlag.
+	FormatArgs []string `json:"format_args,omitempty"`
 }
 
 // ProviderPreset describes how to launch and interact with a specific agent CLI.
@@ -95,24 +100,30 @@ func (p ProviderPreset) InstrFile() string {
 // builtins is the canonical set of provider presets shipped with Cistern.
 var builtins = []ProviderPreset{
 	{
-		Name:               "opencode",
-		Command:            "opencode",
-		Subcommand:         "run",
-		Args:               []string{"--dangerously-skip-permissions"},
-		ModelFlag:          "--model",
-		DefaultModel:       "ollama/glm-5.1:cloud",
-		PromptPositional:   true,
-		InstructionsFile:   "AGENTS.md",
-		AgentFlag:          "--agent",
-		NonInteractive:     NonInteractiveConfig{Subcommand: "run"},
+		Name:             "opencode",
+		Command:          "opencode",
+		Subcommand:       "run",
+		Args:             []string{"--dangerously-skip-permissions"},
+		ModelFlag:        "--model",
+		DefaultModel:     "ollama/glm-5.1:cloud",
+		PromptPositional: true,
+		InstructionsFile: "AGENTS.md",
+		AgentFlag:        "--agent",
+		ResumeFlag:       "-s",
+		NonInteractive: NonInteractiveConfig{
+			Subcommand: "run",
+			FormatArgs: []string{"--format", "json"},
+		},
 	},
 }
 
 // cloneSliceFields deep-copies all slice fields of a ProviderPreset so the
-// copy does not alias the original's backing arrays.
+// copy does not alias the original's backing arrays. This includes nested slice
+// fields inside NonInteractiveConfig.
 func cloneSliceFields(p *ProviderPreset) {
 	p.Args = slices.Clone(p.Args)
 	p.EnvPassthrough = slices.Clone(p.EnvPassthrough)
+	p.NonInteractive.FormatArgs = slices.Clone(p.NonInteractive.FormatArgs)
 }
 
 // Builtins returns a deep copy of the built-in provider preset slice.

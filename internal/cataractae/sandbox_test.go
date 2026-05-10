@@ -15,8 +15,8 @@ func makeGitRepoWithCommit(t *testing.T) string {
 
 	steps := [][]string{
 		{"git", "init"},
-		{"git", "config", "user.email", "test@test.com"},
-		{"git", "config", "user.name", "Test"},
+		{"git", "config", "user.email", "noreply@lobsterdog.dev"},
+		{"git", "config", "user.name", "Lobsterdog Contributors"},
 	}
 	for _, args := range steps {
 		cmd := exec.Command(args[0], args[1:]...)
@@ -163,13 +163,13 @@ func makeEmptyGitRepo(t *testing.T) string {
 		t.Fatalf("git init: %v\n%s", err, out)
 	}
 
-	cmd = exec.Command("git", "config", "user.email", "test@test.com")
+	cmd = exec.Command("git", "config", "user.email", "noreply@lobsterdog.dev")
 	cmd.Dir = dir
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("git config user.email: %v\n%s", err, out)
 	}
 
-	cmd = exec.Command("git", "config", "user.name", "Test")
+	cmd = exec.Command("git", "config", "user.name", "Lobsterdog Contributors")
 	cmd.Dir = dir
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("git config user.name: %v\n%s", err, out)
