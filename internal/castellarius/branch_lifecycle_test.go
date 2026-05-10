@@ -59,6 +59,8 @@ func makeBareAndClone(t *testing.T) (string, string) {
 	branchMustRun(t, branchGitCmd(initDir, "branch", "-M", "main"))
 	branchMustRun(t, branchGitCmd(initDir, "remote", "add", "origin", remoteDir))
 	branchMustRun(t, branchGitCmd(initDir, "push", "-u", "origin", "main"))
+	// Ensure the bare repo's HEAD points to main so clones default to main.
+	branchMustRun(t, branchGitCmd(remoteDir, "symbolic-ref", "HEAD", "refs/heads/main"))
 
 	// Clone the bare remote to create the primary (inherits origin remote).
 	branchMustRun(t, branchGitCmd(".", "clone", remoteDir, primaryDir))
