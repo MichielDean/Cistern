@@ -29,18 +29,17 @@ func TestCallFilterAgent_Deprecated_AlwaysErrors(t *testing.T) {
 	}
 }
 
-// --- filterAgentTmux tests ---
+// --- filterAgentRun tests ---
 
-// TestFilterAgentTmux_SkipsWithoutTmux verifies that filterAgentTmux test is
-// properly gated behind tmux availability. This is a placeholder — the real
-// integration test happens in CI with the full agent.
-func TestFilterAgentTmux_SkipsWithoutTmux(t *testing.T) {
-	// This test just verifies the function signature compiles and exists.
-	// The real integration test requires tmux + opencode.
-	_ = filterAgentTmux
+// TestFilterAgentRun_SignatureExists verifies that filterAgentRun
+// compiles and exists. The real integration test runs in CI with opencode.
+func TestFilterAgentRun_SignatureExists(t *testing.T) {
+	// This test verifies the function signature exists.
+	_ = filterAgentRun
+	_ = filterAgentRunResume
 }
 
-// --- invokeFilterNew tests (tmux integration) ---
+// --- invokeFilterNew tests ---
 
 // TestInvokeFilterNew_WithContextBlock_IncludesContextInResult verifies that
 // invokeFilterNew accepts a non-empty contextBlock without panicking.
@@ -61,12 +60,12 @@ func TestInvokeFilterNew_WithContextBlock_IncludesContextInResult(t *testing.T) 
 
 // --- filterAgentsMD tests ---
 
-// TestFilterAgentsMD_ContainsResponseInstruction verifies that the agent
-// instructions include the requirement to write RESPONSE.md.
-func TestFilterAgentsMD_ContainsResponseInstruction(t *testing.T) {
+// TestFilterAgentMD_ContainsFilterInstructions verifies that the agent
+// instructions include the key filter directives.
+func TestFilterAgentsMD_ContainsFilterInstructions(t *testing.T) {
 	md := filterAgentsMD()
-	if !strings.Contains(md, "RESPONSE.md") {
-		t.Error("filterAgentsMD must instruct agent to write RESPONSE.md")
+	if !strings.Contains(md, "CONTEXT.md") {
+		t.Error("filterAgentsMD must reference CONTEXT.md")
 	}
 }
 
@@ -237,39 +236,13 @@ func TestFilterCmd_PromptAlwaysHasContextHeader(t *testing.T) {
 	}
 }
 
-// --- buildFilterTmuxCommand tests ---
+// --- buildFilterRunCommand tests ---
 
-// TestBuildFilterTmuxCommand_ContainsEnvUnsets verifies that the tmux command
-// environment unsets OPENCODE_SERVER_* variables that interfere with spawning.
-func TestBuildFilterTmuxCommand_ContainsEnvUnsets(t *testing.T) {
+// TestBuildFilterRunCommand_ContainsFormatJson verifies that the opencode run
+// command includes --format json for parseable output.
+func TestBuildFilterRunCommand_ContainsFormatJson(t *testing.T) {
 	preset := provider.ProviderPreset{
-		Name:    "test",
-		Command: "echo",
-	}
-
-	_, envPairs, err := buildFilterTmuxCommand(preset, "/tmp/test-workdir")
-	if err != nil {
-		t.Fatalf("buildFilterTmuxCommand: %v", err)
-	}
-
-	// Check that OPENCODE_SERVER_USERNAME is unset
-	foundUnset := false
-	for _, kv := range envPairs {
-		if kv == "OPENCODE_SERVER_USERNAME=" {
-			foundUnset = true
-		}
-	}
-	if !foundUnset {
-		t.Error("env pairs should contain OPENCODE_SERVER_USERNAME= (empty value to unset)")
-	}
-}
-
-// TestBuildFilterTmuxCommand_ReturnsSingleCommandString verifies that
-// buildFilterTmuxCommand returns a single shell command string suitable
-// for tmux new-session.
-func TestBuildFilterTmuxCommand_ReturnsSingleCommandString(t *testing.T) {
-	preset := provider.ProviderPreset{
-		Name:             "test",
+		Name:             "opencode",
 		Command:          "opencode",
 		Subcommand:       "run",
 		Args:             []string{"--dangerously-skip-permissions"},
@@ -279,21 +252,83 @@ func TestBuildFilterTmuxCommand_ReturnsSingleCommandString(t *testing.T) {
 		PromptPositional: true,
 	}
 
-	cmdStr, _, err := buildFilterTmuxCommand(preset, "/tmp/test-workdir")
+	_, args, _, _, err := buildFilterRunCommand(preset, "Test prompt", "")
 	if err != nil {
-		t.Fatalf("buildFilterTmuxCommand: %v", err)
+		t.Fatalf("buildFilterRunCommand: %v", err)
 	}
 
-	// Must contain "exec" prefix
-	if !strings.HasPrefix(cmdStr, "exec ") {
-		t.Errorf("command string must start with 'exec ', got: %s", cmdStr)
+	// Must contain --format json
+	hasFormat := false
+	for _, arg := range args {
+		if arg == "--format" {
+			hasFormat = true
+		}
 	}
-	// Must contain the subcommand and args
-	if !strings.Contains(cmdStr, "run") {
-		t.Errorf("command string must contain 'run', got: %s", cmdStr)
+	if !hasFormat {
+		t.Errorf("args must contain --format, got: %v", args)
 	}
-	if !strings.Contains(cmdStr, "--dangerously-skip-permissions") {
-		t.Errorf("command string must contain preset args, got: %s", cmdStr)
+}
+
+// TestBuildFilterRunCommand_ContainsDangerouslySkipPermissions verifies that
+// --dangerously-skip-permissions is included.
+func TestBuildFilterRunCommand_ContainsDangerouslySkipPermissions(t *testing.T) {
+	preset := provider.ProviderPreset{
+		Name:             "opencode",
+		Command:          "opencode",
+		Subcommand:       "run",
+		Args:             []string{"--dangerously-skip-permissions"},
+		DefaultModel:     "ollama/glm-5.1:cloud",
+		ModelFlag:        "--model",
+		AgentFlag:        "--agent",
+		PromptPositional: true,
+	}
+
+	_, args, _, _, err := buildFilterRunCommand(preset, "Test prompt", "")
+	if err != nil {
+		t.Fatalf("buildFilterRunCommand: %v", err)
+	}
+
+	hasSkipPerms := false
+	for _, arg := range args {
+		if arg == "--dangerously-skip-permissions" {
+			hasSkipPerms = true
+		}
+	}
+	if !hasSkipPerms {
+		t.Errorf("args must contain --dangerously-skip-permissions, got: %v", args)
+	}
+}
+
+// TestBuildFilterRunCommand_EnvUnsets verifies that OPENCODE_SERVER_* env vars
+// are removed from the environment to prevent "Session not found" errors.
+func TestBuildFilterRunCommand_EnvUnsets(t *testing.T) {
+	preset := provider.ProviderPreset{
+		Name:             "opencode",
+		Command:          "opencode",
+		Subcommand:       "run",
+		Args:             nil,
+		DefaultModel:     "ollama/glm-5.1:cloud",
+		ModelFlag:        "--model",
+		PromptPositional: true,
+	}
+
+	// Set env vars that should be unset
+	t.Setenv("OPENCODE_SERVER_USERNAME", "testuser")
+	t.Setenv("OPENCODE_SERVER_PASSWORD", "testpass")
+
+	_, _, env, _, err := buildFilterRunCommand(preset, "Test prompt", "")
+	if err != nil {
+		t.Fatalf("buildFilterRunCommand: %v", err)
+	}
+
+	// OPENCODE_SERVER_USERNAME and OPENCODE_SERVER_PASSWORD should NOT be in env
+	for _, e := range env {
+		if strings.HasPrefix(e, "OPENCODE_SERVER_USERNAME=") {
+			t.Errorf("env should not contain OPENCODE_SERVER_USERNAME: %s", e)
+		}
+		if strings.HasPrefix(e, "OPENCODE_SERVER_PASSWORD=") {
+			t.Errorf("env should not contain OPENCODE_SERVER_PASSWORD: %s", e)
+		}
 	}
 }
 
@@ -323,11 +358,26 @@ func TestTryParseAgentJSON_InvalidJSON(t *testing.T) {
 	}
 }
 
-// --- responseFileName constant test ---
+// --- unsetEnvPrefix tests ---
 
-// TestResponseFileName verifies the response file name is RESPONSE.md.
-func TestResponseFileName(t *testing.T) {
-	if responseFileName != "RESPONSE.md" {
-		t.Errorf("responseFileName: got %q, want %q", responseFileName, "RESPONSE.md")
+// TestUnsetEnvPrefix removes entries with the given prefix.
+func TestUnsetEnvPrefix(t *testing.T) {
+	env := []string{
+		"PATH=/usr/bin",
+		"HOME=/home/test",
+		"OPENCODE_SERVER_USERNAME=old",
+		"OPENCODE_SERVER_PASSWORD=secret",
+		"OPENCODE_PID=123",
+		"OPENCODE=1",
+		"SHELL=/bin/bash",
+	}
+	cleaned := unsetEnvPrefix(env, "OPENCODE_SERVER_USERNAME=")
+	for _, e := range cleaned {
+		if e == "OPENCODE_SERVER_USERNAME=old" {
+			t.Error("should have removed OPENCODE_SERVER_USERNAME")
+		}
+	}
+	if len(cleaned) != len(env)-1 {
+		t.Errorf("expected %d entries, got %d", len(env)-1, len(cleaned))
 	}
 }

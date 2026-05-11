@@ -1,6 +1,8 @@
 package main
 
 import (
+	"bufio"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"os"
@@ -12,273 +14,300 @@ import (
 	"github.com/MichielDean/cistern/internal/provider"
 )
 
-const responseFileName = "RESPONSE.md"
-
-// filterAgentTmux spawns an opencode filter session inside a tmux session,
-// waits for completion, and returns the agent's text response.
+// filterAgentRun invokes opencode run --format json to execute the filter agent.
+// This is the direct-exec approach: run opencode as a subprocess, capture its
+// NDJSON output, and parse the text events to extract the agent's response.
 //
-// The agent writes its response to RESPONSE.md in the workdir. We read that
-// file after the tmux session exits — no PTY parsing, no ANSI stripping.
-func filterAgentTmux(preset provider.ProviderPreset, prompt string) (filterSessionResult, error) {
-	sessionID := fmt.Sprintf("filter-%d", time.Now().UnixMilli())
-
-	// 1. Create temp workdir
-	tmpDir, err := os.MkdirTemp("", "ct-filter-*")
+// Key insight: OPENCODE_SERVER_* env vars must be unset so opencode doesn't
+// try to connect to an existing server (which causes "Session not found" errors).
+func filterAgentRun(preset provider.ProviderPreset, prompt string) (filterSessionResult, error) {
+	// Build the command
+	cmdPath, args, env, tmpDir, err := buildFilterRunCommand(preset, prompt, "")
 	if err != nil {
-		return filterSessionResult{}, fmt.Errorf("filter: create temp dir: %w", err)
+		return filterSessionResult{}, err
 	}
-	cleanup := true
-	defer func() {
-		if cleanup {
-			os.RemoveAll(tmpDir)
+	if tmpDir != "" {
+		defer os.RemoveAll(tmpDir)
+	}
+
+	cmd := exec.Command(cmdPath, args...)
+	cmd.Env = env
+	cmd.Stderr = os.Stderr // pass stderr through for debugging
+
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return filterSessionResult{}, fmt.Errorf("filter: create stdout pipe: %w", err)
+	}
+
+	slog.Default().Info("filter: running opencode",
+		"command", cmdPath,
+		"args", strings.Join(args, " "))
+
+	if err := cmd.Start(); err != nil {
+		return filterSessionResult{}, fmt.Errorf("filter: start command: %w", err)
+	}
+
+	// Parse NDJSON output with timeout
+	var textParts []string
+	var sessionID string
+	scanner := bufio.NewScanner(stdout)
+	done := make(chan struct{})
+	go func() {
+		for scanner.Scan() {
+			line := scanner.Text()
+			if line == "" {
+				continue
+			}
+			var event map[string]interface{}
+			if err := json.Unmarshal([]byte(line), &event); err != nil {
+				continue
+			}
+
+			// Extract session ID from any event that has one
+			if sid, ok := event["sessionID"].(string); ok && sid != "" && sessionID == "" {
+				sessionID = sid
+			}
+
+			// Extract text from text events
+			if eventType, _ := event["type"].(string); eventType == "text" {
+				if part, ok := event["part"].(map[string]interface{}); ok {
+					if text, ok := part["text"].(string); ok && text != "" {
+						textParts = append(textParts, text)
+					}
+				}
+			}
 		}
+		close(done)
 	}()
 
-	// 2. Write CONTEXT.md with the full prompt
-	contextPath := filepath.Join(tmpDir, "CONTEXT.md")
-	if err := os.WriteFile(contextPath, []byte(prompt), 0o644); err != nil {
-		return filterSessionResult{}, fmt.Errorf("filter: write CONTEXT.md: %w", err)
-	}
+	// Wait for command to complete with timeout
+	cmdDone := make(chan error, 1)
+	go func() {
+		cmdDone <- cmd.Wait()
+	}()
 
-	// 3. Write AGENTS.md with filter-specific instructions
-	agentsMd := filterAgentsMD()
-	if err := os.WriteFile(filepath.Join(tmpDir, "AGENTS.md"), []byte(agentsMd), 0o644); err != nil {
-		return filterSessionResult{}, fmt.Errorf("filter: write AGENTS.md: %w", err)
-	}
-
-	// 3b. Create identity directory with agent markdown file (for --agent flag)
-	identityDir := filepath.Join(tmpDir, "identity")
-	agentsSubDir := filepath.Join(identityDir, "agents")
-	if err := os.MkdirAll(agentsSubDir, 0o755); err != nil {
-		return filterSessionResult{}, fmt.Errorf("filter: create agents dir: %w", err)
-	}
-	agentFrontmatter := strings.Join([]string{
-		"---",
-		"description: Cistern filter agent — analyzes and refines work item specifications",
-		"mode: primary",
-		"---",
-		"",
-	}, "\n")
-	agentMdPath := filepath.Join(agentsSubDir, "filter.md")
-	agentMdContent := agentFrontmatter + prompt
-	if err := os.WriteFile(agentMdPath, []byte(agentMdContent), 0o644); err != nil {
-		return filterSessionResult{}, fmt.Errorf("filter: write agent markdown: %w", err)
-	}
-
-	// 4. Build the agent command
-	cmdStr, envPairs, err := buildFilterTmuxCommand(preset, tmpDir)
-	if err != nil {
-		return filterSessionResult{}, fmt.Errorf("filter: build command: %w", err)
-	}
-
-	// 5. Spawn tmux session
-	tmuxArgs := []string{"new-session", "-d", "-s", sessionID, "-c", tmpDir}
-	for _, kv := range envPairs {
-		tmuxArgs = append(tmuxArgs, "-e", kv)
-	}
-	tmuxArgs = append(tmuxArgs, cmdStr)
-
-	slog.Default().Info("filter: spawning tmux session",
-		"session", sessionID,
-		"workdir", tmpDir,
-		"command", cmdStr)
-
-	if out, err := exec.Command("tmux", tmuxArgs...).CombinedOutput(); err != nil {
-		return filterSessionResult{}, fmt.Errorf("filter: tmux spawn failed: %w: %s", err, strings.TrimSpace(string(out)))
-	}
-
-	// Check if session actually started
-	if !isSessionAlive(sessionID) {
-		return filterSessionResult{}, fmt.Errorf("filter: session %s died immediately", sessionID)
-	}
-
-	// 6. Set remain-on-exit off so tmux cleans up when the agent exits
-	exec.Command("tmux", "set-window-option", "-t", sessionID, "remain-on-exit", "off").Run()
-
-	// 7. Wait for session to exit, polling every 2 seconds with configurable timeout
 	timeout := filterTimeout()
-	deadline := time.Now().Add(timeout)
-	pollInterval := 2 * time.Second
-
-	for time.Now().Before(deadline) {
-		if !isSessionAlive(sessionID) {
-			break
+	select {
+	case cmdErr := <-cmdDone:
+		// Command completed, wait for scanner to finish
+		<-done
+		if cmdErr != nil && len(textParts) == 0 {
+			return filterSessionResult{}, fmt.Errorf("filter: command failed: %w", cmdErr)
 		}
-		time.Sleep(pollInterval)
-	}
-
-	// If still alive after timeout, kill it
-	if isSessionAlive(sessionID) {
-		slog.Default().Warn("filter: session timed out, killing", "session", sessionID)
-		exec.Command("tmux", "kill-session", "-t", sessionID).Run()
-	}
-
-	// 8. Read the response file written by the agent
-	responsePath := filepath.Join(tmpDir, responseFileName)
-	responseData, err := os.ReadFile(responsePath)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return filterSessionResult{}, fmt.Errorf("filter: agent did not write %s in %s", responseFileName, tmpDir)
+		if cmdErr != nil {
+			slog.Default().Warn("filter: command exited with error but produced output",
+				"error", cmdErr,
+				"text_parts", len(textParts))
 		}
-		return filterSessionResult{}, fmt.Errorf("filter: read response file: %w", err)
+	case <-time.After(timeout):
+		if cmd.Process != nil {
+			cmd.Process.Kill()
+		}
+		<-done
+		return filterSessionResult{}, fmt.Errorf("filter: command timed out after %v", timeout)
 	}
 
-	response := strings.TrimSpace(string(responseData))
+	response := strings.TrimSpace(strings.Join(textParts, "\n"))
 
 	slog.Default().Info("filter: completed",
-		"session", sessionID,
+		"session_id", sessionID,
 		"text_len", len(response))
 
-	return filterSessionResult{
-		Text: response,
-	}, nil
-}
-
-// filterAgentResume resumes an existing filter tmux session by sending a message
-// via tmux send-keys. This is used for --resume rounds.
-// The agent writes its updated response to RESPONSE.md in the workdir.
-func filterAgentResume(preset provider.ProviderPreset, sessionID, message string) (filterSessionResult, error) {
-	if !isSessionAlive(sessionID) {
-		return filterSessionResult{}, fmt.Errorf("filter: session %s not found (may have exited)", sessionID)
-	}
-
-	// Find the workdir by looking up the tmux session's current directory
-	workdir, err := tmuxSessionWorkdir(sessionID)
-	if err != nil {
-		return filterSessionResult{}, fmt.Errorf("filter: find workdir for session %s: %w", sessionID, err)
-	}
-
-	// Remove the old RESPONSE.md so we can detect when the agent writes a new one
-	responsePath := filepath.Join(workdir, responseFileName)
-	os.Remove(responsePath)
-
-	// Send the message as keystrokes to the tmux session
-	exec.Command("tmux", "send-keys", "-t", sessionID, message, "Enter").Run()
-
-	// Wait for RESPONSE.md to appear (poll with timeout)
-	timeout := filterTimeout()
-	deadline := time.Now().Add(timeout)
-	pollInterval := 2 * time.Second
-
-	for time.Now().Before(deadline) {
-		if _, err := os.Stat(responsePath); err == nil {
-			// File appeared — give it a moment to finish writing
-			time.Sleep(1 * time.Second)
-			break
-		}
-		if !isSessionAlive(sessionID) {
-			break
-		}
-		time.Sleep(pollInterval)
-	}
-
-	// Read the response file
-	responseData, err := os.ReadFile(responsePath)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return filterSessionResult{}, fmt.Errorf("filter: agent did not write %s after resume", responseFileName)
-		}
-		return filterSessionResult{}, fmt.Errorf("filter: read response file: %w", err)
-	}
-
-	response := strings.TrimSpace(string(responseData))
 	return filterSessionResult{
 		SessionID: sessionID,
 		Text:      response,
 	}, nil
 }
 
-// buildFilterTmuxCommand constructs the shell command for spawning the filter agent
-// in a tmux session. It mirrors the cataractae session.buildPresetCmd logic.
-func buildFilterTmuxCommand(preset provider.ProviderPreset, workDir string) (string, []string, error) {
-	var parts []string
+// filterAgentRunResume resumes an existing filter session using opencode run
+// with the --session flag and --format json.
+func filterAgentRunResume(preset provider.ProviderPreset, sessionID, message string) (filterSessionResult, error) {
+	cmdPath, args, env, tmpDir, err := buildFilterRunCommand(preset, message, sessionID)
+	if err != nil {
+		return filterSessionResult{}, err
+	}
+	if tmpDir != "" {
+		defer os.RemoveAll(tmpDir)
+	}
 
+	cmd := exec.Command(cmdPath, args...)
+	cmd.Env = env
+	cmd.Stderr = os.Stderr
+
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return filterSessionResult{}, fmt.Errorf("filter: create stdout pipe: %w", err)
+	}
+
+	if err := cmd.Start(); err != nil {
+		return filterSessionResult{}, fmt.Errorf("filter: start command: %w", err)
+	}
+
+	var textParts []string
+	scanner := bufio.NewScanner(stdout)
+	done := make(chan struct{})
+	go func() {
+		for scanner.Scan() {
+			line := scanner.Text()
+			if line == "" {
+				continue
+			}
+			var event map[string]interface{}
+			if err := json.Unmarshal([]byte(line), &event); err != nil {
+				continue
+			}
+			if eventType, _ := event["type"].(string); eventType == "text" {
+				if part, ok := event["part"].(map[string]interface{}); ok {
+					if text, ok := part["text"].(string); ok && text != "" {
+						textParts = append(textParts, text)
+					}
+				}
+			}
+		}
+		close(done)
+	}()
+
+	cmdDone := make(chan error, 1)
+	go func() {
+		cmdDone <- cmd.Wait()
+	}()
+
+	timeout := filterTimeout()
+	select {
+	case cmdErr := <-cmdDone:
+		<-done
+		if cmdErr != nil && len(textParts) == 0 {
+			return filterSessionResult{}, fmt.Errorf("filter: resume command failed: %w", cmdErr)
+		}
+		if cmdErr != nil {
+			slog.Default().Warn("filter: resume command exited with error but produced output",
+				"error", cmdErr,
+				"session_id", sessionID)
+		}
+	case <-time.After(timeout):
+		if cmd.Process != nil {
+			cmd.Process.Kill()
+		}
+		<-done
+		return filterSessionResult{}, fmt.Errorf("filter: resume command timed out after %v", timeout)
+	}
+
+	response := strings.TrimSpace(strings.Join(textParts, "\n"))
+
+	return filterSessionResult{
+		SessionID: sessionID,
+		Text:      response,
+	}, nil
+}
+
+// buildFilterRunCommand constructs the opencode run command and environment.
+// If sessionID is non-empty, adds -s flag for resume mode.
+// Returns (cmdPath, args, env, tmpDir, error) — tmpDir is empty if no temp dir was created.
+func buildFilterRunCommand(preset provider.ProviderPreset, prompt string, sessionID string) (string, []string, []string, string, error) {
 	// Resolve command path
 	cmdPath := preset.Command
 	if p, err := exec.LookPath(preset.Command); err == nil {
 		cmdPath = p
 	}
-	parts = append(parts, shellQuote(cmdPath))
 
-	// Subcommand (e.g., "run" for opencode)
-	if preset.Subcommand != "" {
-		parts = append(parts, preset.Subcommand)
-	}
+	args := []string{"run"}
 
 	// Preset args (e.g., --dangerously-skip-permissions)
-	for _, a := range preset.Args {
-		parts = append(parts, shellQuote(a))
-	}
+	args = append(args, preset.Args...)
 
 	// Model
 	if preset.DefaultModel != "" && preset.ModelFlag != "" {
-		parts = append(parts, preset.ModelFlag, shellQuote(preset.DefaultModel))
+		args = append(args, preset.ModelFlag, preset.DefaultModel)
 	}
 
-	// Agent flag — use filter identity from the identity directory we created
+	// Agent flag
+	var tmpDir string
 	if preset.AgentFlag != "" {
-		parts = append(parts, preset.AgentFlag, "filter")
-	}
+		args = append(args, preset.AgentFlag, "filter")
 
-	// Prompt: short message telling the agent to read CONTEXT.md
-	// For PromptPositional providers (opencode), this goes as a positional arg
-	// after all flags. For PromptFlag providers, use the flag.
-	shortPrompt := "Read CONTEXT.md and follow the instructions in AGENTS.md."
-	if preset.PromptPositional {
-		parts = append(parts, shellQuote(shortPrompt))
-	} else if preset.PromptFlag != "" {
-		parts = append(parts, preset.PromptFlag, shellQuote(shortPrompt))
-	}
+		// Create temp workdir with identity files
+		var err error
+		tmpDir, err = os.MkdirTemp("", "ct-filter-*")
+		if err != nil {
+			return "", nil, nil, "", fmt.Errorf("filter: create temp dir: %w", err)
+		}
 
-	// Build the full command string (tmux expects a single command argument)
-	cmdStr := "exec " + strings.Join(parts, " ")
+		// Write AGENTS.md
+		agentsMd := filterAgentsMD()
+		if err := os.WriteFile(filepath.Join(tmpDir, "AGENTS.md"), []byte(agentsMd), 0o644); err != nil {
+			os.RemoveAll(tmpDir)
+			return "", nil, nil, "", fmt.Errorf("filter: write AGENTS.md: %w", err)
+		}
 
-	// Build environment pairs (like collectEnvArgs in cataractae)
-	var envPairs []string
+		// Write CONTEXT.md with the full prompt
+		if err := os.WriteFile(filepath.Join(tmpDir, "CONTEXT.md"), []byte(prompt), 0o644); err != nil {
+			os.RemoveAll(tmpDir)
+			return "", nil, nil, "", fmt.Errorf("filter: write CONTEXT.md: %w", err)
+		}
 
-	// Preset-driven env passthrough
-	for _, envVar := range preset.EnvPassthrough {
-		if val := os.Getenv(envVar); val != "" {
-			envPairs = append(envPairs, envVar+"="+val)
+		// Create identity directory with agent markdown
+		identityDir := filepath.Join(tmpDir, "identity", "agents")
+		if err := os.MkdirAll(identityDir, 0o755); err != nil {
+			os.RemoveAll(tmpDir)
+			return "", nil, nil, "", fmt.Errorf("filter: create identity dir: %w", err)
+		}
+		agentFrontmatter := "---\ndescription: Cistern filter agent — analyzes and refines work item specifications\nmode: primary\n---\n\n"
+		agentMdPath := filepath.Join(identityDir, "filter.md")
+		if err := os.WriteFile(agentMdPath, []byte(agentFrontmatter+prompt), 0o644); err != nil {
+			os.RemoveAll(tmpDir)
+			return "", nil, nil, "", fmt.Errorf("filter: write agent markdown: %w", err)
 		}
 	}
-	// Extra env from preset
-	for k, v := range preset.ExtraEnv {
-		envPairs = append(envPairs, k+"="+v)
+
+	// Format: always use JSON for parseable output
+	args = append(args, "--format", "json")
+
+	// Skip permissions for non-interactive use
+	args = append(args, "--dangerously-skip-permissions")
+
+	// Session ID for resume
+	if sessionID != "" {
+		args = append(args, "-s", sessionID)
 	}
 
-	// Required: PATH, HOME, USER, SHELL, GIT_EDITOR, GIT_SEQUENCE_EDITOR
-	envPairs = append(envPairs,
-		"PATH="+os.Getenv("PATH"),
-		"HOME="+homeDir(),
-		"USER="+os.Getenv("USER"),
-		"SHELL="+os.Getenv("SHELL"),
-		"GIT_EDITOR=true",
-		"GIT_SEQUENCE_EDITOR=true",
-	)
-
-	// Always-unset: env vars that interfere with opencode.
-	// OPENCODE_SERVER_* causes "session not found" errors when opencode run
-	// tries to connect to an authenticated server instead of starting fresh.
-	envPairs = append(envPairs,
-		"OPENCODE_SERVER_USERNAME=",
-		"OPENCODE_SERVER_PASSWORD=",
-		"OPENCODE_PID=",
-		"OPENCODE=",
-	)
-
-	// Set OPENCODE_CONFIG_DIR to the identity directory so --agent filter finds the agent file
-	if preset.AgentFlag != "" {
-		envPairs = append(envPairs, "OPENCODE_CONFIG_DIR="+filepath.Join(workDir, "identity"))
-		envPairs = append(envPairs, "OPENCODE_DISABLE_PROJECT_CONFIG=1")
+	// Prompt: positional arg for opencode (PromptPositional providers)
+	// or via flag
+	if preset.PromptPositional {
+		args = append(args, prompt)
+	} else if preset.PromptFlag != "" {
+		args = append(args, preset.PromptFlag, prompt)
 	}
 
-	return cmdStr, envPairs, nil
+	// Build environment — clear OPENCODE_SERVER_* vars that interfere
+	env := os.Environ()
+	env = unsetEnvPrefix(env, "OPENCODE_SERVER_USERNAME=")
+	env = unsetEnvPrefix(env, "OPENCODE_SERVER_PASSWORD=")
+	env = unsetEnvPrefix(env, "OPENCODE_PID=")
+	env = unsetEnvPrefix(env, "OPENCODE=")
+
+	// Set OPENCODE_CONFIG_DIR if using agent flag
+	if preset.AgentFlag != "" && tmpDir != "" {
+		env = append(env, "OPENCODE_CONFIG_DIR="+filepath.Join(tmpDir, "identity"))
+		env = append(env, "OPENCODE_DISABLE_PROJECT_CONFIG=1")
+	}
+
+	return cmdPath, args, env, tmpDir, nil
+}
+
+// unsetEnvPrefix removes entries that start with the given prefix from the
+// environment slice. Used to clear vars like OPENCODE_SERVER_USERNAME= that
+// cause "Session not found" errors.
+func unsetEnvPrefix(env []string, prefix string) []string {
+	var result []string
+	for _, e := range env {
+		if !strings.HasPrefix(e, prefix) {
+			result = append(result, e)
+		}
+	}
+	return result
 }
 
 // filterAgentsMD returns the AGENTS.md content for the filter agent.
-// This gives the filter agent clear instructions about its role and
-// tells it to write results to RESPONSE.md for reliable extraction.
 func filterAgentsMD() string {
 	return `<!-- filter agent — generates and refines specifications -->
 
@@ -304,39 +333,5 @@ You are a software specification analyst. Your job is to review a rough idea in 
 - State dependencies explicitly: "Droplet 2 requires droplet 1 to be delivered first"
 - Minimum 3 filtration rounds before filing — keep going until the spec is unambiguous
 - Be direct. Skip preamble and postamble. Just the spec.
-
-## CRITICAL: Writing Your Response
-
-You MUST write your complete response to a file called RESPONSE.md in your working directory. This is the primary output mechanism — your response will be read from that file.
-
-After generating your response, write it to RESPONSE.md using your file write tool. The file must contain your full analysis and droplet specifications.
-
-If you cannot write files, include your response in your text output as a fallback.
 `
-}
-
-// isSessionAlive checks if a tmux session with the given ID is running.
-var isSessionAlive = func(sessionID string) bool {
-	return exec.Command("tmux", "has-session", "-t", sessionID).Run() == nil
-}
-
-// tmuxSessionWorkdir returns the working directory of a tmux session.
-func tmuxSessionWorkdir(sessionID string) (string, error) {
-	out, err := exec.Command("tmux", "display-message", "-t", sessionID, "-p", "#{session_path}").Output()
-	if err != nil {
-		return "", fmt.Errorf("tmux display-message: %w", err)
-	}
-	return strings.TrimSpace(string(out)), nil
-}
-
-func homeDir() string {
-	if h, err := os.UserHomeDir(); err == nil {
-		return h
-	}
-	return "/root"
-}
-
-// shellQuote wraps a string in single quotes for safe shell interpolation.
-func shellQuote(s string) string {
-	return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'"
 }

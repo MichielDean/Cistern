@@ -48,7 +48,7 @@ Use --output-format json for scriptable output (session_id + text).`,
 			if len(args) == 0 {
 				return fmt.Errorf("feedback argument required: ct filter --resume <id> '<feedback>'")
 			}
-			result, err := filterAgentResume(preset, filterResume, strings.Join(args, " "))
+			result, err := filterAgentRunResume(preset, filterResume, strings.Join(args, " "))
 			if err != nil {
 				return err
 			}
@@ -81,16 +81,19 @@ func invokeFilterNew(preset provider.ProviderPreset, title, description, context
 		userPrompt += "\nDescription: " + description
 	}
 	prompt := buildFilterPrompt(contextBlock, userPrompt)
-	result, err := filterAgentTmux(preset, prompt)
+	result, err := filterAgentRun(preset, prompt)
 	if err != nil {
 		return filterSessionResult{}, err
 	}
-	// Try to parse structured JSON from the response (agent may produce
-	// a JSON envelope with session_id even in tmux mode).
-	if envelope := tryParseAgentJSON(result.Text); envelope != nil {
-		result.SessionID = envelope.SessionID
-		if envelope.Result != "" {
-			result.Text = envelope.Result
+	// The NDJSON output from opencode run --format json already provides
+	// session_id in each event, so tryParseAgentJSON is no longer needed
+	// for the primary path. Keep it as a fallback for any embedded JSON.
+	if result.SessionID == "" {
+		if envelope := tryParseAgentJSON(result.Text); envelope != nil {
+			result.SessionID = envelope.SessionID
+			if envelope.Result != "" {
+				result.Text = envelope.Result
+			}
 		}
 	}
 	return result, nil
@@ -99,14 +102,16 @@ func invokeFilterNew(preset provider.ProviderPreset, title, description, context
 // invokeFilterResume resumes an existing filtration session with the given message
 // and returns the updated response with session_id.
 func invokeFilterResume(preset provider.ProviderPreset, sessionID, message string) (filterSessionResult, error) {
-	result, err := filterAgentResume(preset, sessionID, message)
+	result, err := filterAgentRunResume(preset, sessionID, message)
 	if err != nil {
 		return filterSessionResult{}, err
 	}
-	if envelope := tryParseAgentJSON(result.Text); envelope != nil {
-		result.SessionID = envelope.SessionID
-		if envelope.Result != "" {
-			result.Text = envelope.Result
+	if result.SessionID == "" {
+		if envelope := tryParseAgentJSON(result.Text); envelope != nil {
+			result.SessionID = envelope.SessionID
+			if envelope.Result != "" {
+				result.Text = envelope.Result
+			}
 		}
 	}
 	return result, nil
@@ -192,12 +197,12 @@ func filterTimeout() time.Duration {
 }
 
 // callFilterAgent is a stub retained for backward compatibility with test code.
-// The direct-exec approach has been replaced by tmux-based spawning (filterAgentTmux).
-// This function always returns an error directing callers to the tmux approach.
+// The direct-exec approach has been replaced by opencode run --format json
+// (filterAgentRun). This function always returns an error.
 //
-// Deprecated: Use filterAgentTmux instead.
+// Deprecated: Use filterAgentRun instead.
 func callFilterAgent(preset provider.ProviderPreset, extraArgs []string, prompt string) (filterSessionResult, error) {
-	return filterSessionResult{}, fmt.Errorf("callFilterAgent is deprecated: filter now uses tmux-based spawning (filterAgentTmux)")
+	return filterSessionResult{}, fmt.Errorf("callFilterAgent is deprecated: filter now uses opencode run --format json (filterAgentRun)")
 }
 
 func init() {
