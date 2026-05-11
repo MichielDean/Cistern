@@ -5,6 +5,7 @@
 //
 //	--dangerously-skip-permissions (ignored)
 //	--model <model>                (ignored)
+//	--agent <name>                 (identity name, triggers RESPONSE.md write)
 //	--format json                  (when present, triggers non-interactive mode)
 //	--output-format <format>       (legacy: also triggers non-interactive mode)
 //	--resume <session-id>          (ignored; accepted for flag compatibility)
@@ -28,9 +29,11 @@
 //	Environment variables read:
 //	  CT_CATARACTA_NAME   identity passed by the session runner (ignored)
 //
-//	CONTEXT.md (in the current working directory) must contain a line:
-//	  ## Item: <droplet-id>
+//	When --agent filter is present (filter mode), the agent writes its output
+//	to RESPONSE.md in the current directory instead of printing to stdout.
 //
+//	When CONTEXT.md (in the current working directory) contains a line:
+//	  ## Item: <droplet-id>
 //	The binary sleeps 200 ms to simulate work, then calls:
 //	  ct droplet pass <id> --notes 'fakeagent: ok'
 package main
@@ -60,16 +63,20 @@ const hardcodedJSONEnvelope = `{"type":"result","subtype":"success","is_error":f
 const hardcodedErrorEnvelope = `{"type":"result","subtype":"error","is_error":true,"result":"agent encountered an error","session_id":"error-session-id"}`
 
 func main() {
-	// Pre-scan os.Args for format-related flags before calling flag.Parse.
-	// flag.Parse stops at the first positional arg (e.g. a subcommand such as
-	// "run"), so these flags could appear later in the arg list without
-	// being registered by the flag package. We check for both --output-format
-	// (legacy flag) and --format (opencode's current flag) to maintain
-	// backward compatibility.
+	// Pre-scan os.Args for flags before calling flag.Parse.
 	hasOutputFormat := false
+	hasAgentFilter := false
 	for _, arg := range os.Args[1:] {
 		if arg == "--output-format" || arg == "--format" {
 			hasOutputFormat = true
+		}
+		if arg == "filter" {
+			// Check if previous arg was --agent
+			for i, a := range os.Args[1:] {
+				if a == "--agent" && i+1 < len(os.Args[1:]) && os.Args[1:][i+1] == "filter" {
+					hasAgentFilter = true
+				}
+			}
 		}
 	}
 
@@ -79,7 +86,6 @@ func main() {
 			_ = os.WriteFile(argsFile, []byte(strings.Join(os.Args[1:], "\n")), 0o644)
 		}
 		// Capture the prompt for tests that need to inspect what was sent.
-		// The prompt is always the last argument regardless of how it was passed.
 		if promptFile := os.Getenv("FAKEAGENT_PROMPT_FILE"); promptFile != "" {
 			if len(os.Args) > 1 {
 				_ = os.WriteFile(promptFile, []byte(os.Args[len(os.Args)-1]), 0o644)
@@ -105,19 +111,42 @@ func main() {
 	flag.String("output-format", "", "")
 	flag.String("resume", "", "")
 	flag.String("s", "", "")
+	flag.String("agent", "", "")
 	flag.Parse()
 
 	mode := os.Getenv("FAKEAGENT_MODE")
 
 	// Interactive mode: optionally dump environment variables for env-hygiene integration tests.
-	// When FAKEAGENT_MODE=env_dump the agent prints all env vars to stdout (which is tee'd to
-	// the session log), then proceeds normally so the droplet still gets delivered.
 	if mode == "env_dump" {
 		fmt.Println("=== FAKEAGENT ENV DUMP ===")
 		for _, e := range os.Environ() {
 			fmt.Println(e)
 		}
 		fmt.Println("=== END ENV DUMP ===")
+	}
+
+	// Filter mode: write RESPONSE.md for tmux-based filter tests.
+	// This is the path used by filterAgentTmux — the agent writes its response
+	// to RESPONSE.md instead of producing output on stdout.
+	if hasAgentFilter {
+		responseContent := `1. Add user authentication
+
+   Title: Add user authentication
+   Description: Implement JWT-based authentication with refresh tokens
+   Dependencies: none
+   Complexity: standard
+
+2. Set up role-based access control
+
+   Title: Set up role-based access control
+   Description: Define roles and permissions for admin, editor, and viewer
+   Dependencies: droplet 1
+   Complexity: standard
+
+Ready to file
+`
+		_ = os.WriteFile("RESPONSE.md", []byte(responseContent), 0o644)
+		return
 	}
 
 	// Interactive mode: read CONTEXT.md from the working directory to find the droplet ID.
@@ -144,9 +173,6 @@ func main() {
 	time.Sleep(200 * time.Millisecond)
 
 	// Signal outcome via ct.
-	// CT_BIN overrides the path to ct so integration tests can inject the
-	// source-built binary without relying on PATH (which tmux sessions may
-	// override via shell profile files).
 	ctBin := "ct"
 	if v := os.Getenv("CT_BIN"); v != "" {
 		ctBin = v

@@ -59,10 +59,12 @@ func TestBuiltins_NonInteractiveConfig(t *testing.T) {
 }
 
 // TestBuiltins_OpencodeFormatArgs verifies the opencode builtin preset has
-// NonInteractive.FormatArgs set to ["--format", "json"].
+// empty FormatArgs (removed because opencode --format is a top-level flag,
+// not a run subcommand flag; the tmux-based filter approach uses RESPONSE.md
+// instead of JSON output).
 func TestBuiltins_OpencodeFormatArgs(t *testing.T) {
 	p := builtinByName(t, "opencode")
-	assertStrs(t, "NonInteractive.FormatArgs", []string{"--format", "json"}, p.NonInteractive.FormatArgs)
+	assertStrs(t, "NonInteractive.FormatArgs", nil, p.NonInteractive.FormatArgs)
 }
 
 // TestBuiltins_OpencodeResumeFlag verifies the opencode builtin preset has
@@ -107,6 +109,7 @@ func TestBuiltins_ReturnsCopy(t *testing.T) {
 
 	t.Run("NonInteractive.FormatArgs mutation is isolated", func(t *testing.T) {
 		first := Builtins()
+		// FormatArgs is nil for opencode preset (removed); skip if empty
 		if len(first[0].NonInteractive.FormatArgs) == 0 {
 			t.Skip("preset has no FormatArgs to test isolation")
 		}

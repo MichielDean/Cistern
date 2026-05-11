@@ -6,26 +6,19 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"time"
 
 	"github.com/MichielDean/cistern/internal/provider"
 )
 
+const responseFileName = "RESPONSE.md"
+
 // filterAgentTmux spawns an opencode filter session inside a tmux session,
 // waits for completion, and returns the agent's text response.
 //
-// This replaces the old direct-exec approach (opencode run --format json)
-// which doesn't work because opencode run requires an existing session ID
-// and doesn't return output on stdout. Instead, we:
-//  1. Create a temp workdir with CONTEXT.md
-//  2. Write an AGENTS.md with filter-specific instructions
-//  3. Spawn opencode in a tmux session (like cataractae do)
-//  4. Use pipe-pane to capture PTY output to a log file
-//  5. Wait for the tmux session to exit (poll with timeout)
-//  6. Read the log file, strip ANSI codes, extract the agent's response
-//  7. Clean up: kill tmux session, remove temp dir
+// The agent writes its response to RESPONSE.md in the workdir. We read that
+// file after the tmux session exits — no PTY parsing, no ANSI stripping.
 func filterAgentTmux(preset provider.ProviderPreset, prompt string) (filterSessionResult, error) {
 	sessionID := fmt.Sprintf("filter-%d", time.Now().UnixMilli())
 
@@ -54,8 +47,6 @@ func filterAgentTmux(preset provider.ProviderPreset, prompt string) (filterSessi
 	}
 
 	// 3b. Create identity directory with agent markdown file (for --agent flag)
-	// The identity directory follows the cataractae pattern:
-	// <workdir>/identity/agents/filter.md contains the full prompt with frontmatter
 	identityDir := filepath.Join(tmpDir, "identity")
 	agentsSubDir := filepath.Join(identityDir, "agents")
 	if err := os.MkdirAll(agentsSubDir, 0o755); err != nil {
@@ -74,27 +65,18 @@ func filterAgentTmux(preset provider.ProviderPreset, prompt string) (filterSessi
 		return filterSessionResult{}, fmt.Errorf("filter: write agent markdown: %w", err)
 	}
 
-	// 4. Build the agent command (returns a single string like cataractae's buildPresetCmd)
+	// 4. Build the agent command
 	cmdStr, envPairs, err := buildFilterTmuxCommand(preset, tmpDir)
 	if err != nil {
 		return filterSessionResult{}, fmt.Errorf("filter: build command: %w", err)
 	}
 
-	// 5. Set up session log — create the file before spawning so pipe-pane
-	// can write to it even if the agent exits quickly
-	homeDir, _ := os.UserHomeDir()
-	logDir := filepath.Join(homeDir, ".cistern", "session-logs")
-	os.MkdirAll(logDir, 0o750)
-	logPath := filepath.Join(logDir, sessionID+".log")
-	// Pre-create the log file to ensure pipe-pane has something to write to
-	os.WriteFile(logPath, nil, 0o644)
-
-	// 6. Spawn tmux session
+	// 5. Spawn tmux session
 	tmuxArgs := []string{"new-session", "-d", "-s", sessionID, "-c", tmpDir}
 	for _, kv := range envPairs {
 		tmuxArgs = append(tmuxArgs, "-e", kv)
 	}
-	tmuxArgs = append(tmuxArgs, cmdStr) // single command string, not separate args
+	tmuxArgs = append(tmuxArgs, cmdStr)
 
 	slog.Default().Info("filter: spawning tmux session",
 		"session", sessionID,
@@ -107,20 +89,14 @@ func filterAgentTmux(preset provider.ProviderPreset, prompt string) (filterSessi
 
 	// Check if session actually started
 	if !isSessionAlive(sessionID) {
-		// Session died immediately — likely a command error. Try to read log anyway.
-		logData, _ := os.ReadFile(logPath)
-		return filterSessionResult{}, fmt.Errorf("filter: session %s died immediately; log: %s", sessionID, string(logData))
+		return filterSessionResult{}, fmt.Errorf("filter: session %s died immediately", sessionID)
 	}
 
-	// 7. Set remain-on-exit off and attach pipe-pane
+	// 6. Set remain-on-exit off so tmux cleans up when the agent exits
 	exec.Command("tmux", "set-window-option", "-t", sessionID, "remain-on-exit", "off").Run()
-	exec.Command("tmux", "pipe-pane", "-o", "-t", sessionID, "cat >> "+shellQuote(logPath)).Run()
 
-	// Brief pause to let pipe-pane attach before the agent potentially exits
-	time.Sleep(500 * time.Millisecond)
-
-	// 8. Wait for session to exit, polling every 2 seconds with a configurable timeout
-	timeout := 10 * time.Minute
+	// 7. Wait for session to exit, polling every 2 seconds with configurable timeout
+	timeout := filterTimeout()
 	deadline := time.Now().Add(timeout)
 	pollInterval := 2 * time.Second
 
@@ -137,99 +113,75 @@ func filterAgentTmux(preset provider.ProviderPreset, prompt string) (filterSessi
 		exec.Command("tmux", "kill-session", "-t", sessionID).Run()
 	}
 
-	// 9. Read the log file
-	logData, err := os.ReadFile(logPath)
+	// 8. Read the response file written by the agent
+	responsePath := filepath.Join(tmpDir, responseFileName)
+	responseData, err := os.ReadFile(responsePath)
 	if err != nil {
-		return filterSessionResult{}, fmt.Errorf("filter: read session log: %w", err)
+		if os.IsNotExist(err) {
+			return filterSessionResult{}, fmt.Errorf("filter: agent did not write %s in %s", responseFileName, tmpDir)
+		}
+		return filterSessionResult{}, fmt.Errorf("filter: read response file: %w", err)
 	}
 
-	slog.Default().Info("filter: raw log data",
-		"session", sessionID,
-		"bytes", len(logData))
-
-	// 10. Clean up the log file
-	os.Remove(logPath)
-
-	// 11. Strip ANSI codes and terminal control sequences from PTY output
-	rawText := cleanANSI(string(logData))
-	response := extractFilterResponse(rawText)
-
-	// Try to parse as JSON (in case the agent produced structured output)
-	var sessionID_ string
-	text := response
-
-	// 12. Clean up temp dir (deferred above will handle it unless we set cleanup=false)
-	_ = cleanup // used by defer
+	response := strings.TrimSpace(string(responseData))
 
 	slog.Default().Info("filter: completed",
-		"session", sessionID_,
-		"text_len", len(text),
-		"raw_len", len(rawText))
+		"session", sessionID,
+		"text_len", len(response))
 
 	return filterSessionResult{
-		SessionID: sessionID_,
-		Text:      text,
+		Text: response,
 	}, nil
 }
 
 // filterAgentResume resumes an existing filter tmux session by sending a message
 // via tmux send-keys. This is used for --resume rounds.
+// The agent writes its updated response to RESPONSE.md in the workdir.
 func filterAgentResume(preset provider.ProviderPreset, sessionID, message string) (filterSessionResult, error) {
 	if !isSessionAlive(sessionID) {
 		return filterSessionResult{}, fmt.Errorf("filter: session %s not found (may have exited)", sessionID)
 	}
 
-	// Send the message as keystrokes to the tmux session
-	// Use send-keys with the message + Enter
-	exec.Command("tmux", "send-keys", "-t", sessionID, message, "Enter").Run()
-
-	// Wait for the agent to respond (poll session log for changes)
-	homeDir, _ := os.UserHomeDir()
-	logPath := filepath.Join(homeDir, ".cistern", "session-logs", sessionID+".log")
-
-	// Read current log size as baseline
-	prevSize := int64(0)
-	if info, err := os.Stat(logPath); err == nil {
-		prevSize = info.Size()
+	// Find the workdir by looking up the tmux session's current directory
+	workdir, err := tmuxSessionWorkdir(sessionID)
+	if err != nil {
+		return filterSessionResult{}, fmt.Errorf("filter: find workdir for session %s: %w", sessionID, err)
 	}
 
-	// Poll until log stops growing (5-second stability window) or 10-minute timeout
-	timeout := 10 * time.Minute
+	// Remove the old RESPONSE.md so we can detect when the agent writes a new one
+	responsePath := filepath.Join(workdir, responseFileName)
+	os.Remove(responsePath)
+
+	// Send the message as keystrokes to the tmux session
+	exec.Command("tmux", "send-keys", "-t", sessionID, message, "Enter").Run()
+
+	// Wait for RESPONSE.md to appear (poll with timeout)
+	timeout := filterTimeout()
 	deadline := time.Now().Add(timeout)
-	stableSince := time.Time{}
-	stabilityWindow := 5 * time.Second
+	pollInterval := 2 * time.Second
 
 	for time.Now().Before(deadline) {
-		time.Sleep(2 * time.Second)
+		if _, err := os.Stat(responsePath); err == nil {
+			// File appeared — give it a moment to finish writing
+			time.Sleep(1 * time.Second)
+			break
+		}
 		if !isSessionAlive(sessionID) {
 			break
 		}
-		curSize := int64(0)
-		if info, err := os.Stat(logPath); err == nil {
-			curSize = info.Size()
-		}
-		if curSize > prevSize {
-			prevSize = curSize
-			stableSince = time.Time{}
-		} else {
-			if stableSince.IsZero() {
-				stableSince = time.Now()
-			}
-			if time.Since(stableSince) > stabilityWindow {
-				break
-			}
-		}
+		time.Sleep(pollInterval)
 	}
 
-	// Read and parse the response
-	logData, err := os.ReadFile(logPath)
+	// Read the response file
+	responseData, err := os.ReadFile(responsePath)
 	if err != nil {
-		return filterSessionResult{}, fmt.Errorf("filter: read session log: %w", err)
+		if os.IsNotExist(err) {
+			return filterSessionResult{}, fmt.Errorf("filter: agent did not write %s after resume", responseFileName)
+		}
+		return filterSessionResult{}, fmt.Errorf("filter: read response file: %w", err)
 	}
 
-	rawText := cleanANSI(string(logData))
-	response := extractFilterResponse(rawText)
-
+	response := strings.TrimSpace(string(responseData))
 	return filterSessionResult{
 		SessionID: sessionID,
 		Text:      response,
@@ -325,8 +277,8 @@ func buildFilterTmuxCommand(preset provider.ProviderPreset, workDir string) (str
 }
 
 // filterAgentsMD returns the AGENTS.md content for the filter agent.
-// This gives the filter agent clear instructions about its role:
-// analyze the spec, ask probing questions, and then stop.
+// This gives the filter agent clear instructions about its role and
+// tells it to write results to RESPONSE.md for reliable extraction.
 func filterAgentsMD() string {
 	return `<!-- filter agent — generates and refines specifications -->
 
@@ -352,75 +304,29 @@ You are a software specification analyst. Your job is to review a rough idea in 
 - State dependencies explicitly: "Droplet 2 requires droplet 1 to be delivered first"
 - Minimum 3 filtration rounds before filing — keep going until the spec is unambiguous
 - Be direct. Skip preamble and postamble. Just the spec.
+
+## CRITICAL: Writing Your Response
+
+You MUST write your complete response to a file called RESPONSE.md in your working directory. This is the primary output mechanism — your response will be read from that file.
+
+After generating your response, write it to RESPONSE.md using your file write tool. The file must contain your full analysis and droplet specifications.
+
+If you cannot write files, include your response in your text output as a fallback.
 `
 }
 
-// cleanANSI removes ANSI escape sequences and terminal control characters from
-// raw PTY output. This is more aggressive than stripANSI (which only removes color
-// codes) because pipe-pane captures the full PTY stream including cursor movements,
-// status lines, and other TUI chrome.
-var cleanANSIRegex = regexp.MustCompile(`\x1b\[[0-9;]*[a-zA-Z]|\x1b\][^\x07]*\x07|\x1b\[.*?[a-zA-Z]|\r`)
-
-func cleanANSI(s string) string {
-	return cleanANSIRegex.ReplaceAllString(s, "")
+// isSessionAlive checks if a tmux session with the given ID is running.
+var isSessionAlive = func(sessionID string) bool {
+	return exec.Command("tmux", "has-session", "-t", sessionID).Run() == nil
 }
 
-// extractFilterResponse extracts the agent's response text from the raw PTY log.
-// It looks for the last substantial block of text after the prompt was sent,
-// skipping the opencode TUI chrome (splash screen, status lines, etc.).
-func extractFilterResponse(raw string) string {
-	lines := strings.Split(raw, "\n")
-
-	// Find lines that look like assistant output (not TUI chrome).
-	// The filter agent's response will be substantial text blocks.
-	// We look for the last contiguous block of non-empty, non-chrome lines.
-	var responseLines []string
-	inResponse := false
-
-	for i := len(lines) - 1; i >= 0; i-- {
-		line := strings.TrimSpace(lines[i])
-		if line == "" {
-			if inResponse {
-				break
-			}
-			continue
-		}
-		// Skip TUI chrome lines (opencode status bar, key hints, etc.)
-		if isTUICrome(line) {
-			if inResponse {
-				break
-			}
-			continue
-		}
-		inResponse = true
-		responseLines = append([]string{lines[i]}, responseLines...)
+// tmuxSessionWorkdir returns the working directory of a tmux session.
+func tmuxSessionWorkdir(sessionID string) (string, error) {
+	out, err := exec.Command("tmux", "display-message", "-t", sessionID, "-p", "#{session_path}").Output()
+	if err != nil {
+		return "", fmt.Errorf("tmux display-message: %w", err)
 	}
-
-	if len(responseLines) == 0 {
-		return strings.TrimSpace(raw)
-	}
-
-	return strings.TrimSpace(strings.Join(responseLines, "\n"))
-}
-
-// isTUICrome returns true if a line looks like TUI framework chrome
-// (status bars, key bindings, splash text, etc.) rather than agent output.
-func isTUICrome(line string) bool {
-	// OpenCode TUI patterns
-	lower := strings.ToLower(line)
-	switch {
-	case strings.HasPrefix(lower, "opencode"):
-		return true
-	case strings.Contains(lower, "press ") && strings.Contains(lower, " to "):
-		return true
-	case strings.Contains(lower, "session"):
-		// Keep "Session not found" as error output, skip session ID headers
-		return !strings.Contains(lower, "error") && !strings.Contains(lower, "not found")
-	case len(line) < 5 && line != "":
-		// Short lines are likely key hints or borders
-		return true
-	}
-	return false
+	return strings.TrimSpace(string(out)), nil
 }
 
 func homeDir() string {
@@ -428,30 +334,6 @@ func homeDir() string {
 		return h
 	}
 	return "/root"
-}
-
-// minimalTmuxEnv returns a minimal environment for tmux sessions,
-// matching the cataractae approach of not leaking the calling process's env.
-func minimalTmuxEnv() []string {
-	env := []string{
-		"PATH=" + os.Getenv("PATH"),
-		"HOME=" + homeDir(),
-		"USER=" + os.Getenv("USER"),
-		"SHELL=" + os.Getenv("SHELL"),
-		"TERM=xterm-256color",
-	}
-	if tmpdir := os.Getenv("TMPDIR"); tmpdir != "" {
-		env = append(env, "TMPDIR="+tmpdir)
-	}
-	if xdg := os.Getenv("XDG_RUNTIME_DIR"); xdg != "" {
-		env = append(env, "XDG_RUNTIME_DIR="+xdg)
-	}
-	return env
-}
-
-// isSessionAlive checks if a tmux session with the given ID is running.
-var isSessionAlive = func(sessionID string) bool {
-	return exec.Command("tmux", "has-session", "-t", sessionID).Run() == nil
 }
 
 // shellQuote wraps a string in single quotes for safe shell interpolation.
