@@ -11,6 +11,7 @@ import (
 
 	"github.com/MichielDean/cistern/internal/aqueduct"
 	"github.com/MichielDean/cistern/internal/provider"
+	"github.com/MichielDean/cistern/internal/sessionlog"
 )
 
 // Session manages an agent execution inside a tmux session.
@@ -101,8 +102,11 @@ func (s *Session) spawn() error {
 	// Session output log: prepare the log directory so pipe-pane can write to it
 	// after the session is created. The log path is also read by the liveness
 	// check for stall detection via mtime.
-	sessionLogPath := filepath.Join(home, ".cistern", "session-logs", s.ID+".log")
-	logDirReady := os.MkdirAll(filepath.Dir(sessionLogPath), 0o750) == nil
+	sessionLogPath, err := sessionlog.Path(s.ID)
+	if err != nil {
+		slog.Default().Warn("session: could not resolve log path", "session", s.ID, "error", err)
+	}
+	logDirReady := sessionlog.EnsureDir() == nil
 
 	args = append(args, s.collectEnvArgs()...)
 	args = append(args, agentCmd)

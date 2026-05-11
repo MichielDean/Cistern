@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/MichielDean/cistern/internal/cistern"
+	"github.com/MichielDean/cistern/internal/sessionlog"
 	_ "github.com/mattn/go-sqlite3"
 )
 
@@ -236,8 +237,9 @@ func TestDropletPeekRaw_ReadsSessionLog(t *testing.T) {
 
 	// Create a session log file in a temp dir.
 	logDir := t.TempDir()
-	sessionLogDir = logDir
-	defer func() { sessionLogDir = "" }()
+	origLogDirFn := sessionlog.LogDirFn
+	sessionlog.LogDirFn = func() (string, error) { return logDir, nil }
+	t.Cleanup(func() { sessionlog.LogDirFn = origLogDirFn })
 
 	logContent := "agent output line 1\nagent output line 2\n"
 	logFile := filepath.Join(logDir, "myrepo-test-worker.log")
@@ -284,9 +286,10 @@ func TestDropletPeekRaw_ReadsSessionLog(t *testing.T) {
 func TestDropletPeekRaw_NoLogFile_PrintsHelpfulMessage(t *testing.T) {
 	itemID := makeInProgressItem(t)
 
-	// Point sessionLogDir to an empty temp dir (no log file present).
-	sessionLogDir = t.TempDir()
-	defer func() { sessionLogDir = "" }()
+	// Point LogDirFn to an empty temp dir (no log file present).
+	origLogDirFn := sessionlog.LogDirFn
+	sessionlog.LogDirFn = func() (string, error) { return t.TempDir(), nil }
+	t.Cleanup(func() { sessionlog.LogDirFn = origLogDirFn })
 
 	old := os.Stdout
 	r, w, _ := os.Pipe()
