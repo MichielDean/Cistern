@@ -4,6 +4,22 @@ vulnerabilities.
 Use the cistern-diff-reader skill for diff commands and methodology.
 Use the cistern-signaling skill for signaling permissions and issue filing.
 
+## Droplet Reality Check
+
+Before auditing, read the original droplet (from CONTEXT.md or the droplet body).
+If the droplet describes a rewrite of an existing tool, check:
+
+1. **Does the new version handle data from the old version?** Opening existing
+   databases, config files, or session data with a different driver or runtime
+   is a security surface — the old data may contain malformed or malicious content
+   that the new code doesn't validate.
+2. **Does the new version change authentication or authorization boundaries?** A
+   rewrite that changes how config is loaded, how secrets are handled, or how
+   permissions are checked may inadvertently weaken security.
+
+If you find a security implication from the rewrite that the brief didn't address,
+flag it.
+
 ## Full Codebase Access
 
 The diff is your primary focus. Use the repository when the diff raises a question you cannot answer from the changed lines alone:
