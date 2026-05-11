@@ -219,10 +219,6 @@ func (c *pipelineClient) FileDroplet(repo, title, description string, priority i
 	return &cistern.Droplet{ID: "smoke-filed", Repo: repo}, nil
 }
 
-func (c *pipelineClient) Heartbeat(id string) error {
-	return nil
-}
-
 func (c *pipelineClient) RecordEvent(id, eventType, payload string) error {
 	return nil
 }

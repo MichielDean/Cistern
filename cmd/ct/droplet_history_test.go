@@ -216,28 +216,24 @@ func TestDropletHistory_InvalidFormat(t *testing.T) {
 	}
 }
 
-func TestDropletHistory_NoSyntheticHeartbeat(t *testing.T) {
+func TestDropletHistory_NoteOrdering(t *testing.T) {
 	c := setupHistoryTestDB(t)
-	item, err := c.Add("myrepo", "Heartbeat history task", "", 1)
+	item, err := c.Add("myrepo", "Note ordering task", "", 1)
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	c.GetReadyForAqueduct("myrepo", "default")
 	c.Assign(item.ID, "worker-1", "implement")
-	c.AddNote(item.ID, "implement", "started")
-	err = c.Heartbeat(item.ID)
-	if err != nil {
-		t.Fatalf("heartbeat failed: %v", err)
-	}
+	c.AddNote(item.ID, "implement", "early note")
 
 	out, err := runHistoryCapture(t, item.ID)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if strings.Contains(out, "last heartbeat recorded") {
-		t.Errorf("history output should not contain synthetic heartbeat detail: %s", out)
+	if !strings.Contains(out, "early note") {
+		t.Errorf("history output should contain note: %s", out)
 	}
 }
 

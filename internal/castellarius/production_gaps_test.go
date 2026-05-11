@@ -3,8 +3,8 @@ package castellarius
 // production_gaps_test.go — tests for failure modes that caused real incidents.
 //
 // These tests cover the interaction paths that were MISSING before 2026-03-25
-// and whose absence allowed the self-kill bug, silent backoff, and heartbeat
-// race to go undetected.
+// and whose absence allowed the self-kill bug, silent backoff, and liveness
+// check race to go undetected.
 
 import (
 	"bytes"
@@ -21,16 +21,20 @@ import (
 	"github.com/MichielDean/cistern/internal/cistern"
 )
 
-// --- Heartbeat progress-monitoring tests ---
+// --- Liveness check progress-monitoring tests ---
 
-// TestHeartbeat_StallDetected_WhenNoSignals verifies that the heartbeat detects
-// a stall and logs "stall detected" when all three progress signals are absent
+// TestLivenessCheck_StallDetected_WhenNoSignals verifies that the liveness check detects
+// a stall and logs "stall detected" when all progress signals are absent
 // (no notes, no worktree files, no session log).
-func TestHeartbeat_StallDetected_WhenNoSignals(t *testing.T) {
+func TestLivenessCheck_StallDetected_WhenNoSignals(t *testing.T) {
 	// Mock tmux as alive so liveness check passes through to stall detector.
 	orig := isTmuxAliveFn
 	isTmuxAliveFn = func(_ string) bool { return true }
 	t.Cleanup(func() { isTmuxAliveFn = orig })
+
+	origMtime := sessionLogMtimeFn
+	sessionLogMtimeFn = func(sessionID string) (time.Time, error) { return time.Time{}, nil }
+	t.Cleanup(func() { sessionLogMtimeFn = origMtime })
 
 	buf := &bytes.Buffer{}
 	client := newMockClient()
@@ -45,23 +49,27 @@ func TestHeartbeat_StallDetected_WhenNoSignals(t *testing.T) {
 	}
 	client.items["stale-session"] = item
 
-	sched.heartbeatRepo(context.Background(), aqueduct.RepoConfig{Name: "repo"})
+	sched.livenessCheckRepo(context.Background(), aqueduct.RepoConfig{Name: "repo"})
 
 	log := buf.String()
 	if !strings.Contains(log, "stall detected") {
-		t.Errorf("heartbeat should log 'stall detected' when no signals present; log:\n%s", log)
+		t.Errorf("liveness check should log 'stall detected' when no signals present; log:\n%s", log)
 	}
 }
 
-// TestHeartbeat_NoStallNote_WhenRecentHeartbeat verifies that the heartbeat
-// does not write a stall note when the agent's LastHeartbeatAt is within the
-// 45-minute default threshold.
-func TestHeartbeat_NoStallNote_WhenRecentHeartbeat(t *testing.T) {
+// TestLivenessCheck_NoStallNote_WhenRecentLogMtime verifies that the liveness check
+// does not write a stall note when the agent's session log mtime is within the
+// stall threshold.
+func TestLivenessCheck_NoStallNote_WhenRecentLogMtime(t *testing.T) {
 	// Mock tmux as alive so exit detection is bypassed and stall
-	// detection runs on the heartbeat timestamp.
+	// detection runs on the session log mtime.
 	orig := isTmuxAliveFn
 	isTmuxAliveFn = func(_ string) bool { return true }
 	t.Cleanup(func() { isTmuxAliveFn = orig })
+
+	origMtime := sessionLogMtimeFn
+	sessionLogMtimeFn = func(sessionID string) (time.Time, error) { return time.Now().Add(-5 * time.Second), nil }
+	t.Cleanup(func() { sessionLogMtimeFn = origMtime })
 
 	buf := &bytes.Buffer{}
 	client := newMockClient()
@@ -73,23 +81,21 @@ func TestHeartbeat_NoStallNote_WhenRecentHeartbeat(t *testing.T) {
 		Status:            "in_progress",
 		Assignee:          "alpha",
 		CurrentCataractae: "implement",
-		// Recent heartbeat: 5 seconds ago — well within the 45-minute default threshold.
-		LastHeartbeatAt: time.Now().Add(-5 * time.Second),
 	}
 	client.items["fresh-dispatch"] = item
 
-	sched.heartbeatRepo(context.Background(), aqueduct.RepoConfig{Name: "repo"})
+	sched.livenessCheckRepo(context.Background(), aqueduct.RepoConfig{Name: "repo"})
 
 	log := buf.String()
 	if strings.Contains(log, "stall detected") {
-		t.Errorf("heartbeat flagged a recently-heartbeating droplet as stalled; log:\n%s", log)
+		t.Errorf("liveness check flagged a recently-active droplet as stalled; log:\n%s", log)
 	}
 }
 
-// TestHeartbeat_SkipsItemsWithOutcome verifies that the heartbeat never writes
+// TestLivenessCheck_SkipsItemsWithOutcome verifies that the liveness check never writes
 // a stall note for a droplet that already has an outcome — the observe loop
 // handles those and must not be interfered with.
-func TestHeartbeat_SkipsItemsWithOutcome(t *testing.T) {
+func TestLivenessCheck_SkipsItemsWithOutcome(t *testing.T) {
 	buf := &bytes.Buffer{}
 	client := newMockClient()
 	sched := newTestScheduler(buf, client)
@@ -104,11 +110,11 @@ func TestHeartbeat_SkipsItemsWithOutcome(t *testing.T) {
 	}
 	client.items["has-outcome"] = item
 
-	sched.heartbeatRepo(context.Background(), aqueduct.RepoConfig{Name: "repo"})
+	sched.livenessCheckRepo(context.Background(), aqueduct.RepoConfig{Name: "repo"})
 
 	log := buf.String()
 	if strings.Contains(log, "stall detected") {
-		t.Errorf("heartbeat flagged a droplet with an existing outcome; log:\n%s", log)
+		t.Errorf("liveness check flagged a droplet with an existing outcome; log:\n%s", log)
 	}
 }
 
@@ -279,19 +285,19 @@ func init() {
 	var _ CisternClient = (*mockClient)(nil)
 }
 
-// --- Heartbeat DB integration tests ---
+// --- Liveness check DB integration tests ---
 //
 // These tests use a real cistern.Client backed by SQLite to catch column scan
 // ordering bugs that mock-client tests cannot detect. If List() has a bug that
-// leaves LastHeartbeatAt always zero, the stall detector falls back to
+// leaves session log mtime always zero, the stall detector falls back to
 // UpdatedAt. Because UpdatedAt is artificially aged in these tests, such a
-// scan bug would cause a false stall in TestHeartbeat_DB_NotStalled and
+// scan bug would cause a false stall in TestLivenessCheck_DB_NotStalled and
 // the test would fail.
 
-// TestHeartbeat_DB_NotStalled_WhenRecentHeartbeat uses a real DB to verify
-// that the stall detector skips agents whose last_heartbeat_at is recent, even
+// TestLivenessCheck_DB_NotStalled_WhenRecentLogMtime uses a real DB to verify
+// that the stall detector skips agents whose session log mtime is recent, even
 // when updated_at is old. Detects scan ordering bugs in List().
-func TestHeartbeat_DB_NotStalled_WhenRecentHeartbeat(t *testing.T) {
+func TestLivenessCheck_DB_NotStalled_WhenRecentLogMtime(t *testing.T) {
 	origTmux := isTmuxAliveFn
 	isTmuxAliveFn = func(_ string) bool { return true }
 	t.Cleanup(func() { isTmuxAliveFn = origTmux })
@@ -310,24 +316,27 @@ func TestHeartbeat_DB_NotStalled_WhenRecentHeartbeat(t *testing.T) {
 	if err := c.UpdateStatus(item.ID, "in_progress"); err != nil {
 		t.Fatal(err)
 	}
+	if err := c.Assign(item.ID, "alpha", "implement"); err != nil {
+		t.Fatal(err)
+	}
 
 	// Age updated_at so the stall detector fires on the fallback path if
-	// last_heartbeat_at is not scanned correctly (zero value scan bug).
+	// session_log mtime is not available.
 	rawDB, err := sql.Open("sqlite3", dbPath+"?_journal_mode=WAL&_busy_timeout=5000")
 	if err != nil {
 		t.Fatal(err)
 	}
 	past := time.Now().UTC().Add(-2 * time.Hour)
-	if _, err := rawDB.Exec(`UPDATE droplets SET updated_at = ? WHERE id = ?`, past, item.ID); err != nil {
+	if _, err := rawDB.Exec(`UPDATE droplets SET updated_at = ?, stage_dispatched_at = ? WHERE id = ?`, past, past, item.ID); err != nil {
 		rawDB.Close()
 		t.Fatal(err)
 	}
 	rawDB.Close()
 
-	// Emit a heartbeat — last_heartbeat_at is now current.
-	if err := c.Heartbeat(item.ID); err != nil {
-		t.Fatal(err)
-	}
+	// Mock session log mtime to return a recent time — agent is alive and working.
+	origMtime := sessionLogMtimeFn
+	sessionLogMtimeFn = func(sessionID string) (time.Time, error) { return time.Now().Add(-5 * time.Second), nil }
+	t.Cleanup(func() { sessionLogMtimeFn = origMtime })
 
 	cfg := testConfig()
 	cfg.StallThresholdMinutes = 1
@@ -335,22 +344,22 @@ func TestHeartbeat_DB_NotStalled_WhenRecentHeartbeat(t *testing.T) {
 	clients := map[string]CisternClient{"test-repo": c}
 	sched := NewFromParts(cfg, workflows, clients, newMockRunner(nil))
 
-	sched.heartbeatRepo(context.Background(), cfg.Repos[0])
+	sched.livenessCheckRepo(context.Background(), cfg.Repos[0])
 
-	// Recent heartbeat → no stall event should be recorded.
+	// Recent session log mtime → no stall event should be recorded.
 	stallCount, err := c.CountEventsByType(item.ID, cistern.EventStall, time.Time{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if stallCount != 0 {
-		t.Errorf("DB integration: stall event written for heartbeating agent (count=%d)", stallCount)
+		t.Errorf("DB integration: stall event written for recently-active agent (count=%d)", stallCount)
 	}
 }
 
-// TestHeartbeat_DB_Stalled_WhenNoHeartbeat uses a real DB to verify that an
-// agent with no heartbeat and an aged updated_at is detected as stalled and
-// an escalation note with heartbeat=none is written.
-func TestHeartbeat_DB_Stalled_WhenNoHeartbeat(t *testing.T) {
+// TestLivenessCheck_DB_Stalled_WhenNoLogMtime uses a real DB to verify that an
+// agent with no session log mtime and an aged updated_at is detected as stalled
+// and an escalation note is written.
+func TestLivenessCheck_DB_Stalled_WhenNoLogMtime(t *testing.T) {
 	origTmux := isTmuxAliveFn
 	isTmuxAliveFn = func(_ string) bool { return true }
 	t.Cleanup(func() { isTmuxAliveFn = origTmux })
@@ -369,18 +378,26 @@ func TestHeartbeat_DB_Stalled_WhenNoHeartbeat(t *testing.T) {
 	if err := c.UpdateStatus(item.ID, "in_progress"); err != nil {
 		t.Fatal(err)
 	}
+	if err := c.Assign(item.ID, "alpha", "implement"); err != nil {
+		t.Fatal(err)
+	}
 
-	// Age updated_at — no heartbeat was ever emitted; fallback triggers stall.
+	// Age updated_at and stage_dispatched_at — no session log mtime; fallback triggers stall.
 	rawDB, err := sql.Open("sqlite3", dbPath+"?_journal_mode=WAL&_busy_timeout=5000")
 	if err != nil {
 		t.Fatal(err)
 	}
 	past := time.Now().UTC().Add(-2 * time.Hour)
-	if _, err := rawDB.Exec(`UPDATE droplets SET updated_at = ? WHERE id = ?`, past, item.ID); err != nil {
+	if _, err := rawDB.Exec(`UPDATE droplets SET updated_at = ?, stage_dispatched_at = ? WHERE id = ?`, past, past, item.ID); err != nil {
 		rawDB.Close()
 		t.Fatal(err)
 	}
 	rawDB.Close()
+
+	// Mock session log mtime to return zero time — agent has no session log.
+	origMtime := sessionLogMtimeFn
+	sessionLogMtimeFn = func(sessionID string) (time.Time, error) { return time.Time{}, nil }
+	t.Cleanup(func() { sessionLogMtimeFn = origMtime })
 
 	cfg := testConfig()
 	cfg.StallThresholdMinutes = 1
@@ -388,15 +405,15 @@ func TestHeartbeat_DB_Stalled_WhenNoHeartbeat(t *testing.T) {
 	clients := map[string]CisternClient{"test-repo": c}
 	sched := NewFromParts(cfg, workflows, clients, newMockRunner(nil))
 
-	sched.heartbeatRepo(context.Background(), cfg.Repos[0])
+	sched.livenessCheckRepo(context.Background(), cfg.Repos[0])
 
-	// No heartbeat → stall detected → stall event recorded with heartbeat=none in payload.
+	// No session log → stall detected → stall event recorded.
 	stallCount, err := c.CountEventsByType(item.ID, cistern.EventStall, time.Time{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if stallCount == 0 {
-		t.Error("DB integration: expected stall event for no-heartbeat agent, got none")
+		t.Error("DB integration: expected stall event for no-liveness agent, got none")
 		return
 	}
 }

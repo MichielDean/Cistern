@@ -74,7 +74,7 @@ func sessionPrefix(t *testing.T) string {
 // droplet ID and signal pass via `ct droplet pass <id>`.
 //
 // Session isolation is achieved by embedding a per-test prefix into the repo
-// name via intConfig(prefix), so both the runner and the Castellarius heartbeat
+// name via intConfig(prefix), so both the runner and the Castellarius liveness
 // derive identical session names (repo.Name + "-" + assignee).
 type integrationRunner struct {
 	t        *testing.T
@@ -104,7 +104,7 @@ func intShellQuote(s string) string {
 // fakeagent. Returns immediately (non-blocking).
 //
 // Session names are derived as req.RepoConfig.Name+"-"+req.AqueductName. The
-// per-test prefix is embedded in RepoConfig.Name by intConfig, so the heartbeat
+// per-test prefix is embedded in RepoConfig.Name by intConfig, so the liveness
 // (which computes the same formula) finds the correct session.
 func (r *integrationRunner) Spawn(_ context.Context, req castellarius.CataractaeRequest) error {
 	dir, err := os.MkdirTemp("", "cistern-inttest-*")
@@ -120,7 +120,7 @@ func (r *integrationRunner) Spawn(_ context.Context, req castellarius.Cataractae
 	}
 
 	// Session name: <repo>-<aqueduct>. The prefix is embedded in the repo name
-	// by intConfig so the heartbeat (which computes repo.Name+"-"+assignee) and
+	// by intConfig so the liveness check (which computes repo.Name+"-"+assignee) and
 	// this runner derive identical session names.
 	sessionID := req.RepoConfig.Name + "-" + req.AqueductName
 	r.mu.Lock()
@@ -259,9 +259,9 @@ func intWorkflow() *aqueduct.Workflow {
 }
 
 // intConfig returns a minimal AqueductConfig for integration tests.
-// The prefix is embedded in the repo name so that the Castellarius heartbeat
+// The prefix is embedded in the repo name so that the Castellarius liveness check
 // (which computes sessionID as repo.Name+"-"+assignee) matches the session
-// names created by integrationRunner.Spawn, preventing false-positive heartbeat
+// names created by integrationRunner.Spawn, preventing false-positive liveness
 // recovery and ensuring test sessions never collide with production.
 func intConfig(prefix string) aqueduct.AqueductConfig {
 	return aqueduct.AqueductConfig{
@@ -277,7 +277,7 @@ func intConfig(prefix string) aqueduct.AqueductConfig {
 }
 
 // newIntScheduler creates a Castellarius configured for integration tests with
-// short poll and heartbeat intervals to keep test runtime under 30s.
+// short poll and liveness intervals to keep test runtime under 30s.
 // prefix must match the value embedded in the repo name via intConfig.
 func newIntScheduler(client *cistern.Client, runner castellarius.CataractaeRunner, prefix string) *castellarius.Castellarius {
 	cfg := intConfig(prefix)
@@ -287,7 +287,7 @@ func newIntScheduler(client *cistern.Client, runner castellarius.CataractaeRunne
 
 	return castellarius.NewFromParts(cfg, workflows, clients, runner,
 		castellarius.WithPollInterval(500*time.Millisecond),
-		castellarius.WithHeartbeatInterval(time.Second),
+		castellarius.WithLivenessInterval(time.Second),
 		castellarius.WithDrainTimeout(3*time.Second),
 	)
 }
@@ -455,15 +455,15 @@ func TestIntegration_StartupRecovery_OrphanedDroplet_RedeliversDroplet(t *testin
 	}
 }
 
-// TestIntegration_HeartbeatRecovery_DeadSession_RedeliversDroplet verifies
+// TestIntegration_LivenessCheckRecovery_DeadSession_RedeliversDroplet verifies
 // that a droplet whose agent session dies at runtime (without signaling) is
-// detected by the heartbeat goroutine, reset to open, and then re-dispatched
+// detected by the liveness check, reset to open, and then re-dispatched
 // to a new session that signals pass:
 //
 //	Given: a droplet is dispatched to a fakeagent that exits without signaling
-//	When:  the heartbeat fires, confirms the tmux session is dead, resets to open
+//	When:  the liveness check fires, confirms the tmux session is dead, resets to open
 //	Then:  the droplet is re-dispatched and reaches 'delivered' status
-func TestIntegration_HeartbeatRecovery_DeadSession_RedeliversDroplet(t *testing.T) {
+func TestIntegration_LivenessCheckRecovery_DeadSession_RedeliversDroplet(t *testing.T) {
 	checkIntegrationPrereqs(t)
 	fakeagentPath := buildFakeagent(t)
 	ctPath := buildCt(t)
@@ -491,7 +491,7 @@ func TestIntegration_HeartbeatRecovery_DeadSession_RedeliversDroplet(t *testing.
 
 	sched := newIntScheduler(client, runner, prefix)
 
-	droplet, err := client.Add(prefix+"-myrepo", "heartbeat recovery test", "desc", 1)
+	droplet, err := client.Add(prefix+"-myrepo", "liveness recovery test", "desc", 1)
 	if err != nil {
 		t.Fatalf("client.Add: %v", err)
 	}
@@ -506,7 +506,7 @@ func TestIntegration_HeartbeatRecovery_DeadSession_RedeliversDroplet(t *testing.
 		if d != nil {
 			status = d.Status
 		}
-		t.Fatalf("droplet %s was not re-delivered after dead-session heartbeat recovery (status: %s)",
+		t.Fatalf("droplet %s was not re-delivered after dead-session liveness check recovery (status: %s)",
 			droplet.ID, status)
 	}
 }

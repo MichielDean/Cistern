@@ -682,25 +682,6 @@ func TestAPI_ApproveDroplet_Success(t *testing.T) {
 	}
 }
 
-func TestAPI_Heartbeat_Success(t *testing.T) {
-	db := tempDB(t)
-	c, err := cistern.New(db, "mr")
-	if err != nil {
-		t.Fatal(err)
-	}
-	d, _ := c.Add("myrepo", "Test", "", 1)
-	c.Close()
-
-	mux := newDashboardMux(tempCfg(t), db)
-	req := httptest.NewRequest(http.MethodPost, "/api/droplets/"+d.ID+"/heartbeat", nil)
-	w := httptest.NewRecorder()
-	mux.ServeHTTP(w, req)
-
-	if w.Code != http.StatusOK {
-		t.Errorf("status = %d, want 200", w.Code)
-	}
-}
-
 // --- Notes ---
 
 func TestAPI_GetNotes_ReturnsNotes(t *testing.T) {

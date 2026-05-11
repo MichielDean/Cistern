@@ -1723,172 +1723,7 @@ func TestExternalRef_RoundTrips_ThroughSearch(t *testing.T) {
 	}
 }
 
-// --- Heartbeat round-trip tests ---
-
-// TestHeartbeat_RoundTrips_ThroughGet verifies that Get returns the
-// last_heartbeat_at written by Heartbeat(). A column scan order bug would
-// leave LastHeartbeatAt zero and this test would fail.
-func TestHeartbeat_RoundTrips_ThroughGet(t *testing.T) {
-	c := testClient(t)
-	item, err := c.Add("myrepo", "Task", "", 1)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	before := time.Now().UTC().Add(-time.Second)
-	if err := c.Heartbeat(item.ID); err != nil {
-		t.Fatal(err)
-	}
-	after := time.Now().UTC().Add(time.Second)
-
-	// When: Get is called.
-	got, err := c.Get(item.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	// Then: LastHeartbeatAt is populated.
-	if got.LastHeartbeatAt.IsZero() {
-		t.Fatal("Get: LastHeartbeatAt is zero after Heartbeat()")
-	}
-	if got.LastHeartbeatAt.Before(before) || got.LastHeartbeatAt.After(after) {
-		t.Errorf("Get: LastHeartbeatAt = %v, want between %v and %v", got.LastHeartbeatAt, before, after)
-	}
-}
-
-// TestHeartbeat_RoundTrips_ThroughList verifies that List returns the
-// last_heartbeat_at written by Heartbeat().
-func TestHeartbeat_RoundTrips_ThroughList(t *testing.T) {
-	c := testClient(t)
-	item, err := c.Add("myrepo", "Task", "", 1)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	before := time.Now().UTC().Add(-time.Second)
-	if err := c.Heartbeat(item.ID); err != nil {
-		t.Fatal(err)
-	}
-	after := time.Now().UTC().Add(time.Second)
-
-	// When: List is called.
-	items, err := c.List("myrepo", "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(items) != 1 {
-		t.Fatalf("List returned %d items, want 1", len(items))
-	}
-
-	// Then: LastHeartbeatAt is populated.
-	if items[0].LastHeartbeatAt.IsZero() {
-		t.Fatal("List: LastHeartbeatAt is zero after Heartbeat()")
-	}
-	if items[0].LastHeartbeatAt.Before(before) || items[0].LastHeartbeatAt.After(after) {
-		t.Errorf("List: LastHeartbeatAt = %v, want between %v and %v", items[0].LastHeartbeatAt, before, after)
-	}
-}
-
-// TestHeartbeat_RoundTrips_ThroughSearch verifies that Search returns the
-// last_heartbeat_at written by Heartbeat().
-func TestHeartbeat_RoundTrips_ThroughSearch(t *testing.T) {
-	c := testClient(t)
-	item, err := c.Add("myrepo", "Heartbeat task", "", 1)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	before := time.Now().UTC().Add(-time.Second)
-	if err := c.Heartbeat(item.ID); err != nil {
-		t.Fatal(err)
-	}
-	after := time.Now().UTC().Add(time.Second)
-
-	// When: Search is called.
-	results, err := c.Search("Heartbeat task", "", 0)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(results) != 1 {
-		t.Fatalf("Search returned %d items, want 1", len(results))
-	}
-
-	// Then: LastHeartbeatAt is populated.
-	if results[0].LastHeartbeatAt.IsZero() {
-		t.Fatal("Search: LastHeartbeatAt is zero after Heartbeat()")
-	}
-	if results[0].LastHeartbeatAt.Before(before) || results[0].LastHeartbeatAt.After(after) {
-		t.Errorf("Search: LastHeartbeatAt = %v, want between %v and %v", results[0].LastHeartbeatAt, before, after)
-	}
-}
-
-// TestHeartbeat_RoundTrips_ThroughGetReady verifies that GetReady returns the
-// last_heartbeat_at written by Heartbeat().
-func TestHeartbeat_RoundTrips_ThroughGetReady(t *testing.T) {
-	c := testClient(t)
-	item, err := c.Add("myrepo", "Task", "", 1)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	before := time.Now().UTC().Add(-time.Second)
-	if err := c.Heartbeat(item.ID); err != nil {
-		t.Fatal(err)
-	}
-	after := time.Now().UTC().Add(time.Second)
-
-	// When: GetReady is called.
-	got, err := c.GetReady("myrepo")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got == nil {
-		t.Fatal("GetReady returned nil")
-	}
-
-	// Then: LastHeartbeatAt is populated.
-	if got.LastHeartbeatAt.IsZero() {
-		t.Fatal("GetReady: LastHeartbeatAt is zero after Heartbeat()")
-	}
-	if got.LastHeartbeatAt.Before(before) || got.LastHeartbeatAt.After(after) {
-		t.Errorf("GetReady: LastHeartbeatAt = %v, want between %v and %v", got.LastHeartbeatAt, before, after)
-	}
-}
-
-// TestHeartbeat_RoundTrips_ThroughGetReadyForAqueduct verifies that
-// GetReadyForAqueduct returns the last_heartbeat_at written by Heartbeat().
-func TestHeartbeat_RoundTrips_ThroughGetReadyForAqueduct(t *testing.T) {
-	c := testClient(t)
-	item, err := c.Add("myrepo", "Task", "", 1)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	before := time.Now().UTC().Add(-time.Second)
-	if err := c.Heartbeat(item.ID); err != nil {
-		t.Fatal(err)
-	}
-	after := time.Now().UTC().Add(time.Second)
-
-	// When: GetReadyForAqueduct is called.
-	got, err := c.GetReadyForAqueduct("myrepo", "feature")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got == nil {
-		t.Fatal("GetReadyForAqueduct returned nil")
-	}
-
-	// Then: LastHeartbeatAt is populated.
-	if got.LastHeartbeatAt.IsZero() {
-		t.Fatal("GetReadyForAqueduct: LastHeartbeatAt is zero after Heartbeat()")
-	}
-	if got.LastHeartbeatAt.Before(before) || got.LastHeartbeatAt.After(after) {
-		t.Errorf("GetReadyForAqueduct: LastHeartbeatAt = %v, want between %v and %v", got.LastHeartbeatAt, before, after)
-	}
-}
-
-// TestSetExternalRef_ReturnsError_WhenDropletNotFound verifies that SetExternalRef
+// TestSetExternalRef_ReturnsError_WhenDropletNotFound verifies that SetExternalRef verifies that SetExternalRef
 // returns an error when the given ID does not exist in the database.
 func TestSetExternalRef_ReturnsError_WhenDropletNotFound(t *testing.T) {
 	c := testClient(t)
@@ -2234,69 +2069,6 @@ func TestSetAssignedAqueduct_WhenAlreadySet_DoesNotOverwrite(t *testing.T) {
 	}
 	if got.AssignedAqueduct != "cistern-alpha" {
 		t.Errorf("AssignedAqueduct after second SetAssignedAqueduct = %q, want %q (original must not be overwritten)", got.AssignedAqueduct, "cistern-alpha")
-	}
-}
-
-// TestNew_LastHeartbeatAtMigration_AddsColumnToExistingDB verifies that when
-// New() is called on a DB that predates the last_heartbeat_at column, the ALTER
-// TABLE migration adds the column so that Heartbeat() and subsequent reads work
-// without error.
-//
-// Given: a DB created without last_heartbeat_at (simulating a pre-migration install)
-// When:  New() is called to open that DB
-// Then:  Heartbeat() succeeds and Get returns a non-zero LastHeartbeatAt
-func TestNew_LastHeartbeatAtMigration_AddsColumnToExistingDB(t *testing.T) {
-	dbPath := filepath.Join(t.TempDir(), "legacy.db")
-
-	// Seed a DB that has stage_dispatched_at but not last_heartbeat_at,
-	// bypassing New() so the migration has not yet run.
-	seedDB, err := sql.Open("sqlite3", dbPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := seedDB.Exec(`CREATE TABLE IF NOT EXISTS droplets (
-		id TEXT PRIMARY KEY,
-		repo TEXT NOT NULL,
-		title TEXT NOT NULL,
-		description TEXT DEFAULT '',
-		priority INTEGER DEFAULT 2,
-		status TEXT DEFAULT 'open',
-		assignee TEXT DEFAULT '',
-		current_cataractae TEXT DEFAULT '',
-		outcome TEXT DEFAULT NULL,
-		assigned_aqueduct TEXT DEFAULT '',
-		last_reviewed_commit TEXT DEFAULT NULL,
-		external_ref TEXT DEFAULT NULL,
-		stage_dispatched_at DATETIME DEFAULT NULL,
-		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-		updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
-	)`); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := seedDB.Exec(`INSERT INTO droplets (id, repo, title) VALUES ('migrate-test', 'myrepo', 'heartbeat migration test')`); err != nil {
-		t.Fatal(err)
-	}
-	seedDB.Close()
-
-	// When: New() is called — the ALTER TABLE migration should add last_heartbeat_at.
-	c, err := New(dbPath, "bf")
-	if err != nil {
-		t.Fatalf("New() on legacy DB: %v", err)
-	}
-	defer c.Close()
-
-	// Then: Heartbeat must succeed (would fail with "no such column" without the migration).
-	if err := c.Heartbeat("migrate-test"); err != nil {
-		t.Fatalf("Heartbeat() after migration: %v", err)
-	}
-
-	// And: Get must return a populated LastHeartbeatAt.
-	got, err := c.Get("migrate-test")
-	if err != nil {
-		t.Fatalf("Get() after migration: %v", err)
-	}
-	if got.LastHeartbeatAt.IsZero() {
-		t.Error("Get: LastHeartbeatAt is zero after migration + Heartbeat(); expected non-zero")
 	}
 }
 
@@ -2873,32 +2645,6 @@ func TestRestart_ClearsStageDispatchedAt(t *testing.T) {
 	}
 }
 
-func TestRestart_ClearsLastHeartbeatAt(t *testing.T) {
-	c := testClient(t)
-	item, _ := c.Add("myrepo", "Task", "", 1)
-
-	if err := c.Heartbeat(item.ID); err != nil {
-		t.Fatal(err)
-	}
-	pre, _ := c.Get(item.ID)
-	if pre.LastHeartbeatAt.IsZero() {
-		t.Fatal("precondition: LastHeartbeatAt must be set after Heartbeat()")
-	}
-
-	got, err := c.Restart(item.ID, "implement")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !got.LastHeartbeatAt.IsZero() {
-		t.Errorf("LastHeartbeatAt = %v, want zero after restart", got.LastHeartbeatAt)
-	}
-
-	reloaded, _ := c.Get(item.ID)
-	if !reloaded.LastHeartbeatAt.IsZero() {
-		t.Errorf("reloaded LastHeartbeatAt = %v, want zero after restart", reloaded.LastHeartbeatAt)
-	}
-}
-
 // ── FilterSession CRUD ──
 
 func TestClient_CreateFilterSession(t *testing.T) {
@@ -3325,7 +3071,7 @@ func TestValidEventTypes_ContainsAllConstants(t *testing.T) {
 		EventPool, EventCancel,
 		EventExitNoOutcome, EventStall, EventRecovery,
 		EventCircuitBreaker, EventLoopRecovery,
-		EventAutoPromote, EventNoRoute, EventHeartbeat,
+		EventAutoPromote, EventNoRoute,
 	}
 	for _, e := range expected {
 		if !ValidEventTypes[e] {

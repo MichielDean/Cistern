@@ -111,7 +111,7 @@ func TestEndToEndSchemaVerification(t *testing.T) {
 		"id", "repo", "title", "description", "priority",
 		"status", "assignee", "current_cataractae", "outcome",
 		"assigned_aqueduct", "last_reviewed_commit", "external_ref",
-		"last_heartbeat_at", "created_at", "updated_at", "stage_dispatched_at",
+		"created_at", "updated_at", "stage_dispatched_at",
 	}
 
 	rows, err := c.db.Query(`PRAGMA table_info("droplets")`)
@@ -154,8 +154,8 @@ func TestEndToEndSchemaVerification(t *testing.T) {
 
 	var migrationCount int
 	c.db.QueryRow(`SELECT COUNT(*) FROM "_schema_migrations"`).Scan(&migrationCount)
-	if migrationCount != 19 {
-		t.Errorf("expected 19 migration records, got %d", migrationCount)
+	if migrationCount != 20 {
+		t.Errorf("expected 20 migration records, got %d", migrationCount)
 	}
 }
 

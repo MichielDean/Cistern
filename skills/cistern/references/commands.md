@@ -42,7 +42,6 @@ ct droplet restart <id> --cataractae delivery --notes "..."   # Re-enter with a 
 ct droplet pool <id>                    # Pool — cannot currently proceed
 ct droplet cancel <id> --reason "..."    # Cancel droplet — won't be implemented or no longer needed (reason required)
 ct droplet note <id> "..."               # Add a note
-ct droplet heartbeat <id>                # Record agent heartbeat (called by agents every 60 seconds)
 ```
 
 ### Tail — Stream Droplet Events
