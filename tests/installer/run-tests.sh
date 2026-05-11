@@ -324,7 +324,8 @@ fi
 
 # ── Scenario 4: Upgrade ───────────────────────────────────────────────────────
 # Given: ~/.cistern is pre-seeded with a "prior-version" install
-#        (stale config keys, old binary path) and existing credentials
+#        (valid schema with stale keys like old_binary_path, legacy_agent_timeout)
+#        and existing credentials
 # When:  ct init runs again (simulating an upgrade)
 # Then:  service comes up cleanly; ct doctor passes;
 #        credentials are not lost or silently overwritten
@@ -334,22 +335,38 @@ echo "=== Scenario: Upgrade ==="
 _reset_scenario_state
 
 # Given: pre-seed ~/.cistern with a prior-version config.
-# Unknown keys (old_binary_path, legacy_agent_timeout) are silently ignored by
-# the YAML parser, making this a valid-but-stale config that represents an
-# older installation.
+# The config uses the current schema (aqueducts + aqueduct refs) but also
+# includes stale keys (old_binary_path, legacy_agent_timeout) from a prior
+# version. YAML parser silently ignores unknown keys, so this represents
+# a valid-but-stale config from an upgraded installation.
 mkdir -p "${HOME}/.cistern"
 cat > "${HOME}/.cistern/cistern.yaml" <<'STALE_CFG_EOF'
 # Prior-version config — preserved by ct init (writeFileIfAbsent).
+aqueducts:
+  - name: default
+    cataractae:
+      - name: implement
+        type: agent
+        identity: virgo
+        on_pass: review
+      - name: review
+        type: agent
+        identity: marcia
+        on_pass: merge
+      - name: merge
+        type: automated
+        on_pass: done
+
 repos:
   - name: ScaledTest
     url: https://github.com/example/ScaledTest
-    workflow_path: aqueduct/aqueduct.yaml
+    aqueduct: default
     cataractae: 2
     names: [virgo, marcia]
     prefix: st
   - name: cistern
     url: https://github.com/example/cistern
-    workflow_path: aqueduct/aqueduct.yaml
+    aqueduct: default
     cataractae: 2
     names: [virgo, marcia]
     prefix: ct
