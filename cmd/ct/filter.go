@@ -1,29 +1,15 @@
 package main
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"strings"
 	"time"
 
 	"github.com/MichielDean/cistern/internal/provider"
 	"github.com/spf13/cobra"
 )
-
-// agentJSONOutput is the envelope returned by the agent's JSON output
-// mode (triggered by FormatArgs like --format json). The Result field
-// contains the assistant's raw text response; SessionID identifies the
-// conversation so it can be resumed.
-type agentJSONOutput struct {
-	Type      string `json:"type"`
-	Subtype   string `json:"subtype"`
-	IsError   bool   `json:"is_error"`
-	Result    string `json:"result"`
-	SessionID string `json:"session_id"`
-}
 
 // filterSessionResult holds the parsed output from a filtration LLM invocation.
 type filterSessionResult struct {
@@ -62,7 +48,7 @@ Use --output-format json for scriptable output (session_id + text).`,
 			if len(args) == 0 {
 				return fmt.Errorf("feedback argument required: ct filter --resume <id> '<feedback>'")
 			}
-			result, err := invokeFilterResume(preset, filterResume, strings.Join(args, " "))
+			result, err := filterAgentRunResume(preset, filterResume, strings.Join(args, " "))
 			if err != nil {
 				return err
 			}
@@ -94,78 +80,78 @@ func invokeFilterNew(preset provider.ProviderPreset, title, description, context
 	if description != "" {
 		userPrompt += "\nDescription: " + description
 	}
-	return callFilterAgent(preset, nil, buildFilterPrompt(contextBlock, userPrompt))
+	prompt := buildFilterPrompt(contextBlock, userPrompt)
+	result, err := filterAgentRun(preset, prompt)
+	if err != nil {
+		return filterSessionResult{}, err
+	}
+	// The NDJSON output from opencode run --format json already provides
+	// session_id in each event, so tryParseAgentJSON is no longer needed
+	// for the primary path. Keep it as a fallback for any embedded JSON.
+	if result.SessionID == "" {
+		if envelope := tryParseAgentJSON(result.Text); envelope != nil {
+			result.SessionID = envelope.SessionID
+			if envelope.Result != "" {
+				result.Text = envelope.Result
+			}
+		}
+	}
+	return result, nil
 }
 
 // invokeFilterResume resumes an existing filtration session with the given message
 // and returns the updated response with session_id.
 func invokeFilterResume(preset provider.ProviderPreset, sessionID, message string) (filterSessionResult, error) {
-	resumeFlag := preset.ResumeFlag
-	if resumeFlag == "" {
-		resumeFlag = "--resume"
+	result, err := filterAgentRunResume(preset, sessionID, message)
+	if err != nil {
+		return filterSessionResult{}, err
 	}
-	extraArgs := []string{resumeFlag, sessionID}
-	return callFilterAgent(preset, extraArgs, message)
+	if result.SessionID == "" {
+		if envelope := tryParseAgentJSON(result.Text); envelope != nil {
+			result.SessionID = envelope.SessionID
+			if envelope.Result != "" {
+				result.Text = envelope.Result
+			}
+		}
+	}
+	return result, nil
 }
 
-// callFilterAgent invokes the preset command with the configured FormatArgs,
-// optional extraArgs (e.g. --resume <id>), and the given prompt.
-// It returns the raw text response and the session_id from the JSON envelope.
-// If the agent does not produce parseable JSON output, the raw stdout becomes
-// the text (session_id will be empty in that case).
-func callFilterAgent(preset provider.ProviderPreset, extraArgs []string, prompt string) (filterSessionResult, error) {
-	for _, key := range preset.EnvPassthrough {
-		if os.Getenv(key) == "" {
-			return filterSessionResult{}, fmt.Errorf("%s is not set", key)
+// agentJSONEnvelope is the envelope returned by the agent when it produces
+// structured JSON output. This is the same format as opencode --format json.
+type agentJSONEnvelope struct {
+	Type      string `json:"type"`
+	Subtype   string `json:"subtype"`
+	IsError   bool   `json:"is_error"`
+	Result    string `json:"result"`
+	SessionID string `json:"session_id"`
+}
+
+// tryParseAgentJSON attempts to parse a JSON envelope from the agent's text output.
+// Returns nil if the text is not valid JSON or does not match the expected structure.
+func tryParseAgentJSON(text string) *agentJSONEnvelope {
+	// The agent may produce NDJSON (one JSON event per line) or a single JSON object.
+	// Try to find a line that looks like a complete/envelope event.
+	for _, line := range strings.Split(text, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || line[0] != '{' {
+			continue
+		}
+		var envelope agentJSONEnvelope
+		if err := json.Unmarshal([]byte(line), &envelope); err == nil {
+			if envelope.Type != "" && envelope.Result != "" {
+				return &envelope
+			}
 		}
 	}
-
-	// Build args: [Subcommand] [preset.Args...] [extraArgs...] [FormatArgs...] [PromptFlag] [prompt]
-	var args []string
-	if preset.NonInteractive.Subcommand != "" {
-		args = append(args, preset.NonInteractive.Subcommand)
-	}
-	args = append(args, preset.Args...)
-	args = append(args, extraArgs...)
-	args = append(args, preset.NonInteractive.FormatArgs...)
-	if preset.NonInteractive.PromptFlag != "" {
-		args = append(args, preset.NonInteractive.PromptFlag)
-	}
-	args = append(args, prompt)
-
-	ctx, cancel := context.WithTimeout(context.Background(), 600*time.Second)
-	defer cancel()
-
-	cmd := exec.CommandContext(ctx, preset.Command, args...)
-	if len(preset.ExtraEnv) > 0 {
-		env := os.Environ()
-		for k, v := range preset.ExtraEnv {
-			env = append(env, k+"="+v)
+	// Try parsing the entire text as a single JSON envelope
+	var envelope agentJSONEnvelope
+	if err := json.Unmarshal([]byte(strings.TrimSpace(text)), &envelope); err == nil {
+		if envelope.Type != "" {
+			return &envelope
 		}
-		cmd.Env = env
 	}
-
-	out, err := cmd.Output()
-	if err != nil {
-		if ee, ok := err.(*exec.ExitError); ok {
-			return filterSessionResult{}, fmt.Errorf("agent exec failed (exit %d): %s", ee.ExitCode(), strings.TrimSpace(string(ee.Stderr)))
-		}
-		return filterSessionResult{}, fmt.Errorf("agent exec failed: %w", err)
-	}
-
-	var envelope agentJSONOutput
-	if err := json.Unmarshal(out, &envelope); err != nil {
-		// Fallback: the agent may not produce parseable JSON; use raw output as text.
-		return filterSessionResult{Text: strings.TrimSpace(string(out))}, nil
-	}
-	if envelope.IsError {
-		return filterSessionResult{}, fmt.Errorf("agent returned error: %s", envelope.Result)
-	}
-
-	return filterSessionResult{
-		SessionID: envelope.SessionID,
-		Text:      envelope.Result,
-	}, nil
+	return nil
 }
 
 // printFilterResult writes the filtration result to stdout. Human format prints
@@ -195,6 +181,28 @@ func printFilterResult(result filterSessionResult, outputFormat string) error {
 		fmt.Fprintln(os.Stderr, result.SessionID)
 	}
 	return nil
+}
+
+const filterTimeoutEnvKey = "CT_FILTER_TIMEOUT"
+
+// filterTimeout returns the timeout for a filter session. Defaults to 10 minutes.
+// Can be overridden with CT_FILTER_TIMEOUT environment variable (in seconds).
+func filterTimeout() time.Duration {
+	if v := os.Getenv(filterTimeoutEnvKey); v != "" {
+		if d, err := time.ParseDuration(v + "s"); err == nil {
+			return d
+		}
+	}
+	return 10 * time.Minute
+}
+
+// callFilterAgent is a stub retained for backward compatibility with test code.
+// The direct-exec approach has been replaced by opencode run --format json
+// (filterAgentRun). This function always returns an error.
+//
+// Deprecated: Use filterAgentRun instead.
+func callFilterAgent(preset provider.ProviderPreset, extraArgs []string, prompt string) (filterSessionResult, error) {
+	return filterSessionResult{}, fmt.Errorf("callFilterAgent is deprecated: filter now uses opencode run --format json (filterAgentRun)")
 }
 
 func init() {

@@ -103,17 +103,10 @@ Filtration sends the rough title + description through an LLM that:
 - May split one idea into multiple well-specified droplets
 - Sets appropriate complexity and priority
 
-Requires a TTY — run via tmux. Example wrapper pattern:
+Requires a TTY or `--dangerously-skip-permissions` flag. The `ct filter` command uses `opencode run --format json` under the hood for programmatic output and `--resume` support.
 
 ```bash
-cat > /tmp/add-droplet.sh << 'EOF'
-#!/bin/bash
-export PATH="$HOME/go/bin:$HOME/.local/bin:$PATH"
 ct droplet add --repo cistern --filter --title "My idea" --description "Rough description here"
-EOF
-chmod +x /tmp/add-droplet.sh
-tmux new-session -d -s filtration
-tmux send-keys -t filtration "/tmp/add-droplet.sh" Enter
 ```
 
 ## Import from External Trackers

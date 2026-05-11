@@ -112,7 +112,6 @@ var builtins = []ProviderPreset{
 		ResumeFlag:       "-s",
 		NonInteractive: NonInteractiveConfig{
 			Subcommand: "run",
-			FormatArgs: []string{"--format", "json"},
 		},
 	},
 }

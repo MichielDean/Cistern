@@ -89,6 +89,12 @@ Filtration is a **thinking tool**, not a filing tool. It refines ideas into clea
 - **Do not set provider API keys before running `ct filter`** — ct filter uses the opencode CLI, which manages its own credentials. Setting API keys in the environment may cause authentication conflicts.
 - **Run `ct filter` from `~/cistern`** — it uses `--allowedTools` to read codebase context. Running from another directory gives the agent no context.
 - **Don't use `--description` for long text** — pass the title only; provide full context in the first interactive turn instead.
+- **`--file` and `--repo` flags are removed** — they no longer exist on `ct filter`
+
+**Troubleshooting `ct filter` failures:**
+- **"Session not found" error**: Caused by `OPENCODE_SERVER_USERNAME`, `OPENCODE_SERVER_PASSWORD`, `OPENCODE_PID`, or `OPENCODE` env vars being set. These cause opencode to connect to an existing server session instead of creating a new one. `ct filter` automatically unsets these vars in the subprocess environment. If running `opencode run` manually, unset them: `unset OPENCODE_SERVER_USERNAME OPENCODE_SERVER_PASSWORD OPENCODE_PID OPENCODE`
+- **Empty response**: The `opencode run --format json` command must produce NDJSON output on stdout. If stderr shows errors but stdout is empty, check that `--dangerously-skip-permissions` is included and the model is valid
+- **Timeout (10 min default)**: Increase with `CT_FILTER_TIMEOUT` env var (in seconds): `CT_FILTER_TIMEOUT=600 ct filter --title "..."`
 
 **Step 1 — Start (from ~/cistern, no provider API keys exported):**
 ```bash
@@ -112,7 +118,7 @@ ct droplet add --title "Second droplet" --repo <repo> --complexity standard \
 
 **Rules:**
 - Never use `ct droplet add --filter` — fires-and-forgets, no conversation
-- Never use `ct filter --file` — the finalize JSON step is lossy and drops `depends_on`; always file manually after filtration
+- `ct filter --file` and `ct filter --repo` are removed flags — they don't exist
 - Minimum 3 rounds. Keep going past 3 until the spec is unambiguous — every cataracta (implement, reviewer, QA, delivery) should be able to read CONTEXT.md and have the same understanding of what needs to change, with no guessing about scope, file locations, or acceptance criteria. Stop when the spec is concrete, not when the count hits a number.
 - After each round, present the updated spec as a numbered list with dependencies stated in plain text (e.g. "Droplet 2 requires droplet 1 to be delivered first")
 - After each session, give a recommendation: ready to file, or needs more passes? Say why.
