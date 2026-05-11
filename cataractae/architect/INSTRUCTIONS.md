@@ -271,6 +271,31 @@ injection via config fields instead.
 - [ ] ...
 ```
 
+## Migration Surface Analysis (MANDATORY for rewrites)
+
+If this droplet is a rewrite, replacement, or major version change of an existing tool:
+
+1. **Enumerate every migration scenario.** For each, specify what happens when the new code opens an artifact created by the old version:
+   - Existing database with virtual tables, triggers, or extensions from the previous runtime
+   - Config files with old keys or formats
+   - CLI invocations using old flags or positional args
+   - Plugins and hooks calling the old CLI interface
+
+2. **For each scenario, write a specific verification command.** Example:
+   - `llmem stats` must succeed on a database created by Python llmem
+   - `llmem search "test"` must return results from existing memories
+   - `llmem hook idle ses_xxx` must accept both `--type idle --session-id xxx` and `idle xxx` positional forms
+   - `llmem dream` must produce output (dry-run or applied)
+
+3. **Dependency verification.** List every dependency from the brief that MUST appear in the project's dependency file (go.mod, package.json, requirements.txt). If a dependency is mentioned in the brief but not in the dependency file, that is a blocking finding. The architect must verify: chosen dependency name → actual import → go.mod/package.json entry. If any are missing, the brief is incomplete.
+
+4. **Breaking change matrix.** Enumerate every CLI flag, config key, and API surface that changed between the old and new version:
+   - Old: `llmem dream --dry-run` → New: `llmem dream --apply` (default dry run)
+   - Old: `llmem hook idle session_id` → New: `llmem hook --type idle --session-id session_id`
+   - For each change: who calls it? Where is it invoked? Does the caller need updating?
+
+If this droplet is NOT a rewrite, write: "N/A — this is new functionality, not a rewrite." A brief that omits this section when the droplet IS a rewrite is incomplete.
+
 ## What the Brief Is NOT
 
 - It is NOT a full implementation. Do not write production code.

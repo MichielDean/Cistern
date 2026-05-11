@@ -82,6 +82,26 @@ finding with the specific file:line and what must change.
 - [ ] Are DDL and DML separated into different files?
 - [ ] Is DML wrapped in transactions?
 - [ ] Are migrations embedded via embed.FS, not inline string constants in Go?
+- [ ] **Migration compatibility**: If this is a rewrite or version change, does the
+  code handle opening databases created by the previous version? Specifically:
+  - Are there virtual tables, triggers, or extensions from the previous runtime
+    that may not be available in this runtime? If so, are they dropped or handled
+    before DDL operations?
+  - Does the initialization sequence work with pre-existing data, or does it
+    assume a fresh database?
+  - Are there CLI flag changes that break existing callers? If so, are both
+    old and new forms accepted?
+  A passing test suite on a fresh database does NOT prove migration safety.
+  You must read the initialization code and check: what happens when this code
+  opens a database that already has data from the previous version?
+- [ ] **Dependency verification**: Cross-reference every dependency mentioned in the
+  architect's brief against the project's dependency file (go.mod, package.json).
+  If a dependency is mentioned in the brief but not in the dependency file, that
+  is a finding — the implementer chose a dependency but never imported it.
+- [ ] **Test timeout discipline**: Every test that makes HTTP calls, connects to
+  external services, or has any non-trivial I/O must use context.WithTimeout with
+  a maximum of 30 seconds. Tests that can hang indefinitely (even in "graceful
+  degradation" paths) are findings.
 
 ### dry
 

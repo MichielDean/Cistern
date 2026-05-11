@@ -131,6 +131,21 @@ finding naming what is missing.
 - Verify migrations are embedded via embed.FS, not inline string constants
 - If the diff adds DB migrations, verify an E2E schema verification test exists
   that runs the migrations and verifies the resulting schema
+- **Migration compatibility test**: If this is a rewrite or major version change,
+  verify there is an integration test that opens a pre-existing database (not a
+  fresh t.TempDir database) and confirms the migration succeeds. A test suite
+  that only creates fresh databases does NOT prove migration compatibility.
+  If no such test exists, recirculate with: "Missing migration compatibility test
+  — add a test that creates a database with the previous version's schema/data,
+  then opens it with the new code and verifies core operations work."
+- **Dependency verification**: Verify every dependency the architect brief chose
+  is actually imported in the project's dependency file (go.mod, package.json).
+  If a dependency was chosen but not imported, that is a finding.
+- **Test timeout discipline**: Every test that makes HTTP calls or connects to
+  external services must use context.WithTimeout with a maximum of 30 seconds.
+  Tests that can hang indefinitely on unavailable services are findings, even if
+  the code has "graceful degradation" — degradation is not graceful if it takes
+  300 seconds.
 
 ### dry
 
@@ -190,6 +205,20 @@ For any diff that adds or modifies an HTTP API endpoint, a web UI, or a CLI comm
 1. **Start the actual server.** Build it, run it, hit the endpoint with `curl` or the test runner. An empty-database GET must return valid JSON with `[]` for every collection field, not `null`.
 2. **Load the actual UI.** If the diff adds or modifies a web page, open it in a browser (or Playwright). Verify it renders without JS console errors. Verify it handles empty data (no items, no lists) without crashing.
 3. **Test the boundary.** If the diff adds serialization code (Go struct → JSON, Python model → JSON, etc.), build the zero-value struct, serialize it, and assert no field is `null` where the consumer expects a collection.
+4. **Deploy-and-verify for rewrites.** If this diff is a rewrite of an existing tool, you MUST:
+   - Build the new binary
+   - Deploy it (replace the old binary)
+   - Run core commands against the EXISTING data store (not a fresh one):
+     - Stats/count commands must return valid results
+     - Search/query commands must return results from real data
+     - Hook/lifecycle commands must work with real session data
+   - Verify every CLI flag that existed in the old version still works (or document
+     the breaking change with migration instructions)
+   - "Tests pass on a fresh database" is NOT sufficient proof for a rewrite.
+     A rewrite MUST be verified against existing production data.
+   If you cannot deploy and verify (no access to production data), state that
+   explicitly: "I could not deploy-and-verify this rewrite against existing data.
+   This is an unverified gap."
 
 If you cannot run the code (no server available, no browser), state that explicitly in your findings and flag it as a gap. "I could not smoke-test this" is a finding.
 
