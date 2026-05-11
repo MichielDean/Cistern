@@ -395,17 +395,6 @@ else
 
     _install_skill_stubs
 
-    # Diagnostic: show config and service state before starting
-    echo "=== DIAGNOSTIC: upgrade config ==="
-    cat "${HOME}/.cistern/cistern.yaml"
-    echo "=== DIAGNOSTIC: env file ==="
-    cat "${HOME}/.cistern/env"
-    echo "=== DIAGNOSTIC: cataractae dir ==="
-    ls -la "${HOME}/.cistern/cataractae/" 2>&1 || true
-    echo "=== DIAGNOSTIC: skills dir ==="
-    ls -la "${HOME}/.cistern/skills/" 2>&1 || true
-    echo "=== END DIAGNOSTIC ==="
-
     # Then: service comes up cleanly with the (stale-but-valid) config.
     _start_castellarius_with_retry
 
@@ -422,7 +411,7 @@ else
         fi
     else
         _svc_state=$(systemctl is-active cistern-castellarius.service 2>/dev/null || true)
-        _log=$(journalctl -u cistern-castellarius.service -n 20 --no-pager 2>/dev/null || true)
+        _log=$(journalctl -u cistern-castellarius.service -n 5 --no-pager 2>/dev/null || true)
         fail "upgrade_service_active" \
             "service did not reach active state after upgrade (state=${_svc_state}): ${_log}"
     fi

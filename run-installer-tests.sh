@@ -215,31 +215,8 @@ test_upgrade() {
     if ! exec_in_container bash -c "
         rm -rf '${home_dir}' &&
         mkdir -p '${cistern_dir}/aqueduct' '${cistern_dir}/cataractae' &&
-        cat > '${cistern_dir}/cistern.yaml' << 'STALE_CFG_EOF'
-aqueducts:
-  - name: default
-    cataractae:
-      - name: implement
-        type: agent
-        identity: virgo
-        on_pass: review
-      - name: review
-        type: agent
-        identity: marcia
-        on_pass: merge
-      - name: merge
-        type: automated
-        on_pass: done
-repos:
-  - name: TestRepo
-    url: https://github.com/example/TestRepo
-    aqueduct: default
-    cataractae: 2
-    names: [virgo, marcia]
-    prefix: tr
-stale_old_key: removed_in_v2
-STALE_CFG_EOF
-        " &&
+        printf 'aqueducts:\\n  - name: default\\n    cataractae:\\n      - name: implement\\n        type: agent\\n        identity: virgo\\n        on_pass: review\\n      - name: review\\n        type: agent\\n        identity: marcia\\n        on_pass: merge\\n      - name: merge\\n        type: automated\\n        on_pass: done\\nrepos:\\n  - name: TestRepo\\n    url: https://github.com/example/TestRepo\\n    aqueduct: default\\n    cataractae: 2\\n    names: [virgo, marcia]\\n    prefix: tr\\nstale_old_key: removed_in_v2\\n' \
+            > '${cistern_dir}/cistern.yaml' &&
         printf 'GH_TOKEN=ghp-test-old-key\n' \
             > '${cistern_dir}/env' &&
         chmod 600 '${cistern_dir}/env'
