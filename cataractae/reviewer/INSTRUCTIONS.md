@@ -37,6 +37,26 @@ The examples below show how this principle manifests — but they are examples o
 - A migration that bundles CREATE TABLE and INSERT of reference data — schema changes and data seeding have different rollback requirements
 - Unquoted SQL identifiers in migrations — the code assumes reserved words won't be used, which is a contract with the SQL dialect that may be violated
 
+## Droplet Reality Check
+
+Before reviewing the diff, read the original droplet (from CONTEXT.md or the droplet body)
+and compare it against DESIGN_BRIEF.md. The brief is what the implementer followed,
+but the droplet is what was actually requested. Check:
+
+1. **Did the brief omit anything the droplet asked for?** If the droplet mentions
+   "must work with existing databases" and the brief has no migration compatibility
+   section, that's a gap the reviewer must flag.
+2. **Does the implementation deliver what the droplet asked for?** The brief may be
+   accurate, but the implementation may have drifted. Cross-reference the droplet's
+   requirements against what the code actually does.
+3. **If this is a rewrite**, does the implementation work with data created by the
+   previous version? A diff that only adds fresh-database tests misses the critical
+   scenario.
+
+If you find a gap between the droplet and the brief, flag it as a finding even if
+the code correctly implements the brief. The brief is not the source of truth — the
+droplet is.
+
 ## How You Read Code
 
 Do not scan for categories. Ask questions per change: what did this assume was true before? Is it still true? Who called this? What do they expect?

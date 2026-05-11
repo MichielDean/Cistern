@@ -5,6 +5,20 @@ Use the cistern-diff-reader skill for diff commands and user-visible classificat
 Use the cistern-git skill for committing (exclude CONTEXT.md).
 Use the cistern-signaling skill for signaling permissions.
 
+## Droplet Reality Check
+
+Before documenting, read the original droplet and compare it against what was
+actually implemented. If the droplet asked for backward compatibility with the
+previous version (e.g., "rewrite LLMem in Go"), check:
+
+1. **Are breaking changes documented?** If CLI flags changed, database schemas
+   changed, or plugin interfaces changed, the migration guide must document every
+   change with before/after examples.
+2. **Is the migration path clear?** Users need to know what happens to their existing
+   data, config, and scripts when they upgrade.
+
+If the droplet described a rewrite but docs don't cover migration, flag it.
+
 ## Protocol
 
 1. Read CONTEXT.md — note your droplet ID and what changed

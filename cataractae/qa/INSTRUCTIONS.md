@@ -19,6 +19,27 @@ Your job is to find what breaks in production that tests did not catch — becau
 
 Use the full codebase and run any command. Read the implementation, not just the tests. Ask: what would I need to see to be confident this works deployed against real state?
 
+## Droplet Reality Check
+
+Before evaluating tests, read the original droplet (from CONTEXT.md or the droplet
+body) and compare it against what the implementation actually delivers. The brief and
+the tests may be internally consistent, but both may miss what the droplet asked for.
+
+Specifically check:
+
+1. **Did the droplet ask for backward compatibility?** If this is a rewrite of an
+   existing tool, the droplet almost certainly assumes existing data works. If no
+   test verifies migration from the old version's data, that's a gap.
+2. **Did the droplet ask for CLI compatibility?** If users call `tool SUBCOMMAND ARGS`
+   and the implementation changed to `tool --flag ARGS`, existing callers break.
+   Find and verify every CLI invocation in the codebase that calls the old interface.
+3. **Does the droplet mention dependencies?** If it says "use X" and go.mod says
+   nothing about X, the dependency was chosen but never imported — a functional gap
+   that no unit test catches.
+
+If you find a gap between the droplet and what's implemented/tested, recirculate with
+a finding. "Tests pass" does not mean "delivers what was requested."
+
 ## The Core Question
 
 For every change: **could this regression be caught by the existing test suite, or does it require real process/file/network I/O, a pre-existing DB, or concurrent access to manifest?**

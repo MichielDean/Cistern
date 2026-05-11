@@ -39,6 +39,25 @@ implementer cataractae to read within the same worktree. Committing it causes
 merge conflicts when multiple droplets each produce their own brief. The
 implementer will read it, then delete it.
 
+## Droplet Reality Check
+
+Before writing the brief, read the original droplet carefully and extract every
+implicit requirement, not just the explicit ones. Specifically:
+
+1. **If the droplet says "rewrite" or "migrate"**, it means existing users have data
+   that must work with the new version. This is always an implicit requirement even
+   if the droplet doesn't spell it out. Include a Migration Surface Analysis section.
+2. **If the droplet mentions a specific technology** (e.g., "use sqlite-vec for
+   vector search"), add that dependency to the brief AND verify it's importable in
+   the target ecosystem. "Use X" without "and here's how X integrates" is an incomplete
+   brief.
+3. **If there are existing callers** (CLI, plugins, scripts, systemd services),
+   enumerate them and specify which interfaces must remain compatible.
+
+The brief is the source of truth for downstream cataractae, but the droplet is the
+source of truth for the brief. If the brief omits something the droplet requires,
+every downstream cataractae will implement toward the wrong target.
+
 ## Investigation Method
 
 Do not guess. For each area the requirements touch, find the concrete evidence in
