@@ -243,34 +243,9 @@ func TestDropletLog_InvalidFormat(t *testing.T) {
 	}
 }
 
-func TestDropletLog_NoSyntheticHeartbeat(t *testing.T) {
+func TestDropletLog_NoteOrdering(t *testing.T) {
 	c := setupLogTestDB(t)
-	item, err := c.Add("myrepo", "Heartbeat task", "", 1)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	c.GetReadyForAqueduct("myrepo", "default")
-	c.Assign(item.ID, "worker-1", "implement")
-	c.AddNote(item.ID, "implement", "started")
-	err = c.Heartbeat(item.ID)
-	if err != nil {
-		t.Fatalf("heartbeat failed: %v", err)
-	}
-
-	out, err := runLogCapture(t, item.ID)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	if strings.Contains(out, "last heartbeat recorded") {
-		t.Errorf("log output should not contain synthetic heartbeat detail: %s", out)
-	}
-}
-
-func TestDropletLog_HeartbeatInChronologicalOrder(t *testing.T) {
-	c := setupLogTestDB(t)
-	item, err := c.Add("myrepo", "Heartbeat order task", "", 1)
+	item, err := c.Add("myrepo", "Note ordering task", "", 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -278,11 +253,6 @@ func TestDropletLog_HeartbeatInChronologicalOrder(t *testing.T) {
 	c.GetReadyForAqueduct("myrepo", "default")
 	c.Assign(item.ID, "worker-1", "implement")
 	c.AddNote(item.ID, "implement", "early note")
-	err = c.Heartbeat(item.ID)
-	if err != nil {
-		t.Fatalf("heartbeat failed: %v", err)
-	}
-
 	time.Sleep(10 * time.Millisecond)
 	c.AddNote(item.ID, "implement", "late note")
 
@@ -291,13 +261,13 @@ func TestDropletLog_HeartbeatInChronologicalOrder(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	heartbeatIdx := strings.Index(out, "heartbeat")
+	noteIdx := strings.Index(out, "early note")
 	lateNoteIdx := strings.Index(out, "late note")
-	if heartbeatIdx == -1 || lateNoteIdx == -1 {
-		t.Fatalf("log output missing expected entries: %s", out)
+	if noteIdx == -1 || lateNoteIdx == -1 {
+		t.Fatalf("log output missing expected notes: %s", out)
 	}
-	if heartbeatIdx > lateNoteIdx {
-		t.Errorf("heartbeat should appear before late note in chronological order: heartbeat at %d, late note at %d", heartbeatIdx, lateNoteIdx)
+	if noteIdx > lateNoteIdx {
+		t.Errorf("notes not in chronological order: early note at %d, late note at %d", noteIdx, lateNoteIdx)
 	}
 }
 
@@ -526,7 +496,7 @@ func TestDisplayInfo_DisplaysHumanReadableDetails(t *testing.T) {
 		{
 			name:     "stall event shows step, elapsed",
 			evt:      "stall",
-			detail:   `{"cataractae":"implement","elapsed":"45m","heartbeat":"2026-04-21T10:00:00Z"}`,
+			detail:   `{"cataractae":"implement","elapsed":"45m"}`,
 			wantEvt:  "stall",
 			wantSub:  "step: implement, elapsed: 45m",
 			wantOmit: `"cataractae"`,

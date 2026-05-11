@@ -286,9 +286,9 @@ func TestRecoverInProgress(t *testing.T) {
 	}
 }
 
-// --- heartbeatRepo tests ---
+// --- livenessCheckRepo tests ---
 
-func TestHeartbeatRepo(t *testing.T) {
+func TestLivenessCheckRepo(t *testing.T) {
 	tests := []struct {
 		name       string
 		item       *cistern.Droplet
@@ -297,7 +297,7 @@ func TestHeartbeatRepo(t *testing.T) {
 		{
 			name: "writes stall note for droplet with no recent signals",
 			item: &cistern.Droplet{
-				ID: "hb-1", CurrentCataractae: "implement", Status: "in_progress",
+				ID: "lc-1", CurrentCataractae: "implement", Status: "in_progress",
 				Assignee: "", Outcome: "",
 			},
 			wantEvents: 2, // stall + recovery
@@ -305,7 +305,7 @@ func TestHeartbeatRepo(t *testing.T) {
 		{
 			name: "skips item with outcome",
 			item: &cistern.Droplet{
-				ID: "hb-2", CurrentCataractae: "review", Status: "in_progress",
+				ID: "lc-2", CurrentCataractae: "review", Status: "in_progress",
 				Assignee: "", Outcome: "pass",
 			},
 			wantEvents: 0,
@@ -316,7 +316,7 @@ func TestHeartbeatRepo(t *testing.T) {
 			client := newMockClient()
 			client.items[tc.item.ID] = tc.item
 			sched := testScheduler(client, newMockRunner(client))
-			sched.heartbeatRepo(context.Background(), sched.config.Repos[0])
+			sched.livenessCheckRepo(context.Background(), sched.config.Repos[0])
 			client.mu.Lock()
 			defer client.mu.Unlock()
 			if len(client.events) != tc.wantEvents {
@@ -326,16 +326,13 @@ func TestHeartbeatRepo(t *testing.T) {
 	}
 }
 
-func TestHeartbeatRepo_StallDetected_ForAssignedDroplet(t *testing.T) {
-	// A droplet assigned to a worker with no recent signals should receive a
-	// stall note. Mock tmux as alive so the liveness check passes through to
-	// the stall detector.
+func TestLivenessCheckRepo_StallDetected_ForAssignedDroplet(t *testing.T) {
 	orig := isTmuxAliveFn
 	isTmuxAliveFn = func(_ string) bool { return true }
 	t.Cleanup(func() { isTmuxAliveFn = orig })
 	client := newMockClient()
 	item := &cistern.Droplet{
-		ID:                "hb-assigned-stall",
+		ID:                "lc-assigned-stall",
 		CurrentCataractae: "implement",
 		Status:            "in_progress",
 		Assignee:          "alpha",
@@ -344,7 +341,11 @@ func TestHeartbeatRepo_StallDetected_ForAssignedDroplet(t *testing.T) {
 	client.items[item.ID] = item
 
 	sched := testScheduler(client, newMockRunner(client))
-	sched.heartbeatRepo(context.Background(), sched.config.Repos[0])
+	origMtime := sessionLogMtimeFn
+	sessionLogMtimeFn = func(sessionID string) (time.Time, error) { return time.Time{}, nil }
+	t.Cleanup(func() { sessionLogMtimeFn = origMtime })
+
+	sched.livenessCheckRepo(context.Background(), sched.config.Repos[0])
 
 	client.mu.Lock()
 	defer client.mu.Unlock()
@@ -353,27 +354,26 @@ func TestHeartbeatRepo_StallDetected_ForAssignedDroplet(t *testing.T) {
 	}
 }
 
-func TestHeartbeatRepo_ActiveDroplet_NotStalled(t *testing.T) {
-	// A droplet whose newest note signal is within the stall threshold should
-	// not receive a stall event. Mock tmux as alive so the liveness check passes
-	// through to the stall detector.
+func TestLivenessCheckRepo_ActiveDroplet_NotStalled(t *testing.T) {
 	orig := isTmuxAliveFn
 	isTmuxAliveFn = func(_ string) bool { return true }
 	t.Cleanup(func() { isTmuxAliveFn = orig })
 	client := newMockClient()
 	item := &cistern.Droplet{
-		ID:                "hb-active",
+		ID:                "lc-active",
 		CurrentCataractae: "implement",
 		Status:            "in_progress",
 		Assignee:          "alpha",
 		Outcome:           "",
-		// Recent heartbeat: 1 minute ago, well within the 45-minute default threshold.
-		LastHeartbeatAt: time.Now().Add(-1 * time.Minute),
 	}
 	client.items[item.ID] = item
 
 	sched := testScheduler(client, newMockRunner(client))
-	sched.heartbeatRepo(context.Background(), sched.config.Repos[0])
+	origMtime := sessionLogMtimeFn
+	sessionLogMtimeFn = func(sessionID string) (time.Time, error) { return time.Now().Add(-1 * time.Minute), nil }
+	t.Cleanup(func() { sessionLogMtimeFn = origMtime })
+
+	sched.livenessCheckRepo(context.Background(), sched.config.Repos[0])
 
 	client.mu.Lock()
 	defer client.mu.Unlock()
@@ -382,24 +382,26 @@ func TestHeartbeatRepo_ActiveDroplet_NotStalled(t *testing.T) {
 	}
 }
 
-func TestHeartbeatRepo_UnknownAssignee_WritesStallNote(t *testing.T) {
-	// A droplet with an unknown assignee and no recent signals should receive
-	// a stall note. Mock tmux as alive so liveness check passes through.
+func TestLivenessCheckRepo_UnknownAssignee_WritesStallNote(t *testing.T) {
 	orig := isTmuxAliveFn
 	isTmuxAliveFn = func(_ string) bool { return true }
 	t.Cleanup(func() { isTmuxAliveFn = orig })
 	client := newMockClient()
 	item := &cistern.Droplet{
-		ID:                "hb-unknown",
+		ID:                "lc-unknown",
 		CurrentCataractae: "implement",
 		Status:            "in_progress",
-		Assignee:          "removed-aqueduct", // not in pool
+		Assignee:          "removed-aqueduct",
 		Outcome:           "",
 	}
 	client.items[item.ID] = item
 
 	sched := testScheduler(client, newMockRunner(client))
-	sched.heartbeatRepo(context.Background(), sched.config.Repos[0])
+	origMtime := sessionLogMtimeFn
+	sessionLogMtimeFn = func(sessionID string) (time.Time, error) { return time.Time{}, nil }
+	t.Cleanup(func() { sessionLogMtimeFn = origMtime })
+
+	sched.livenessCheckRepo(context.Background(), sched.config.Repos[0])
 
 	client.mu.Lock()
 	defer client.mu.Unlock()
@@ -408,11 +410,11 @@ func TestHeartbeatRepo_UnknownAssignee_WritesStallNote(t *testing.T) {
 	}
 }
 
-// TestHeartbeatRepo_ExitNoOutcome_AddsNoteAndResetsToOpen verifies that when
-// a tmux session is dead and the item is old enough, heartbeatRepo records an
+// TestLivenessCheckRepo_ExitNoOutcome_AddsNoteAndResetsToOpen verifies that when
+// a tmux session is dead and the item is old enough, livenessCheckRepo records an
 // exit_no_outcome event (containing session, worker, and cataractae) and resets the
 // droplet to open for re-dispatch.
-func TestHeartbeatRepo_ExitNoOutcome_AddsNoteAndResetsToOpen(t *testing.T) {
+func TestLivenessCheckRepo_ExitNoOutcome_AddsNoteAndResetsToOpen(t *testing.T) {
 	orig := isTmuxAliveFn
 	isTmuxAliveFn = func(_ string) bool { return false }
 	t.Cleanup(func() { isTmuxAliveFn = orig })
@@ -424,13 +426,13 @@ func TestHeartbeatRepo_ExitNoOutcome_AddsNoteAndResetsToOpen(t *testing.T) {
 		Status:            "in_progress",
 		Assignee:          "alpha",
 		Outcome:           "",
-		UpdatedAt:         time.Now().Add(-10 * time.Minute), // old enough
+		UpdatedAt:         time.Now().Add(-10 * time.Minute),
 		StageDispatchedAt: time.Now().Add(-10 * time.Minute),
 	}
 	client.items[item.ID] = item
 
 	sched := testScheduler(client, newMockRunner(client))
-	sched.heartbeatRepo(context.Background(), sched.config.Repos[0])
+	sched.livenessCheckRepo(context.Background(), sched.config.Repos[0])
 
 	client.mu.Lock()
 	defer client.mu.Unlock()
@@ -441,15 +443,14 @@ func TestHeartbeatRepo_ExitNoOutcome_AddsNoteAndResetsToOpen(t *testing.T) {
 	if client.events[0].eventType != cistern.EventExitNoOutcome {
 		t.Errorf("event type = %q, want %q", client.events[0].eventType, cistern.EventExitNoOutcome)
 	}
-	// Droplet must be reset to open for re-dispatch.
 	if got := client.items[item.ID].Status; got != "open" {
 		t.Errorf("droplet status after exit reset = %q, want %q", got, "open")
 	}
 }
 
-// TestHeartbeatRepo_ExitGuardYoungSession_Skipped verifies that a droplet whose
+// TestLivenessCheckRepo_ExitGuardYoungSession_Skipped verifies that a droplet whose
 // tmux session is dead but was dispatched very recently is skipped (age guard).
-func TestHeartbeatRepo_ExitGuardYoungSession_Skipped(t *testing.T) {
+func TestLivenessCheckRepo_ExitGuardYoungSession_Skipped(t *testing.T) {
 	orig := isTmuxAliveFn
 	isTmuxAliveFn = func(_ string) bool { return false }
 	t.Cleanup(func() { isTmuxAliveFn = orig })
@@ -461,12 +462,12 @@ func TestHeartbeatRepo_ExitGuardYoungSession_Skipped(t *testing.T) {
 		Status:            "in_progress",
 		Assignee:          "alpha",
 		Outcome:           "",
-		UpdatedAt:         time.Now(), // very recent — within age guard
+		UpdatedAt:         time.Now(),
 	}
 	client.items[item.ID] = item
 
 	sched := testScheduler(client, newMockRunner(client))
-	sched.heartbeatRepo(context.Background(), sched.config.Repos[0])
+	sched.livenessCheckRepo(context.Background(), sched.config.Repos[0])
 
 	client.mu.Lock()
 	defer client.mu.Unlock()
@@ -479,24 +480,24 @@ func TestHeartbeatRepo_ExitGuardYoungSession_Skipped(t *testing.T) {
 	}
 }
 
-func TestHeartbeatInProgress_CallsHeartbeatForAllRepos(t *testing.T) {
+func TestLivenessCheck_CallsLivenessCheckForAllRepos(t *testing.T) {
 	client := newMockClient()
 	item := &cistern.Droplet{
-		ID:                "hb-all-1",
+		ID:                "lc-all-1",
 		CurrentCataractae: "implement",
 		Status:            "in_progress",
 		Assignee:          "",
 		Outcome:           "",
 	}
-	client.items["hb-all-1"] = item
+	client.items["lc-all-1"] = item
 
 	sched := testScheduler(client, newMockRunner(client))
-	sched.heartbeatInProgress(context.Background())
+	sched.livenessCheck(context.Background())
 
 	client.mu.Lock()
 	defer client.mu.Unlock()
 	if len(client.events) != 2 {
-		t.Errorf("heartbeatInProgress: expected 2 events (stall + recovery) for orphaned item, got %d", len(client.events))
+		t.Errorf("livenessCheck: expected 2 events (stall + recovery) for orphaned item, got %d", len(client.events))
 	}
 }
 

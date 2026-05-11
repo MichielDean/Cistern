@@ -1006,33 +1006,6 @@ var dropletRecirculateCmd = &cobra.Command{
 	},
 }
 
-// --- cistern heartbeat ---
-
-var dropletHeartbeatCmd = &cobra.Command{
-	Use:   "heartbeat <id>",
-	Short: "Record agent heartbeat — signals the scheduler that work is progressing",
-	Long: `Record a heartbeat timestamp for the given droplet.
-
-Agents should call this every 60 seconds while working. The stall detector
-uses the heartbeat timestamp to distinguish alive-but-slow agents from agents
-that are genuinely stuck or dead. An agent that is emitting heartbeats will
-not be considered stalled regardless of how long it has been running.`,
-	Args: cobra.ExactArgs(1),
-	RunE: func(cmd *cobra.Command, args []string) error {
-		c, err := cistern.New(resolveDBPath(), "")
-		if err != nil {
-			return err
-		}
-		defer c.Close()
-
-		if err := c.Heartbeat(args[0]); err != nil {
-			return err
-		}
-		fmt.Printf("droplet %s: heartbeat recorded\n", args[0])
-		return nil
-	},
-}
-
 // --- cistern peek ---
 
 var (
@@ -1495,7 +1468,7 @@ func init() {
 		dropletPassCmd, dropletRecirculateCmd, dropletPoolCmd, dropletCancelCmd,
 		dropletStatsCmd, dropletDepsCmd, dropletPeekCmd, dropletIssueCmd, dropletSearchCmd,
 		dropletExportCmd, dropletRenameCmd, dropletRestartCmd, dropletEditCmd,
-		dropletTailCmd, dropletHeartbeatCmd, dropletLogCmd, dropletHistoryCmd)
+		dropletTailCmd, dropletLogCmd, dropletHistoryCmd)
 	rootCmd.AddCommand(dropletCmd)
 	rootCmd.AddCommand(evaluateCmd)
 }

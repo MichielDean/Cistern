@@ -187,30 +187,24 @@ When a droplet has been inactive for a prolonged period (default: 45 minutes), t
 
 **Stall event display in `ct droplet log`:**
 ```
-stall  step: implement, elapsed: 2h30m, heartbeat: 2026-01-15T10:30:45Z
-```
-or, if no heartbeat has been emitted:
-```
-stall  step: implement, elapsed: 2h30m, heartbeat: none
+stall  step: implement, elapsed: 2h30m
 ```
 
 **Fields explained:**
 - `step` — The cataractae stage where the droplet is stalled
 - `elapsed` — How long the droplet has been inactive (rounded to nearest minute; e.g., `2h30m`, `45m`)
-- `heartbeat` — The RFC3339 timestamp of the agent's most recent `ct droplet heartbeat <id>` call, or `none` if no heartbeat has ever been emitted (pre-feature agents or agents that exited before their first heartbeat)
 
-**Rate-limiting:** To prevent log spam from long-stalled droplets, the scheduler writes at most one stall event per hour for the same droplet. If a droplet remains stalled beyond the first detection, no new event is written until 60 minutes have passed since the last event (or until the heartbeat advances, which resets the window).
+The Castellarius determines liveness by checking the session log mtime (the file written by tmux `pipe-pane`). If the agent is alive and working, it's writing to its session log continuously. A stale mtime means the agent is stuck or dead. If no session log exists (orphan droplets with no assignee), `updated_at` is used as a fallback signal.
+
+**Rate-limiting:** To prevent log spam from long-stalled droplets, the scheduler writes at most one stall event per hour for the same droplet. If a droplet remains stalled beyond the first detection, no new event is written until 60 minutes have passed since the last event.
 
 **What to do when you see stall events:**
-1. Check the `heartbeat` field: if it shows `none`, the agent never emitted a heartbeat — it likely died before starting work. Check exit detection logs and consider restarting:
-   - `ct droplet restart <id>` — restart at current cataractae
-   - `ct droplet restart <id> --cataractae implement` — restart at a specific cataractae
-2. If `heartbeat` shows a timestamp, the agent was alive at that point. Check if the agent session is still running: `ct droplet peek <id>` (shows live session output)
-3. A stall event does **not** trigger an automatic respawn — the agent may simply be slow (e.g., waiting on an LLM response). Monitor before acting.
-4. If the droplet can proceed, restart it:
+1. Check if the agent session is still running: `ct droplet peek <id>` (shows live session output)
+2. A stall event does **not** trigger an automatic respawn — the agent may simply be slow (e.g., waiting on an LLM response). Monitor before acting.
+3. If the droplet can proceed, restart it:
    - `ct droplet restart <id>` — restart at current cataractae
    - `ct droplet restart <id> --cataractae review` — restart at a specific cataractae
-5. If it's a known limitation or awaiting external resources, pool it: `ct droplet pool <id> --notes "..."`
+4. If it's a known limitation or awaiting external resources, pool it: `ct droplet pool <id> --notes "..."`
 
 ### Droplet Repeatedly Failing with "backing off" Messages
 
@@ -239,7 +233,7 @@ If you see an `exit_no_outcome` event in `ct droplet log <id>`, the Castellarius
 **What this means:**
 - The agent's tmux session is gone (agent finished and exited, or crashed)
 - The agent never called `ct droplet pass/recirculate/pool` before exiting
-- The Castellarius heartbeat detected this and checked the DB — no outcome was written, and the cataractae stage hadn't advanced — so it reset the droplet for re-dispatch
+- The Castellarius liveness check detected this and checked the DB — no outcome was written, and the cataractae stage hadn't advanced — so it reset the droplet for re-dispatch
 
 **Expected behavior:**
 1. An `exit_no_outcome` event is recorded in the droplet history
@@ -313,7 +307,7 @@ If you see a `recovery` event in `ct droplet log <id>` (displayed as `recovery  
 - The droplet had no assignee, so the Castellarius could not identify a tmux session to resume and triggered orphan recovery after the stall threshold elapsed
 - The droplet was invisible to any aqueduct and could not make progress
 - This typically occurs after Castellarius crash/restart or failed dispatch where the droplet was never assigned to a worker
-- The Castellarius heartbeat automatically recovered it (check interval: 30 seconds by default)
+- The Castellarius liveness check automatically recovered it (check interval: 30 seconds by default)
 
 **Expected behavior:**
 1. A `recovery` event is recorded in the droplet history

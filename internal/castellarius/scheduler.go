@@ -55,9 +55,6 @@ type CisternClient interface {
 	// FileDroplet creates a new droplet in the given repo. Used by the Architect
 	// to file structural fix work items.
 	FileDroplet(repo, title, description string, priority int) (*cistern.Droplet, error)
-	// Heartbeat records the current time as the agent's most recent activity
-	// timestamp. Called by agents via `ct droplet heartbeat <id>` every 60 seconds.
-	Heartbeat(id string) error
 	// RecordEvent inserts a typed event row into the events table. Used by CLI
 	// and dashboard handlers, and by Client methods internally.
 	RecordEvent(id, eventType, payload string) error
@@ -100,10 +97,10 @@ type Castellarius struct {
 	runner       CataractaeRunner
 	logger       *slog.Logger
 	pollInterval time.Duration
-	// heartbeatInterval controls how often orphaned in-progress droplets are
+	// livenessInterval controls how often orphaned in-progress droplets are
 	// checked. Independent of pollInterval so it fires even when the main tick
 	// is busy. Defaults to 30s.
-	heartbeatInterval  time.Duration
+	livenessInterval    time.Duration
 	sandboxRoot        string
 	cleanupInterval    time.Duration
 	dbPath             string
@@ -180,10 +177,10 @@ func WithDrainTimeout(d time.Duration) Option {
 	return func(s *Castellarius) { s.drainTimeout = d }
 }
 
-// WithHeartbeatInterval overrides how often the heartbeat scans for stalled
+// WithLivenessInterval overrides how often the liveness scan checks for stalled
 // in-progress droplets. Defaults to 30s; pass a shorter duration in tests.
-func WithHeartbeatInterval(d time.Duration) Option {
-	return func(s *Castellarius) { s.heartbeatInterval = d }
+func WithLivenessInterval(d time.Duration) Option {
+	return func(s *Castellarius) { s.livenessInterval = d }
 }
 
 // New creates a Castellarius from an AqueductConfig.
@@ -206,7 +203,7 @@ func New(config aqueduct.AqueductConfig, dbPath string, runner CataractaeRunner,
 		runner:             runner,
 		logger:             slog.Default(),
 		pollInterval:       10 * time.Second,
-		heartbeatInterval:  30 * time.Second,
+		livenessInterval:   30 * time.Second,
 		drainTimeout:       5 * time.Minute,
 		dbPath:             dbPath,
 		startupBinaryMtime: startupBinaryMtime,
@@ -247,12 +244,12 @@ func New(config aqueduct.AqueductConfig, dbPath string, runner CataractaeRunner,
 		s.cleanupInterval = 24 * time.Hour
 	}
 
-	if config.HeartbeatInterval != "" {
-		d, err := time.ParseDuration(config.HeartbeatInterval)
+	if config.LivenessInterval != "" {
+		d, err := time.ParseDuration(config.LivenessInterval)
 		if err != nil {
-			return nil, fmt.Errorf("castellarius: invalid heartbeat_interval %q: %w", config.HeartbeatInterval, err)
+			return nil, fmt.Errorf("castellarius: invalid liveness_interval %q: %w", config.LivenessInterval, err)
 		}
-		s.heartbeatInterval = d
+		s.livenessInterval = d
 	}
 
 	if config.DrainTimeoutMinutes > 0 {
@@ -298,7 +295,7 @@ func NewFromParts(
 		runner:            runner,
 		logger:            slog.Default(),
 		pollInterval:      10 * time.Second,
-		heartbeatInterval: 30 * time.Second,
+		livenessInterval: 30 * time.Second,
 		drainTimeout:      5 * time.Minute,
 	}
 	for _, o := range opts {
@@ -402,11 +399,11 @@ func (s *Castellarius) Run(ctx context.Context) error {
 		}()
 	}
 
-	// Heartbeat goroutine — runs independently of the main poll loop.
+	// Liveness goroutine — runs independently of the main poll loop.
 	// Detects orphaned in-progress droplets (dead sessions with no outcome)
 	// and resets them to open so they can be re-dispatched.
 	go func() {
-		hbTicker := time.NewTicker(s.heartbeatInterval)
+		hbTicker := time.NewTicker(s.livenessInterval)
 		defer hbTicker.Stop()
 		for {
 			select {
@@ -417,13 +414,13 @@ func (s *Castellarius) Run(ctx context.Context) error {
 					defer func() {
 						if r := recover(); r != nil {
 							stack := debug.Stack()
-							s.logger.Error("heartbeat: panic recovered",
+							s.logger.Error("liveness: panic recovered",
 								"panic", r,
 								"stack", string(stack),
 							)
 						}
 					}()
-					s.heartbeatInProgress(ctx)
+					s.livenessCheck(ctx)
 					s.checkHungDrought()
 				}()
 			}
@@ -1340,7 +1337,7 @@ func (s *Castellarius) handleTerminal(client CisternClient, itemID, terminal, fr
 // If the tmux session is still alive, leave the droplet alone — the agent
 // will signal its outcome.
 // Otherwise, reset to open for re-dispatch. The circuit breaker in
-// heartbeatRepo will pool the droplet if it keeps dying.
+// livenessCheckRepo will pool the droplet if it keeps dying.
 func (s *Castellarius) recoverInProgress() {
 	for _, repo := range s.config.Repos {
 		client := s.clients[repo.Name]
@@ -1392,15 +1389,15 @@ func (s *Castellarius) recoverInProgress() {
 	}
 }
 
-// heartbeatInProgress scans for in_progress droplets whose agent sessions
+// livenessCheck scans for in_progress droplets whose agent sessions
 // have exited. If the agent wrote an outcome, the observe cycle handles it.
 // If not, the droplet is reset for re-dispatch.
-func (s *Castellarius) heartbeatInProgress(ctx context.Context) {
+func (s *Castellarius) livenessCheck(ctx context.Context) {
 	for _, repo := range s.config.Repos {
 		if ctx.Err() != nil {
 			return
 		}
-		s.heartbeatRepo(ctx, repo)
+		s.livenessCheckRepo(ctx, repo)
 	}
 }
 
@@ -1427,13 +1424,13 @@ func (s *Castellarius) checkHungDrought() {
 	}
 }
 
-func (s *Castellarius) heartbeatRepo(ctx context.Context, repo aqueduct.RepoConfig) {
+func (s *Castellarius) livenessCheckRepo(ctx context.Context, repo aqueduct.RepoConfig) {
 	client := s.clients[repo.Name]
 	wf := s.workflows[repo.Name]
 
 	items, err := client.List(repo.Name, "in_progress")
 	if err != nil {
-		s.logger.Error("heartbeat: list in_progress failed", "repo", repo.Name, "error", err)
+		s.logger.Error("liveness: list in_progress failed", "repo", repo.Name, "error", err)
 		return
 	}
 
@@ -1448,7 +1445,7 @@ func (s *Castellarius) heartbeatRepo(ctx context.Context, repo aqueduct.RepoConf
 		// destroys the session (remain-on-exit is off). A dead tmux session
 		// is the normal completion signal — check the DB for an outcome
 		// before deciding whether to reset for re-dispatch.
-		exitGuard := 4 * s.heartbeatInterval
+		exitGuard := 4 * s.livenessInterval
 		if item.Assignee != "" {
 			sessionID := repo.Name + "-" + item.Assignee
 			dispatchedAt := item.StageDispatchedAt
@@ -1465,12 +1462,12 @@ func (s *Castellarius) heartbeatRepo(ctx context.Context, repo aqueduct.RepoConf
 				fresh, err := client.Get(item.ID)
 				if err == nil {
 					if fresh.Outcome != "" {
-						s.logger.Info("heartbeat: session exited with outcome — observe will process",
+						s.logger.Info("liveness: session exited with outcome — observe will process",
 							"repo", repo.Name, "droplet", item.ID, "outcome", fresh.Outcome)
 						continue
 					}
 					if fresh.CurrentCataractae != item.CurrentCataractae {
-						s.logger.Info("heartbeat: cataractae already advanced — observe already processed",
+						s.logger.Info("liveness: cataractae already advanced — observe already processed",
 							"repo", repo.Name, "droplet", item.ID,
 							"was", item.CurrentCataractae, "now", fresh.CurrentCataractae)
 						continue
@@ -1481,7 +1478,7 @@ func (s *Castellarius) heartbeatRepo(ctx context.Context, repo aqueduct.RepoConf
 					// dead session belongs to the previous cataractae, not the
 					// current one.
 					if !fresh.StageDispatchedAt.IsZero() && fresh.StageDispatchedAt != item.StageDispatchedAt {
-						s.logger.Info("heartbeat: stage_dispatched_at changed — re-dispatched since snapshot",
+						s.logger.Info("liveness: stage_dispatched_at changed — re-dispatched since snapshot",
 							"repo", repo.Name, "droplet", item.ID,
 							"was", item.StageDispatchedAt, "now", fresh.StageDispatchedAt)
 						continue
@@ -1489,7 +1486,7 @@ func (s *Castellarius) heartbeatRepo(ctx context.Context, repo aqueduct.RepoConf
 					// The assignee may have been cleared by observe or changed by
 					// dispatch. If so, the session we're checking is stale.
 					if fresh.Assignee != item.Assignee {
-						s.logger.Info("heartbeat: assignee changed — stale session check",
+						s.logger.Info("liveness: assignee changed — stale session check",
 							"repo", repo.Name, "droplet", item.ID,
 							"was", item.Assignee, "now", fresh.Assignee)
 						continue
@@ -1499,7 +1496,7 @@ func (s *Castellarius) heartbeatRepo(ctx context.Context, repo aqueduct.RepoConf
 				// Session exited with no outcome — reset for re-dispatch.
 				step := currentCataracta(item, wf)
 				if step == nil {
-					s.logger.Error("heartbeat: no step for exited session — skipping",
+					s.logger.Error("liveness: no step for exited session — skipping",
 						"repo", repo.Name, "droplet", item.ID)
 					continue
 				}
@@ -1515,14 +1512,22 @@ func (s *Castellarius) heartbeatRepo(ctx context.Context, repo aqueduct.RepoConf
 				})
 				s.addEvent(client, item.ID, cistern.EventExitNoOutcome, string(payload))
 				if err := client.Assign(item.ID, "", step.Name); err != nil {
-					s.logger.Error("heartbeat: reset failed", "droplet", item.ID, "error", err)
+					s.logger.Error("liveness: reset failed", "droplet", item.ID, "error", err)
 				}
 				continue
 			}
 		}
 
-		// Stall detection: agent heartbeat older than threshold.
-		stallSig := item.LastHeartbeatAt
+		// Stall detection: check session log mtime as liveness signal.
+		// If the agent is alive and working, it's writing to its session log
+		// via tmux pipe-pane. A stale mtime means the agent is stuck or dead.
+		var stallSig time.Time
+		if item.Assignee != "" {
+			sessionID := repo.Name + "-" + item.Assignee
+			if logMtime, err := sessionLogMtime(sessionID); err == nil && !logMtime.IsZero() {
+				stallSig = logMtime
+			}
+		}
 		if stallSig.IsZero() {
 			stallSig = item.UpdatedAt
 		}
@@ -1530,18 +1535,12 @@ func (s *Castellarius) heartbeatRepo(ctx context.Context, repo aqueduct.RepoConf
 			continue
 		}
 
-		// Stalled — write an escalation note.
-		heartbeatStatus := "none"
-		if !item.LastHeartbeatAt.IsZero() {
-			heartbeatStatus = item.LastHeartbeatAt.UTC().Format(time.RFC3339)
-		}
 		stallPayload, _ := json.Marshal(map[string]any{
 			"cataractae": item.CurrentCataractae,
 			"elapsed":    formatStallDuration(time.Since(stallSig)),
-			"heartbeat":  heartbeatStatus,
 		})
 		s.addEvent(client, item.ID, cistern.EventStall, string(stallPayload))
-		s.logger.Warn("heartbeat: stall detected",
+		s.logger.Warn("liveness: stall detected",
 			"repo", repo.Name, "droplet", item.ID,
 			"cataractae", item.CurrentCataractae,
 			"stall_duration", time.Since(stallSig).Round(time.Second).String(),
@@ -1559,10 +1558,10 @@ func (s *Castellarius) heartbeatRepo(ctx context.Context, repo aqueduct.RepoConf
 				"cataractae": stepName,
 			})
 			s.addEvent(client, item.ID, cistern.EventRecovery, string(recoveryPayload))
-			s.logger.Info("heartbeat: orphan reset to open",
+			s.logger.Info("liveness: orphan reset to open",
 				"repo", repo.Name, "droplet", item.ID, "cataractae", stepName)
 			if err := client.Assign(item.ID, "", stepName); err != nil {
-				s.logger.Error("heartbeat: orphan reset failed", "droplet", item.ID, "error", err)
+				s.logger.Error("liveness: orphan reset failed", "droplet", item.ID, "error", err)
 			}
 		}
 	}
@@ -1689,6 +1688,27 @@ var isTmuxAliveFn = func(sessionID string) bool {
 // isTmuxAlive returns true if a tmux session with the given name is running.
 func isTmuxAlive(sessionID string) bool {
 	return isTmuxAliveFn(sessionID)
+}
+
+// sessionLogMtime returns the modification time of the session log file.
+// Used as a liveness signal: an active agent writes to its session log via
+// tmux pipe-pane, so a stale mtime indicates the agent is stuck or dead.
+// Returns zero time if the log file does not exist.
+var sessionLogMtimeFn = func(sessionID string) (time.Time, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return time.Time{}, err
+	}
+	path := filepath.Join(home, ".cistern", "session-logs", sessionID+".log")
+	info, err := os.Stat(path)
+	if err != nil {
+		return time.Time{}, nil
+	}
+	return info.ModTime().UTC(), nil
+}
+
+func sessionLogMtime(sessionID string) (time.Time, error) {
+	return sessionLogMtimeFn(sessionID)
 }
 
 // sandboxHead returns the current HEAD commit hash in the given directory.

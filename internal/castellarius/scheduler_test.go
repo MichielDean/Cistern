@@ -231,17 +231,6 @@ func (m *mockClient) FileDroplet(repo, title, description string, priority int) 
 	return d, nil
 }
 
-func (m *mockClient) Heartbeat(id string) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	item, ok := m.items[id]
-	if !ok {
-		return fmt.Errorf("droplet not found: %s", id)
-	}
-	item.LastHeartbeatAt = time.Now()
-	return nil
-}
-
 func (m *mockClient) List(repo, status string) ([]*cistern.Droplet, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -1990,12 +1979,12 @@ func TestDispatch_DiffOnlyStepGetsSandboxDir(t *testing.T) {
 	}
 }
 
-// --- heartbeat progress-monitoring tests ---
+// --- liveness check progress-monitoring tests ---
 
-// TestHeartbeatRepo_StallDetected_AppendsNoteAndWarnLog verifies that when all
-// three progress signals are older than the stall threshold, heartbeatRepo
+// TestLivenessCheckRepo_StallDetected_AppendsNoteAndWarnLog verifies that when all
+// three progress signals are older than the stall threshold, livenessCheckRepo
 // appends a note to the droplet and emits a Warn-level log entry.
-func TestHeartbeatRepo_StallDetected_AppendsNoteAndWarnLog(t *testing.T) {
+func TestLivenessCheckRepo_StallDetected_AppendsNoteAndWarnLog(t *testing.T) {
 	var buf bytes.Buffer
 	client := newMockClient()
 
@@ -2017,7 +2006,7 @@ func TestHeartbeatRepo_StallDetected_AppendsNoteAndWarnLog(t *testing.T) {
 	sched := NewFromParts(config, workflows, clients, runner,
 		WithLogger(newTestLogger(&buf)))
 
-	sched.heartbeatRepo(context.Background(), config.Repos[0])
+	sched.livenessCheckRepo(context.Background(), config.Repos[0])
 
 	// Stall event and recovery event must both be recorded.
 	if len(client.events) != 2 {
@@ -2033,18 +2022,18 @@ func TestHeartbeatRepo_StallDetected_AppendsNoteAndWarnLog(t *testing.T) {
 	// A Warn-level log entry must be present containing the droplet ID.
 	out := buf.String()
 	if !strings.Contains(out, "stall-basic") {
-		t.Errorf("heartbeat log missing droplet ID; got: %s", out)
+		t.Errorf("liveness check log missing droplet ID; got: %s", out)
 	}
 	if !strings.Contains(out, "stall_duration=") {
-		t.Errorf("heartbeat log missing stall_duration field; got: %s", out)
+		t.Errorf("liveness check log missing stall_duration field; got: %s", out)
 	}
 }
 
-// TestHeartbeatRepo_OrphanRecovery_SecondTick_ItemResetToOpenNotReprocessed
+// TestLivenessCheckRepo_OrphanRecovery_SecondTick_ItemResetToOpenNotReprocessed
 // verifies that after orphan handling resets a no-assignee in_progress droplet
-// to open on the first tick, the second heartbeat tick writes no additional
+// to open on the first tick, the second liveness check tick writes no additional
 // notes because the item is no longer in_progress and is not returned by List.
-func TestHeartbeatRepo_OrphanRecovery_SecondTick_ItemResetToOpenNotReprocessed(t *testing.T) {
+func TestLivenessCheckRepo_OrphanRecovery_SecondTick_ItemResetToOpenNotReprocessed(t *testing.T) {
 	client := newMockClient()
 
 	item := &cistern.Droplet{
@@ -2064,7 +2053,7 @@ func TestHeartbeatRepo_OrphanRecovery_SecondTick_ItemResetToOpenNotReprocessed(t
 	sched := NewFromParts(config, workflows, clients, runner)
 
 	// First call: no signals → stalled → stall event + recovery event written, item reset to open.
-	sched.heartbeatRepo(context.Background(), config.Repos[0])
+	sched.livenessCheckRepo(context.Background(), config.Repos[0])
 	if len(client.events) != 2 {
 		t.Fatalf("expected 2 events (stall + recovery) after first tick, got %d", len(client.events))
 	}
@@ -2073,27 +2062,37 @@ func TestHeartbeatRepo_OrphanRecovery_SecondTick_ItemResetToOpenNotReprocessed(t
 	}
 
 	// Second call: item is now open (no longer in_progress) → no additional events.
-	sched.heartbeatRepo(context.Background(), config.Repos[0])
+	sched.livenessCheckRepo(context.Background(), config.Repos[0])
 	if len(client.events) != 2 {
 		t.Errorf("expected still 2 events after second tick (item is open), got %d", len(client.events))
 	}
 }
 
-// TestHeartbeatRepo_StallThreshold_ExplicitMinutesRespected verifies that an
+// TestLivenessCheckRepo_StallThreshold_ExplicitMinutesRespected verifies that an
 // explicitly configured stall_threshold_minutes is used for stall detection.
-func TestHeartbeatRepo_StallThreshold_ExplicitMinutesRespected(t *testing.T) {
+func TestLivenessCheckRepo_StallThreshold_ExplicitMinutesRespected(t *testing.T) {
 	client := newMockClient()
 
-	// Droplet with heartbeat 2 minutes old.
-	twoMinAgo := time.Now().Add(-2 * time.Minute)
+	// Droplet with session log mtime 2 minutes old.
+	// Assignee and StageDispatchedAt must be set so the exit guard passes
+	// and session log mtime is checked for stall detection.
 	item := &cistern.Droplet{
 		ID:                "stall-thresh-explicit",
 		CurrentCataractae: "implement",
 		Status:            "in_progress",
-		Assignee:          "",
-		LastHeartbeatAt:   twoMinAgo,
+		Assignee:          "alpha",
+		StageDispatchedAt: time.Now().Add(-5 * time.Minute),
 	}
 	client.items[item.ID] = item
+
+	// Mock session log mtime to return 2 minutes ago — older than threshold.
+	origMtime := sessionLogMtimeFn
+	sessionLogMtimeFn = func(sessionID string) (time.Time, error) { return time.Now().Add(-2 * time.Minute), nil }
+	t.Cleanup(func() { sessionLogMtimeFn = origMtime })
+
+	orig := isTmuxAliveFn
+	isTmuxAliveFn = func(_ string) bool { return true }
+	t.Cleanup(func() { isTmuxAliveFn = orig })
 
 	config := testConfig()
 	config.StallThresholdMinutes = 1 // 2 min > 1 min → stalled
@@ -2103,29 +2102,39 @@ func TestHeartbeatRepo_StallThreshold_ExplicitMinutesRespected(t *testing.T) {
 	runner := newMockRunner(client)
 	sched := NewFromParts(config, workflows, clients, runner)
 
-	sched.heartbeatRepo(context.Background(), config.Repos[0])
+	sched.livenessCheckRepo(context.Background(), config.Repos[0])
 
-	if len(client.events) != 2 {
-		t.Errorf("expected 2 events (stall + recovery) with 1-min threshold and 2-min-old heartbeat, got %d", len(client.events))
+	if len(client.events) != 1 {
+		t.Errorf("expected 1 stall event with 1-min threshold and 2-min-old session log, got %d", len(client.events))
 	}
 }
 
-// TestHeartbeatRepo_StallThreshold_DefaultsTo45Minutes verifies that when
+// TestLivenessCheckRepo_StallThreshold_DefaultsTo45Minutes verifies that when
 // stall_threshold_minutes is absent or zero, the default threshold of 45
-// minutes is used and a droplet with a heartbeat only 2 minutes old is not stalled.
-func TestHeartbeatRepo_StallThreshold_DefaultsTo45Minutes(t *testing.T) {
+// minutes is used and a droplet with a session log mtime only 2 minutes old is not stalled.
+func TestLivenessCheckRepo_StallThreshold_DefaultsTo45Minutes(t *testing.T) {
 	client := newMockClient()
 
-	// Droplet with heartbeat 2 minutes old — well within the 45-min default.
-	twoMinAgo := time.Now().Add(-2 * time.Minute)
+	// Droplet with session log mtime 2 minutes old — well within the 45-min default.
+	// Assignee and StageDispatchedAt must be set so the exit guard passes
+	// and session log mtime is checked for stall detection.
 	item := &cistern.Droplet{
 		ID:                "stall-thresh-default",
 		CurrentCataractae: "implement",
 		Status:            "in_progress",
-		Assignee:          "",
-		LastHeartbeatAt:   twoMinAgo,
+		Assignee:          "alpha",
+		StageDispatchedAt: time.Now().Add(-5 * time.Minute),
 	}
 	client.items[item.ID] = item
+
+	// Mock session log mtime to return 2 minutes ago — within default threshold.
+	origMtime := sessionLogMtimeFn
+	sessionLogMtimeFn = func(sessionID string) (time.Time, error) { return time.Now().Add(-2 * time.Minute), nil }
+	t.Cleanup(func() { sessionLogMtimeFn = origMtime })
+
+	orig := isTmuxAliveFn
+	isTmuxAliveFn = func(_ string) bool { return true }
+	t.Cleanup(func() { isTmuxAliveFn = orig })
 
 	config := testConfig()
 	// StallThresholdMinutes deliberately left at zero → should default to 45 min.
@@ -2135,19 +2144,19 @@ func TestHeartbeatRepo_StallThreshold_DefaultsTo45Minutes(t *testing.T) {
 	runner := newMockRunner(client)
 	sched := NewFromParts(config, workflows, clients, runner)
 
-	sched.heartbeatRepo(context.Background(), config.Repos[0])
+	sched.livenessCheckRepo(context.Background(), config.Repos[0])
 
 	// 2 min < 45 min → not stalled → no events written.
 	if len(client.events) != 0 {
-		t.Errorf("expected 0 events with default 45-min threshold and 2-min-old heartbeat, got %d", len(client.events))
+		t.Errorf("expected 0 events with default 45-min threshold and 2-min-old session log, got %d", len(client.events))
 	}
 }
 
-// TestHeartbeatRepo_StallWithAssignee_WritesNoteNoRespawn verifies that when a
+// TestLivenessCheckRepo_StallWithAssignee_WritesNoteNoRespawn verifies that when a
 // stall is detected and the droplet has an assignee, a stall note is written but
 // runner.Spawn is NOT called. Stall detection no longer auto-respawns: agents
-// emitting heartbeats are alive, and dead agents are handled by exit detection.
-func TestHeartbeatRepo_StallWithAssignee_WritesNoteNoRespawn(t *testing.T) {
+// emitting session log mtime signals are alive, and dead agents are handled by exit detection.
+func TestLivenessCheckRepo_StallWithAssignee_WritesNoteNoRespawn(t *testing.T) {
 	// Mock tmux as alive so liveness check passes through to stall detector.
 	orig := isTmuxAliveFn
 	isTmuxAliveFn = func(_ string) bool { return true }
@@ -2171,7 +2180,7 @@ func TestHeartbeatRepo_StallWithAssignee_WritesNoteNoRespawn(t *testing.T) {
 	clients := map[string]CisternClient{"test-repo": client}
 	sched := NewFromParts(config, workflows, clients, runner)
 
-	sched.heartbeatRepo(context.Background(), config.Repos[0])
+	sched.livenessCheckRepo(context.Background(), config.Repos[0])
 
 	// Stall event must be recorded.
 	if len(client.events) != 1 {
@@ -2198,11 +2207,11 @@ func TestHeartbeatRepo_StallWithAssignee_WritesNoteNoRespawn(t *testing.T) {
 	}
 }
 
-// TestHeartbeatRepo_StallWithNoAssignee_RecoverAndNoSpawn verifies that when a
+// TestLivenessCheckRepo_StallWithNoAssignee_RecoverAndNoSpawn verifies that when a
 // stall is detected on an orphaned droplet (no assignee), both the stall note and
 // the recovery note are written, the droplet is reset to open for re-dispatch,
 // and runner.Spawn is NOT called (there is no session to resume).
-func TestHeartbeatRepo_StallWithNoAssignee_RecoverAndNoSpawn(t *testing.T) {
+func TestLivenessCheckRepo_StallWithNoAssignee_RecoverAndNoSpawn(t *testing.T) {
 	client := newMockClient()
 	runner := newMockRunner(client)
 
@@ -2221,7 +2230,7 @@ func TestHeartbeatRepo_StallWithNoAssignee_RecoverAndNoSpawn(t *testing.T) {
 	clients := map[string]CisternClient{"test-repo": client}
 	sched := NewFromParts(config, workflows, clients, runner)
 
-	sched.heartbeatRepo(context.Background(), config.Repos[0])
+	sched.livenessCheckRepo(context.Background(), config.Repos[0])
 
 	// Stall event and recovery event must both be recorded.
 	if len(client.events) != 2 {
@@ -2245,10 +2254,10 @@ func TestHeartbeatRepo_StallWithNoAssignee_RecoverAndNoSpawn(t *testing.T) {
 	}
 }
 
-// TestHeartbeatRepo_OrphanRecovery_ClearsAssignedAqueduct verifies that the
+// TestLivenessCheckRepo_OrphanRecovery_ClearsAssignedAqueduct verifies that the
 // orphan handling path clears assigned_aqueduct so the pooled droplet is not
 // locked to a specific aqueduct operator that may no longer exist.
-func TestHeartbeatRepo_OrphanRecovery_ClearsAssignedAqueduct(t *testing.T) {
+func TestLivenessCheckRepo_OrphanRecovery_ClearsAssignedAqueduct(t *testing.T) {
 	client := newMockClient()
 	runner := newMockRunner(client)
 
@@ -2268,7 +2277,7 @@ func TestHeartbeatRepo_OrphanRecovery_ClearsAssignedAqueduct(t *testing.T) {
 	clients := map[string]CisternClient{"test-repo": client}
 	sched := NewFromParts(config, workflows, clients, runner)
 
-	sched.heartbeatRepo(context.Background(), config.Repos[0])
+	sched.livenessCheckRepo(context.Background(), config.Repos[0])
 
 	if item.Status != "open" {
 		t.Errorf("expected item status=open after orphan handling, got %q", item.Status)
@@ -2278,10 +2287,10 @@ func TestHeartbeatRepo_OrphanRecovery_ClearsAssignedAqueduct(t *testing.T) {
 	}
 }
 
-// TestHeartbeatRepo_OrphanRecovery_AssignFailure_ClearsDebounce verifies that
+// TestLivenessCheckRepo_OrphanRecovery_AssignFailure_ClearsDebounce verifies that
 // when the Assign call fails, the debounce entry is cleared so the next
-// heartbeat retries the orphan handling rather than suppressing it permanently.
-func TestHeartbeatRepo_OrphanRecovery_AssignFailure_ClearsDebounce(t *testing.T) {
+// liveness check retries the orphan handling rather than suppressing it permanently.
+func TestLivenessCheckRepo_OrphanRecovery_AssignFailure_ClearsDebounce(t *testing.T) {
 	client := newMockClient()
 	client.assignErr = errors.New("db error")
 	runner := newMockRunner(client)
@@ -2301,7 +2310,7 @@ func TestHeartbeatRepo_OrphanRecovery_AssignFailure_ClearsDebounce(t *testing.T)
 	clients := map[string]CisternClient{"test-repo": client}
 	sched := NewFromParts(config, workflows, clients, runner)
 
-	sched.heartbeatRepo(context.Background(), config.Repos[0])
+	sched.livenessCheckRepo(context.Background(), config.Repos[0])
 
 	// Recovery event must be recorded (best-effort) even when Pool fails.
 	recoveryEvents := 0
@@ -2315,28 +2324,30 @@ func TestHeartbeatRepo_OrphanRecovery_AssignFailure_ClearsDebounce(t *testing.T)
 	}
 }
 
-// --- heartbeat stall detection integration tests ---
+// --- liveness check stall detection integration tests ---
 
-// TestHeartbeatRepo_AgentEmittingHeartbeat_NotStalled verifies that an agent
-// actively emitting heartbeats (heartbeat < threshold) is not considered stalled,
-// even if it has been running for a long time without commits or an outcome.
-func TestHeartbeatRepo_AgentEmittingHeartbeat_NotStalled(t *testing.T) {
+// TestLivenessCheckRepo_RecentLogMtime_NotStalled verifies that an agent
+// with a recent session log mtime is not considered stalled, even if it has
+// been running for a long time without commits or an outcome.
+func TestLivenessCheckRepo_RecentLogMtime_NotStalled(t *testing.T) {
 	// Mock tmux as alive so exit detection is bypassed and stall
-	// detection runs on the heartbeat timestamp.
+	// detection runs on the session log mtime.
 	orig := isTmuxAliveFn
 	isTmuxAliveFn = func(_ string) bool { return true }
 	t.Cleanup(func() { isTmuxAliveFn = orig })
 
+	origMtime := sessionLogMtimeFn
+	sessionLogMtimeFn = func(sessionID string) (time.Time, error) { return time.Now().Add(-30 * time.Second), nil }
+	t.Cleanup(func() { sessionLogMtimeFn = origMtime })
+
 	client := newMockClient()
 	runner := newMockRunner(client)
 
-	// Heartbeat 30s ago — well within the 1-minute threshold.
 	item := &cistern.Droplet{
-		ID:                "hb-alive",
+		ID:                "lc-alive",
 		CurrentCataractae: "implement",
 		Status:            "in_progress",
 		Assignee:          "alpha",
-		LastHeartbeatAt:   time.Now().Add(-30 * time.Second),
 	}
 	client.items[item.ID] = item
 
@@ -2347,39 +2358,41 @@ func TestHeartbeatRepo_AgentEmittingHeartbeat_NotStalled(t *testing.T) {
 	clients := map[string]CisternClient{"test-repo": client}
 	sched := NewFromParts(config, workflows, clients, runner)
 
-	sched.heartbeatRepo(context.Background(), config.Repos[0])
+	sched.livenessCheckRepo(context.Background(), config.Repos[0])
 
-	// Agent is heartbeating → not stalled → no events written, no spawn.
+	// Agent has recent session log mtime → not stalled → no events written, no spawn.
 	if len(client.events) != 0 {
-		t.Errorf("expected no stall events for heartbeating agent, got %d", len(client.events))
+		t.Errorf("expected no stall events for active agent, got %d", len(client.events))
 	}
 	runner.mu.Lock()
 	calls := runner.calls
 	runner.mu.Unlock()
 	if len(calls) != 0 {
-		t.Errorf("expected no Spawn calls for heartbeating agent, got %d", len(calls))
+		t.Errorf("expected no Spawn calls for active agent, got %d", len(calls))
 	}
 }
 
-// TestHeartbeatRepo_AgentNotEmittingHeartbeat_Stalled verifies that an agent
-// that has not emitted a heartbeat for longer than the stall threshold is
+// TestLivenessCheckRepo_StaleLogMtime_Stalled verifies that an agent
+// that has a stale session log mtime (beyond stall threshold) is
 // detected as stalled and an escalation note is written. No auto-respawn occurs.
-func TestHeartbeatRepo_AgentNotEmittingHeartbeat_Stalled(t *testing.T) {
+func TestLivenessCheckRepo_StaleLogMtime_Stalled(t *testing.T) {
 	// Mock tmux as alive to avoid exit detection path.
 	orig := isTmuxAliveFn
 	isTmuxAliveFn = func(_ string) bool { return true }
 	t.Cleanup(func() { isTmuxAliveFn = orig })
 
+	origMtime := sessionLogMtimeFn
+	sessionLogMtimeFn = func(sessionID string) (time.Time, error) { return time.Now().Add(-90 * time.Second), nil }
+	t.Cleanup(func() { sessionLogMtimeFn = origMtime })
+
 	client := newMockClient()
 	runner := newMockRunner(nil) // nil client: Spawn must not be called
 
-	// Heartbeat 90s ago — older than the 1-minute threshold.
 	item := &cistern.Droplet{
-		ID:                "hb-stalled",
+		ID:                "lc-stalled",
 		CurrentCataractae: "implement",
 		Status:            "in_progress",
 		Assignee:          "alpha",
-		LastHeartbeatAt:   time.Now().Add(-90 * time.Second),
 	}
 	client.items[item.ID] = item
 
@@ -2390,17 +2403,14 @@ func TestHeartbeatRepo_AgentNotEmittingHeartbeat_Stalled(t *testing.T) {
 	clients := map[string]CisternClient{"test-repo": client}
 	sched := NewFromParts(config, workflows, clients, runner)
 
-	sched.heartbeatRepo(context.Background(), config.Repos[0])
+	sched.livenessCheckRepo(context.Background(), config.Repos[0])
 
 	// Stall detected → escalation event recorded.
 	if len(client.events) != 1 {
-		t.Fatalf("expected 1 stall event for non-heartbeating agent, got %d", len(client.events))
+		t.Fatalf("expected 1 stall event for stale-log agent, got %d", len(client.events))
 	}
 	if client.events[0].eventType != cistern.EventStall {
 		t.Errorf("stall event type = %q, want %q", client.events[0].eventType, cistern.EventStall)
-	}
-	if !strings.Contains(client.events[0].payload, "heartbeat") {
-		t.Errorf("stall event payload missing heartbeat field; got: %s", client.events[0].payload)
 	}
 
 	// No auto-respawn — stall detection does not respawn; that is exit detection's job.
@@ -2412,12 +2422,12 @@ func TestHeartbeatRepo_AgentNotEmittingHeartbeat_Stalled(t *testing.T) {
 	}
 }
 
-// --- heartbeat exit detection tests ---
+// --- liveness check exit detection tests ---
 
-// TestHeartbeatRepo_TmuxDead_WritesNoteAndResetsDroplet verifies that when the
+// TestLivenessCheckRepo_TmuxDead_WritesNoteAndResetsDroplet verifies that when the
 // tmux session is dead the droplet is reset to open for re-dispatch and an
 // exit-no-outcome note is written.
-func TestHeartbeatRepo_TmuxDead_WritesNoteAndResetsDroplet(t *testing.T) {
+func TestLivenessCheckRepo_TmuxDead_WritesNoteAndResetsDroplet(t *testing.T) {
 	// Ensure tmux appears dead for our test session.
 	orig := isTmuxAliveFn
 	isTmuxAliveFn = func(_ string) bool { return false }
@@ -2440,7 +2450,7 @@ func TestHeartbeatRepo_TmuxDead_WritesNoteAndResetsDroplet(t *testing.T) {
 	runner := newMockRunner(client)
 	sched := NewFromParts(config, workflows, clients, runner)
 
-	sched.heartbeatRepo(context.Background(), config.Repos[0])
+	sched.livenessCheckRepo(context.Background(), config.Repos[0])
 
 	// Event must have been recorded.
 	if len(client.events) != 1 {

@@ -49,9 +49,9 @@ type Session struct {
 // Spawn creates a new tmux session running the agent and returns immediately.
 // The Castellarius observe loop detects completion via the outcome field in the DB —
 // agents signal their outcome by calling `ct droplet pass/recirculate/pool <id>`.
-// When the session exits for any reason the heartbeat detects the dead tmux session
+// When the session exits for any reason the liveness check detects the dead tmux session
 // and resets the droplet for re-dispatch. If a session log file exists at
-// ~/.cistern/session-logs/<id>.log the heartbeat reads and logs the tail for diagnostics.
+// ~/.cistern/session-logs/<id>.log the liveness check reads and logs the tail for diagnostics.
 func (s *Session) Spawn() error {
 	return s.spawn()
 }
@@ -99,8 +99,8 @@ func (s *Session) spawn() error {
 	)
 
 	// Session output log: prepare the log directory so pipe-pane can write to it
-	// after the session is created. The log path is also read by the heartbeat
-	// for quick-exit diagnostics.
+	// after the session is created. The log path is also read by the liveness
+	// check for stall detection via mtime.
 	sessionLogPath := filepath.Join(home, ".cistern", "session-logs", s.ID+".log")
 	logDirReady := os.MkdirAll(filepath.Dir(sessionLogPath), 0o750) == nil
 
@@ -479,9 +479,7 @@ continues flowing.
    requirements, and all revision notes from prior cycles.
 2. Adopt the persona described in your role instructions below.
 3. Complete your work according to that persona.
-4. Periodically call ct droplet heartbeat <id> between major operations (after
-   exploring, after implementing, after committing) to prevent stall detection.
-5. Signal your outcome before exiting. You MUST call one of:
+4. Signal your outcome before exiting. You MUST call one of:
      ct droplet pass <id> --notes "..."
      ct droplet recirculate <id> --notes "..."
      ct droplet pool <id> --notes "..."

@@ -1107,7 +1107,7 @@ func newDashboardMuxInternalWith(cfgPath, dbPath string, tui *DashboardTUI, fetc
 	apiMux.HandleFunc("POST /api/droplets/{id}/cancel", handleCancelDroplet(dbPath))
 	apiMux.HandleFunc("POST /api/droplets/{id}/restart", handleRestartDroplet(dbPath))
 	apiMux.HandleFunc("POST /api/droplets/{id}/approve", handleApproveDroplet(dbPath))
-	apiMux.HandleFunc("POST /api/droplets/{id}/heartbeat", handleHeartbeatDroplet(dbPath))
+
 
 	// Notes
 	apiMux.HandleFunc("GET /api/droplets/{id}/notes", handleGetNotes(dbPath))
@@ -1965,19 +1965,6 @@ func handleApproveDroplet(dbPath string) http.HandlerFunc {
 				return err
 			}
 			writeAPIJSON(w, http.StatusOK, map[string]string{"id": id, "status": "approved"})
-			return nil
-		})
-	}
-}
-
-func handleHeartbeatDroplet(dbPath string) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		id := r.PathValue("id")
-		apiClient(dbPath, w, func(c *cistern.Client) error {
-			if err := c.Heartbeat(id); err != nil {
-				return err
-			}
-			writeAPIJSON(w, http.StatusOK, map[string]string{"id": id, "heartbeat": "recorded"})
 			return nil
 		})
 	}

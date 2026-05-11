@@ -161,10 +161,10 @@ type AqueductConfig struct {
 	HandoffTokenThreshold int          `yaml:"handoff_token_threshold"`
 	RetentionDays         int          `yaml:"retention_days"`
 	CleanupInterval       string       `yaml:"cleanup_interval"`
-	// HeartbeatInterval controls how often the Castellarius scans in-progress
+	// LivenessInterval controls how often the Castellarius scans in-progress
 	// droplets for orphaned or stalled sessions. Accepts Go duration strings
 	// (e.g. "30s", "1m"). Defaults to "30s" when empty.
-	HeartbeatInterval string        `yaml:"heartbeat_interval,omitempty"`
+	LivenessInterval string        `yaml:"liveness_interval,omitempty"`
 	DroughtHooks      []DroughtHook `yaml:"drought_hooks,omitempty"`
 	// RateLimit configures rate limiting for the delivery cataractae API endpoint.
 	// Omit to use the built-in defaults (60 req/min per IP, 120 req/min per token).
@@ -187,9 +187,8 @@ type AqueductConfig struct {
 	// Defaults to 5 when omitted or 0.
 	DrainTimeoutMinutes int `yaml:"drain_timeout_minutes,omitempty"`
 
-	// StallThresholdMinutes is the number of minutes of inactivity across all
-	// three progress signals (newest note, worktree mtime, session log mtime)
-	// before a droplet is considered stalled. Defaults to 45 when absent or 0.
+	// StallThresholdMinutes is the number of minutes of inactivity (session log
+	// mtime) before a droplet is considered stalled. Defaults to 45 when absent or 0.
 	StallThresholdMinutes int `yaml:"stall_threshold_minutes,omitempty"`
 
 	// DashboardFontFamily is the CSS font-family string used by the Cistern

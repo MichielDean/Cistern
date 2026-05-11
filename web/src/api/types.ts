@@ -12,7 +12,6 @@ export interface Droplet {
   assigned_aqueduct?: string;
   last_reviewed_commit?: string;
   external_ref?: string;
-  last_heartbeat_at?: string;
   created_at: string;
   updated_at: string;
   stage_dispatched_at?: string;

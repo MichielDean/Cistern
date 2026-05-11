@@ -380,17 +380,15 @@ ct doctor --fix                # Auto-repair common configuration issues
 Config lives at `~/.cistern/cistern.yaml`. Key options:
 
 ```yaml
-# Heartbeat: how often the Castellarius scans for stalled sessions
-heartbeat_interval: 30s
+# Liveness check: how often the Castellarius scans for stalled sessions
+liveness_interval: 30s
 
 # Stall detection: threshold for inactivity before marking a droplet as stalled
-# Monitors three progress signals: newest note timestamp, worktree file mtime,
-# and session log mtime. Droplet is stalled if all three are older than this threshold.
-# When detected: (1) a "stall" event is recorded with diagnostic signals, (2) if the
-# droplet has an assignee with prior session history, the session is automatically
-# re-spawned with --continue to allow the agent to resume; (3) further stall events
-# are suppressed until one of the signals advances. Re-spawn failures are automatically
-# retried on the next heartbeat tick.
+# Monitors session log mtime (written by tmux pipe-pane). If the agent is alive,
+# its session log is being written to continuously. A stale mtime means the agent
+# is stuck or dead. If no session log exists (orphan droplets), updated_at is used
+# as a fallback signal. When detected: a "stall" event is recorded with diagnostic
+# signals, and orphaned droplets are reset to open for re-dispatch.
 # Default: 45 minutes
 stall_threshold_minutes: 45
 
@@ -690,7 +688,6 @@ The web dashboard exposes a REST API at `/api/` that mirrors all TUI operations.
 | `POST` | `/api/droplets/{id}/cancel` | Cancel droplet (JSON body: `reason`) |
 | `POST` | `/api/droplets/{id}/restart` | Restart at step (optional JSON body: `cataractae`) |
 | `POST` | `/api/droplets/{id}/approve` | Approve human-gated droplet |
-| `POST` | `/api/droplets/{id}/heartbeat` | Record agent heartbeat |
 
 ### Notes
 
