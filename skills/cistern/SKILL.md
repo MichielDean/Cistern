@@ -62,11 +62,11 @@ ScaledTest worktree: `~/.cistern/sandboxes/ScaledTest/lobsterdog`
 implement → review → qa → security-review → docs → delivery
 ```
 
-| Complexity | Code | Notes |
-|------------|------|-------|
-| standard | 1 | minimal scrutiny |
-| full | 2 | standard scrutiny |
-| critical | 3 | maximum scrutiny (security review included) |
+| Priority | Meaning |
+|----------|---------|
+| 1 | Critical — maximum scrutiny (security review included) |
+| 2 | Standard — default scrutiny |
+| 3 | Low — minimal scrutiny |
 
 ## Adding a Droplet
 
@@ -77,7 +77,7 @@ implement → review → qa → security-review → docs → delivery
 ct droplet add \
   --title "Short imperative description" \
   --repo <repo-name> \
-  --complexity standard \
+  --priority 2 \
   --description "What, why, acceptance criteria"
 ```
 
@@ -110,9 +110,9 @@ ct filter --resume <session-id> "answers and context..."
 **Step 3 — When spec is approved, file manually:**
 ```bash
 # File each droplet explicitly, wiring deps with --depends-on
-ct droplet add --title "First droplet" --repo <repo> --complexity standard \
+ct droplet add --title "First droplet" --repo <repo> --priority 2 \
   --description "..."
-ct droplet add --title "Second droplet" --repo <repo> --complexity standard \
+ct droplet add --title "Second droplet" --repo <repo> --priority 2 \
   --description "..." --depends-on <first-id>
 ```
 
