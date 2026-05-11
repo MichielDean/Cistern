@@ -19,6 +19,7 @@ import (
 
 	"github.com/MichielDean/cistern/internal/aqueduct"
 	"github.com/MichielDean/cistern/internal/cistern"
+	"github.com/MichielDean/cistern/internal/sessionlog"
 )
 
 // --- Liveness check progress-monitoring tests ---
@@ -32,9 +33,9 @@ func TestLivenessCheck_StallDetected_WhenNoSignals(t *testing.T) {
 	isTmuxAliveFn = func(_ string) bool { return true }
 	t.Cleanup(func() { isTmuxAliveFn = orig })
 
-	origMtime := sessionLogMtimeFn
-	sessionLogMtimeFn = func(sessionID string) (time.Time, error) { return time.Time{}, nil }
-	t.Cleanup(func() { sessionLogMtimeFn = origMtime })
+	origMtime := sessionlog.MtimeFn
+	sessionlog.MtimeFn = func(sessionID string) (time.Time, error) { return time.Time{}, nil }
+	t.Cleanup(func() { sessionlog.MtimeFn = origMtime })
 
 	buf := &bytes.Buffer{}
 	client := newMockClient()
@@ -67,9 +68,9 @@ func TestLivenessCheck_NoStallNote_WhenRecentLogMtime(t *testing.T) {
 	isTmuxAliveFn = func(_ string) bool { return true }
 	t.Cleanup(func() { isTmuxAliveFn = orig })
 
-	origMtime := sessionLogMtimeFn
-	sessionLogMtimeFn = func(sessionID string) (time.Time, error) { return time.Now().Add(-5 * time.Second), nil }
-	t.Cleanup(func() { sessionLogMtimeFn = origMtime })
+	origMtime := sessionlog.MtimeFn
+	sessionlog.MtimeFn = func(sessionID string) (time.Time, error) { return time.Now().Add(-5 * time.Second), nil }
+	t.Cleanup(func() { sessionlog.MtimeFn = origMtime })
 
 	buf := &bytes.Buffer{}
 	client := newMockClient()
@@ -334,9 +335,9 @@ func TestLivenessCheck_DB_NotStalled_WhenRecentLogMtime(t *testing.T) {
 	rawDB.Close()
 
 	// Mock session log mtime to return a recent time — agent is alive and working.
-	origMtime := sessionLogMtimeFn
-	sessionLogMtimeFn = func(sessionID string) (time.Time, error) { return time.Now().Add(-5 * time.Second), nil }
-	t.Cleanup(func() { sessionLogMtimeFn = origMtime })
+	origMtime := sessionlog.MtimeFn
+	sessionlog.MtimeFn = func(sessionID string) (time.Time, error) { return time.Now().Add(-5 * time.Second), nil }
+	t.Cleanup(func() { sessionlog.MtimeFn = origMtime })
 
 	cfg := testConfig()
 	cfg.StallThresholdMinutes = 1
@@ -395,9 +396,9 @@ func TestLivenessCheck_DB_Stalled_WhenNoLogMtime(t *testing.T) {
 	rawDB.Close()
 
 	// Mock session log mtime to return zero time — agent has no session log.
-	origMtime := sessionLogMtimeFn
-	sessionLogMtimeFn = func(sessionID string) (time.Time, error) { return time.Time{}, nil }
-	t.Cleanup(func() { sessionLogMtimeFn = origMtime })
+	origMtime := sessionlog.MtimeFn
+	sessionlog.MtimeFn = func(sessionID string) (time.Time, error) { return time.Time{}, nil }
+	t.Cleanup(func() { sessionlog.MtimeFn = origMtime })
 
 	cfg := testConfig()
 	cfg.StallThresholdMinutes = 1

@@ -17,6 +17,7 @@ import (
 
 	"github.com/MichielDean/cistern/internal/aqueduct"
 	"github.com/MichielDean/cistern/internal/cistern"
+	"github.com/MichielDean/cistern/internal/sessionlog"
 )
 
 // newTestLogger creates a slog.Logger backed by buf for test inspection.
@@ -2086,9 +2087,9 @@ func TestLivenessCheckRepo_StallThreshold_ExplicitMinutesRespected(t *testing.T)
 	client.items[item.ID] = item
 
 	// Mock session log mtime to return 2 minutes ago — older than threshold.
-	origMtime := sessionLogMtimeFn
-	sessionLogMtimeFn = func(sessionID string) (time.Time, error) { return time.Now().Add(-2 * time.Minute), nil }
-	t.Cleanup(func() { sessionLogMtimeFn = origMtime })
+	origMtime := sessionlog.MtimeFn
+	sessionlog.MtimeFn = func(sessionID string) (time.Time, error) { return time.Now().Add(-2 * time.Minute), nil }
+	t.Cleanup(func() { sessionlog.MtimeFn = origMtime })
 
 	orig := isTmuxAliveFn
 	isTmuxAliveFn = func(_ string) bool { return true }
@@ -2128,9 +2129,9 @@ func TestLivenessCheckRepo_StallThreshold_DefaultsTo45Minutes(t *testing.T) {
 	client.items[item.ID] = item
 
 	// Mock session log mtime to return 2 minutes ago — within default threshold.
-	origMtime := sessionLogMtimeFn
-	sessionLogMtimeFn = func(sessionID string) (time.Time, error) { return time.Now().Add(-2 * time.Minute), nil }
-	t.Cleanup(func() { sessionLogMtimeFn = origMtime })
+	origMtime := sessionlog.MtimeFn
+	sessionlog.MtimeFn = func(sessionID string) (time.Time, error) { return time.Now().Add(-2 * time.Minute), nil }
+	t.Cleanup(func() { sessionlog.MtimeFn = origMtime })
 
 	orig := isTmuxAliveFn
 	isTmuxAliveFn = func(_ string) bool { return true }
@@ -2336,9 +2337,9 @@ func TestLivenessCheckRepo_RecentLogMtime_NotStalled(t *testing.T) {
 	isTmuxAliveFn = func(_ string) bool { return true }
 	t.Cleanup(func() { isTmuxAliveFn = orig })
 
-	origMtime := sessionLogMtimeFn
-	sessionLogMtimeFn = func(sessionID string) (time.Time, error) { return time.Now().Add(-30 * time.Second), nil }
-	t.Cleanup(func() { sessionLogMtimeFn = origMtime })
+	origMtime := sessionlog.MtimeFn
+	sessionlog.MtimeFn = func(sessionID string) (time.Time, error) { return time.Now().Add(-30 * time.Second), nil }
+	t.Cleanup(func() { sessionlog.MtimeFn = origMtime })
 
 	client := newMockClient()
 	runner := newMockRunner(client)
@@ -2381,9 +2382,9 @@ func TestLivenessCheckRepo_StaleLogMtime_Stalled(t *testing.T) {
 	isTmuxAliveFn = func(_ string) bool { return true }
 	t.Cleanup(func() { isTmuxAliveFn = orig })
 
-	origMtime := sessionLogMtimeFn
-	sessionLogMtimeFn = func(sessionID string) (time.Time, error) { return time.Now().Add(-90 * time.Second), nil }
-	t.Cleanup(func() { sessionLogMtimeFn = origMtime })
+	origMtime := sessionlog.MtimeFn
+	sessionlog.MtimeFn = func(sessionID string) (time.Time, error) { return time.Now().Add(-90 * time.Second), nil }
+	t.Cleanup(func() { sessionlog.MtimeFn = origMtime })
 
 	client := newMockClient()
 	runner := newMockRunner(nil) // nil client: Spawn must not be called

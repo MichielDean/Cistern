@@ -10,6 +10,7 @@ import (
 
 	"github.com/MichielDean/cistern/internal/aqueduct"
 	"github.com/MichielDean/cistern/internal/cistern"
+	"github.com/MichielDean/cistern/internal/sessionlog"
 )
 
 // testDB creates a temporary cistern database and returns its path.
@@ -341,9 +342,9 @@ func TestLivenessCheckRepo_StallDetected_ForAssignedDroplet(t *testing.T) {
 	client.items[item.ID] = item
 
 	sched := testScheduler(client, newMockRunner(client))
-	origMtime := sessionLogMtimeFn
-	sessionLogMtimeFn = func(sessionID string) (time.Time, error) { return time.Time{}, nil }
-	t.Cleanup(func() { sessionLogMtimeFn = origMtime })
+	origMtime := sessionlog.MtimeFn
+	sessionlog.MtimeFn = func(sessionID string) (time.Time, error) { return time.Time{}, nil }
+	t.Cleanup(func() { sessionlog.MtimeFn = origMtime })
 
 	sched.livenessCheckRepo(context.Background(), sched.config.Repos[0])
 
@@ -369,9 +370,9 @@ func TestLivenessCheckRepo_ActiveDroplet_NotStalled(t *testing.T) {
 	client.items[item.ID] = item
 
 	sched := testScheduler(client, newMockRunner(client))
-	origMtime := sessionLogMtimeFn
-	sessionLogMtimeFn = func(sessionID string) (time.Time, error) { return time.Now().Add(-1 * time.Minute), nil }
-	t.Cleanup(func() { sessionLogMtimeFn = origMtime })
+	origMtime := sessionlog.MtimeFn
+	sessionlog.MtimeFn = func(sessionID string) (time.Time, error) { return time.Now().Add(-1 * time.Minute), nil }
+	t.Cleanup(func() { sessionlog.MtimeFn = origMtime })
 
 	sched.livenessCheckRepo(context.Background(), sched.config.Repos[0])
 
@@ -397,9 +398,9 @@ func TestLivenessCheckRepo_UnknownAssignee_WritesStallNote(t *testing.T) {
 	client.items[item.ID] = item
 
 	sched := testScheduler(client, newMockRunner(client))
-	origMtime := sessionLogMtimeFn
-	sessionLogMtimeFn = func(sessionID string) (time.Time, error) { return time.Time{}, nil }
-	t.Cleanup(func() { sessionLogMtimeFn = origMtime })
+	origMtime := sessionlog.MtimeFn
+	sessionlog.MtimeFn = func(sessionID string) (time.Time, error) { return time.Time{}, nil }
+	t.Cleanup(func() { sessionlog.MtimeFn = origMtime })
 
 	sched.livenessCheckRepo(context.Background(), sched.config.Repos[0])
 

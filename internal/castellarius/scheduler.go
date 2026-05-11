@@ -22,6 +22,7 @@ import (
 
 	"github.com/MichielDean/cistern/internal/aqueduct"
 	"github.com/MichielDean/cistern/internal/cistern"
+	"github.com/MichielDean/cistern/internal/sessionlog"
 )
 
 // CisternClient is the interface for interacting with the work cistern.
@@ -1690,22 +1691,10 @@ func isTmuxAlive(sessionID string) bool {
 	return isTmuxAliveFn(sessionID)
 }
 
-// sessionLogMtime returns the modification time of the session log file.
-// Used as a liveness signal: an active agent writes to its session log via
-// tmux pipe-pane, so a stale mtime indicates the agent is stuck or dead.
-// Returns zero time if the log file does not exist.
-var sessionLogMtimeFn = func(sessionID string) (time.Time, error) {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return time.Time{}, err
-	}
-	path := filepath.Join(home, ".cistern", "session-logs", sessionID+".log")
-	info, err := os.Stat(path)
-	if err != nil {
-		return time.Time{}, nil
-	}
-	return info.ModTime().UTC(), nil
-}
+// sessionLogMtime delegates to the sessionlog package for testability.
+// Tests can override sessionLogMtimeFn (or sessionlog.MtimeFn directly)
+// to control the mtime returned without creating real files.
+var sessionLogMtimeFn = sessionlog.Mtime
 
 func sessionLogMtime(sessionID string) (time.Time, error) {
 	return sessionLogMtimeFn(sessionID)

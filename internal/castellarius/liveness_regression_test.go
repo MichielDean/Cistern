@@ -10,6 +10,7 @@ import (
 
 	"github.com/MichielDean/cistern/internal/aqueduct"
 	"github.com/MichielDean/cistern/internal/cistern"
+	"github.com/MichielDean/cistern/internal/sessionlog"
 )
 
 // --- Liveness Regression Tests ---
@@ -254,11 +255,11 @@ func TestLiveness_Stall_RecentSessionLogMtime_NotStalled(t *testing.T) {
 	isTmuxAliveFn = func(_ string) bool { return true } // session alive
 	t.Cleanup(func() { isTmuxAliveFn = orig })
 
-	origMtime := sessionLogMtimeFn
-	sessionLogMtimeFn = func(_ string) (time.Time, error) {
+	origMtime := sessionlog.MtimeFn
+	sessionlog.MtimeFn = func(_ string) (time.Time, error) {
 		return time.Now().Add(-30 * time.Second), nil // active agent
 	}
-	t.Cleanup(func() { sessionLogMtimeFn = origMtime })
+	t.Cleanup(func() { sessionlog.MtimeFn = origMtime })
 
 
 	client := newMockClient()
@@ -295,11 +296,11 @@ func TestLiveness_Stall_OldSessionLogMtime_IsStalled(t *testing.T) {
 	isTmuxAliveFn = func(_ string) bool { return true }
 	t.Cleanup(func() { isTmuxAliveFn = orig })
 
-	origMtime := sessionLogMtimeFn
-	sessionLogMtimeFn = func(_ string) (time.Time, error) {
+	origMtime := sessionlog.MtimeFn
+	sessionlog.MtimeFn = func(_ string) (time.Time, error) {
 		return time.Now().Add(-60 * time.Minute), nil // stale
 	}
-	t.Cleanup(func() { sessionLogMtimeFn = origMtime })
+	t.Cleanup(func() { sessionlog.MtimeFn = origMtime })
 
 
 	client := newMockClient()
@@ -341,9 +342,9 @@ func TestLiveness_Stall_NoSessionLog_FallsBackToUpdatedAt(t *testing.T) {
 	isTmuxAliveFn = func(_ string) bool { return true }
 	t.Cleanup(func() { isTmuxAliveFn = orig })
 
-	origMtime := sessionLogMtimeFn
-	sessionLogMtimeFn = func(_ string) (time.Time, error) { return time.Time{}, nil } // no log
-	t.Cleanup(func() { sessionLogMtimeFn = origMtime })
+	origMtime := sessionlog.MtimeFn
+	sessionlog.MtimeFn = func(_ string) (time.Time, error) { return time.Time{}, nil } // no log
+	t.Cleanup(func() { sessionlog.MtimeFn = origMtime })
 
 
 	client := newMockClient()
@@ -385,9 +386,9 @@ func TestLiveness_Stall_NoSessionLog_RecentUpdatedAt_NotStalled(t *testing.T) {
 	isTmuxAliveFn = func(_ string) bool { return true }
 	t.Cleanup(func() { isTmuxAliveFn = orig })
 
-	origMtime := sessionLogMtimeFn
-	sessionLogMtimeFn = func(_ string) (time.Time, error) { return time.Time{}, nil } // no log
-	t.Cleanup(func() { sessionLogMtimeFn = origMtime })
+	origMtime := sessionlog.MtimeFn
+	sessionlog.MtimeFn = func(_ string) (time.Time, error) { return time.Time{}, nil } // no log
+	t.Cleanup(func() { sessionlog.MtimeFn = origMtime })
 
 
 	client := newMockClient()
@@ -425,9 +426,9 @@ func TestLiveness_Stall_NoAssignee_OrphanRecovery(t *testing.T) {
 	isTmuxAliveFn = func(_ string) bool { return true }
 	t.Cleanup(func() { isTmuxAliveFn = orig })
 
-	origMtime := sessionLogMtimeFn
-	sessionLogMtimeFn = func(_ string) (time.Time, error) { return time.Time{}, nil }
-	t.Cleanup(func() { sessionLogMtimeFn = origMtime })
+	origMtime := sessionlog.MtimeFn
+	sessionlog.MtimeFn = func(_ string) (time.Time, error) { return time.Time{}, nil }
+	t.Cleanup(func() { sessionlog.MtimeFn = origMtime })
 
 
 	client := newMockClient()
@@ -513,9 +514,9 @@ func TestLiveness_DB_StallWithOrphanRecovery(t *testing.T) {
 	isTmuxAliveFn = func(_ string) bool { return true }
 	t.Cleanup(func() { isTmuxAliveFn = origTmux })
 
-	origMtime := sessionLogMtimeFn
-	sessionLogMtimeFn = func(_ string) (time.Time, error) { return time.Time{}, nil }
-	t.Cleanup(func() { sessionLogMtimeFn = origMtime })
+	origMtime := sessionlog.MtimeFn
+	sessionlog.MtimeFn = func(_ string) (time.Time, error) { return time.Time{}, nil }
+	t.Cleanup(func() { sessionlog.MtimeFn = origMtime })
 
 	dbPath := filepath.Join(t.TempDir(), "test.db")
 	c, err := cistern.New(dbPath, "ts")
@@ -643,9 +644,9 @@ func TestLiveness_Stall_SessionLogReadError_FallsBackToUpdatedAt(t *testing.T) {
 	isTmuxAliveFn = func(_ string) bool { return true }
 	t.Cleanup(func() { isTmuxAliveFn = orig })
 
-	origMtime := sessionLogMtimeFn
-	sessionLogMtimeFn = func(_ string) (time.Time, error) { return time.Time{}, sql.ErrConnDone } // read error
-	t.Cleanup(func() { sessionLogMtimeFn = origMtime })
+	origMtime := sessionlog.MtimeFn
+	sessionlog.MtimeFn = func(_ string) (time.Time, error) { return time.Time{}, sql.ErrConnDone } // read error
+	t.Cleanup(func() { sessionlog.MtimeFn = origMtime })
 
 
 	client := newMockClient()
@@ -687,9 +688,9 @@ func TestLiveness_Stall_NoAssignee_NoSessionLog_UsesUpdatedAt(t *testing.T) {
 	isTmuxAliveFn = func(_ string) bool { return true }
 	t.Cleanup(func() { isTmuxAliveFn = orig })
 
-	origMtime := sessionLogMtimeFn
-	sessionLogMtimeFn = func(_ string) (time.Time, error) { return time.Time{}, nil }
-	t.Cleanup(func() { sessionLogMtimeFn = origMtime })
+	origMtime := sessionlog.MtimeFn
+	sessionlog.MtimeFn = func(_ string) (time.Time, error) { return time.Time{}, nil }
+	t.Cleanup(func() { sessionlog.MtimeFn = origMtime })
 
 
 	client := newMockClient()

@@ -8,7 +8,6 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
-	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -19,6 +18,7 @@ import (
 	"github.com/MichielDean/cistern/internal/aqueduct"
 	"github.com/MichielDean/cistern/internal/cistern"
 	"github.com/MichielDean/cistern/internal/provider"
+	"github.com/MichielDean/cistern/internal/sessionlog"
 	"github.com/spf13/cobra"
 )
 
@@ -1013,7 +1013,6 @@ var (
 	peekRaw       bool
 	peekFollow    bool
 	peekSnapshot  bool
-	sessionLogDir string // overrideable in tests; empty means ~/.cistern/session-logs
 )
 
 // tmuxHasSession reports whether the named tmux session exists.
@@ -1090,16 +1089,11 @@ var dropletPeekCmd = &cobra.Command{
 			if peekFollow {
 				return fmt.Errorf("--raw is incompatible with --follow")
 			}
-			logDir := sessionLogDir
-			if logDir == "" {
-				home, err := os.UserHomeDir()
-				if err != nil {
-					return fmt.Errorf("cannot determine home directory: %w", err)
-				}
-				logDir = filepath.Join(home, ".cistern", "session-logs")
+			logPath, err := sessionlog.Path(session)
+			if err != nil {
+				return fmt.Errorf("cannot resolve session log path: %w", err)
 			}
-			logPath := filepath.Join(logDir, session+".log")
-			f, err := os.Open(logPath)
+			data, err := sessionlog.Read(session)
 			if err != nil {
 				if os.IsNotExist(err) {
 					fmt.Printf("No session log found at %s\n", logPath)
@@ -1107,8 +1101,7 @@ var dropletPeekCmd = &cobra.Command{
 				}
 				return err
 			}
-			defer f.Close()
-			_, err = io.Copy(os.Stdout, f)
+			_, err = os.Stdout.Write(data)
 			return err
 		}
 
