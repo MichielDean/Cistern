@@ -24,6 +24,11 @@ repos:
       - confluence
     prefix: ct
 
+    # Fork-mode delivery: push to a fork remote and open a PR against upstream
+    # instead of merging directly. Uncomment these lines for external repos.
+    # delivery_mode: fork
+    # upstream_remote: https://github.com/upstream-org/repo.git
+
 handoff_token_threshold: 100000
 
 # rate_limit configures the delivery cataractae API endpoint.

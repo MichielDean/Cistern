@@ -15,7 +15,13 @@ import (
 //
 // On first call: clones the repo.
 // On subsequent calls: fetches latest remote refs.
-func EnsurePrimaryClone(primaryDir, repoURL string) error {
+//
+// When upstreamURL is non-empty, an "upstream" remote is added (or updated)
+// pointing to the upstream repository, and upstream refs are fetched. This
+// is required for fork-mode repos where worktrees must track upstream/main
+// rather than origin/main. When upstreamURL is empty, upstream remote setup
+// is skipped (backward compatible).
+func EnsurePrimaryClone(primaryDir, repoURL, upstreamURL string) error {
 	gitDir := filepath.Join(primaryDir, ".git")
 	if _, err := os.Stat(gitDir); os.IsNotExist(err) {
 		if err := os.RemoveAll(primaryDir); err != nil && !os.IsNotExist(err) {
@@ -29,6 +35,14 @@ func EnsurePrimaryClone(primaryDir, repoURL string) error {
 		}
 		slog.Default().Info("git clone completed",
 			"dir", primaryDir, "duration", time.Since(t0).Round(time.Millisecond).String())
+
+		// Add upstream remote after fresh clone if upstreamURL is provided.
+		if upstreamURL != "" {
+			if err := addUpstreamRemote(primaryDir, upstreamURL); err != nil {
+				return err
+			}
+		}
+
 		return nil
 	}
 	t0 := time.Now()
@@ -39,6 +53,57 @@ func EnsurePrimaryClone(primaryDir, repoURL string) error {
 	}
 	slog.Default().Info("git fetch completed",
 		"dir", primaryDir, "duration", time.Since(t0).Round(time.Millisecond).String())
+
+	// Update upstream remote if needed on subsequent calls.
+	if upstreamURL != "" {
+		if err := addUpstreamRemote(primaryDir, upstreamURL); err != nil {
+			// Non-fatal: log a warning but don't fail the whole operation.
+			// The upstream may be temporarily unreachable.
+			slog.Default().Warn("upstream remote setup failed",
+				"dir", primaryDir, "error", err)
+		}
+	}
+
+	return nil
+}
+
+// addUpstreamRemote ensures the "upstream" remote points to upstreamURL.
+// If the remote already exists with a different URL, it is updated.
+// If it already exists with the same URL, this is a no-op.
+// After ensuring the remote exists, upstream refs are fetched.
+func addUpstreamRemote(primaryDir, upstreamURL string) error {
+	// Check if "upstream" remote already exists.
+	listCmd := exec.Command("git", "remote", "get-url", "upstream")
+	listCmd.Dir = primaryDir
+	out, err := listCmd.CombinedOutput()
+	if err != nil {
+		// Remote doesn't exist yet — add it.
+		addCmd := exec.Command("git", "remote", "add", "upstream", upstreamURL)
+		addCmd.Dir = primaryDir
+		if addOut, addErr := addCmd.CombinedOutput(); addErr != nil {
+			return fmt.Errorf("cataractae: add upstream remote in %s: %w: %s", primaryDir, addErr, addOut)
+		}
+	} else {
+		// Remote exists — update URL if it differs.
+		currentURL := strings.TrimSpace(string(out))
+		if currentURL != upstreamURL {
+			setURLCmd := exec.Command("git", "remote", "set-url", "upstream", upstreamURL)
+			setURLCmd.Dir = primaryDir
+			if setURLOut, setURLErr := setURLCmd.CombinedOutput(); setURLErr != nil {
+				return fmt.Errorf("cataractae: set upstream remote URL in %s: %w: %s", primaryDir, setURLErr, setURLOut)
+			}
+		}
+	}
+
+	// Fetch from upstream so refs are available for worktree creation.
+	fetchUpstream := exec.Command("git", "fetch", "upstream")
+	fetchUpstream.Dir = primaryDir
+	if fetchOut, fetchErr := fetchUpstream.CombinedOutput(); fetchErr != nil {
+		// Non-fatal: log a warning. The upstream may be temporarily unreachable.
+		slog.Default().Warn("git fetch upstream failed",
+			"dir", primaryDir, "error", fetchErr, "output", string(fetchOut))
+	}
+
 	return nil
 }
 

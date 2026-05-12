@@ -1184,7 +1184,11 @@ func (s *Castellarius) dispatchRepo(ctx context.Context, repo aqueduct.RepoConfi
 				req.Step.Type == aqueduct.CataractaeTypeAgent &&
 				req.Step.Context != aqueduct.ContextSpecOnly {
 				primaryDir := filepath.Join(s.sandboxRoot, req.RepoConfig.Name, "_primary")
-				sandboxDir, err := prepareDropletWorktree(primaryDir, s.sandboxRoot, req.RepoConfig.Name, req.Item.ID)
+				baseRemote := "origin"
+				if req.RepoConfig.DeliveryMode == aqueduct.DeliveryModeFork {
+					baseRemote = "upstream"
+				}
+				sandboxDir, err := prepareDropletWorktree(primaryDir, s.sandboxRoot, req.RepoConfig.Name, req.Item.ID, baseRemote)
 				if err != nil {
 					s.logger.Error("prepare worktree failed",
 						"repo", req.RepoConfig.Name,
@@ -1825,13 +1829,22 @@ func repoHasCommits(dir, ref string) (bool, error) {
 // `git worktree add -b feat/<id> <path> origin/main` to create a fresh branch.
 // When origin/main has no commits (empty/unborn repo), uses
 // `git worktree add --orphan -b feat/<id> <path>` instead.
-func prepareDropletWorktree(primaryDir, sandboxRoot, repoName, dropletID string) (string, error) {
-	return prepareDropletWorktreeWithLogger(slog.Default(), primaryDir, sandboxRoot, repoName, dropletID)
+func prepareDropletWorktree(primaryDir, sandboxRoot, repoName, dropletID string, baseRemote ...string) (string, error) {
+	remote := "origin"
+	if len(baseRemote) > 0 {
+		remote = baseRemote[0]
+	}
+	return prepareDropletWorktreeWithLogger(slog.Default(), primaryDir, sandboxRoot, repoName, dropletID, remote)
 }
 
 // prepareDropletWorktreeWithLogger is the logger-parameterized implementation
 // of prepareDropletWorktree, used directly in tests.
-func prepareDropletWorktreeWithLogger(logger *slog.Logger, primaryDir, sandboxRoot, repoName, dropletID string) (string, error) {
+// baseRemote controls which remote the worktree tracks: "origin" for direct
+// mode, "upstream" for fork mode. When empty, defaults to "origin".
+func prepareDropletWorktreeWithLogger(logger *slog.Logger, primaryDir, sandboxRoot, repoName, dropletID, baseRemote string) (string, error) {
+	if baseRemote == "" {
+		baseRemote = "origin"
+	}
 	worktreePath := filepath.Join(sandboxRoot, repoName, dropletID)
 	branch := "feat/" + dropletID
 	t0 := time.Now()
@@ -1858,16 +1871,28 @@ func prepareDropletWorktreeWithLogger(logger *slog.Logger, primaryDir, sandboxRo
 			return "", fmt.Errorf("git checkout %s in %s: %w: %s", branch, worktreePath, err, out)
 		}
 
+		// For fork mode, set up tracking against upstream/main instead of origin/main.
+		if baseRemote == "upstream" {
+			trackCmd := exec.Command("git", "branch", "--set-upstream-to=upstream/main", branch)
+			trackCmd.Dir = worktreePath
+			if out, err := trackCmd.CombinedOutput(); err != nil {
+				// Non-fatal: log a warning. The upstream remote may not have main yet.
+				logger.Warn("git branch --set-upstream-to=upstream/main failed",
+					"branch", branch, "error", err, "output", string(out))
+			}
+		}
+
 		logger.Info("worktree resumed",
 			"droplet", dropletID, "path", worktreePath,
 			"duration", time.Since(t0).Round(time.Millisecond).String())
 		return worktreePath, nil
 	}
 
-	// Fetch latest before creating — but only if origin/main exists. On an
-	// empty/unborn repo, git fetch origin succeeds but there are no refs to
+	// Fetch latest before creating — but only if baseRemote/main exists. On an
+	// empty/unborn repo, git fetch succeeds but there are no refs to
 	// base a worktree on. The orphan path handles this case.
-	hasCommits, commitsErr := repoHasCommits(primaryDir, "origin/main")
+	baseRef := baseRemote + "/main"
+	hasCommits, commitsErr := repoHasCommits(primaryDir, baseRef)
 	if commitsErr != nil {
 		// If we can't check, assume commits exist (conservative fallback)
 		// and let the normal path fail with a descriptive error if wrong.
@@ -1876,11 +1901,11 @@ func prepareDropletWorktreeWithLogger(logger *slog.Logger, primaryDir, sandboxRo
 		hasCommits = true
 	}
 	if hasCommits {
-		logger.Info("git fetch", "dir", primaryDir)
-		fetch := exec.Command("git", "fetch", "origin")
+		logger.Info("git fetch", "dir", primaryDir, "remote", baseRemote)
+		fetch := exec.Command("git", "fetch", baseRemote)
 		fetch.Dir = primaryDir
 		if out, err := fetch.CombinedOutput(); err != nil {
-			return "", fmt.Errorf("git fetch in %s: %w: %s", primaryDir, err, out)
+			return "", fmt.Errorf("git fetch %s in %s: %w: %s", baseRemote, primaryDir, err, out)
 		}
 	}
 
@@ -1911,8 +1936,8 @@ func prepareDropletWorktreeWithLogger(logger *slog.Logger, primaryDir, sandboxRo
 			freshBranch = true
 			orphanBranch = true
 		} else {
-			// Branch doesn't exist yet — create it fresh from origin/main.
-			addNew := exec.Command("git", "worktree", "add", "-b", branch, worktreePath, "origin/main")
+			// Branch doesn't exist yet — create it fresh from baseRemote/main.
+			addNew := exec.Command("git", "worktree", "add", "-b", branch, worktreePath, baseRef)
 			addNew.Dir = primaryDir
 			if out2, err2 := addNew.CombinedOutput(); err2 != nil {
 				return "", fmt.Errorf("git worktree add %s in %s: %w: %s", worktreePath, primaryDir, err2, out2)
@@ -1933,11 +1958,11 @@ func prepareDropletWorktreeWithLogger(logger *slog.Logger, primaryDir, sandboxRo
 	}
 
 	if freshBranch && !orphanBranch {
-		// Hard-reset to origin/main to guarantee a clean baseline — the worktree
+		// Hard-reset to baseRef to guarantee a clean baseline — the worktree
 		// may inherit local modifications from the primary clone.
-		// This is skipped for orphan branches (empty repo) since origin/main
+		// This is skipped for orphan branches (empty repo) since baseRef
 		// doesn't exist — there's nothing to reset to.
-		reset := exec.Command("git", "reset", "--hard", "origin/main")
+		reset := exec.Command("git", "reset", "--hard", baseRef)
 		reset.Dir = worktreePath
 		if out, err := reset.CombinedOutput(); err != nil {
 			return "", fmt.Errorf("git reset in %s: %w: %s", worktreePath, err, out)

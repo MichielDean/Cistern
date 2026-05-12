@@ -847,3 +847,93 @@ func TestWriteContextFile_UncommittedFilesSectionExcludesInstructionsFile(t *tes
 		t.Error("feature.go must appear in uncommitted files section")
 	}
 }
+
+// --- Fork delivery section tests ---
+
+// TestWriteContextFile_ForkMode_IncludesUpstreamRemote verifies that when
+// RepoConfig.DeliveryMode is DeliveryModeFork, CONTEXT.md includes the
+// Fork Delivery section with the upstream remote URL.
+func TestWriteContextFile_ForkMode_IncludesUpstreamRemote(t *testing.T) {
+	item := &cistern.Droplet{ID: "ci-fork1", Title: "Fork test", Status: "in_progress", Description: "Test fork delivery"}
+	step := &aqueduct.WorkflowCataractae{Name: "implementation", Type: "agent", Identity: "implementer"}
+	upstream := "https://github.com/upstream-org/repo.git"
+
+	p := ContextParams{
+		Item:       item,
+		Step:       step,
+		RepoConfig: aqueduct.RepoConfig{DeliveryMode: aqueduct.DeliveryModeFork, UpstreamRemote: upstream},
+	}
+
+	ctxPath := filepath.Join(t.TempDir(), "CONTEXT.md")
+	if err := writeContextFile(ctxPath, p); err != nil {
+		t.Fatalf("writeContextFile: %v", err)
+	}
+
+	content, err := os.ReadFile(ctxPath)
+	if err != nil {
+		t.Fatalf("ReadFile: %v", err)
+	}
+	got := string(content)
+
+	if !strings.Contains(got, "## Fork Delivery") {
+		t.Error("expected '## Fork Delivery' section in CONTEXT.md for fork mode")
+	}
+	if !strings.Contains(got, "**Delivery Mode:** fork") {
+		t.Error("expected '**Delivery Mode:** fork' in CONTEXT.md")
+	}
+	if !strings.Contains(got, "**Upstream Remote:** "+upstream) {
+		t.Error("expected upstream remote URL in CONTEXT.md")
+	}
+	if !strings.Contains(got, "**Base Branch:** main (from upstream)") {
+		t.Error("expected '**Base Branch:** main (from upstream)' in CONTEXT.md")
+	}
+}
+
+// TestWriteContextFile_DirectMode_NoForkDeliverySection verifies that when
+// DeliveryMode is direct (or empty), no Fork Delivery section appears.
+func TestWriteContextFile_DirectMode_NoForkDeliverySection(t *testing.T) {
+	item := &cistern.Droplet{ID: "ci-direct1", Title: "Direct test", Status: "in_progress"}
+	step := &aqueduct.WorkflowCataractae{Name: "implementation", Type: "agent", Identity: "implementer"}
+
+	// Test with explicit direct mode.
+	p := ContextParams{
+		Item:       item,
+		Step:       step,
+		RepoConfig: aqueduct.RepoConfig{DeliveryMode: aqueduct.DeliveryModeDirect},
+	}
+
+	ctxPath := filepath.Join(t.TempDir(), "CONTEXT_direct.md")
+	if err := writeContextFile(ctxPath, p); err != nil {
+		t.Fatalf("writeContextFile: %v", err)
+	}
+
+	content, err := os.ReadFile(ctxPath)
+	if err != nil {
+		t.Fatalf("ReadFile: %v", err)
+	}
+	got := string(content)
+
+	if strings.Contains(got, "## Fork Delivery") {
+		t.Error("Fork Delivery section must NOT appear for direct mode")
+	}
+
+	// Test with empty delivery mode (zero value default).
+	p2 := ContextParams{
+		Item:       item,
+		Step:       step,
+		RepoConfig: aqueduct.RepoConfig{}, // DeliveryMode is ""
+	}
+
+	ctxPath2 := filepath.Join(t.TempDir(), "CONTEXT_empty.md")
+	if err := writeContextFile(ctxPath2, p2); err != nil {
+		t.Fatalf("writeContextFile: %v", err)
+	}
+
+	content2, err := os.ReadFile(ctxPath2)
+	if err != nil {
+		t.Fatalf("ReadFile: %v", err)
+	}
+	if strings.Contains(string(content2), "## Fork Delivery") {
+		t.Error("Fork Delivery section must NOT appear when DeliveryMode is empty")
+	}
+}

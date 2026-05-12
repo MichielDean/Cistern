@@ -88,7 +88,7 @@ func New(cfg Config) (*Runner, error) {
 	// SkipInitialClone is set in tests that use fake repo URLs.
 	if !cfg.SkipInitialClone {
 		primaryDir := filepath.Join(repoSandboxDir, "_primary")
-		if err := EnsurePrimaryClone(primaryDir, cfg.Repo.URL); err != nil {
+		if err := EnsurePrimaryClone(primaryDir, cfg.Repo.URL, cfg.Repo.UpstreamRemote); err != nil {
 			return nil, fmt.Errorf("cataractae: primary clone for %q: %w", cfg.Repo.Name, err)
 		}
 		for _, w := range workers {
@@ -232,6 +232,7 @@ func (r *Runner) SpawnStep(w *Worker, item *cistern.Droplet, step *aqueduct.Work
 		OpenIssues:       openIssues,
 		QueueClient:      r.queue,
 		InstructionsFile: r.preset.InstrFile(),
+		RepoConfig:       r.repo,
 	})
 	if err != nil {
 		return fmt.Errorf("context: %w", err)

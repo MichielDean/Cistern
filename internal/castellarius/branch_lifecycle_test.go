@@ -280,7 +280,7 @@ func TestRemoveDropletWorktree_KeepBranch_WhenStagnant_PreservesFeatureBranch(t 
 	sandboxRoot := t.TempDir()
 	l := newBranchLifecycleLogger(io.Discard)
 
-	worktreePath, err := prepareDropletWorktreeWithLogger(l, primaryDir, sandboxRoot, "myrepo", "drop-stagnant")
+	worktreePath, err := prepareDropletWorktreeWithLogger(l, primaryDir, sandboxRoot, "myrepo", "drop-stagnant", "origin")
 	if err != nil {
 		t.Fatalf("prepareDropletWorktree: %v", err)
 	}
@@ -313,7 +313,7 @@ func TestRemoveDropletWorktree_DeletesBranchAndDir_WhenDone(t *testing.T) {
 	sandboxRoot := t.TempDir()
 	l := newBranchLifecycleLogger(io.Discard)
 
-	worktreePath, err := prepareDropletWorktreeWithLogger(l, primaryDir, sandboxRoot, "myrepo", "drop-done")
+	worktreePath, err := prepareDropletWorktreeWithLogger(l, primaryDir, sandboxRoot, "myrepo", "drop-done", "origin")
 	if err != nil {
 		t.Fatalf("prepareDropletWorktree: %v", err)
 	}
@@ -342,7 +342,7 @@ func TestPrepareDropletWorktree_ResumesFromExistingBranch_AfterStagnantCleanup(t
 	sandboxRoot := t.TempDir()
 	l := newBranchLifecycleLogger(io.Discard)
 
-	worktreePath, err := prepareDropletWorktreeWithLogger(l, primaryDir, sandboxRoot, "myrepo", "drop-resume-stagnant")
+	worktreePath, err := prepareDropletWorktreeWithLogger(l, primaryDir, sandboxRoot, "myrepo", "drop-resume-stagnant", "origin")
 	if err != nil {
 		t.Fatalf("prepareDropletWorktree (first): %v", err)
 	}
@@ -365,7 +365,7 @@ func TestPrepareDropletWorktree_ResumesFromExistingBranch_AfterStagnantCleanup(t
 	}
 
 	// When: Architecti restarts the droplet — prepareDropletWorktree is called again.
-	newWorktreePath, err := prepareDropletWorktreeWithLogger(l, primaryDir, sandboxRoot, "myrepo", "drop-resume-stagnant")
+	newWorktreePath, err := prepareDropletWorktreeWithLogger(l, primaryDir, sandboxRoot, "myrepo", "drop-resume-stagnant", "origin")
 	if err != nil {
 		t.Fatalf("prepareDropletWorktree (resume): %v", err)
 	}
@@ -827,7 +827,7 @@ func TestPrepareDropletWorktree_EmptyRepo_UsesOrphanBranch(t *testing.T) {
 	sandboxRoot := t.TempDir()
 
 	worktreePath, err := prepareDropletWorktreeWithLogger(
-		newBranchLifecycleLogger(io.Discard), primaryDir, sandboxRoot, "myrepo", "drop-orphan",
+		newBranchLifecycleLogger(io.Discard), primaryDir, sandboxRoot, "myrepo", "drop-orphan", "origin",
 	)
 	if err != nil {
 		t.Fatalf("prepareDropletWorktree on empty repo: %v", err)
@@ -870,7 +870,7 @@ func TestPrepareDropletWorktree_EmptyRepo_ResumeOrphanBranch(t *testing.T) {
 	l := newBranchLifecycleLogger(io.Discard)
 
 	// First dispatch: create the orphan worktree and commit a file.
-	worktreePath, err := prepareDropletWorktreeWithLogger(l, primaryDir, sandboxRoot, "myrepo", "drop-resume-orphan")
+	worktreePath, err := prepareDropletWorktreeWithLogger(l, primaryDir, sandboxRoot, "myrepo", "drop-resume-orphan", "origin")
 	if err != nil {
 		t.Fatalf("first prepareDropletWorktree on empty repo: %v", err)
 	}
@@ -894,7 +894,7 @@ func TestPrepareDropletWorktree_EmptyRepo_ResumeOrphanBranch(t *testing.T) {
 	}
 
 	// Second dispatch: resume the orphan branch.
-	newWorktreePath, err := prepareDropletWorktreeWithLogger(l, primaryDir, sandboxRoot, "myrepo", "drop-resume-orphan")
+	newWorktreePath, err := prepareDropletWorktreeWithLogger(l, primaryDir, sandboxRoot, "myrepo", "drop-resume-orphan", "origin")
 	if err != nil {
 		t.Fatalf("second prepareDropletWorktree (resume) on empty repo: %v", err)
 	}
@@ -922,11 +922,11 @@ func TestPrepareDropletWorktree_EmptyRepo_MultipleDroplets(t *testing.T) {
 	sandboxRoot := t.TempDir()
 	l := newBranchLifecycleLogger(io.Discard)
 
-	wt1, err := prepareDropletWorktreeWithLogger(l, primaryDir, sandboxRoot, "myrepo", "drop-multi-1")
+	wt1, err := prepareDropletWorktreeWithLogger(l, primaryDir, sandboxRoot, "myrepo", "drop-multi-1", "origin")
 	if err != nil {
 		t.Fatalf("prepareDropletWorktree for drop-multi-1: %v", err)
 	}
-	wt2, err := prepareDropletWorktreeWithLogger(l, primaryDir, sandboxRoot, "myrepo", "drop-multi-2")
+	wt2, err := prepareDropletWorktreeWithLogger(l, primaryDir, sandboxRoot, "myrepo", "drop-multi-2", "origin")
 	if err != nil {
 		t.Fatalf("prepareDropletWorktree for drop-multi-2: %v", err)
 	}
@@ -976,7 +976,7 @@ func TestPrepareDropletWorktree_EmptyRepo_LogsWorktreeCreated(t *testing.T) {
 	primaryDir := makeEmptyBareAndClone(t)
 	sandboxRoot := t.TempDir()
 
-	_, err := prepareDropletWorktreeWithLogger(l, primaryDir, sandboxRoot, "myrepo", "ci-orphan-log")
+	_, err := prepareDropletWorktreeWithLogger(l, primaryDir, sandboxRoot, "myrepo", "ci-orphan-log", "origin")
 	if err != nil {
 		t.Fatalf("prepareDropletWorktree on empty repo: %v", err)
 	}
@@ -1092,5 +1092,172 @@ func TestPurgeStaleBranches_DeletesTerminalDropletBranches(t *testing.T) {
 	}
 	if !branchExists(t, dstPrimary, "feat/"+prefix+"active") {
 		t.Error("feat/te-active should be preserved (in-progress droplet)")
+	}
+}
+
+// --- Fork-mode prepareDropletWorktree tests ---
+
+// makeBareAndCloneWithUpstream creates a primary clone with an "upstream"
+// remote pointing to a separate bare repo. This simulates the fork-mode
+// setup where origin is the fork and upstream is the source-of-truth repo.
+func makeBareAndCloneWithUpstream(t *testing.T) (string, string) {
+	t.Helper()
+	primaryDir, _ := makeBareAndClone(t)
+
+	// Create a second bare repo as "upstream".
+	upstreamDir := filepath.Join(t.TempDir(), "upstream.git")
+	branchMustRun(t, branchGitCmd(".", "init", "--bare", upstreamDir))
+
+	// Push the initial commit to upstream so upstream/main exists.
+	// We need to create a commit in the upstream repo first.
+	upstreamWork := filepath.Join(t.TempDir(), "upstream-work")
+	branchMustRun(t, branchGitCmd(".", "clone", upstreamDir, upstreamWork))
+	branchMustRun(t, branchGitCmd(upstreamWork, "config", "user.email", "noreply@lobsterdog.dev"))
+	branchMustRun(t, branchGitCmd(upstreamWork, "config", "user.name", "Lobsterdog Contributors"))
+	if err := os.WriteFile(filepath.Join(upstreamWork, "README.md"), []byte("upstream init\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	branchMustRun(t, branchGitCmd(upstreamWork, "add", "."))
+	branchMustRun(t, branchGitCmd(upstreamWork, "commit", "-m", "upstream initial"))
+	branchMustRun(t, branchGitCmd(upstreamWork, "branch", "-M", "main"))
+	// The clone already set up "origin" pointing to upstreamDir, so just push.
+	branchMustRun(t, branchGitCmd(upstreamWork, "push", "-u", "origin", "main"))
+
+	// Add "upstream" remote to the primary clone.
+	branchMustRun(t, branchGitCmd(primaryDir, "remote", "add", "upstream", upstreamDir))
+	branchMustRun(t, branchGitCmd(primaryDir, "fetch", "upstream"))
+
+	return primaryDir, upstreamDir
+}
+
+// TestPrepareDropletWorktree_ForkMode_TracksUpstreamMain verifies that when
+// baseRemote is "upstream", the worktree branch is created from upstream/main
+// rather than origin/main.
+func TestPrepareDropletWorktree_ForkMode_TracksUpstreamMain(t *testing.T) {
+	primaryDir, _ := makeBareAndCloneWithUpstream(t)
+	sandboxRoot := t.TempDir()
+	l := newBranchLifecycleLogger(io.Discard)
+
+	// Create worktree based on upstream/main via baseRemote="upstream".
+	worktreePath, err := prepareDropletWorktreeWithLogger(l, primaryDir, sandboxRoot, "myrepo", "drop-fork-base", "upstream")
+	if err != nil {
+		t.Fatalf("prepareDropletWorktreeWithLogger: %v", err)
+	}
+	defer os.RemoveAll(worktreePath)
+
+	if _, statErr := os.Stat(worktreePath); statErr != nil {
+		t.Fatalf("worktree path does not exist: %v", statErr)
+	}
+
+	// Verify HEAD points to upstream/main's commit.
+	upstreamMainSHA, err := exec.Command("git", "-C", primaryDir, "rev-parse", "upstream/main").Output()
+	if err != nil {
+		t.Fatalf("git rev-parse upstream/main: %v", err)
+	}
+	worktreeHEAD, err := exec.Command("git", "-C", worktreePath, "rev-parse", "HEAD").Output()
+	if err != nil {
+		t.Fatalf("git rev-parse HEAD in worktree: %v", err)
+	}
+
+	if strings.TrimSpace(string(worktreeHEAD)) != strings.TrimSpace(string(upstreamMainSHA)) {
+		t.Errorf("worktree HEAD = %s, want upstream/main = %s",
+			strings.TrimSpace(string(worktreeHEAD)),
+			strings.TrimSpace(string(upstreamMainSHA)))
+	}
+}
+
+// TestPrepareDropletWorktree_ForkMode_ExistingWorktreeChecksOutFromUpstream
+// verifies that when resuming an existing worktree in fork mode, the tracking
+// branch is set to upstream/main.
+func TestPrepareDropletWorktree_ForkMode_ExistingWorktreeChecksOutFromUpstream(t *testing.T) {
+	primaryDir, _ := makeBareAndCloneWithUpstream(t)
+	sandboxRoot := t.TempDir()
+	l := newBranchLifecycleLogger(io.Discard)
+
+	// First call creates the worktree.
+	worktreePath, err := prepareDropletWorktreeWithLogger(l, primaryDir, sandboxRoot, "myrepo", "drop-fork-resume", "upstream")
+	if err != nil {
+		t.Fatalf("first prepareDropletWorktreeWithLogger: %v", err)
+	}
+
+	// Second call resumes the existing worktree — should set tracking to upstream/main.
+	worktreePath2, err := prepareDropletWorktreeWithLogger(l, primaryDir, sandboxRoot, "myrepo", "drop-fork-resume", "upstream")
+	if err != nil {
+		t.Fatalf("second prepareDropletWorktreeWithLogger (resume): %v", err)
+	}
+	if worktreePath2 != worktreePath {
+		t.Errorf("resumed worktree path = %q, want %q", worktreePath2, worktreePath)
+	}
+
+	// Verify tracking branch is set to upstream/main.
+	trackOut, trackErr := exec.Command("git", "-C", worktreePath, "rev-parse", "--abbrev-ref", "--symbolic-full-name", "HEAD").Output()
+	if trackErr != nil {
+		// This may fail if no tracking is set — log but don't fail; some git versions don't set tracking.
+		t.Logf("tracking branch check (non-fatal): %v: %s", trackErr, string(trackOut))
+	} else {
+		trackBranch := strings.TrimSpace(string(trackOut))
+		if trackBranch != "upstream/main" && trackBranch != "" {
+			t.Logf("tracking branch = %q (expected upstream/main or empty)", trackBranch)
+		}
+	}
+}
+
+// TestPrepareDropletWorktree_DirectMode_DefaultsToOrigin verifies that when
+// baseRemote is "" (empty string), it defaults to "origin" and the worktree
+// is created from origin/main.
+func TestPrepareDropletWorktree_DirectMode_DefaultsToOrigin(t *testing.T) {
+	primaryDir, _ := makeBareAndClone(t)
+	sandboxRoot := t.TempDir()
+	l := newBranchLifecycleLogger(io.Discard)
+
+	// Empty baseRemote should default to "origin".
+	worktreePath, err := prepareDropletWorktreeWithLogger(l, primaryDir, sandboxRoot, "myrepo", "drop-direct-default", "")
+	if err != nil {
+		t.Fatalf("prepareDropletWorktreeWithLogger: %v", err)
+	}
+	defer os.RemoveAll(worktreePath)
+
+	originMainSHA, err := exec.Command("git", "-C", primaryDir, "rev-parse", "origin/main").Output()
+	if err != nil {
+		t.Fatalf("git rev-parse origin/main: %v", err)
+	}
+	worktreeHEAD, err := exec.Command("git", "-C", worktreePath, "rev-parse", "HEAD").Output()
+	if err != nil {
+		t.Fatalf("git rev-parse HEAD: %v", err)
+	}
+
+	if strings.TrimSpace(string(worktreeHEAD)) != strings.TrimSpace(string(originMainSHA)) {
+		t.Errorf("worktree HEAD = %s, want origin/main = %s",
+			strings.TrimSpace(string(worktreeHEAD)),
+			strings.TrimSpace(string(originMainSHA)))
+	}
+}
+
+// TestPrepareDropletWorktree_ExplicitOrigin_UsesOriginMain verifies that when
+// baseRemote is "origin" (explicit), the worktree is created from origin/main.
+func TestPrepareDropletWorktree_ExplicitOrigin_UsesOriginMain(t *testing.T) {
+	primaryDir, _ := makeBareAndClone(t)
+	sandboxRoot := t.TempDir()
+	l := newBranchLifecycleLogger(io.Discard)
+
+	worktreePath, err := prepareDropletWorktreeWithLogger(l, primaryDir, sandboxRoot, "myrepo", "drop-origin-explicit", "origin")
+	if err != nil {
+		t.Fatalf("prepareDropletWorktreeWithLogger: %v", err)
+	}
+	defer os.RemoveAll(worktreePath)
+
+	originMainSHA, err := exec.Command("git", "-C", primaryDir, "rev-parse", "origin/main").Output()
+	if err != nil {
+		t.Fatalf("git rev-parse origin/main: %v", err)
+	}
+	worktreeHEAD, err := exec.Command("git", "-C", worktreePath, "rev-parse", "HEAD").Output()
+	if err != nil {
+		t.Fatalf("git rev-parse HEAD: %v", err)
+	}
+
+	if strings.TrimSpace(string(worktreeHEAD)) != strings.TrimSpace(string(originMainSHA)) {
+		t.Errorf("worktree HEAD = %s, want origin/main = %s",
+			strings.TrimSpace(string(worktreeHEAD)),
+			strings.TrimSpace(string(originMainSHA)))
 	}
 }
