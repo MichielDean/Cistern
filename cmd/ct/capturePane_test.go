@@ -26,7 +26,7 @@ func TestCapturePane_FullScrollback_ReturnsHistoryBeyondVisible(t *testing.T) {
 		t.Skip("tmux not in PATH — skipping integration test")
 	}
 
-	session := fmt.Sprintf("ct-test-scrollback-%d", os.Getpid())
+	session := fmt.Sprintf("ct-test-scrollback-%d-%d", os.Getpid(), time.Now().UnixNano()%10000)
 
 	// Use a minimal shell command that writes output immediately and exits,
 	// avoiding any interactive shell startup (GPG agent prompts, etc.)
@@ -38,12 +38,21 @@ func TestCapturePane_FullScrollback_ReturnsHistoryBeyondVisible(t *testing.T) {
 	// Create a detached session running a minimal shell that skips profile/rc files.
 	// GPG agent and other interactive startup hooks can block the shell prompt
 	// from appearing, causing the "shell ready" check to time out.
-	cmd := exec.Command("tmux", "new-session", "-d", "-s", session,
-		"env", "-i", "HOME="+os.Getenv("HOME"), "PATH="+os.Getenv("PATH"),
-		"TERM="+os.Getenv("TERM"), "SHELL=/bin/bash",
-		"bash", "--norc", "--noprofile")
-	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("tmux new-session: %v: %s", err, out)
+	// Retry up to 3 times to handle transient tmux server contention.
+	var cmd *exec.Cmd
+	for attempt := 0; attempt < 3; attempt++ {
+		cmd = exec.Command("tmux", "new-session", "-d", "-s", session,
+			"env", "-i", "HOME="+os.Getenv("HOME"), "PATH="+os.Getenv("PATH"),
+			"TERM="+os.Getenv("TERM"), "SHELL=/bin/bash",
+			"bash", "--norc", "--noprofile")
+		out, err := cmd.CombinedOutput()
+		if err == nil {
+			break
+		}
+		if attempt == 2 {
+			t.Fatalf("tmux new-session (attempt %d): %v: %s", attempt+1, err, out)
+		}
+		time.Sleep(500 * time.Millisecond)
 	}
 	t.Cleanup(func() {
 		exec.Command("tmux", "kill-session", "-t", session).Run() //nolint:errcheck
