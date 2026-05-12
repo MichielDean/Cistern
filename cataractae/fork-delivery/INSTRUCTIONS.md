@@ -102,7 +102,15 @@ UPSTREAM_URL=$(grep '^\*\*Upstream Remote:\*\*' CONTEXT.md | sed 's/\*\*Upstream
 # Convert git URL (https://github.com/owner/repo.git or git@github.com:owner/repo.git)
 # to OWNER/REPO format required by gh --repo.
 UPSTREAM_REPO=$(echo "$UPSTREAM_URL" | sed -E 's#(https?://[^/]+/|git@[^:]+:)##' | sed 's/\.git$//')
-PR_URL=$(gh pr create --repo "$UPSTREAM_REPO" --base $BASE --head $BRANCH --title "$PR_TITLE" --body "Closes droplet $DROPLET_ID." 2>&1) || true
+# Extract fork owner from origin remote so --head uses OWNER:BRANCH format.
+# Cross-repo PRs require the fork owner prefix; bare branch names are assumed
+# to exist on the upstream repo, not the fork.
+ORIGIN_URL=$(git remote get-url origin)
+# Convert git URL to OWNER/REPO, then extract just the owner part.
+# https://github.com/owner/repo.git → owner  |  git@github.com:owner/repo.git → owner
+FORK_REPO=$(echo "$ORIGIN_URL" | sed -E 's#(https?://[^/]+/|git@[^:]+:)##' | sed 's/\.git$//')
+FORK_OWNER=$(echo "$FORK_REPO" | cut -d'/' -f1)
+PR_URL=$(gh pr create --repo "$UPSTREAM_REPO" --base $BASE --head "${FORK_OWNER}:${BRANCH}" --title "$PR_TITLE" --body "Closes droplet $DROPLET_ID." 2>&1) || true
 if echo "$PR_URL" | grep -q "already exists"; then
   PR_URL=$(gh pr view $BRANCH --repo "$UPSTREAM_REPO" --json url --jq '.url')
 fi
