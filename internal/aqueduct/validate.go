@@ -152,6 +152,11 @@ func ValidateAqueductConfig(cfg *AqueductConfig) error {
 			cfg.Repos[i].DeliveryMode = DeliveryModeDirect
 		}
 
+		// Reject invalid delivery mode values.
+		if repo.DeliveryMode != DeliveryModeDirect && repo.DeliveryMode != DeliveryModeFork {
+			return fmt.Errorf("cistern config: repo %q: invalid delivery_mode %q (valid: direct, fork)", repo.Name, repo.DeliveryMode)
+		}
+
 		if repo.DeliveryMode == DeliveryModeFork && repo.UpstreamRemote == "" {
 			return fmt.Errorf("cistern config: repo %q: upstream_remote is required when delivery_mode is fork", repo.Name)
 		}

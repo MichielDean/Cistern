@@ -78,3 +78,19 @@ func TestValidateAqueductConfig_DirectMode_UpstreamRemoteIgnored(t *testing.T) {
 		t.Fatalf("expected valid config for direct mode with upstream_remote set, got: %v", err)
 	}
 }
+
+func TestValidateAqueductConfig_InvalidDeliveryMode_Rejected(t *testing.T) {
+	cfg := validConfig()
+	cfg.Repos[0].DeliveryMode = "flork"
+
+	err := ValidateAqueductConfig(cfg)
+	if err == nil {
+		t.Fatal("expected error for invalid delivery_mode, got nil")
+	}
+	if !strings.Contains(err.Error(), "invalid delivery_mode") {
+		t.Errorf("error = %q, want it to contain 'invalid delivery_mode'", err)
+	}
+	if !strings.Contains(err.Error(), "flork") {
+		t.Errorf("error = %q, want it to contain the invalid value 'flork'", err)
+	}
+}
