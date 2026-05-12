@@ -2,6 +2,43 @@
 
 ## Unreleased
 
+### Add fork-based delivery mode for external repos (ci-0pbgd)
+
+Cistern now supports fork-mode delivery for repositories where you don't have merge access. Instead of pushing to origin and merging directly, fork-mode repos push to your fork remote and open a PR against the upstream repository.
+
+**New config fields** (`cistern.yaml`):
+- `delivery_mode` — `"direct"` (default) or `"fork"`. Invalid values are rejected at validation.
+- `upstream_remote` — Required when `delivery_mode` is `fork`. The URL of the upstream repository (e.g., `https://github.com/upstream-org/repo.git`).
+
+**Key changes:**
+- `RepoConfig` gains `DeliveryMode` and `UpstreamRemote` fields with YAML tags `delivery_mode` and `upstream_remote`
+- `ValidateAqueductConfig` normalizes empty `delivery_mode` to `"direct"`, rejects invalid values, and requires `upstream_remote` when fork mode is set
+- `EnsurePrimaryClone` adds an `upstream` git remote for fork-mode repos and fetches upstream refs
+- `prepareDropletWorktree` accepts a `baseRemote` parameter — fork-mode worktrees are based on `upstream/main` instead of `origin/main`, and their tracking branch is set to `upstream/main`
+- `hookGitSync` routes fork-mode repos: fetches from `upstream` (primary), also fetches `origin` as best-effort, resets `_primary` to `upstream/main`, syncs skills from the primary remote's main branch
+- `CONTEXT.md` includes a **Fork Delivery** section when the repo is in fork mode, providing the upstream remote URL and base branch to the fork-delivery cataractae
+- New `fork-delivery` cataractae identity (`cataractae/fork-delivery/`) with a full INSTRUCTIONS.md covering rebase onto upstream, push to origin, PR creation via `gh`, CI monitoring, and conflict resolution
+- Example fork-mode aqueduct workflow in `aqueduct/aqueduct.yaml` (commented out)
+
+**Files changed:**
+- `internal/aqueduct/types.go` — `DeliveryMode` type, constants, `RepoConfig.DeliveryMode` and `RepoConfig.UpstreamRemote` fields
+- `internal/aqueduct/types_test.go` — new tests for `DeliveryMode` constants
+- `internal/aqueduct/validate.go` — validation for delivery mode values and upstream_remote requirement
+- `internal/aqueduct/validate_test.go` — new tests for fork-mode validation
+- `internal/castellarius/scheduler.go` — `prepareDropletWorktree` and `dispatchRepo` pass `baseRemote` based on delivery mode
+- `internal/castellarius/drought_hooks.go` — `hookGitSync` routes fork-mode repos to upstream, `syncSkillsFromRepo` takes `remote` parameter
+- `internal/castellarius/branch_lifecycle_test.go` — new fork-mode worktree tests
+- `internal/castellarius/drought_hooks_test.go` — new fork-mode git_sync tests
+- `internal/cataractae/context.go` — `RepoConfig` field on `ContextParams`, fork delivery section in CONTEXT.md
+- `internal/cataractae/context_test.go` — tests for fork delivery section in CONTEXT.md
+- `internal/cataractae/runner.go` — passes repo config to context params
+- `internal/cataractae/sandbox.go` — `EnsurePrimaryClone` adds upstream remote for fork mode
+- `internal/cataractae/sandbox_test.go` — new tests for upstream remote setup
+- `cataractae/fork-delivery/PERSONA.md` — new cataractae identity
+- `cataractae/fork-delivery/INSTRUCTIONS.md` — full fork-delivery protocol
+- `aqueduct/aqueduct.yaml` — commented-out fork-mode workflow template
+- `cistern.yaml` — commented-out fork-mode repo config example
+
 ### Handle empty repos in worktree creation with --orphan flag (ci-adwp9)
 
 When a repo has no commits (empty/unborn branch), `git worktree add --detach` and `git worktree add -b feat/<id> <path> origin/main` both fail with `fatal: invalid reference: HEAD`. This crashed the Castellarius in a restart loop. The fix detects empty repos (no commits on `origin/main` or `HEAD`) and uses `git worktree add --orphan` instead, which creates an unborn branch with no parent commit. Once an initial commit exists, subsequent worktrees use the normal path.

@@ -64,6 +64,14 @@ All:      implement → review → qa → security-review → docs → delivery 
 
 All droplets flow through the same pipeline and auto-merge after delivery.
 
+**Fork-mode delivery:** For external repos where you don't have merge access, set `delivery_mode: fork` and `upstream_remote` in the repo config. Fork-mode repos use a `fork-delivery` cataractae that pushes to your fork and opens a PR against the upstream repository instead of merging directly. The pipeline is identical through the docs step, then:
+
+```
+Fork:  implement → review → qa → security-review → docs → fork-delivery → done
+```
+
+The `fork-delivery` cataractae rebases onto `upstream/main`, pushes to the fork's `origin`, and opens a PR with `gh pr create --repo <upstream>`. It does not merge — upstream maintainers handle that.
+
 Filtration is an optional pre-intake step that refines vague ideas before they enter the pipeline. Use `ct droplet add --filter` to filtrate while adding, or `ct filter` to refine ideas standalone before deciding to add them.
 
 1. **Implement** (`implement`) — Reads the droplet description, implements the feature, writes tests, commits. Verifies every concrete deliverable from the description exists in the commit before signaling pass.
@@ -76,7 +84,7 @@ Filtration is an optional pre-intake step that refines vague ideas before they e
 
 5. **Docs** (`docs`) — Reviews the diff and updates documentation for all user-visible changes: README, CHANGELOG, CLI reference, config docs. Skips if there are no user-visible changes.
 
-6. **Delivery** (`delivery`) — Owns all git operations: rebase, PR creation, CI monitoring, PR review response, and merge. One agent handles the full branch-to-merged lifecycle. If a delivery agent stalls, the Castellarius detects and recovers automatically — see [Automatic Stuck Delivery Recovery](#automatic-stuck-delivery-recovery).
+6. **Delivery** (`delivery`) — Owns all git operations: rebase, PR creation, CI monitoring, PR review response, and merge. One agent handles the full branch-to-merged lifecycle. For **fork-mode** repos, the `fork-delivery` cataractae handles rebase onto `upstream/main`, push to origin, and PR creation against upstream — it does not merge (upstream maintainers decide). If a delivery agent stalls, the Castellarius detects and recovers automatically — see [Automatic Stuck Delivery Recovery](#automatic-stuck-delivery-recovery).
 
 ## Pipeline Behaviors
 
@@ -142,9 +150,32 @@ repos:
     names:
       - virgo
       - marcia
+
+  # Fork-mode: push to your fork and open a PR against upstream
+  - name: external-project
+    url: https://github.com/contributor/external-project
+    delivery_mode: fork
+    upstream_remote: https://github.com/upstream-org/external-project
+    workflow_path: aqueduct/feature-fork.yaml
+    cataractae: 1
+    prefix: ext
+    aqueduct: feature-fork
 ```
 
 Repo names are validated case-insensitively — `ct droplet add --repo myproject` and `ct droplet add --repo MYPROJECT` both map to the canonical name `myproject` in the config.
+
+### Delivery Mode
+
+The `delivery_mode` field controls how a repo merges changes:
+
+| Mode | Behavior |
+|---|---|
+| `direct` *(default)* | Push to origin and merge locally. The `delivery` cataractae handles rebase, PR creation, CI monitoring, and merge. |
+| `fork` | Push to the fork remote (origin) and open a PR against the upstream repository. The `fork-delivery` cataractae handles rebase onto `upstream/main`, push to origin, and PR creation via `gh`. Upstream maintainers merge the PR. |
+
+When `delivery_mode` is `fork`, the `upstream_remote` field is **required** — it's the URL of the upstream repository (e.g., `https://github.com/upstream-org/repo.git`). The Castellarius adds this as a git remote named `upstream` in the primary clone, and worktrees for fork-mode repos track `upstream/main` instead of `origin/main`.
+
+Invalid `delivery_mode` values (typos, unsupported modes) are rejected at validation with a clear error message.
 
 Aqueduct names are **concurrency slots** — they control how many droplets run in parallel per repo. Each active droplet gets its own isolated git worktree at `~/.cistern/sandboxes/<repo>/<droplet-id>/` on branch `feat/<droplet-id>`. Worktrees are created when a droplet enters the `implement` step and removed once it reaches a terminal state (`done`, `pooled`, or `human`). On empty repos (no commits on `origin/main`), worktrees are created with `--orphan` branches instead of branching from `origin/main`, so brand-new repos work without any initial commit.
 
@@ -320,7 +351,7 @@ drought_hooks:
 
 | Action | What it does |
 |---|---|
-| `git_sync` | Fetches `origin/main` (with 30s timeout) and deploys `aqueduct.yaml`, `cataractae/<role>/PERSONA.md`, `cataractae/<role>/INSTRUCTIONS.md`, and `skills/` to `~/.cistern/`. Resets the `_primary` clone's working tree to `origin/main` so new worktrees always inherit current files. Safe for agent worktrees (droplet ID directories) — they are never reset and retain in-progress work. Skips files that are already up to date. On empty repos (no commits on `origin/main`), the reset is skipped since there is nothing to reset to. **Must be the first drought hook** so roles and skills are available to subsequent hooks. |
+| `git_sync` | Fetches the appropriate remote for each repo and deploys `aqueduct.yaml`, `cataractae/<role>/PERSONA.md`, `cataractae/<role>/INSTRUCTIONS.md`, and `skills/` to `~/.cistern/`. For **direct-mode** repos, fetches `origin` and resets `_primary` to `origin/main`. For **fork-mode** repos, fetches `upstream` (and `origin` as a best-effort secondary fetch), then resets `_primary` to `upstream/main` so new worktrees always reflect the upstream project's latest state. Skills are synced from the primary remote's main branch (`origin/main` for direct, `upstream/main` for fork). Safe for agent worktrees (droplet ID directories) — they are never reset and retain in-progress work. Skips files that are already up to date. On empty repos (no commits on the primary ref), the reset is skipped since there is nothing to reset to. **Must be the first drought hook** so roles and skills are available to subsequent hooks. |
 | `cataractae_generate` | Regenerates the instructions file (`AGENTS.md`) for each cataractae from its `PERSONA.md` + `INSTRUCTIONS.md`. Run after `git_sync` to pick up new source files. |
 | `worktree_prune` | Runs `git worktree prune` on the repo's primary clone to remove stale worktree registrations. |
 | `db_vacuum` | Flushes the SQLite WAL file back into the main database using `PRAGMA wal_checkpoint(TRUNCATE)`. This reclaims space without requiring an exclusive lock, making it safe to run while agents are active. |
@@ -328,7 +359,7 @@ drought_hooks:
 
 Protocols fire once on the `flowing → idle` transition, not on every tick. Safe to add your own.
 
-**Note on `git_sync` positioning:** The `git_sync` hook must come before `cataractae_generate` and any skill-referencing hooks. It deploys fresh role definitions and skills from `origin/main`; subsequent hooks depend on these being up to date. The Castellarius logs a warning if `git_sync` is not first.
+**Note on `git_sync` positioning:** The `git_sync` hook must come before `cataractae_generate` and any skill-referencing hooks. It deploys fresh role definitions and skills from the primary remote's main branch; subsequent hooks depend on these being up to date. The Castellarius logs a warning if `git_sync` is not first.
 
 ## Installation
 
