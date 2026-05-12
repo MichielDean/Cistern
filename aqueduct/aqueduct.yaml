@@ -95,3 +95,105 @@ cataractae:
     on_pass: done
     on_recirculate: implement
     on_pool: pooled
+
+# Fork-mode variant: for external repos where you push to a fork and open a PR
+# against upstream instead of merging directly. Use this workflow with a repo
+# config that sets delivery_mode: fork and upstream_remote: <upstream-url>.
+#
+# name: feature-fork
+#
+#   cataractae:
+#     - name: architect
+#       type: agent
+#       identity: architect
+#       context: full_codebase
+#       skills:
+#         - name: cistern-signaling
+#         - name: cistern-git
+#         - name: cistern-diff-reader
+#       timeout_minutes: 20
+#       on_pass: implement
+#       on_recirculate: architect
+#       on_fail: pooled
+#       on_pool: pooled
+#
+#     - name: implement
+#       type: agent
+#       identity: implementer
+#       context: full_codebase
+#       skills:
+#         - name: cistern-signaling
+#         - name: cistern-git
+#         - name: cistern-test-runner
+#       timeout_minutes: 30
+#       on_pass: review
+#       on_fail: pooled
+#       on_pool: pooled
+#
+#     - name: review
+#       type: agent
+#       identity: reviewer
+#       context: full_codebase
+#       skills:
+#         - name: cistern-signaling
+#         - name: cistern-git
+#         - name: cistern-diff-reader
+#       timeout_minutes: 20
+#       on_pass: qa
+#       on_fail: implement
+#       on_recirculate: implement
+#       on_pool: pooled
+#
+#     - name: qa
+#       type: agent
+#       identity: qa
+#       context: full_codebase
+#       skills:
+#         - name: cistern-signaling
+#         - name: cistern-git
+#         - name: cistern-test-runner
+#         - name: cistern-diff-reader
+#       timeout_minutes: 20
+#       on_pass: security-review
+#       on_fail: implement
+#       on_recirculate: implement
+#       on_pool: pooled
+#
+#     - name: security-review
+#       type: agent
+#       identity: security
+#       context: full_codebase
+#       skills:
+#         - name: cistern-signaling
+#         - name: cistern-diff-reader
+#       timeout_minutes: 15
+#       on_pass: docs
+#       on_fail: implement
+#       on_recirculate: implement
+#       on_pool: pooled
+#
+#     - name: docs
+#       type: agent
+#       identity: docs_writer
+#       context: full_codebase
+#       skills:
+#         - name: cistern-signaling
+#         - name: cistern-git
+#         - name: cistern-diff-reader
+#       timeout_minutes: 20
+#       on_pass: fork-delivery
+#       on_fail: implement
+#       on_recirculate: implement
+#       on_pool: pooled
+#
+#     - name: fork-delivery
+#       type: agent
+#       identity: fork-delivery
+#       skills:
+#         - name: cistern-signaling
+#         - name: cistern-github
+#         - name: cistern-git
+#       timeout_minutes: 60
+#       on_pass: done
+#       on_recirculate: implement
+#       on_pool: pooled

@@ -146,6 +146,21 @@ func ValidateAqueductConfig(cfg *AqueductConfig) error {
 			return fmt.Errorf("cistern config: repo %q references unknown aqueduct %q (available: %v)", repo.Name, repo.Aqueduct, sortedKeys(aqueductNames))
 		}
 
+		// Normalize empty delivery mode to "direct".
+		if repo.DeliveryMode == "" {
+			repo.DeliveryMode = DeliveryModeDirect
+			cfg.Repos[i].DeliveryMode = DeliveryModeDirect
+		}
+
+		// Reject invalid delivery mode values.
+		if repo.DeliveryMode != DeliveryModeDirect && repo.DeliveryMode != DeliveryModeFork {
+			return fmt.Errorf("cistern config: repo %q: invalid delivery_mode %q (valid: direct, fork)", repo.Name, repo.DeliveryMode)
+		}
+
+		if repo.DeliveryMode == DeliveryModeFork && repo.UpstreamRemote == "" {
+			return fmt.Errorf("cistern config: repo %q: upstream_remote is required when delivery_mode is fork", repo.Name)
+		}
+
 		if repo.Prefix != "" {
 			if other, ok := prefixes[repo.Prefix]; ok {
 				return fmt.Errorf("cistern config: repos %q and %q share prefix %q", other, repo.Name, repo.Prefix)

@@ -26,6 +26,16 @@ const (
 	ContextSpecOnly     ContextLevel = "spec_only"
 )
 
+// DeliveryMode controls how a repo merges changes.
+// "direct" pushes to origin and merges locally (default).
+// "fork" pushes to a fork remote and opens a PR against upstream.
+type DeliveryMode string
+
+const (
+	DeliveryModeDirect DeliveryMode = "direct"
+	DeliveryModeFork   DeliveryMode = "fork"
+)
+
 // SkillRef references a locally installed skill by name.
 //
 // All skills must be installed in ~/.cistern/skills/<name>/SKILL.md before use.
@@ -104,6 +114,14 @@ type RepoConfig struct {
 	// Required — every repo must reference a named aqueduct defined in the
 	// top-level aqueducts list in cistern.yaml.
 	Aqueduct string `yaml:"aqueduct"`
+	// DeliveryMode controls how changes are merged. "direct" (default) pushes
+	// to origin and merges locally. "fork" pushes to a fork remote and opens
+	// a PR against the upstream remote. When empty or absent, defaults to
+	// "direct".
+	DeliveryMode DeliveryMode `yaml:"delivery_mode,omitempty"`
+	// UpstreamRemote is the URL of the upstream repository for fork-mode repos.
+	// Required when DeliveryMode is "fork". Ignored for "direct" mode.
+	UpstreamRemote string `yaml:"upstream_remote,omitempty"`
 	// Provider overrides the top-level provider config for this repo only.
 	Provider *ProviderConfig `yaml:"provider,omitempty"`
 }

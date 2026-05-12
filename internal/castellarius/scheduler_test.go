@@ -2483,7 +2483,7 @@ func TestPrepareDropletWorktree_LogsWorktreeCreated(t *testing.T) {
 	sandboxRoot := t.TempDir()
 	repoName := "logrepo"
 
-	_, err := prepareDropletWorktreeWithLogger(l, primary, sandboxRoot, repoName, "ci-wt-create")
+	_, err := prepareDropletWorktreeWithLogger(l, primary, sandboxRoot, repoName, "ci-wt-create", "origin")
 	if err != nil {
 		t.Fatalf("prepareDropletWorktree: %v", err)
 	}
@@ -2511,13 +2511,13 @@ func TestPrepareDropletWorktree_LogsWorktreeResumed(t *testing.T) {
 	repoName := "logrepo"
 
 	// First call: create.
-	if _, err := prepareDropletWorktreeWithLogger(l, primary, sandboxRoot, repoName, "ci-wt-resume"); err != nil {
+	if _, err := prepareDropletWorktreeWithLogger(l, primary, sandboxRoot, repoName, "ci-wt-resume", "origin"); err != nil {
 		t.Fatalf("first prepareDropletWorktree: %v", err)
 	}
 	buf.Reset()
 
 	// Second call: resume.
-	if _, err := prepareDropletWorktreeWithLogger(l, primary, sandboxRoot, repoName, "ci-wt-resume"); err != nil {
+	if _, err := prepareDropletWorktreeWithLogger(l, primary, sandboxRoot, repoName, "ci-wt-resume", "origin"); err != nil {
 		t.Fatalf("second prepareDropletWorktree: %v", err)
 	}
 
@@ -2537,7 +2537,7 @@ func TestRemoveDropletWorktree_LogsWorktreeDeleted(t *testing.T) {
 	sandboxRoot := t.TempDir()
 	repoName := "logrepo"
 
-	if _, err := prepareDropletWorktreeWithLogger(l, primary, sandboxRoot, repoName, "ci-wt-del"); err != nil {
+	if _, err := prepareDropletWorktreeWithLogger(l, primary, sandboxRoot, repoName, "ci-wt-del", "origin"); err != nil {
 		t.Fatalf("prepareDropletWorktree: %v", err)
 	}
 	buf.Reset()

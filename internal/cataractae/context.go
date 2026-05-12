@@ -58,6 +58,10 @@ type ContextParams struct {
 	// For providers with AgentFlag support (opencode), this field is not used —
 	// the prompt is delivered via an agent markdown file instead.
 	InstructionsFile string
+	// RepoConfig carries delivery mode information. For fork-mode repos, the
+	// CONTEXT.md file includes the upstream remote URL so the fork-delivery
+	// agent knows where to open the PR.
+	RepoConfig aqueduct.RepoConfig
 }
 
 func (p ContextParams) logger() *slog.Logger {
@@ -374,6 +378,15 @@ func writeContextFile(path string, p ContextParams) error {
 			writeSkill(skill.Name, skillDescription(skill.Name), skills.LocalPath(skill.Name))
 		}
 		b.WriteString("</available_skills>\n\n")
+	}
+
+	// Fork delivery info: include upstream remote URL so the fork-delivery agent
+	// knows where to open the PR.
+	if p.RepoConfig.DeliveryMode == aqueduct.DeliveryModeFork {
+		b.WriteString("## Fork Delivery\n\n")
+		b.WriteString(fmt.Sprintf("**Delivery Mode:** fork\n"))
+		b.WriteString(fmt.Sprintf("**Upstream Remote:** %s\n", p.RepoConfig.UpstreamRemote))
+		b.WriteString("**Base Branch:** main (from upstream)\n\n")
 	}
 
 	b.WriteString("## Signaling\n\n")

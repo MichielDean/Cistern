@@ -210,3 +210,110 @@ func TestEnsureWorktree_EmptyRepo_UsesOrphanBranch(t *testing.T) {
 		t.Error("worktree not registered in primary clone")
 	}
 }
+
+// --- EnsurePrimaryClone fork-mode tests ---
+
+// makeGitRepoWithRemoteURL creates a git repo with one commit on main and
+// returns the local directory. Used as both origin and upstream in tests.
+func makeGitRepoWithRemoteURL(t *testing.T) string {
+	t.Helper()
+	return makeGitRepoWithCommit(t)
+}
+
+// TestEnsurePrimaryClone_ForkMode_AddsUpstreamRemote verifies that when
+// upstreamURL is provided, EnsurePrimaryClone adds an "upstream" remote
+// pointing to that URL.
+func TestEnsurePrimaryClone_ForkMode_AddsUpstreamRemote(t *testing.T) {
+	primary := makeGitRepoWithRemoteURL(t)
+	upstream := makeGitRepoWithRemoteURL(t)
+	sandboxDir := filepath.Join(t.TempDir(), "primary")
+
+	if err := EnsurePrimaryClone(sandboxDir, primary, upstream); err != nil {
+		t.Fatalf("EnsurePrimaryClone: %v", err)
+	}
+	defer os.RemoveAll(sandboxDir)
+
+	// Verify "upstream" remote exists and points to the correct URL.
+	cmd := exec.Command("git", "-C", sandboxDir, "remote", "get-url", "upstream")
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("git remote get-url upstream: %v", err)
+	}
+	got := strings.TrimSpace(string(out))
+	if got != upstream {
+		t.Errorf("upstream remote URL = %q, want %q", got, upstream)
+	}
+}
+
+// TestEnsurePrimaryClone_DirectMode_NoUpstreamRemote verifies that when
+// upstreamURL is empty, no "upstream" remote is added.
+func TestEnsurePrimaryClone_DirectMode_NoUpstreamRemote(t *testing.T) {
+	primary := makeGitRepoWithRemoteURL(t)
+	sandboxDir := filepath.Join(t.TempDir(), "primary")
+
+	if err := EnsurePrimaryClone(sandboxDir, primary, ""); err != nil {
+		t.Fatalf("EnsurePrimaryClone: %v", err)
+	}
+	defer os.RemoveAll(sandboxDir)
+
+	// Verify "upstream" remote does NOT exist.
+	cmd := exec.Command("git", "-C", sandboxDir, "remote", "get-url", "upstream")
+	_, err := cmd.Output()
+	if err == nil {
+		t.Error("upstream remote should not exist in direct mode")
+	}
+}
+
+// TestEnsurePrimaryClone_FetchesUpstreamWhenPresent verifies that when
+// upstreamURL is provided, the clone fetches from both origin and upstream.
+func TestEnsurePrimaryClone_FetchesUpstreamWhenPresent(t *testing.T) {
+	primary := makeGitRepoWithRemoteURL(t)
+	upstream := makeGitRepoWithRemoteURL(t)
+	sandboxDir := filepath.Join(t.TempDir(), "primary")
+
+	if err := EnsurePrimaryClone(sandboxDir, primary, upstream); err != nil {
+		t.Fatalf("EnsurePrimaryClone: %v", err)
+	}
+	defer os.RemoveAll(sandboxDir)
+
+	// Verify upstream/main ref exists.
+	cmd := exec.Command("git", "-C", sandboxDir, "branch", "-r", "--list", "upstream/main")
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("git branch -r --list upstream/main: %v", err)
+	}
+	got := strings.TrimSpace(string(out))
+	if got == "" {
+		t.Error("upstream/main ref not found after EnsurePrimaryClone with upstream URL")
+	}
+}
+
+// TestEnsurePrimaryClone_UpdatesUpstreamRemoteURL verifies that calling
+// EnsurePrimaryClone twice with different upstream URLs updates the remote.
+func TestEnsurePrimaryClone_UpdatesUpstreamRemoteURL(t *testing.T) {
+	primary := makeGitRepoWithRemoteURL(t)
+	upstream1 := makeGitRepoWithRemoteURL(t)
+	upstream2 := makeGitRepoWithRemoteURL(t)
+	sandboxDir := filepath.Join(t.TempDir(), "primary")
+
+	// First call with upstream1.
+	if err := EnsurePrimaryClone(sandboxDir, primary, upstream1); err != nil {
+		t.Fatalf("first EnsurePrimaryClone: %v", err)
+	}
+	defer os.RemoveAll(sandboxDir)
+
+	// Second call with upstream2 — should update the remote.
+	if err := EnsurePrimaryClone(sandboxDir, primary, upstream2); err != nil {
+		t.Fatalf("second EnsurePrimaryClone: %v", err)
+	}
+
+	cmd := exec.Command("git", "-C", sandboxDir, "remote", "get-url", "upstream")
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("git remote get-url upstream: %v", err)
+	}
+	got := strings.TrimSpace(string(out))
+	if got != upstream2 {
+		t.Errorf("upstream remote URL after update = %q, want %q", got, upstream2)
+	}
+}
