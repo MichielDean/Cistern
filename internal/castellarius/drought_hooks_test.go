@@ -384,7 +384,7 @@ func TestHookGitSync_DeploysSkillsToSkillsDir(t *testing.T) {
 
 	// Create a sandbox clone for hookGitSync to find.
 	sandboxRoot := filepath.Join(tmpDir, "sandboxes")
-	sandboxClone := filepath.Join(sandboxRoot, "myrepo", "worker1")
+	sandboxClone := filepath.Join(sandboxRoot, "myrepo", "_primary")
 	mustGit(t, "", "clone", originDir, sandboxClone)
 
 	cfg := &aqueduct.AqueductConfig{
@@ -420,7 +420,7 @@ func TestHookGitSync_SkillsDeployIsIdempotent(t *testing.T) {
 	originDir := setupGitOriginWithSkills(t, tmpDir, skillName, skillContent)
 
 	sandboxRoot := filepath.Join(tmpDir, "sandboxes")
-	sandboxClone := filepath.Join(sandboxRoot, "repo", "worker1")
+	sandboxClone := filepath.Join(sandboxRoot, "repo", "_primary")
 	mustGit(t, "", "clone", originDir, sandboxClone)
 
 	cfg := &aqueduct.AqueductConfig{
@@ -476,7 +476,7 @@ func TestHookGitSync_SkillsSyncGracefulWhenNoSkillsDir(t *testing.T) {
 	mustGit(t, workDir, "push", "origin", "HEAD:main")
 
 	sandboxRoot := filepath.Join(tmpDir, "sandboxes")
-	sandboxClone := filepath.Join(sandboxRoot, "noskills-repo", "worker1")
+	sandboxClone := filepath.Join(sandboxRoot, "noskills-repo", "_primary")
 	mustGit(t, "", "clone", originDir, sandboxClone)
 
 	cfg := &aqueduct.AqueductConfig{

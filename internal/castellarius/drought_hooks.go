@@ -288,11 +288,11 @@ func hookGitSync(cfg *aqueduct.AqueductConfig, sandboxRoot string, gitFetchTimeo
 				logger.Info("git_sync: _primary has no commits on ref — skipping reset",
 					"repo", repo.Name, "ref", primaryRef)
 			}
-		}
 
-	// Sync skills from the skills/ tree on the primary remote's main branch
-	// into ~/.cistern/skills/.
-	syncSkillsFromRepo(cloneDir, repo.Name, primaryRemote, logger)
+			// Sync skills from the skills/ tree on the primary remote's
+			// main branch into ~/.cistern/skills/.
+			syncSkillsFromRepo(cloneDir, repo.Name, primaryRemote, logger)
+		}
 	}
 	return changed, nil
 }
