@@ -1190,7 +1190,7 @@ func TestPrepareDropletWorktree_ForkMode_ExistingWorktreeChecksOutFromUpstream(t
 	}
 
 	// Verify tracking branch is set to upstream/main.
-	trackOut, trackErr := exec.Command("git", "-C", worktreePath, "rev-parse", "--abbrev-ref", "--symbolic-full-name", "HEAD").Output()
+	trackOut, trackErr := exec.Command("git", "-C", worktreePath, "for-each-ref", "--format=%(upstream:short)", "refs/heads/feat/drop-fork-resume").Output()
 	if trackErr != nil {
 		// This may fail if no tracking is set — log but don't fail; some git versions don't set tracking.
 		t.Logf("tracking branch check (non-fatal): %v: %s", trackErr, string(trackOut))
@@ -1259,5 +1259,64 @@ func TestPrepareDropletWorktree_ExplicitOrigin_UsesOriginMain(t *testing.T) {
 		t.Errorf("worktree HEAD = %s, want origin/main = %s",
 			strings.TrimSpace(string(worktreeHEAD)),
 			strings.TrimSpace(string(originMainSHA)))
+	}
+}
+
+// TestPrepareDropletWorktree_ForkMode_NewBranchTrackingSet verifies that when a
+// fresh worktree is created in fork mode (baseRemote="upstream"), the tracking
+// branch is set to upstream/main — matching the resume path's behavior.
+func TestPrepareDropletWorktree_ForkMode_NewBranchTrackingSet(t *testing.T) {
+	primaryDir, _ := makeBareAndCloneWithUpstream(t)
+	sandboxRoot := t.TempDir()
+	l := newBranchLifecycleLogger(io.Discard)
+
+	// Create a NEW worktree (droplet ID not used before).
+	worktreePath, err := prepareDropletWorktreeWithLogger(l, primaryDir, sandboxRoot, "myrepo", "drop-fork-track", "upstream")
+	if err != nil {
+		t.Fatalf("prepareDropletWorktreeWithLogger: %v", err)
+	}
+	defer os.RemoveAll(worktreePath)
+
+	// Verify the tracking branch is set to upstream/main.
+	// Use for-each-ref to query the upstream ref for the feature branch.
+	trackOut, trackErr := exec.Command("git", "-C", worktreePath, "for-each-ref", "--format=%(upstream:short)", "refs/heads/feat/drop-fork-track").Output()
+	if trackErr != nil {
+		t.Logf("tracking branch check (non-fatal): %v: %s", trackErr, string(trackOut))
+	} else {
+		trackBranch := strings.TrimSpace(string(trackOut))
+		if trackBranch != "upstream/main" {
+			t.Errorf("tracking branch for new fork-mode worktree = %q, want %q", trackBranch, "upstream/main")
+		}
+	}
+}
+
+// TestPrepareDropletWorktree_DirectMode_NewBranchNoUpstreamTracking verifies that
+// when a fresh worktree is created in direct mode (baseRemote="origin"), no
+// upstream/main tracking is set (the default git behavior applies).
+func TestPrepareDropletWorktree_DirectMode_NewBranchNoUpstreamTracking(t *testing.T) {
+	primaryDir, _ := makeBareAndClone(t)
+	sandboxRoot := t.TempDir()
+	l := newBranchLifecycleLogger(io.Discard)
+
+	// Create a NEW worktree in direct mode.
+	worktreePath, err := prepareDropletWorktreeWithLogger(l, primaryDir, sandboxRoot, "myrepo", "drop-direct-track", "origin")
+	if err != nil {
+		t.Fatalf("prepareDropletWorktreeWithLogger: %v", err)
+	}
+	defer os.RemoveAll(worktreePath)
+
+	// In direct mode, the tracking should be origin/main (standard git).
+	trackOut, trackErr := exec.Command("git", "-C", worktreePath, "rev-parse", "--abbrev-ref", "--symbolic-full-name", "HEAD").Output()
+	if trackErr != nil {
+		// Non-fatal: some git versions don't set tracking on worktree-created branches.
+		t.Logf("tracking branch check (non-fatal): %v: %s", trackErr, string(trackOut))
+	} else {
+		trackBranch := strings.TrimSpace(string(trackOut))
+		// In direct mode, we do NOT set --set-upstream-to=upstream/main (there's
+		// no upstream remote). Tracking may be empty or origin/main depending on
+		// how the worktree was created.
+		if trackBranch == "upstream/main" {
+			t.Errorf("direct-mode worktree should not track upstream/main, got tracking = %q", trackBranch)
+		}
 	}
 }

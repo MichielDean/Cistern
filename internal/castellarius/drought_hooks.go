@@ -191,15 +191,29 @@ func mtimeAdvanced(path string, baseline time.Time) bool {
 	return err == nil && info.ModTime().After(baseline)
 }
 
-// hookGitSync fetches the latest refs from origin/main for each repo sandbox
-// and deploys skills. The aqueduct workflow is defined inline in cistern.yaml —
-// no separate file sync is needed. Skills are still deployed from each repo's
-// skills/ tree. Uses `git fetch` + `git show origin/main:<path>`. Safe for active
-// agent worktrees (those not named `_primary`) because it never resets them.
-// The `_primary` clone is additionally reset to `origin/main` so new worktrees
-// always branch from a clean base.
+// hookGitSync fetches the latest refs from the appropriate remote for each repo
+// sandbox and deploys skills. The aqueduct workflow is defined inline in
+// cistern.yaml — no separate file sync is needed. Skills are still deployed from
+// each repo's skills/ tree. Uses `git fetch` + `git show <remote>/main:<path>`.
+// Safe for active agent worktrees (those not named "_primary") because it never
+// resets them. The `_primary` clone is reset to the appropriate remote's main
+// branch so new worktrees always branch from a clean base.
+//
+// For direct-mode repos, the remote is "origin" and the reset target is
+// origin/main. For fork-mode repos, the primary remote to sync is "upstream"
+// and the reset target is upstream/main — this ensures the primary clone
+// reflects the upstream project's latest state rather than the fork's.
 func hookGitSync(cfg *aqueduct.AqueductConfig, sandboxRoot string, gitFetchTimeout time.Duration, logger *slog.Logger) (changed bool, err error) {
 	for _, repo := range cfg.Repos {
+		// Determine the primary remote and ref for this repo.
+		// Fork-mode repos sync from upstream; direct-mode repos sync from origin.
+		primaryRemote := "origin"
+		primaryRef := "origin/main"
+		if repo.DeliveryMode == aqueduct.DeliveryModeFork {
+			primaryRemote = "upstream"
+			primaryRef = "upstream/main"
+		}
+
 		// Find any sandbox clone for this repo (first one with a .git dir).
 		repoSandboxDir := filepath.Join(sandboxRoot, repo.Name)
 		entries, err := os.ReadDir(repoSandboxDir)
@@ -223,63 +237,81 @@ func hookGitSync(cfg *aqueduct.AqueductConfig, sandboxRoot string, gitFetchTimeo
 			continue
 		}
 
-		// Fetch latest refs without touching the working tree.
-		// A 30-second timeout prevents a stalled network from blocking RunDroughtHooks indefinitely.
+		// Fetch latest refs from the primary remote without touching the working
+		// tree. A timeout prevents a stalled network from blocking
+		// RunDroughtHooks indefinitely.
 		fetchCtx, fetchCancel := context.WithTimeout(context.Background(), gitFetchTimeout)
-		fetchOut, fetchErr := exec.CommandContext(fetchCtx, "git", "-C", cloneDir, "fetch", "origin").CombinedOutput()
+		fetchOut, fetchErr := exec.CommandContext(fetchCtx, "git", "-C", cloneDir, "fetch", primaryRemote).CombinedOutput()
 		fetchCancel()
 		if fetchCtx.Err() == context.DeadlineExceeded {
 			logger.Warn("git_sync: git fetch timed out, skipping sync", "repo", repo.Name)
 			continue
 		}
 		if fetchErr != nil {
-			logger.Warn("git_sync: fetch failed", "repo", repo.Name, "error", fetchErr, "output", string(fetchOut))
+			logger.Warn("git_sync: fetch failed", "repo", repo.Name, "remote", primaryRemote, "error", fetchErr, "output", string(fetchOut))
 			continue
 		}
 
-		// Reset _primary to origin/main after a successful fetch so it always
-		// reflects upstream exactly. New worktrees are spawned from _primary, so
-		// this ensures they get the latest AGENTS.md and repo files. Agent
-		// worktrees (non-_primary names) are never reset — they carry
-		// in-progress work on feature branches.
-		// On empty/unborn repos (no commits on origin/main), the reset is
-		// skipped — there's nothing to reset to, and the command would fail.
-		if filepath.Base(cloneDir) == "_primary" {
-			primaryHasCommits, commitsErr := repoHasCommits(cloneDir, "origin/main")
-			if commitsErr != nil {
-				logger.Warn("git_sync: cannot check if origin/main has commits",
-					"repo", repo.Name, "error", commitsErr)
-			} else if primaryHasCommits {
-				resetOut, resetErr := exec.Command("git", "-C", cloneDir, "reset", "--hard", "origin/main").CombinedOutput()
-				if resetErr != nil {
-					logger.Warn("git_sync: failed to reset _primary to origin/main", "repo", repo.Name, "error", resetErr, "output", string(resetOut))
-				} else {
-					logger.Info("git_sync: _primary reset to origin/main", "repo", repo.Name)
-				}
-			} else {
-				logger.Info("git_sync: _primary has no origin/main — skipping reset", "repo", repo.Name)
+		// For fork-mode repos, also fetch origin so the fork's own refs stay
+		// up to date (needed for delivery cataractae to push and create PRs).
+		if repo.DeliveryMode == aqueduct.DeliveryModeFork {
+			forkCtx, forkCancel := context.WithTimeout(context.Background(), gitFetchTimeout)
+			forkOut, forkErr := exec.CommandContext(forkCtx, "git", "-C", cloneDir, "fetch", "origin").CombinedOutput()
+			forkCancel()
+			if forkErr != nil {
+				logger.Warn("git_sync: fork origin fetch failed", "repo", repo.Name, "error", forkErr, "output", string(forkOut))
+				// Non-fatal: origin fetch is best-effort.
 			}
 		}
 
-		// Sync skills from the skills/ tree in origin/main into ~/.cistern/skills/.
-		syncSkillsFromRepo(cloneDir, repo.Name, logger)
+		// Reset _primary to the primary ref after a successful fetch so it
+		// always reflects the latest state. New worktrees are spawned from
+		// _primary, so this ensures they get the latest AGENTS.md and repo
+		// files. Agent worktrees (non-_primary names) are never reset — they
+		// carry in-progress work on feature branches.
+		// On empty/unborn repos (no commits on the primary ref), the reset is
+		// skipped — there's nothing to reset to, and the command would fail.
+		if filepath.Base(cloneDir) == "_primary" {
+			primaryHasCommits, commitsErr := repoHasCommits(cloneDir, primaryRef)
+			if commitsErr != nil {
+				logger.Warn("git_sync: cannot check if ref has commits",
+					"repo", repo.Name, "ref", primaryRef, "error", commitsErr)
+			} else if primaryHasCommits {
+				resetOut, resetErr := exec.Command("git", "-C", cloneDir, "reset", "--hard", primaryRef).CombinedOutput()
+				if resetErr != nil {
+					logger.Warn("git_sync: failed to reset _primary",
+						"repo", repo.Name, "ref", primaryRef, "error", resetErr, "output", string(resetOut))
+				} else {
+					logger.Info("git_sync: _primary reset", "repo", repo.Name, "ref", primaryRef)
+				}
+			} else {
+				logger.Info("git_sync: _primary has no commits on ref — skipping reset",
+					"repo", repo.Name, "ref", primaryRef)
+			}
+		}
+
+	// Sync skills from the skills/ tree on the primary remote's main branch
+	// into ~/.cistern/skills/.
+	syncSkillsFromRepo(cloneDir, repo.Name, primaryRemote, logger)
 	}
 	return changed, nil
 }
 
 // syncSkillsFromRepo deploys all skills from the skills/ and internal/skills/
-// trees in origin/main into ~/.cistern/skills/ via skills.Deploy.
+// trees on the given remote's main branch into ~/.cistern/skills/ via skills.Deploy.
+// remote is "origin" for direct-mode repos and "upstream" for fork-mode repos.
 // Errors are logged but not fatal.
-func syncSkillsFromRepo(cloneDir, repoName string, logger *slog.Logger) {
+func syncSkillsFromRepo(cloneDir, repoName string, remote string, logger *slog.Logger) {
+	ref := remote + "/main"
 	for _, prefix := range []string{"skills", "internal/skills"} {
-		out, err := exec.Command("git", "-C", cloneDir, "ls-tree", "--name-only", "origin/main:"+prefix).Output()
+		out, err := exec.Command("git", "-C", cloneDir, "ls-tree", "--name-only", ref+":"+prefix).Output()
 		if err != nil {
 			continue
 		}
 
 		for _, name := range strings.Fields(strings.TrimSpace(string(out))) {
 			skillPath := prefix + "/" + name + "/SKILL.md"
-			content, err := exec.Command("git", "-C", cloneDir, "show", "origin/main:"+skillPath).Output()
+			content, err := exec.Command("git", "-C", cloneDir, "show", ref+":"+skillPath).Output()
 			if err != nil {
 				logger.Warn("git_sync: skill SKILL.md not found", "repo", repoName, "skill", name)
 				continue

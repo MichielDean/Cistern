@@ -1970,6 +1970,20 @@ func prepareDropletWorktreeWithLogger(logger *slog.Logger, primaryDir, sandboxRo
 		clean := exec.Command("git", "clean", "-fd")
 		clean.Dir = worktreePath
 		_ = clean.Run()
+
+		// For fork mode, set up tracking against upstream/main so git push/pull
+		// default to the correct remote. This mirrors the resume path's
+		// --set-upstream-to setup and ensures consistency between fresh and
+		// resumed worktrees.
+		if baseRemote == "upstream" {
+			trackCmd := exec.Command("git", "branch", "--set-upstream-to=upstream/main", branch)
+			trackCmd.Dir = worktreePath
+			if out, err := trackCmd.CombinedOutput(); err != nil {
+				// Non-fatal: log a warning. The upstream remote may not have main yet.
+				logger.Warn("git branch --set-upstream-to=upstream/main failed for new worktree",
+					"branch", branch, "error", err, "output", string(out))
+			}
+		}
 	}
 
 	if orphanBranch {

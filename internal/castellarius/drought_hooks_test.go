@@ -1113,6 +1113,251 @@ func TestRunDroughtHooks_NilCallbacks_DoesNotPanic(t *testing.T) {
 
 // --- _primary working-tree reset tests ---
 
+// --- Fork-mode git_sync tests ---
+
+func TestHookGitSync_ForkMode_FetchesFromUpstream(t *testing.T) {
+	// Given: a fork-mode repo with origin pointing to a fork and upstream
+	// pointing to the source-of-truth repo. When hookGitSync runs, it must
+	// fetch from upstream (not origin) and reset _primary to upstream/main.
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+
+	const repoName = "forkrepo"
+
+	tmpDir := t.TempDir()
+	setHomeForTest(t, tmpDir)
+
+	// Create the upstream repo with original content.
+	upstreamDir := filepath.Join(tmpDir, "upstream.git")
+	mustGit(t, "", "init", "--bare", upstreamDir)
+
+	// Create a working copy and push initial commit to upstream.
+	upstreamWork := filepath.Join(tmpDir, "upstream-work")
+	mustGit(t, "", "clone", upstreamDir, upstreamWork)
+	mustGit(t, upstreamWork, "config", "user.email", "noreply@lobsterdog.dev")
+	mustGit(t, upstreamWork, "config", "user.name", "Lobsterdog Contributors")
+	if err := os.WriteFile(filepath.Join(upstreamWork, "README.md"), []byte("upstream original\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	mustGit(t, upstreamWork, "add", "-A")
+	mustGit(t, upstreamWork, "commit", "-m", "upstream initial")
+	exec.Command("git", "-C", upstreamWork, "branch", "-M", "main").Run() //nolint:errcheck
+	mustGit(t, upstreamWork, "push", "-u", "origin", "main")
+
+	// Create the fork (origin) repo with different content.
+	forkDir := filepath.Join(tmpDir, "fork.git")
+	mustGit(t, "", "init", "--bare", forkDir)
+
+	forkWork := filepath.Join(tmpDir, "fork-work")
+	mustGit(t, "", "clone", forkDir, forkWork)
+	mustGit(t, forkWork, "config", "user.email", "noreply@lobsterdog.dev")
+	mustGit(t, forkWork, "config", "user.name", "Lobsterdog Contributors")
+	if err := os.WriteFile(filepath.Join(forkWork, "README.md"), []byte("fork content\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	mustGit(t, forkWork, "add", "-A")
+	mustGit(t, forkWork, "commit", "-m", "fork initial")
+	exec.Command("git", "-C", forkWork, "branch", "-M", "main").Run() //nolint:errcheck
+	mustGit(t, forkWork, "push", "-u", "origin", "main")
+
+	// Clone the fork into the sandbox structure.
+	sandboxRoot := filepath.Join(tmpDir, "sandboxes")
+	primaryClone := filepath.Join(sandboxRoot, repoName, "_primary")
+	if err := os.MkdirAll(filepath.Dir(primaryClone), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	mustGit(t, "", "clone", forkDir, primaryClone)
+	mustGit(t, primaryClone, "config", "user.email", "noreply@lobsterdog.dev")
+	mustGit(t, primaryClone, "config", "user.name", "Lobsterdog Contributors")
+
+	// Add upstream remote to the primary clone.
+	mustGit(t, primaryClone, "remote", "add", "upstream", upstreamDir)
+	mustGit(t, primaryClone, "fetch", "upstream")
+
+	// Dirty the primary clone — write local content that differs from both remotes.
+	if err := os.WriteFile(filepath.Join(primaryClone, "README.md"), []byte("dirty local content\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := &aqueduct.AqueductConfig{
+		Repos: []aqueduct.RepoConfig{
+			{
+				Name:          repoName,
+				Aqueduct:      "default",
+				Cataractae:    1,
+				Prefix:        "t",
+				DeliveryMode:  aqueduct.DeliveryModeFork,
+				UpstreamRemote: upstreamDir,
+			},
+		},
+	}
+
+	if _, err := hookGitSync(cfg, sandboxRoot, 30*time.Second, discardLogger()); err != nil {
+		t.Fatalf("hookGitSync: %v", err)
+	}
+
+	// After git_sync, _primary should be reset to upstream/main content,
+	// not origin/main content.
+	data, err := os.ReadFile(filepath.Join(primaryClone, "README.md"))
+	if err != nil {
+		t.Fatalf("read README.md: %v", err)
+	}
+	if got := strings.TrimSpace(string(data)); got != "upstream original" {
+		t.Errorf("after sync, _primary content = %q, want %q", got, "upstream original")
+	}
+}
+
+func TestHookGitSync_ForkMode_NonPrimaryNotReset(t *testing.T) {
+	// Given: a fork-mode repo with a non-primary worktree. When hookGitSync
+	// runs, the non-primary worktree should NOT be reset.
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+
+	const repoName = "forkrepo2"
+
+	tmpDir := t.TempDir()
+	setHomeForTest(t, tmpDir)
+
+	// Create the upstream repo.
+	upstreamDir := filepath.Join(tmpDir, "upstream.git")
+	mustGit(t, "", "init", "--bare", upstreamDir)
+
+	upstreamWork := filepath.Join(tmpDir, "upstream-work")
+	mustGit(t, "", "clone", upstreamDir, upstreamWork)
+	mustGit(t, upstreamWork, "config", "user.email", "noreply@lobsterdog.dev")
+	mustGit(t, upstreamWork, "config", "user.name", "Lobsterdog Contributors")
+	if err := os.WriteFile(filepath.Join(upstreamWork, "README.md"), []byte("upstream original\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	mustGit(t, upstreamWork, "add", "-A")
+	mustGit(t, upstreamWork, "commit", "-m", "upstream initial")
+	exec.Command("git", "-C", upstreamWork, "branch", "-M", "main").Run() //nolint:errcheck
+	mustGit(t, upstreamWork, "push", "-u", "origin", "main")
+
+	// Create the fork.
+	forkDir := filepath.Join(tmpDir, "fork.git")
+	mustGit(t, "", "init", "--bare", forkDir)
+
+	forkWork := filepath.Join(tmpDir, "fork-work")
+	mustGit(t, "", "clone", forkDir, forkWork)
+	mustGit(t, forkWork, "config", "user.email", "noreply@lobsterdog.dev")
+	mustGit(t, forkWork, "config", "user.name", "Lobsterdog Contributors")
+	if err := os.WriteFile(filepath.Join(forkWork, "README.md"), []byte("fork content\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	mustGit(t, forkWork, "add", "-A")
+	mustGit(t, forkWork, "commit", "-m", "fork initial")
+	exec.Command("git", "-C", forkWork, "branch", "-M", "main").Run() //nolint:errcheck
+	mustGit(t, forkWork, "push", "-u", "origin", "main")
+
+	// Clone the fork as a non-primary directory (e.g., an agent worktree).
+	sandboxRoot := filepath.Join(tmpDir, "sandboxes")
+	agentClone := filepath.Join(sandboxRoot, repoName, "alpha")
+	if err := os.MkdirAll(filepath.Dir(agentClone), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	mustGit(t, "", "clone", forkDir, agentClone)
+	mustGit(t, agentClone, "config", "user.email", "noreply@lobsterdog.dev")
+	mustGit(t, agentClone, "config", "user.name", "Lobsterdog Contributors")
+	mustGit(t, agentClone, "remote", "add", "upstream", upstreamDir)
+	mustGit(t, agentClone, "fetch", "upstream")
+
+	// Dirty the agent worktree.
+	if err := os.WriteFile(filepath.Join(agentClone, "README.md"), []byte("agent work in progress\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := &aqueduct.AqueductConfig{
+		Repos: []aqueduct.RepoConfig{
+			{
+				Name:           repoName,
+				Aqueduct:       "default",
+				Cataractae:     1,
+				Prefix:         "t",
+				DeliveryMode:   aqueduct.DeliveryModeFork,
+				UpstreamRemote: upstreamDir,
+			},
+		},
+	}
+
+	if _, err := hookGitSync(cfg, sandboxRoot, 30*time.Second, discardLogger()); err != nil {
+		t.Fatalf("hookGitSync: %v", err)
+	}
+
+	// The agent worktree should NOT be reset.
+	data, err := os.ReadFile(filepath.Join(agentClone, "README.md"))
+	if err != nil {
+		t.Fatalf("read README.md: %v", err)
+	}
+	if got := strings.TrimSpace(string(data)); got != "agent work in progress" {
+		t.Errorf("agent worktree content = %q, want %q (should not be reset)", got, "agent work in progress")
+	}
+}
+
+func TestHookGitSync_DirectMode_ResetsToOriginMain(t *testing.T) {
+	// Given: a direct-mode repo. When hookGitSync runs, _primary should
+	// be reset to origin/main (the existing behavior).
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+
+	const repoName = "directrepo"
+	const originalContent = "original content\n"
+
+	tmpDir := t.TempDir()
+	setHomeForTest(t, tmpDir)
+
+	// Create remote repo with a tracked file.
+	remoteDir := filepath.Join(tmpDir, "remote")
+	if err := os.MkdirAll(remoteDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	mustGit(t, remoteDir, "init")
+	mustGit(t, remoteDir, "config", "user.email", "noreply@lobsterdog.dev")
+	mustGit(t, remoteDir, "config", "user.name", "Lobsterdog Contributors")
+	if err := os.WriteFile(filepath.Join(remoteDir, "README.md"), []byte(originalContent), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	mustGit(t, remoteDir, "add", "-A")
+	mustGit(t, remoteDir, "commit", "-m", "initial")
+	exec.Command("git", "-C", remoteDir, "branch", "-M", "main").Run() //nolint:errcheck
+
+	// Clone into the sandbox under _primary.
+	sandboxRoot := filepath.Join(tmpDir, "sandboxes")
+	primaryClone := filepath.Join(sandboxRoot, repoName, "_primary")
+	if err := os.MkdirAll(filepath.Dir(primaryClone), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	mustGit(t, "", "clone", remoteDir, primaryClone)
+	mustGit(t, primaryClone, "config", "user.email", "noreply@lobsterdog.dev")
+	mustGit(t, primaryClone, "config", "user.name", "Lobsterdog Contributors")
+
+	// Dirty the primary clone.
+	if err := os.WriteFile(filepath.Join(primaryClone, "README.md"), []byte("dirty content\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := &aqueduct.AqueductConfig{
+		Repos: []aqueduct.RepoConfig{
+			{Name: repoName, Aqueduct: "default", Cataractae: 1, Prefix: "t"},
+		},
+	}
+
+	if _, err := hookGitSync(cfg, sandboxRoot, 30*time.Second, discardLogger()); err != nil {
+		t.Fatalf("hookGitSync: %v", err)
+	}
+
+	data, err := os.ReadFile(filepath.Join(primaryClone, "README.md"))
+	if err != nil {
+		t.Fatalf("read file after sync: %v", err)
+	}
+	if string(data) != originalContent {
+		t.Errorf("file content after sync = %q, want %q", string(data), originalContent)
+	}
+}
+
 func TestHookGitSync_WorkingTreeReset(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not available")
