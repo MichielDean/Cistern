@@ -101,7 +101,7 @@ PR_TITLE=$(grep '^\*\*Title:\*\*' CONTEXT.md | sed 's/\*\*Title:\*\* //')
 UPSTREAM_URL=$(grep '^\*\*Upstream Remote:\*\*' CONTEXT.md | sed 's/\*\*Upstream Remote:\*\* //')
 # Convert git URL (https://github.com/owner/repo.git or git@github.com:owner/repo.git)
 # to OWNER/REPO format required by gh --repo.
-UPSTREAM_REPO=$(echo "$UPSTREAM_URL" | sed -E 's#(https?://[^/]+/|git@[^:]+:)([^/]+/[^.]+)(\.git)?#\2#')
+UPSTREAM_REPO=$(echo "$UPSTREAM_URL" | sed -E 's#(https?://[^/]+/|git@[^:]+:)##' | sed 's/\.git$//')
 PR_URL=$(gh pr create --repo "$UPSTREAM_REPO" --base $BASE --head $BRANCH --title "$PR_TITLE" --body "Closes droplet $DROPLET_ID." 2>&1) || true
 if echo "$PR_URL" | grep -q "already exists"; then
   PR_URL=$(gh pr view $BRANCH --repo "$UPSTREAM_REPO" --json url --jq '.url')
