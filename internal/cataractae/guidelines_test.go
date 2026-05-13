@@ -25,8 +25,8 @@ func TestExtractGuidelines_AGENTSMD_Exists(t *testing.T) {
 	}
 	t.Cleanup(func() { guidelinesDirFn = origDirFn })
 
-	if err := ExtractGuidelines(primaryDir, "testrepo"); err != nil {
-		t.Fatalf("ExtractGuidelines: %v", err)
+	if err := extractGuidelines(primaryDir, "testrepo"); err != nil {
+		t.Fatalf("extractGuidelines: %v", err)
 	}
 
 	data, err := os.ReadFile(filepath.Join(guidelinesDir, "AGENTS.md"))
@@ -56,8 +56,8 @@ func TestExtractGuidelines_CONTRIBUTINGMD_Exists(t *testing.T) {
 	}
 	t.Cleanup(func() { guidelinesDirFn = origDirFn })
 
-	if err := ExtractGuidelines(primaryDir, "testrepo2"); err != nil {
-		t.Fatalf("ExtractGuidelines: %v", err)
+	if err := extractGuidelines(primaryDir, "testrepo2"); err != nil {
+		t.Fatalf("extractGuidelines: %v", err)
 	}
 
 	data, err := os.ReadFile(filepath.Join(guidelinesDir, "CONTRIBUTING.md"))
@@ -91,8 +91,8 @@ func TestExtractGuidelines_GithubContributing(t *testing.T) {
 	}
 	t.Cleanup(func() { guidelinesDirFn = origDirFn })
 
-	if err := ExtractGuidelines(primaryDir, "testrepo3"); err != nil {
-		t.Fatalf("ExtractGuidelines: %v", err)
+	if err := extractGuidelines(primaryDir, "testrepo3"); err != nil {
+		t.Fatalf("extractGuidelines: %v", err)
 	}
 
 	// .github/CONTRIBUTING.md is stored as "github-CONTRIBUTING.md"
@@ -106,7 +106,7 @@ func TestExtractGuidelines_GithubContributing(t *testing.T) {
 }
 
 // TestExtractGuidelines_NoFiles verifies that when no guideline files exist
-// in the primary dir, ExtractGuidelines returns nil error and no files are stored.
+// in the primary dir, extractGuidelines returns nil error and no files are stored.
 func TestExtractGuidelines_NoFiles(t *testing.T) {
 	primaryDir := t.TempDir()
 
@@ -120,8 +120,8 @@ func TestExtractGuidelines_NoFiles(t *testing.T) {
 	}
 	t.Cleanup(func() { guidelinesDirFn = origDirFn })
 
-	if err := ExtractGuidelines(primaryDir, "emptyrepo"); err != nil {
-		t.Fatalf("ExtractGuidelines returned error for no files: %v", err)
+	if err := extractGuidelines(primaryDir, "emptyrepo"); err != nil {
+		t.Fatalf("extractGuidelines returned error for no files: %v", err)
 	}
 
 	entries, err := os.ReadDir(guidelinesDir)
@@ -151,8 +151,8 @@ func TestExtractGuidelines_PartialFiles(t *testing.T) {
 	}
 	t.Cleanup(func() { guidelinesDirFn = origDirFn })
 
-	if err := ExtractGuidelines(primaryDir, "partialrepo"); err != nil {
-		t.Fatalf("ExtractGuidelines: %v", err)
+	if err := extractGuidelines(primaryDir, "partialrepo"); err != nil {
+		t.Fatalf("extractGuidelines: %v", err)
 	}
 
 	data, err := os.ReadFile(filepath.Join(guidelinesDir, "AGENTS.md"))
@@ -191,9 +191,9 @@ func TestLoadGuidelines_ForkRepo(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	guidelines, err := LoadGuidelines("loadrepo")
+	guidelines, err := loadGuidelines("loadrepo")
 	if err != nil {
-		t.Fatalf("LoadGuidelines: %v", err)
+		t.Fatalf("loadGuidelines: %v", err)
 	}
 	if len(guidelines) != 2 {
 		t.Fatalf("expected 2 guidelines, got %d", len(guidelines))
@@ -214,7 +214,7 @@ func TestLoadGuidelines_ForkRepo(t *testing.T) {
 }
 
 // TestLoadGuidelines_NoDirectory verifies that when no guidelines directory
-// exists, LoadGuidelines returns nil without error.
+// exists, loadGuidelines returns nil without error.
 func TestLoadGuidelines_NoDirectory(t *testing.T) {
 	origDirFn := guidelinesDirFn
 	guidelinesDirFn = func(repoName string) (string, error) {
@@ -223,9 +223,9 @@ func TestLoadGuidelines_NoDirectory(t *testing.T) {
 	}
 	t.Cleanup(func() { guidelinesDirFn = origDirFn })
 
-	guidelines, err := LoadGuidelines("norepo")
+	guidelines, err := loadGuidelines("norepo")
 	if err != nil {
-		t.Fatalf("LoadGuidelines returned error for nonexistent dir: %v", err)
+		t.Fatalf("loadGuidelines returned error for nonexistent dir: %v", err)
 	}
 	if guidelines != nil {
 		t.Errorf("expected nil guidelines for nonexistent directory, got %d items", len(guidelines))
@@ -245,9 +245,9 @@ func TestLoadGuidelines_EmptyDirectory(t *testing.T) {
 	}
 	t.Cleanup(func() { guidelinesDirFn = origDirFn })
 
-	guidelines, err := LoadGuidelines("emptyreposts")
+	guidelines, err := loadGuidelines("emptyreposts")
 	if err != nil {
-		t.Fatalf("LoadGuidelines: %v", err)
+		t.Fatalf("loadGuidelines: %v", err)
 	}
 	if guidelines != nil {
 		t.Errorf("expected nil guidelines for empty directory, got %d items", len(guidelines))
@@ -300,8 +300,8 @@ func TestExtractGuidelines_GithubContributing_DoesNotClobberRoot(t *testing.T) {
 	}
 	t.Cleanup(func() { guidelinesDirFn = origDirFn })
 
-	if err := ExtractGuidelines(primaryDir, "clobberrepo"); err != nil {
-		t.Fatalf("ExtractGuidelines: %v", err)
+	if err := extractGuidelines(primaryDir, "clobberrepo"); err != nil {
+		t.Fatalf("extractGuidelines: %v", err)
 	}
 
 	// Root version stored as CONTRIBUTING.md
@@ -342,7 +342,7 @@ func TestStorageName(t *testing.T) {
 	}
 }
 
-// TestLoadGuidelines_WithAllThreeFiles verifies that LoadGuidelines correctly
+// TestLoadGuidelines_WithAllThreeFiles verifies that loadGuidelines correctly
 // loads all three guideline files, including the github- prefixed variant.
 func TestLoadGuidelines_WithAllThreeFiles(t *testing.T) {
 	guidelinesDir := filepath.Join(t.TempDir(), "allfiles", "guidelines")
@@ -368,9 +368,9 @@ func TestLoadGuidelines_WithAllThreeFiles(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	guidelines, err := LoadGuidelines("allfiles")
+	guidelines, err := loadGuidelines("allfiles")
 	if err != nil {
-		t.Fatalf("LoadGuidelines: %v", err)
+		t.Fatalf("loadGuidelines: %v", err)
 	}
 	if len(guidelines) != 3 {
 		t.Fatalf("expected 3 guidelines, got %d", len(guidelines))
@@ -387,7 +387,7 @@ func TestLoadGuidelines_WithAllThreeFiles(t *testing.T) {
 	}
 }
 
-// TestExtractGuidelines_ClearsStaleFiles verifies that ExtractGuidelines removes
+// TestExtractGuidelines_ClearsStaleFiles verifies that extractGuidelines removes
 // stale guideline files from a previous extraction when those files no longer
 // exist in the primary clone directory. This prevents outdated conventions from
 // being injected into CONTEXT.md.
@@ -417,8 +417,8 @@ func TestExtractGuidelines_ClearsStaleFiles(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := ExtractGuidelines(primaryDir, "stalerepo"); err != nil {
-		t.Fatalf("ExtractGuidelines: %v", err)
+	if err := extractGuidelines(primaryDir, "stalerepo"); err != nil {
+		t.Fatalf("extractGuidelines: %v", err)
 	}
 
 	// The stale CONTRIBUTING.md should have been removed.

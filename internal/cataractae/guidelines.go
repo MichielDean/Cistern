@@ -69,12 +69,12 @@ func guidelinesPath(repoName, filename string) string {
 	return filepath.Join(dir, filename)
 }
 
-// LoadGuidelines reads all stored guideline files for a repo from
+// loadGuidelines reads all stored guideline files for a repo from
 // ~/.cistern/repos/<repoName>/guidelines/. Returns nil (not []RepoGuideline{})
 // when no guidelines directory exists or the directory is empty. Returns a
 // non-nil error only for filesystem failures (permission denied on an existing
 // directory). Results are sorted by filename for deterministic output.
-func LoadGuidelines(repoName string) ([]RepoGuideline, error) {
+func loadGuidelines(repoName string) ([]RepoGuideline, error) {
 	dir, err := guidelinesDirFn(repoName)
 	if err != nil {
 		return nil, fmt.Errorf("guidelines: load %s: %w", repoName, err)
@@ -134,14 +134,14 @@ func clearStaleGuidelines(dir string) error {
 	return nil
 }
 
-// ExtractGuidelines reads candidate guideline files from the primary clone
+// extractGuidelines reads candidate guideline files from the primary clone
 // directory and stores them to ~/.cistern/repos/<repoName>/guidelines/.
 // Before writing, it clears any existing .md files from the guidelines directory
 // so that files removed from the upstream repo do not leave stale copies behind.
 // Returns nil on success. Returns a non-nil error only for filesystem failures
 // on directory creation or stale cleanup. Individual file read failures are logged
 // as warnings but do not fail the entire operation — extraction is best-effort.
-func ExtractGuidelines(primaryDir, repoName string) error {
+func extractGuidelines(primaryDir, repoName string) error {
 	dir, err := guidelinesDirFn(repoName)
 	if err != nil {
 		return fmt.Errorf("guidelines: extract %s: %w", repoName, err)

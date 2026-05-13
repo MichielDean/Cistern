@@ -100,7 +100,7 @@ func New(cfg Config) (*Runner, error) {
 		// For fork-mode repos, extract contributing guidelines from the primary clone
 		// so they can be injected into CONTEXT.md for all cataractae.
 		if cfg.Repo.DeliveryMode == aqueduct.DeliveryModeFork {
-			if err := ExtractGuidelines(primaryDir, cfg.Repo.Name); err != nil {
+			if err := extractGuidelines(primaryDir, cfg.Repo.Name); err != nil {
 				slog.Default().Warn("cataractae: could not extract guidelines", "repo", cfg.Repo.Name, "error", err)
 			}
 		}
@@ -234,7 +234,7 @@ func (r *Runner) SpawnStep(w *Worker, item *cistern.Droplet, step *aqueduct.Work
 	var repoGuidelines []RepoGuideline
 	if r.repo.DeliveryMode == aqueduct.DeliveryModeFork {
 		var err error
-		repoGuidelines, err = LoadGuidelines(r.repo.Name)
+		repoGuidelines, err = loadGuidelines(r.repo.Name)
 		if err != nil {
 			slog.Default().Warn("cataractae: could not load repo guidelines", "repo", r.repo.Name, "error", err)
 		}

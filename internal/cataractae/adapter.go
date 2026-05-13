@@ -62,7 +62,7 @@ func init() {
 	// Wire the guidelines extraction function into the castellarius package
 	// to avoid an import cycle. The adapter is the natural bridge between
 	// cataractae and castellarius, so init is the right place for this.
-	castellarius.ExtractGuidelinesFn = ExtractGuidelines
+	castellarius.ExtractGuidelinesFn = extractGuidelines
 }
 
 // Spawn implements castellarius.CataractaeRunner.
