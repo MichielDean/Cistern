@@ -99,8 +99,7 @@ func New(cfg Config) (*Runner, error) {
 
 		// For fork-mode repos, extract contributing guidelines from the primary clone
 		// so they can be injected into CONTEXT.md for all cataractae.
-		if cfg.Repo.UpstreamRemote != "" {
-			primaryDir := filepath.Join(repoSandboxDir, "_primary")
+		if cfg.Repo.DeliveryMode == aqueduct.DeliveryModeFork {
 			if err := ExtractGuidelines(primaryDir, cfg.Repo.Name); err != nil {
 				slog.Default().Warn("cataractae: could not extract guidelines", "repo", cfg.Repo.Name, "error", err)
 			}

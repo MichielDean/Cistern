@@ -3,7 +3,6 @@ package cataractae
 import (
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 )
 
@@ -71,7 +70,7 @@ func TestExtractGuidelines_CONTRIBUTINGMD_Exists(t *testing.T) {
 }
 
 // TestExtractGuidelines_GithubContributing verifies that .github/CONTRIBUTING.md
-// is extracted.
+// is extracted and stored as "github-CONTRIBUTING.md" (with path prefix flattened).
 func TestExtractGuidelines_GithubContributing(t *testing.T) {
 	primaryDir := t.TempDir()
 	githubDir := filepath.Join(primaryDir, ".github")
@@ -96,12 +95,13 @@ func TestExtractGuidelines_GithubContributing(t *testing.T) {
 		t.Fatalf("ExtractGuidelines: %v", err)
 	}
 
-	data, err := os.ReadFile(filepath.Join(guidelinesDir, "CONTRIBUTING.md"))
+	// .github/CONTRIBUTING.md is stored as "github-CONTRIBUTING.md"
+	data, err := os.ReadFile(filepath.Join(guidelinesDir, "github-CONTRIBUTING.md"))
 	if err != nil {
-		t.Fatalf("CONTRIBUTING.md from .github not found: %v", err)
+		t.Fatalf("github-CONTRIBUTING.md from .github not found: %v", err)
 	}
 	if string(data) != "# GitHub Contributing\nFork and PR" {
-		t.Errorf("CONTRIBUTING.md content mismatch: got %q", string(data))
+		t.Errorf("github-CONTRIBUTING.md content mismatch: got %q", string(data))
 	}
 }
 
@@ -254,7 +254,7 @@ func TestLoadGuidelines_EmptyDirectory(t *testing.T) {
 	}
 }
 
-// TestGuidelinesPath verifies that GuidelinesPath returns the expected path.
+// TestGuidelinesPath verifies that guidelinesPath returns the expected path.
 func TestGuidelinesPath(t *testing.T) {
 	// Override to a deterministic path.
 	origDirFn := guidelinesDirFn
@@ -264,15 +264,17 @@ func TestGuidelinesPath(t *testing.T) {
 	}
 	t.Cleanup(func() { guidelinesDirFn = origDirFn })
 
-	got := GuidelinesPath("myrepo", "AGENTS.md")
+	got := guidelinesPath("myrepo", "AGENTS.md")
 	expected := filepath.Join(testDir, "AGENTS.md")
 	if got != expected {
-		t.Errorf("GuidelinesPath(%q, %q) = %q, want %q", "myrepo", "AGENTS.md", got, expected)
+		t.Errorf("guidelinesPath(%q, %q) = %q, want %q", "myrepo", "AGENTS.md", got, expected)
 	}
 }
 
-// TestGuidelinesPath_WithSlashInFilename verifies that filepath separators in
-// .github/CONTRIBUTING.md base names are handled correctly (base name only).
+// TestExtractGuidelines_GithubContributing_DoesNotClobberRoot verifies that
+// when both root CONTRIBUTING.md and .github/CONTRIBUTING.md exist, both are
+// stored — the .github version as "github-CONTRIBUTING.md" so they don't clobber
+// each other.
 func TestExtractGuidelines_GithubContributing_DoesNotClobberRoot(t *testing.T) {
 	primaryDir := t.TempDir()
 
@@ -302,15 +304,85 @@ func TestExtractGuidelines_GithubContributing_DoesNotClobberRoot(t *testing.T) {
 		t.Fatalf("ExtractGuidelines: %v", err)
 	}
 
-	// Both candidates share the same base name "CONTRIBUTING.md" — the last one
-	// written wins. The candidate list is: AGENTS.md, CONTRIBUTING.md, .github/CONTRIBUTING.md
-	// So .github/CONTRIBUTING.md writes last and its content should be stored.
-	data, err := os.ReadFile(filepath.Join(guidelinesDir, "CONTRIBUTING.md"))
+	// Root version stored as CONTRIBUTING.md
+	rootData, err := os.ReadFile(filepath.Join(guidelinesDir, "CONTRIBUTING.md"))
 	if err != nil {
 		t.Fatalf("CONTRIBUTING.md not found: %v", err)
 	}
-	// The .github version should win because it's processed after the root version.
-	if !strings.Contains(string(data), "github contributing") {
-		t.Errorf("expected .github/CONTRIBUTING.md content to win; got %q", string(data))
+	if string(rootData) != "root contributing" {
+		t.Errorf("root CONTRIBUTING.md content mismatch: got %q, want %q", string(rootData), "root contributing")
+	}
+
+	// .github version stored as github-CONTRIBUTING.md (not clobbered)
+	ghData, err := os.ReadFile(filepath.Join(guidelinesDir, "github-CONTRIBUTING.md"))
+	if err != nil {
+		t.Fatalf("github-CONTRIBUTING.md not found: %v", err)
+	}
+	if string(ghData) != "github contributing" {
+		t.Errorf("github-CONTRIBUTING.md content mismatch: got %q, want %q", string(ghData), "github contributing")
+	}
+}
+
+// TestStorageName verifies that candidate paths are converted to flat, non-hidden
+// filenames that avoid clobbering.
+func TestStorageName(t *testing.T) {
+	tests := []struct {
+		candidate string
+		want      string
+	}{
+		{"AGENTS.md", "AGENTS.md"},
+		{"CONTRIBUTING.md", "CONTRIBUTING.md"},
+		{".github/CONTRIBUTING.md", "github-CONTRIBUTING.md"},
+	}
+	for _, tt := range tests {
+		got := storageName(tt.candidate)
+		if got != tt.want {
+			t.Errorf("storageName(%q) = %q, want %q", tt.candidate, got, tt.want)
+		}
+	}
+}
+
+// TestLoadGuidelines_WithAllThreeFiles verifies that LoadGuidelines correctly
+// loads all three guideline files, including the github- prefixed variant.
+func TestLoadGuidelines_WithAllThreeFiles(t *testing.T) {
+	guidelinesDir := filepath.Join(t.TempDir(), "allfiles", "guidelines")
+	origDirFn := guidelinesDirFn
+	guidelinesDirFn = func(repoName string) (string, error) {
+		if err := os.MkdirAll(guidelinesDir, 0o755); err != nil {
+			return "", err
+		}
+		return guidelinesDir, nil
+	}
+	t.Cleanup(func() { guidelinesDirFn = origDirFn })
+
+	if err := os.MkdirAll(guidelinesDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(guidelinesDir, "AGENTS.md"), []byte("agents content"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(guidelinesDir, "CONTRIBUTING.md"), []byte("root contributing"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(guidelinesDir, "github-CONTRIBUTING.md"), []byte("github contributing"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	guidelines, err := LoadGuidelines("allfiles")
+	if err != nil {
+		t.Fatalf("LoadGuidelines: %v", err)
+	}
+	if len(guidelines) != 3 {
+		t.Fatalf("expected 3 guidelines, got %d", len(guidelines))
+	}
+	// Sorted: AGENTS.md < CONTRIBUTING.md < github-CONTRIBUTING.md
+	if guidelines[0].Filename != "AGENTS.md" {
+		t.Errorf("first should be AGENTS.md, got %s", guidelines[0].Filename)
+	}
+	if guidelines[1].Filename != "CONTRIBUTING.md" {
+		t.Errorf("second should be CONTRIBUTING.md, got %s", guidelines[1].Filename)
+	}
+	if guidelines[2].Filename != "github-CONTRIBUTING.md" {
+		t.Errorf("third should be github-CONTRIBUTING.md, got %s", guidelines[2].Filename)
 	}
 }

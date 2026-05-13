@@ -23,8 +23,26 @@ type RepoGuideline struct {
 
 // candidateGuidelines lists the filenames to extract from a repo's primary
 // clone directory, checked in order. .github/CONTRIBUTING.md is resolved
-// relative to primaryDir.
+// relative to primaryDir. The storage name for each candidate is derived by
+// replacing path separators with dashes so that root CONTRIBUTING.md and
+// .github/CONTRIBUTING.md do not clobber each other.
 var candidateGuidelines = []string{"AGENTS.md", "CONTRIBUTING.md", ".github/CONTRIBUTING.md"}
+
+// storageName converts a candidate path to a flat filename for storage.
+// Root-level files keep their base name; subdirectory files use the path
+// with separators replaced by dashes (e.g., ".github/CONTRIBUTING.md"
+// becomes "github-CONTRIBUTING.md"). Leading dots are stripped so files
+// are not hidden on disk.
+func storageName(candidate string) string {
+	dir, base := filepath.Split(candidate)
+	if dir == "" {
+		return base
+	}
+	// ".github/CONTRIBUTING.md" → "github-CONTRIBUTING.md"
+	cleanDir := strings.TrimPrefix(dir, ".")
+	cleanDir = strings.TrimSuffix(cleanDir, "/")
+	return cleanDir + "-" + base
+}
 
 // guidelinesDirFn returns the path to the guidelines storage directory for a repo.
 // Overridable in tests (matches the cataractaeDirFn pattern).
@@ -40,10 +58,10 @@ var guidelinesDirFn = func(repoName string) (string, error) {
 	return dir, nil
 }
 
-// GuidelinesPath returns the absolute path to a stored guideline file for a repo.
+// guidelinesPath returns the absolute path to a stored guideline file for a repo.
 // Never returns an error — home directory resolution failure causes a panic,
 // matching the skills.SkillsDir() pattern.
-func GuidelinesPath(repoName, filename string) string {
+func guidelinesPath(repoName, filename string) string {
 	dir, err := guidelinesDirFn(repoName)
 	if err != nil {
 		panic(fmt.Sprintf("guidelines: cannot resolve path: %v", err))
@@ -116,13 +134,14 @@ func ExtractGuidelines(primaryDir, repoName string) error {
 			continue
 		}
 
-		// Use just the base filename for storage (e.g., CONTRIBUTING.md, not .github/CONTRIBUTING.md).
-		baseName := filepath.Base(candidate)
-		destPath := filepath.Join(dir, baseName)
+		// Use storageName to avoid clobbering: root CONTRIBUTING.md and
+		// .github/CONTRIBUTING.md are stored as distinct files.
+		sName := storageName(candidate)
+		destPath := filepath.Join(dir, sName)
 		if err := os.WriteFile(destPath, data, 0o644); err != nil {
 			return fmt.Errorf("guidelines: write %s: %w", destPath, err)
 		}
-		slog.Default().Info("guidelines: extracted", "repo", repoName, "file", baseName)
+		slog.Default().Info("guidelines: extracted", "repo", repoName, "file", sName)
 	}
 
 	return nil
