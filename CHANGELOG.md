@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+### Add kotlin-sdk as first external fork-mode repo (ci-ofvhg)
+
+Add modelcontextprotocol/kotlin-sdk as a repo in cistern.yaml with `delivery_mode: fork`, `upstream_remote: https://github.com/modelcontextprotocol/kotlin-sdk`, and `fork: https://github.com/MichielDean/kotlin-sdk`. Uses 1 cataractae (sufficient for samples/docs contributions). Also promotes the fork-mode aqueduct from a commented-out template in `aqueduct.yaml` to a standalone `aqueduct/feature-fork.yaml` workflow file, and adds the `feature-fork` aqueduct definition to the embedded `cistern.yaml` config.
+
+**Key changes:**
+- New `aqueduct/feature-fork.yaml` — standalone aqueduct definition for fork-mode repos (previously commented-out in aqueduct.yaml)
+- `cmd/ct/assets/cistern.yaml` — added `feature-fork` aqueduct definition and `kotlin-sdk` repo entry with `delivery_mode: fork`
+- `aqueduct/aqueduct.yaml` — removed commented-out fork-mode template (moved to standalone file)
+- `cmd/ct/doctor_test.go` — generalized doctor test to iterate all aqueducts instead of only `default`
+- `internal/aqueduct/workflow_test.go` — new test validating kotlin-sdk repo config parses in fork mode (all 6 fields)
+
 ### Inject external repo contributing guidelines as cataractae context (ci-agrc5)
 
 For fork-mode repos, Cistern now automatically extracts contributing guidelines from the upstream repository and injects them into CONTEXT.md for all cataractae. This ensures that agents working on external repos follow the upstream project's own conventions (coding style, test commands, commit message format, etc.) instead of Cistern defaults when they conflict.
