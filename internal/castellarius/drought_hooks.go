@@ -18,6 +18,11 @@ import (
 	_ "github.com/mattn/go-sqlite3"
 )
 
+// ExtractGuidelinesFn extracts contributing guidelines from a repo's primary
+// clone directory. Set by the adapter package to wire in the cataractae
+// implementation, avoiding an import cycle. Defaults to a no-op.
+var ExtractGuidelinesFn = func(primaryDir, repoName string) error { return nil }
+
 // DroughtHookParams bundles the context needed by RunDroughtHooks.
 // Using a struct avoids a long positional parameter list and makes call sites
 // self-documenting — callers only set the fields they need.
@@ -292,6 +297,14 @@ func hookGitSync(cfg *aqueduct.AqueductConfig, sandboxRoot string, gitFetchTimeo
 			// Sync skills from the skills/ tree on the primary remote's
 			// main branch into ~/.cistern/skills/.
 			syncSkillsFromRepo(cloneDir, repo.Name, primaryRemote, logger)
+
+			// For fork-mode repos, extract contributing guidelines from the
+			// primary clone so they stay current after each sync cycle.
+			if repo.DeliveryMode == aqueduct.DeliveryModeFork {
+				if err := ExtractGuidelinesFn(cloneDir, repo.Name); err != nil {
+					logger.Warn("git_sync: could not extract guidelines", "repo", repo.Name, "error", err)
+				}
+			}
 		}
 	}
 	return changed, nil

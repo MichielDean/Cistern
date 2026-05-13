@@ -2,6 +2,33 @@
 
 ## Unreleased
 
+### Inject external repo contributing guidelines as cataractae context (ci-agrc5)
+
+For fork-mode repos, Cistern now automatically extracts contributing guidelines from the upstream repository and injects them into CONTEXT.md for all cataractae. This ensures that agents working on external repos follow the upstream project's own conventions (coding style, test commands, commit message format, etc.) instead of Cistern defaults when they conflict.
+
+**Key changes:**
+- `extractGuidelines` reads `AGENTS.md`, `CONTRIBUTING.md`, and `.github/CONTRIBUTING.md` from the repo's primary clone and stores them per-repo in `~/.cistern/repos/<repo>/guidelines/`
+- `.github/CONTRIBUTING.md` is stored as `github-CONTRIBUTING.md` to avoid clobbering root-level `CONTRIBUTING.md`
+- `loadGuidelines` reads stored guideline files for injection into CONTEXT.md (sorted by filename for deterministic output)
+- `clearStaleGuidelines` removes old `.md` files before writing, so guideline files removed from the upstream repo don't persist as stale copies
+- `RepoConfig.DeliveryMode` check gates guideline extraction to fork-mode repos only (both at startup and during `git_sync`)
+- `ContextParams.RepoGuidelines` field holds the loaded guidelines for CONTEXT.md generation
+- CONTEXT.md includes a `## Contributing Guidelines` section (between Skills and Fork Delivery) for fork-mode repos with guidelines, with a compliance directive
+- `ExtractGuidelinesFn` package-level function wired via `adapter.go` init to avoid import cycles
+- New `external-repo-guidelines` skill documents the convention priority rule
+
+**Files added:**
+- `internal/cataractae/guidelines.go` — `extractGuidelines`, `loadGuidelines`, `clearStaleGuidelines`, `storageName`, `guidelinesDirFn`, `guidelinesPath`, `candidateGuidelines`, `RepoGuideline` type
+- `internal/cataractae/guidelines_test.go` — comprehensive tests for extraction, loading, clobber prevention, stale cleanup, and ordering
+- `skills/external-repo-guidelines/SKILL.md` — skill for cataractae to follow upstream conventions
+
+**Files changed:**
+- `internal/cataractae/context.go` — `RepoGuidelines` field on `ContextParams`, `## Contributing Guidelines` section in CONTEXT.md (fork-mode only)
+- `internal/cataractae/context_test.go` — 5 new tests for guidelines section (fork with guidelines, direct mode exclusion, nil guidelines, ordering, section position)
+- `internal/cataractae/runner.go` — `extractGuidelines` called in `New()` for fork-mode repos, `loadGuidelines` called in `SpawnStep` for CONTEXT.md injection
+- `internal/cataractae/adapter.go` — `init()` wires `extractGuidelines` into `castellarius.ExtractGuidelinesFn`
+- `internal/castellarius/drought_hooks.go` — `ExtractGuidelinesFn` call added to `hookGitSync` for fork-mode repos after sync cycle
+
 ### Add fork-based delivery mode for external repos (ci-0pbgd)
 
 Cistern now supports fork-mode delivery for repositories where you don't have merge access. Instead of pushing to origin and merging directly, fork-mode repos push to your fork remote and open a PR against the upstream repository.
