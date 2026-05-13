@@ -72,6 +72,8 @@ Fork:  implement → review → qa → security-review → docs → fork-deliver
 
 The `fork-delivery` cataractae rebases onto `upstream/main`, pushes to the fork's `origin`, and opens a PR with `gh pr create --repo <upstream>`. It does not merge — upstream maintainers handle that.
 
+**Contributing guidelines:** For fork-mode repos, Cistern automatically extracts the upstream repo's `AGENTS.md`, `CONTRIBUTING.md`, and `.github/CONTRIBUTING.md` from the primary clone and injects them into CONTEXT.md as a `## Contributing Guidelines` section. All cataractae working on fork-mode repos receive these guidelines and must follow the upstream project's conventions (coding style, test commands, commit message format, etc.) instead of Cistern defaults when they conflict.
+
 Filtration is an optional pre-intake step that refines vague ideas before they enter the pipeline. Use `ct droplet add --filter` to filtrate while adding, or `ct filter` to refine ideas standalone before deciding to add them.
 
 1. **Implement** (`implement`) — Reads the droplet description, implements the feature, writes tests, commits. Verifies every concrete deliverable from the description exists in the commit before signaling pass.
@@ -318,6 +320,7 @@ Skills are referenced by name in your aqueduct YAML under each cataractae's `ski
 | `cistern-git` | Git conventions: exclude CONTEXT.md and InstructionsFile, merge-base diff, no stash | implement, docs, delivery |
 | `cistern-github` | PR creation, CI checks, squash-merge, and automatic conflict resolution for Cistern delivery | implement, review, delivery |
 | `cistern-reviewer` | Adversarial code review for Go, TypeScript/Next.js, and TypeScript/React — all findings equal, recirculate on any finding, pass only when nothing remains | review |
+| `external-repo-guidelines` | Inject external repo contributing guidelines (AGENTS.md, CONTRIBUTING.md) into cataractae context for fork-mode repos | All (fork-mode repos only) |
 
 The `cistern-git` skill encodes hard-won rules: always use `git add -A -- ':!CONTEXT.md' ':!AGENTS.md'`, always use merge-base diff (`git diff $(git merge-base HEAD origin/main)..HEAD`) instead of two-dot — two-dot includes other PRs that merged to main after branching on unrebased branches, never stash in per-droplet worktrees.
 
@@ -351,7 +354,7 @@ drought_hooks:
 
 | Action | What it does |
 |---|---|
-| `git_sync` | Fetches the appropriate remote for each repo and deploys `aqueduct.yaml`, `cataractae/<role>/PERSONA.md`, `cataractae/<role>/INSTRUCTIONS.md`, and `skills/` to `~/.cistern/`. For **direct-mode** repos, fetches `origin` and resets `_primary` to `origin/main`. For **fork-mode** repos, fetches `upstream` (and `origin` as a best-effort secondary fetch), then resets `_primary` to `upstream/main` so new worktrees always reflect the upstream project's latest state. Skills are synced from the primary remote's main branch (`origin/main` for direct, `upstream/main` for fork). Safe for agent worktrees (droplet ID directories) — they are never reset and retain in-progress work. Skips files that are already up to date. On empty repos (no commits on the primary ref), the reset is skipped since there is nothing to reset to. **Must be the first drought hook** so roles and skills are available to subsequent hooks. |
+| `git_sync` | Fetches the appropriate remote for each repo and deploys `aqueduct.yaml`, `cataractae/<role>/PERSONA.md`, `cataractae/<role>/INSTRUCTIONS.md`, and `skills/` to `~/.cistern/`. For **direct-mode** repos, fetches `origin` and resets `_primary` to `origin/main`. For **fork-mode** repos, fetches `upstream` (and `origin` as a best-effort secondary fetch), then resets `_primary` to `upstream/main` so new worktrees always reflect the upstream project's latest state. Skills are synced from the primary remote's main branch (`origin/main` for direct, `upstream/main` for fork). For **fork-mode** repos, also extracts contributing guidelines (`AGENTS.md`, `CONTRIBUTING.md`, `.github/CONTRIBUTING.md`) from the primary clone into `~/.cistern/repos/<repo>/guidelines/` for injection into cataractae CONTEXT.md. Safe for agent worktrees (droplet ID directories) — they are never reset and retain in-progress work. Skips files that are already up to date. On empty repos (no commits on the primary ref), the reset is skipped since there is nothing to reset to. **Must be the first drought hook** so roles and skills are available to subsequent hooks. |
 | `cataractae_generate` | Regenerates the instructions file (`AGENTS.md`) for each cataractae from its `PERSONA.md` + `INSTRUCTIONS.md`. Run after `git_sync` to pick up new source files. |
 | `worktree_prune` | Runs `git worktree prune` on the repo's primary clone to remove stale worktree registrations. |
 | `db_vacuum` | Flushes the SQLite WAL file back into the main database using `PRAGMA wal_checkpoint(TRUNCATE)`. This reclaims space without requiring an exclusive lock, making it safe to run while agents are active. |
