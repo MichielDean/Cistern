@@ -254,23 +254,6 @@ func TestLoadGuidelines_EmptyDirectory(t *testing.T) {
 	}
 }
 
-// TestGuidelinesPath verifies that guidelinesPath returns the expected path.
-func TestGuidelinesPath(t *testing.T) {
-	// Override to a deterministic path.
-	origDirFn := guidelinesDirFn
-	testDir := filepath.Join(t.TempDir(), "myrepo", "guidelines")
-	guidelinesDirFn = func(repoName string) (string, error) {
-		return testDir, nil
-	}
-	t.Cleanup(func() { guidelinesDirFn = origDirFn })
-
-	got := guidelinesPath("myrepo", "AGENTS.md")
-	expected := filepath.Join(testDir, "AGENTS.md")
-	if got != expected {
-		t.Errorf("guidelinesPath(%q, %q) = %q, want %q", "myrepo", "AGENTS.md", got, expected)
-	}
-}
-
 // TestExtractGuidelines_GithubContributing_DoesNotClobberRoot verifies that
 // when both root CONTRIBUTING.md and .github/CONTRIBUTING.md exist, both are
 // stored — the .github version as "github-CONTRIBUTING.md" so they don't clobber

@@ -58,17 +58,6 @@ var guidelinesDirFn = func(repoName string) (string, error) {
 	return dir, nil
 }
 
-// guidelinesPath returns the absolute path to a stored guideline file for a repo.
-// Never returns an error — home directory resolution failure causes a panic,
-// matching the skills.SkillsDir() pattern.
-func guidelinesPath(repoName, filename string) string {
-	dir, err := guidelinesDirFn(repoName)
-	if err != nil {
-		panic(fmt.Sprintf("guidelines: cannot resolve path: %v", err))
-	}
-	return filepath.Join(dir, filename)
-}
-
 // loadGuidelines reads all stored guideline files for a repo from
 // ~/.cistern/repos/<repoName>/guidelines/. Returns nil (not []RepoGuideline{})
 // when no guidelines directory exists or the directory is empty. Returns a
