@@ -767,6 +767,77 @@ trackers:
 	}
 }
 
+// TestAqueductConfig_KotlinSdkRepo_ParsesInForkMode verifies that a cistern.yaml
+// containing the kotlin-sdk repo entry with fork delivery mode parses correctly
+// and produces a valid AqueductConfig.
+func TestAqueductConfig_KotlinSdkRepo_ParsesInForkMode(t *testing.T) {
+	yaml := `
+aqueducts:
+  - name: default
+    cataractae:
+      - name: implement
+        type: agent
+        on_pass: done
+  - name: feature-fork
+    cataractae:
+      - name: architect
+        type: agent
+        on_pass: implement
+      - name: implement
+        type: agent
+        on_pass: review
+      - name: review
+        type: agent
+        on_pass: fork-delivery
+      - name: fork-delivery
+        type: agent
+        on_pass: done
+repos:
+  - name: cistern
+    aqueduct: default
+    cataractae: 1
+    prefix: ct
+  - name: kotlin-sdk
+    url: https://github.com/MichielDean/kotlin-sdk
+    aqueduct: feature-fork
+    cataractae: 1
+    prefix: ks
+    delivery_mode: fork
+    upstream_remote: https://github.com/modelcontextprotocol/kotlin-sdk
+`
+	tmpDir := t.TempDir()
+	cfgPath := filepath.Join(tmpDir, "cistern.yaml")
+	if err := os.WriteFile(cfgPath, []byte(yaml), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := ParseAqueductConfig(cfgPath)
+	if err != nil {
+		t.Fatalf("ParseAqueductConfig: %v", err)
+	}
+
+	// Find the kotlin-sdk repo (last entry).
+	last := cfg.Repos[len(cfg.Repos)-1]
+	if last.Name != "kotlin-sdk" {
+		t.Errorf("last repo Name = %q, want %q", last.Name, "kotlin-sdk")
+	}
+	if last.DeliveryMode != DeliveryModeFork {
+		t.Errorf("kotlin-sdk DeliveryMode = %q, want %q", last.DeliveryMode, DeliveryModeFork)
+	}
+	if last.UpstreamRemote != "https://github.com/modelcontextprotocol/kotlin-sdk" {
+		t.Errorf("kotlin-sdk UpstreamRemote = %q, want upstream URL", last.UpstreamRemote)
+	}
+	if last.URL != "https://github.com/MichielDean/kotlin-sdk" {
+		t.Errorf("kotlin-sdk URL = %q, want fork URL", last.URL)
+	}
+	if last.Aqueduct != "feature-fork" {
+		t.Errorf("kotlin-sdk Aqueduct = %q, want %q", last.Aqueduct, "feature-fork")
+	}
+	if last.Prefix != "ks" {
+		t.Errorf("kotlin-sdk Prefix = %q, want %q", last.Prefix, "ks")
+	}
+}
+
 // TestAqueductConfig_Trackers_OmittedWhenAbsent verifies that the Trackers field
 // is nil when the trackers: key is absent from the config.
 func TestAqueductConfig_Trackers_OmittedWhenAbsent(t *testing.T) {

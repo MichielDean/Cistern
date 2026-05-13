@@ -1,4 +1,8 @@
-name: feature
+# Fork-mode variant: for external repos where you push to a fork and open a PR
+# against upstream instead of merging directly. Use this workflow with a repo
+# config that sets delivery_mode: fork and upstream_remote: <upstream-url>.
+
+name: feature-fork
 
 cataractae:
   - name: architect
@@ -79,14 +83,14 @@ cataractae:
       - name: cistern-git
       - name: cistern-diff-reader
     timeout_minutes: 20
-    on_pass: delivery
+    on_pass: fork-delivery
     on_fail: implement
     on_recirculate: implement
     on_pool: pooled
 
-  - name: delivery
+  - name: fork-delivery
     type: agent
-    identity: delivery
+    identity: fork-delivery
     skills:
       - name: cistern-signaling
       - name: cistern-github

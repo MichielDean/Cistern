@@ -2201,16 +2201,19 @@ func TestRunDoctorExtendedChecks_DefaultWorkflow_InstallerStubs_Passes(t *testin
 	}
 
 	// Generate AGENTS.md files for all identities, mirroring what ct init does.
-	w, err := cfg.ResolveAqueduct("default")
-	if err != nil {
-		t.Fatalf("resolve aqueduct: %v", err)
-	}
-	if err := initCataractaeDir(w, cataractaeDir); err != nil {
-		t.Fatalf("init cataractae dir: %v", err)
-	}
-	preset, _ := cfg.ResolveProvider("")
-	if _, err := aqueduct.GenerateCataractaeFiles(w, cataractaeDir, preset.InstrFile()); err != nil {
-		t.Fatalf("generate AGENTS.md files: %v", err)
+	// Must cover every aqueduct defined in the config since doctor checks all repos.
+	for _, aquedef := range cfg.Aqueducts {
+		w, err := cfg.ResolveAqueduct(aquedef.Name)
+		if err != nil {
+			t.Fatalf("resolve aqueduct %s: %v", aquedef.Name, err)
+		}
+		if err := initCataractaeDir(w, cataractaeDir); err != nil {
+			t.Fatalf("init cataractae dir for %s: %v", aquedef.Name, err)
+		}
+		preset, _ := cfg.ResolveProvider("")
+		if _, err := aqueduct.GenerateCataractaeFiles(w, cataractaeDir, preset.InstrFile()); err != nil {
+			t.Fatalf("generate AGENTS.md files for %s: %v", aquedef.Name, err)
+		}
 	}
 
 	// installerStubs mirrors _install_skill_stubs in tests/installer/run-tests.sh.
