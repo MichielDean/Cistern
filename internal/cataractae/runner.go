@@ -96,6 +96,15 @@ func New(cfg Config) (*Runner, error) {
 				return nil, fmt.Errorf("cataractae: worktree for %q/%s: %w", cfg.Repo.Name, w.Name, err)
 			}
 		}
+
+		// For fork-mode repos, extract contributing guidelines from the primary clone
+		// so they can be injected into CONTEXT.md for all cataractae.
+		if cfg.Repo.UpstreamRemote != "" {
+			primaryDir := filepath.Join(repoSandboxDir, "_primary")
+			if err := ExtractGuidelines(primaryDir, cfg.Repo.Name); err != nil {
+				slog.Default().Warn("cataractae: could not extract guidelines", "repo", cfg.Repo.Name, "error", err)
+			}
+		}
 	}
 
 	return &Runner{
@@ -223,6 +232,15 @@ func (r *Runner) SpawnStep(w *Worker, item *cistern.Droplet, step *aqueduct.Work
 		slog.Default().Warn("cataractae: could not fetch open issues", "droplet", item.ID, "error", err)
 	}
 
+	var repoGuidelines []RepoGuideline
+	if r.repo.DeliveryMode == aqueduct.DeliveryModeFork {
+		var err error
+		repoGuidelines, err = LoadGuidelines(r.repo.Name)
+		if err != nil {
+			slog.Default().Warn("cataractae: could not load repo guidelines", "repo", r.repo.Name, "error", err)
+		}
+	}
+
 	ctxDir, cleanup, err := PrepareContext(ContextParams{
 		Level:            step.Context,
 		SandboxDir:       sandboxDir,
@@ -233,6 +251,7 @@ func (r *Runner) SpawnStep(w *Worker, item *cistern.Droplet, step *aqueduct.Work
 		QueueClient:      r.queue,
 		InstructionsFile: r.preset.InstrFile(),
 		RepoConfig:       r.repo,
+		RepoGuidelines:   repoGuidelines,
 	})
 	if err != nil {
 		return fmt.Errorf("context: %w", err)

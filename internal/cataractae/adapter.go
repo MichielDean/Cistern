@@ -58,6 +58,13 @@ func NewAdapter(cfg *aqueduct.AqueductConfig, workflows map[string]*aqueduct.Wor
 	}, nil
 }
 
+func init() {
+	// Wire the guidelines extraction function into the castellarius package
+	// to avoid an import cycle. The adapter is the natural bridge between
+	// cataractae and castellarius, so init is the right place for this.
+	castellarius.ExtractGuidelinesFn = ExtractGuidelines
+}
+
 // Spawn implements castellarius.CataractaeRunner.
 // For automated steps, runs synchronously and writes the outcome to the DB.
 // For agent steps, spawns a tmux session and returns immediately; the agent

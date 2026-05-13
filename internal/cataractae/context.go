@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/MichielDean/cistern/internal/aqueduct"
@@ -62,6 +63,10 @@ type ContextParams struct {
 	// CONTEXT.md file includes the upstream remote URL so the fork-delivery
 	// agent knows where to open the PR.
 	RepoConfig aqueduct.RepoConfig
+	// RepoGuidelines holds the contributing guidelines extracted from the repo.
+	// For fork-mode repos, these are injected into CONTEXT.md so cataractae
+	// follow the repo's own conventions. Nil or empty for direct-mode repos.
+	RepoGuidelines []RepoGuideline
 }
 
 func (p ContextParams) logger() *slog.Logger {
@@ -378,6 +383,26 @@ func writeContextFile(path string, p ContextParams) error {
 			writeSkill(skill.Name, skillDescription(skill.Name), skills.LocalPath(skill.Name))
 		}
 		b.WriteString("</available_skills>\n\n")
+	}
+
+	// Contributing Guidelines: for fork-mode repos, inject the guidelines extracted
+	// from the upstream repo so cataractae follow the repo's own conventions.
+	if p.RepoConfig.DeliveryMode == aqueduct.DeliveryModeFork && len(p.RepoGuidelines) > 0 {
+		// Sort guidelines by filename for deterministic output.
+		sorted := make([]RepoGuideline, len(p.RepoGuidelines))
+		copy(sorted, p.RepoGuidelines)
+		slices.SortFunc(sorted, func(a, b RepoGuideline) int {
+			return strings.Compare(a.Filename, b.Filename)
+		})
+		b.WriteString("## Contributing Guidelines\n\n")
+		b.WriteString("This is a fork-mode repo. The following guidelines were extracted from the\n")
+		b.WriteString("upstream repository. You MUST follow these conventions when working on this repo.\n\n")
+		for _, g := range sorted {
+			b.WriteString(fmt.Sprintf("### %s\n\n", g.Filename))
+			b.WriteString(g.Content)
+			b.WriteString("\n\n")
+		}
+		b.WriteString("---\n\n")
 	}
 
 	// Fork delivery info: include upstream remote URL so the fork-delivery agent

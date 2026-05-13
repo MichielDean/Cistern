@@ -937,3 +937,200 @@ func TestWriteContextFile_DirectMode_NoForkDeliverySection(t *testing.T) {
 		t.Error("Fork Delivery section must NOT appear when DeliveryMode is empty")
 	}
 }
+
+// --- Contributing Guidelines section tests ---
+
+// TestWriteContextFile_ForkMode_IncludesGuidelines verifies that when fork mode
+// has repo guidelines in ContextParams, CONTEXT.md contains a "## Contributing
+// Guidelines" section with guideline content.
+func TestWriteContextFile_ForkMode_IncludesGuidelines(t *testing.T) {
+	item := &cistern.Droplet{ID: "ci-cg1", Title: "Guidelines test", Status: "in_progress", Description: "Test guidelines"}
+	step := &aqueduct.WorkflowCataractae{Name: "implementation", Type: "agent", Identity: "implementer"}
+
+	p := ContextParams{
+		Item:       item,
+		Step:       step,
+		RepoConfig: aqueduct.RepoConfig{DeliveryMode: aqueduct.DeliveryModeFork, UpstreamRemote: "https://github.com/example/repo.git"},
+		RepoGuidelines: []RepoGuideline{
+			{Filename: "AGENTS.md", Content: "# Conventions\nUse Kotlin style"},
+			{Filename: "CONTRIBUTING.md", Content: "# Contributing\nWrite tests"},
+		},
+	}
+
+	ctxPath := filepath.Join(t.TempDir(), "CONTEXT.md")
+	if err := writeContextFile(ctxPath, p); err != nil {
+		t.Fatalf("writeContextFile: %v", err)
+	}
+
+	content, err := os.ReadFile(ctxPath)
+	if err != nil {
+		t.Fatalf("ReadFile: %v", err)
+	}
+	got := string(content)
+
+	if !strings.Contains(got, "## Contributing Guidelines") {
+		t.Error("expected '## Contributing Guidelines' section in CONTEXT.md")
+	}
+	if !strings.Contains(got, "### AGENTS.md") {
+		t.Error("expected '### AGENTS.md' heading in CONTEXT.md")
+	}
+	if !strings.Contains(got, "Use Kotlin style") {
+		t.Error("expected AGENTS.md content in CONTEXT.md")
+	}
+	if !strings.Contains(got, "### CONTRIBUTING.md") {
+		t.Error("expected '### CONTRIBUTING.md' heading in CONTEXT.md")
+	}
+	if !strings.Contains(got, "Write tests") {
+		t.Error("expected CONTRIBUTING.md content in CONTEXT.md")
+	}
+	if !strings.Contains(got, "You MUST follow these conventions") {
+		t.Error("expected compliance instruction in CONTEXT.md")
+	}
+}
+
+// TestWriteContextFile_DirectMode_NoGuidelines verifies that direct-mode repos
+// do NOT get a Contributing Guidelines section even if RepoGuidelines is set.
+func TestWriteContextFile_DirectMode_NoGuidelines(t *testing.T) {
+	item := &cistern.Droplet{ID: "ci-cg2", Title: "Direct test", Status: "in_progress"}
+	step := &aqueduct.WorkflowCataractae{Name: "implementation", Type: "agent", Identity: "implementer"}
+
+	p := ContextParams{
+		Item:       item,
+		Step:       step,
+		RepoConfig: aqueduct.RepoConfig{DeliveryMode: aqueduct.DeliveryModeDirect},
+		RepoGuidelines: []RepoGuideline{
+			{Filename: "AGENTS.md", Content: "should not appear"},
+		},
+	}
+
+	ctxPath := filepath.Join(t.TempDir(), "CONTEXT_direct.md")
+	if err := writeContextFile(ctxPath, p); err != nil {
+		t.Fatalf("writeContextFile: %v", err)
+	}
+
+	content, err := os.ReadFile(ctxPath)
+	if err != nil {
+		t.Fatalf("ReadFile: %v", err)
+	}
+	got := string(content)
+
+	if strings.Contains(got, "## Contributing Guidelines") {
+		t.Error("Contributing Guidelines section must NOT appear for direct mode")
+	}
+}
+
+// TestWriteContextFile_ForkMode_NoGuidelines_NoSection verifies that fork mode
+// with nil RepoGuidelines does NOT produce a Contributing Guidelines section.
+func TestWriteContextFile_ForkMode_NoGuidelines_NoSection(t *testing.T) {
+	item := &cistern.Droplet{ID: "ci-cg3", Title: "No guidelines test", Status: "in_progress"}
+	step := &aqueduct.WorkflowCataractae{Name: "implementation", Type: "agent", Identity: "implementer"}
+
+	p := ContextParams{
+		Item:            item,
+		Step:            step,
+		RepoConfig:      aqueduct.RepoConfig{DeliveryMode: aqueduct.DeliveryModeFork, UpstreamRemote: "https://github.com/example/repo.git"},
+		RepoGuidelines:  nil, // no guidelines extracted
+	}
+
+	ctxPath := filepath.Join(t.TempDir(), "CONTEXT_noguid.md")
+	if err := writeContextFile(ctxPath, p); err != nil {
+		t.Fatalf("writeContextFile: %v", err)
+	}
+
+	content, err := os.ReadFile(ctxPath)
+	if err != nil {
+		t.Fatalf("ReadFile: %v", err)
+	}
+	got := string(content)
+
+	if strings.Contains(got, "## Contributing Guidelines") {
+		t.Error("Contributing Guidelines section must NOT appear when RepoGuidelines is nil")
+	}
+}
+
+// TestWriteContextFile_GuidelinesOrdering verifies that multiple guidelines
+// appear sorted by filename.
+func TestWriteContextFile_GuidelinesOrdering(t *testing.T) {
+	item := &cistern.Droplet{ID: "ci-cg4", Title: "Order test", Status: "in_progress"}
+	step := &aqueduct.WorkflowCataractae{Name: "implementation", Type: "agent", Identity: "implementer"}
+
+	p := ContextParams{
+		Item:       item,
+		Step:       step,
+		RepoConfig: aqueduct.RepoConfig{DeliveryMode: aqueduct.DeliveryModeFork, UpstreamRemote: "https://github.com/example/repo.git"},
+		RepoGuidelines: []RepoGuideline{
+			{Filename: "CONTRIBUTING.md", Content: "C content"},
+			{Filename: "AGENTS.md", Content: "A content"},
+		},
+	}
+
+	ctxPath := filepath.Join(t.TempDir(), "CONTEXT_order.md")
+	if err := writeContextFile(ctxPath, p); err != nil {
+		t.Fatalf("writeContextFile: %v", err)
+	}
+
+	content, err := os.ReadFile(ctxPath)
+	if err != nil {
+		t.Fatalf("ReadFile: %v", err)
+	}
+	got := string(content)
+
+	// AGENTS.md must appear before CONTRIBUTING.md (alphabetical order)
+	agentsIdx := strings.Index(got, "### AGENTS.md")
+	contribIdx := strings.Index(got, "### CONTRIBUTING.md")
+	if agentsIdx == -1 || contribIdx == -1 {
+		t.Fatal("expected both guidelines in CONTEXT.md")
+	}
+	if agentsIdx > contribIdx {
+		t.Error("guidelines must be sorted by filename: AGENTS.md should come before CONTRIBUTING.md")
+	}
+}
+
+// TestWriteContextFile_GuidelinesSectionBeforeForkDelivery verifies that the
+// Contributing Guidelines section appears between Skills and Fork Delivery.
+func TestWriteContextFile_GuidelinesSectionBeforeForkDelivery(t *testing.T) {
+	item := &cistern.Droplet{ID: "ci-cg5", Title: "Section order test", Status: "in_progress", Description: "Test ordering"}
+	step := &aqueduct.WorkflowCataractae{Name: "implementation", Type: "agent", Identity: "implementer", Skills: []aqueduct.SkillRef{{Name: "cistern-signaling"}}}
+
+	p := ContextParams{
+		Item:       item,
+		Step:       step,
+		RepoConfig: aqueduct.RepoConfig{DeliveryMode: aqueduct.DeliveryModeFork, UpstreamRemote: "https://github.com/example/repo.git"},
+		RepoGuidelines: []RepoGuideline{
+			{Filename: "AGENTS.md", Content: "test guideline"},
+		},
+	}
+
+	ctxPath := filepath.Join(t.TempDir(), "CONTEXT_section_order.md")
+	if err := writeContextFile(ctxPath, p); err != nil {
+		t.Fatalf("writeContextFile: %v", err)
+	}
+
+	content, err := os.ReadFile(ctxPath)
+	if err != nil {
+		t.Fatalf("ReadFile: %v", err)
+	}
+	got := string(content)
+
+	guidelinesIdx := strings.Index(got, "## Contributing Guidelines")
+	forkDeliveryIdx := strings.Index(got, "## Fork Delivery")
+	skillsIdx := strings.Index(got, "<available_skills>")
+
+	if guidelinesIdx == -1 {
+		t.Fatal("expected Contributing Guidelines section in CONTEXT.md")
+	}
+	if forkDeliveryIdx == -1 {
+		t.Fatal("expected Fork Delivery section in CONTEXT.md")
+	}
+	if skillsIdx == -1 {
+		t.Fatal("expected Skills section in CONTEXT.md")
+	}
+
+	// Section ordering: Skills < Contributing Guidelines < Fork Delivery
+	if guidelinesIdx < skillsIdx {
+		t.Error("Contributing Guidelines should come after Skills section")
+	}
+	if guidelinesIdx > forkDeliveryIdx {
+		t.Error("Contributing Guidelines should come before Fork Delivery section")
+	}
+}
