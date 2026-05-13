@@ -386,3 +386,61 @@ func TestLoadGuidelines_WithAllThreeFiles(t *testing.T) {
 		t.Errorf("third should be github-CONTRIBUTING.md, got %s", guidelines[2].Filename)
 	}
 }
+
+// TestExtractGuidelines_ClearsStaleFiles verifies that ExtractGuidelines removes
+// stale guideline files from a previous extraction when those files no longer
+// exist in the primary clone directory. This prevents outdated conventions from
+// being injected into CONTEXT.md.
+func TestExtractGuidelines_ClearsStaleFiles(t *testing.T) {
+	guidelinesDir := filepath.Join(t.TempDir(), "stalerepo", "guidelines")
+	origDirFn := guidelinesDirFn
+	guidelinesDirFn = func(repoName string) (string, error) {
+		if err := os.MkdirAll(guidelinesDir, 0o755); err != nil {
+			return "", err
+		}
+		return guidelinesDir, nil
+	}
+	t.Cleanup(func() { guidelinesDirFn = origDirFn })
+
+	// Pre-populate the guidelines directory with a stale CONTRIBUTING.md
+	// that no longer exists in the upstream repo.
+	if err := os.MkdirAll(guidelinesDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(guidelinesDir, "CONTRIBUTING.md"), []byte("stale content"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Primary dir only has AGENTS.md — no CONTRIBUTING.md.
+	primaryDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(primaryDir, "AGENTS.md"), []byte("fresh agents"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := ExtractGuidelines(primaryDir, "stalerepo"); err != nil {
+		t.Fatalf("ExtractGuidelines: %v", err)
+	}
+
+	// The stale CONTRIBUTING.md should have been removed.
+	if _, err := os.Stat(filepath.Join(guidelinesDir, "CONTRIBUTING.md")); !os.IsNotExist(err) {
+		t.Error("stale CONTRIBUTING.md should have been removed")
+	}
+
+	// AGENTS.md should exist with fresh content.
+	data, err := os.ReadFile(filepath.Join(guidelinesDir, "AGENTS.md"))
+	if err != nil {
+		t.Fatalf("AGENTS.md not found: %v", err)
+	}
+	if string(data) != "fresh agents" {
+		t.Errorf("AGENTS.md content mismatch: got %q, want %q", string(data), "fresh agents")
+	}
+
+	// Only one file should remain (AGENTS.md).
+	entries, err := os.ReadDir(guidelinesDir)
+	if err != nil {
+		t.Fatalf("ReadDir: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Errorf("expected 1 file in guidelines dir, got %d", len(entries))
+	}
+}

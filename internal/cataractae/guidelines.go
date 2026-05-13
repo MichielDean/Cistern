@@ -113,15 +113,44 @@ func LoadGuidelines(repoName string) ([]RepoGuideline, error) {
 	return guidelines, nil
 }
 
+// clearStaleGuidelines removes all .md files from the guidelines directory
+// so that guideline files removed from the upstream repo do not persist.
+func clearStaleGuidelines(dir string) error {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil // nothing to clear
+		}
+		return err
+	}
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".md") {
+			continue
+		}
+		if err := os.Remove(filepath.Join(dir, e.Name())); err != nil {
+			return fmt.Errorf("guidelines: remove stale %s: %w", e.Name(), err)
+		}
+	}
+	return nil
+}
+
 // ExtractGuidelines reads candidate guideline files from the primary clone
 // directory and stores them to ~/.cistern/repos/<repoName>/guidelines/.
+// Before writing, it clears any existing .md files from the guidelines directory
+// so that files removed from the upstream repo do not leave stale copies behind.
 // Returns nil on success. Returns a non-nil error only for filesystem failures
-// on directory creation. Individual file read failures are logged as warnings
-// but do not fail the entire operation — extraction is best-effort.
+// on directory creation or stale cleanup. Individual file read failures are logged
+// as warnings but do not fail the entire operation — extraction is best-effort.
 func ExtractGuidelines(primaryDir, repoName string) error {
 	dir, err := guidelinesDirFn(repoName)
 	if err != nil {
 		return fmt.Errorf("guidelines: extract %s: %w", repoName, err)
+	}
+
+	// Clear stale guideline files so that files removed from the upstream repo
+	// do not persist and get injected into CONTEXT.md.
+	if err := clearStaleGuidelines(dir); err != nil {
+		return fmt.Errorf("guidelines: extract %s: clear stale: %w", repoName, err)
 	}
 
 	for _, candidate := range candidateGuidelines {
