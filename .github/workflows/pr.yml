@@ -134,8 +134,9 @@ jobs:
         if: steps.installer_changed.outputs.skip != 'true'
         run: |
           docker run \
-            --security-opt seccomp=unconfined \
-            --security-opt apparmor=unconfined \
+            --privileged \
+            --cgroupns=host \
+            -v /sys/fs/cgroup:/sys/fs/cgroup:rw \
             --tmpfs /run \
             --tmpfs /run/lock \
             --tmpfs /tmp \
