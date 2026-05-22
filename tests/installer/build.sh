@@ -18,6 +18,7 @@ echo "    Dockerfile: tests/installer/Dockerfile.systemd"
 echo ""
 
 docker build \
+  --network=host \
   --file "${REPO_ROOT}/tests/installer/Dockerfile.systemd" \
   --tag "${IMAGE_TAG}" \
   "${REPO_ROOT}"

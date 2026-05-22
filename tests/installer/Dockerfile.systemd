@@ -5,8 +5,10 @@
 # Build from the repository root:
 #   docker build -f tests/installer/Dockerfile.systemd -t cistern/installer-test .
 #
-# Run (--privileged is required for systemd to manage cgroups):
-#   docker run --privileged --rm -d --name cistern-test cistern/installer-test
+# Run (systemd requires --privileged and host cgroup namespace):
+#   docker run --privileged --cgroupns=host -v /sys/fs/cgroup:/sys/fs/cgroup:rw \
+#     --tmpfs /run --tmpfs /run/lock --tmpfs /tmp --rm -d --name cistern-test \
+#     cistern/installer-test
 #   docker exec cistern-test /usr/local/bin/run-tests.sh
 #   docker stop cistern-test
 
@@ -34,22 +36,51 @@ RUN CGO_ENABLED=0 GOOS=linux \
     go build -o /out/fakeagent ./internal/testutil/fakeagent/
 
 # ─── Stage 2: systemd-capable runtime ─────────────────────────────────────────
-# jrei/systemd-ubuntu:24.04 provides Ubuntu 24.04 with systemd as PID 1,
-# pre-configured for container use. Ubuntu 24.04 ships glibc 2.39, which
-# satisfies the runtime requirements of binaries built on Debian Bookworm.
-# jrei/systemd-ubuntu:24.04
-FROM jrei/systemd-ubuntu@sha256:6cf7f981a584f2afb83782f29abdcdff1fa16660a80be1fdb1f2fc45be40f0b7
+# Build a minimal systemd image from ubuntu:24.04.
+# Ubuntu 24.04 ships glibc 2.39, which satisfies the runtime requirements of
+# binaries built on Debian Bookworm (glibc 2.36).
+#
+# Previous versions used jrei/systemd-ubuntu, which became unreliable on modern
+# Docker / kernel combinations (container exits 255 immediately with no logs).
+# Building our own systemd image from the official Ubuntu cloud image ensures
+# reproducibility and control over the systemd configuration.
+FROM ubuntu:24.04
 
-# Install runtime dependencies.
+ENV DEBIAN_FRONTEND=noninteractive
+ENV LC_ALL=C
+
+# Install systemd and runtime dependencies in a single layer.
+# The default ubuntu:24.04 cloud image sources use HTTP URLs which may be
+# unavailable on some Docker network configurations (CDN returns 404 for noble
+# suites when accessed through the Docker bridge network). Build with
+# --network=host to resolve repository availability issues:
+#   docker build --network=host ...
 # Deliberately excludes pass and gnupg — the credential story must work without
 # them (provider credentials are managed by the opencode CLI).
 RUN apt-get update && apt-get install -y --no-install-recommends \
+        systemd \
+        systemd-sysv \
+        ca-certificates \
         tmux \
         git \
         curl \
-        ca-certificates \
         python3 \
     && rm -rf /var/lib/apt/lists/*
+
+# Strip unnecessary systemd units that conflict with container operation.
+# These units expect hardware, networking, or multi-user services that don't
+# apply inside a container and can cause systemd to hang or fail on startup.
+RUN cd /lib/systemd/system/sysinit.target.wants/ && \
+        ls | grep -v systemd-tmpfiles-setup | xargs rm -f && \
+    rm -f /lib/systemd/system/multi-user.target.wants/* \
+          /etc/systemd/system/*.wants/* \
+          /lib/systemd/system/local-fs.target.wants/* \
+          /lib/systemd/system/sockets.target.wants/*udev* \
+          /lib/systemd/system/sockets.target.wants/*initctl* \
+          /lib/systemd/system/basic.target.wants/* \
+          /lib/systemd/system/anaconda.target.wants/* \
+          /lib/systemd/system/plymouth* \
+          /lib/systemd/system/systemd-update-utmp*
 
 # ── Cistern binaries ─────────────────────────────────────────────────────────
 
@@ -83,4 +114,6 @@ COPY --chmod=0644 tests/installer/cistern-castellarius.service \
 # systemd is PID 1. Tests are run by exec-ing into the container once systemd
 # has reached multi-user.target:
 #   docker exec <container> /usr/local/bin/run-tests.sh
+VOLUME ["/sys/fs/cgroup"]
+STOPSIGNAL SIGRTMIN+3
 ENTRYPOINT ["/lib/systemd/systemd"]

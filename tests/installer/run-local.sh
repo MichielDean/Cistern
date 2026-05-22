@@ -32,7 +32,7 @@ docker run \
     -v /sys/fs/cgroup:/sys/fs/cgroup:rw \
     --tmpfs /run \
     --tmpfs /run/lock \
-    --security-opt apparmor=unconfined \
+    --tmpfs /tmp \
     -d \
     --name "${CONTAINER_NAME}" \
     "${IMAGE_TAG}"

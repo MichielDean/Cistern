@@ -209,12 +209,13 @@ test_upgrade() {
     local cistern_dir="${home_dir}/.cistern"
 
     # Given: pre-populated ~/.cistern simulating a prior-version installation.
-    # The cistern.yaml includes a real repo (so ValidateAqueductConfig passes)
-    # plus a stale key from the prior version that ct init must not remove.
+    # The cistern.yaml includes valid aqueducts and repo config with aqueduct
+    # refs (current schema) plus stale keys from a prior version that ct init
+    # must not remove.
     if ! exec_in_container bash -c "
         rm -rf '${home_dir}' &&
         mkdir -p '${cistern_dir}/aqueduct' '${cistern_dir}/cataractae' &&
-        printf 'repos:\n  - name: TestRepo\n    url: https://github.com/example/TestRepo\n    workflow_path: aqueduct/aqueduct.yaml\n    cataractae: 1\n    names: [test]\n    prefix: tr\nstale_old_key: removed_in_v2\n' \
+        printf 'aqueducts:\\n  - name: default\\n    cataractae:\\n      - name: implement\\n        type: agent\\n        identity: virgo\\n        on_pass: review\\n      - name: review\\n        type: agent\\n        identity: marcia\\n        on_pass: merge\\n      - name: merge\\n        type: automated\\n        on_pass: done\\nrepos:\\n  - name: TestRepo\\n    url: https://github.com/example/TestRepo\\n    aqueduct: default\\n    cataractae: 2\\n    names: [virgo, marcia]\\n    prefix: tr\\nstale_old_key: removed_in_v2\\n' \
             > '${cistern_dir}/cistern.yaml' &&
         printf 'GH_TOKEN=ghp-test-old-key\n' \
             > '${cistern_dir}/env' &&

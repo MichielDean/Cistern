@@ -58,6 +58,7 @@ require_docker() {
 build_image() {
     local repo_root="$1"
     docker build \
+        --network=host \
         --tag  "${IMAGE_NAME}" \
         --file "${repo_root}/tests/installer/Dockerfile.systemd" \
         "${repo_root}"
@@ -77,7 +78,7 @@ start_container() {
         -v /sys/fs/cgroup:/sys/fs/cgroup:rw \
         --tmpfs /run \
         --tmpfs /run/lock \
-        --security-opt apparmor=unconfined \
+        --tmpfs /tmp \
         --rm \
         --detach \
         --name "${CONTAINER_NAME}" \
