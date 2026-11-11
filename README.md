@@ -324,6 +324,15 @@ Skills are referenced by name in your aqueduct YAML under each cataractae's `ski
 
 The `cistern-git` skill encodes hard-won rules: always use `git add -A -- ':!CONTEXT.md' ':!AGENTS.md'`, always use merge-base diff (`git diff $(git merge-base HEAD origin/main)..HEAD`) instead of two-dot — two-dot includes other PRs that merged to main after branching on unrebased branches, never stash in per-droplet worktrees.
 
+**Adapted skills (mp-\*):** stage methodologies are adapted from
+[Matt Pocock's skills](https://github.com/mattpocock/skills) (v1.3.2, MIT). Filtration
+interviews follow his grilling design-tree/frontier methodology (`ct filter`);
+implementation runs his TDD loop; review is his two-axis (Standards/Spec) structure;
+quality engineering uses his diagnosis loop; PR bodies use his show-me-based PR
+template. Per-skill adaptation notes in
+[`internal/skills/ATTRIBUTION.md`](internal/skills/ATTRIBUTION.md) — upstream keeps the
+canonical versions.
+
 ## Drought Protocols
 
 When the cistern is dry, Cistern runs maintenance automatically. Configure in `~/.cistern/cistern.yaml`:
