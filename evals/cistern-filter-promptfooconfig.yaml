@@ -1,0 +1,82 @@
+maxConcurrency: 1
+
+description: "Cistern filtration eval — grilling methodology behavior of the ct filter system prompt"
+
+providers:
+  - id: file://providers/glm_flash.py
+    config:
+      temperature: 0.1
+      reasoning_effort: low
+
+prompts:
+  - |
+    You are operating as the ct filter assistant. Follow your system instructions exactly.
+
+    <SystemInstructions>
+    {{system}}
+    </SystemInstructions>
+
+    The user starts a filtration session:
+
+    User: {{idea}}
+
+defaultTest:
+  vars:
+    system: file://eval-data/filtration.txt
+  options:
+    rubricPrompt: |
+      You are grading output against a rubric. If the statement in the rubric is true, the output passes.
+      Respond with NOTHING except a single JSON object, no prose before or after, no markdown:
+      {"reason": "<concise explanation>", "pass": <true or false>, "score": <1.0 or 0.0>}
+      <Output>
+      {{ output }}
+      </Output>
+      <Rubric>
+      {{ rubric }}
+      </Rubric>
+      JSON object only.
+    provider:
+      id: file://providers/glm_flash.py
+      config:
+        temperature: 0.1
+        max_tokens: 16000
+        reasoning_effort: low
+
+tests:
+  - description: "rough API idea produces numbered spec + frontier round, no filing"
+    vars:
+      idea: |
+        I want a webhook system so the dashboard updates live when a droplet changes stage.
+    assert:
+      - type: llm-rubric
+        value: "The response contains a NUMBERED list of proposed droplets (at least one item, each with an indicative title and a description mentioning acceptance criteria or dependencies)."
+      - type: llm-rubric
+        value: "The response asks interview questions about unsettled decisions, and at least one question comes with an explicit recommended answer for the user to confirm."
+      - type: llm-rubric
+        value: "The response does NOT claim it filed, created, or added droplets; it treats filing as the user's action (ct droplet add)."
+
+  - description: "vague idea — grilling probes scope edges rather than filling in silently"
+    vars:
+      idea: |
+        Make the whole pipeline faster somehow, not sure where the slowness is.
+    assert:
+      - type: llm-rubric
+        value: "The response asks clarifying questions whose answers are needed to write acceptance criteria (e.g. where the slowness is observed, what 'faster' means, which stage is suspect) rather than inventing a full solution."
+      - type: llm-rubric
+        value: "The questions are decisions for the user, not facts the assistant should look up itself; questions are numbered or enumerated as a frontier round."
+
+  - description: "fact-finding duty — improves the review cataractae via interview, not user interrogation"
+    vars:
+      idea: |
+        We should improve the review cataractae. Not sure what to change yet.
+    assert:
+      - type: llm-rubric
+        value: "The response engages the improvement idea by conducting an interview round (numbered spec plus questions), and does not demand the user paste wholesale source files or refuse for lack of context. Acknowledging that file tools are unavailable in the harness and offering to ground through answers is acceptable behavior."
+
+  - description: "dependency decomposition — multi-part idea splits into droplets with dependencies"
+    vars:
+      idea: |
+        Build Jira sync: import issues as droplets, post agent comments back to Jira, and let droplets transition Jira statuses.
+    assert:
+      - type: llm-rubric
+        value: "The proposed droplet list splits this into separable items AND states dependencies explicitly in prose (e.g. 'Requires droplet 1 to be delivered first') rather than bundling everything into one droplet."

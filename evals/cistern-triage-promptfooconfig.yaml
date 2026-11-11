@@ -1,0 +1,105 @@
+maxConcurrency: 1
+
+description: "Cistern triage eval — state-machine decisions and verify-before-grilling"
+
+providers:
+  - id: file://providers/glm_flash.py
+    config:
+      temperature: 0.1
+      reasoning_effort: low
+
+prompts:
+  - |
+    You are operating as the ct triage interviewer. Follow your system instructions exactly.
+
+    <SystemInstructions>
+    {{system}}
+    </SystemInstructions>
+
+    <DropletContext>
+    {{droplet}}
+    </DropletContext>
+
+    Respond to the user's request. Do not pretend to run commands you cannot run;
+    where the system tells you to verify against the codebase, state exactly what
+    you would verify and reason from the context provided.
+
+    User: {{request}}
+
+defaultTest:
+  vars:
+    system: file://eval-data/triage.txt
+  options:
+    rubricPrompt: |
+      You are grading output against a rubric. If the statement in the rubric is true, the output passes.
+      Respond with NOTHING except a single JSON object, no prose before or after, no markdown:
+      {"reason": "<concise explanation>", "pass": <true or false>, "score": <1.0 or 0.0>}
+      <Output>
+      {{ output }}
+      </Output>
+      <Rubric>
+      {{ rubric }}
+      </Rubric>
+      JSON object only.
+    provider:
+      id: file://providers/glm_flash.py
+      config:
+        temperature: 0.1
+        max_tokens: 16000
+        reasoning_effort: low
+
+tests:
+  - description: "vague bug claim — grill and request specifics, not a blind brief"
+    vars:
+      droplet: |
+        ID: ci-abc12
+        Title: "castellarius sometimes stops scheduling"
+        Description: (empty)
+        Status: pooled
+        Notes: []
+      request: "Triage this droplet and decide what should happen to it."
+    assert:
+      - type: llm-rubric
+        value: "The response does NOT upgrade the droplet to ready-for-agent without a verified claim; given an empty description and no evidence, it lands in needs-info (with specific questions) or recommends more information rather than writing an acceptance-criteria brief."
+      - type: llm-rubric
+        value: "The response names the state machine states correctly (needs-triage / needs-info / ready-for-agent / ready-for-human / wontfix) and picks exactly one state."
+
+  - description: "feature claim that the context shows already exists — wontfix direction"
+    vars:
+      droplet: |
+        ID: ci-def34
+        Title: "Add recirculation counting to ct stats"
+        Description: "It would be nice if ct stats could show how often droplets recirculate at each cataractae."
+        Status: in_progress
+        Notes: [{"cataractae_name": "triage", "content": "prior triage note: per-cataractae recirculation counts already exist in ct droplet stats output as of the events-table feature; see cmd/ct/cistern.go:793"}]
+      request: "Triage this droplet."
+    assert:
+      - type: llm-rubric
+        value: "The response takes the prior triage note (feature already exists) into account and recommends wontfix or a duplicate/cancel outcome rather than re-implementing an existing feature."
+
+  - description: "rework request — writes an agent brief with acceptance criteria"
+    vars:
+      droplet: |
+        ID: ci-ghi56
+        Title: "Session log file grows unbounded"
+        Description: "Each cataractae appends to ~/.cistern/session-logs/<session>.log; nothing prunes it. On a busy host this reached 39MB in a few days. Reproduced: ran `ls -la ~/.cistern/session-logs/` and confirmed 39MB single file after 2 days of architect loop retries."
+        Status: pooled
+        Notes: [{"cataractae_name": "architect", "content": "blocked on deciding retention policy"}]
+      request: "This is a confirmed, reproduced bug and the user has already confirmed the direction: rewrite the droplet description as an agent brief now."
+    assert:
+      - type: llm-rubric
+        value: "The response produces a ready-for-agent style brief whose acceptance criteria are verifiable observations (e.g. named behavior like 'session logs are pruned to N days' with the command that would verify it), not vague phrases like 'fix the logging'."
+      - type: llm-rubric
+        value: "The response includes constraints (in-scope/out-of-scope paths or behaviors) and context an implementing agent could not infer from the title alone."
+
+  - description: "human-only gate — recognizes what cannot be delegated"
+    vars:
+      droplet: |
+        ID: ci-jkl78
+        Title: "Rotate the leaked GitHub PAT in production"
+        Description: "A token was posted in a public log; needs a human to rotate it in the GitHub org settings and update the secret in the deployment settings UI."
+        Status: queued
+      request: "Triage this droplet."
+    assert:
+      - type: llm-rubric
+        value: "The response classifies this as ready-for-human (not ready-for-agent), citing human-only actions (org settings, credentials rotation) rather than proposing an agent brief."
