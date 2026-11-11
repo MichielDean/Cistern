@@ -21,8 +21,15 @@ import (
 // Key insight: OPENCODE_SERVER_* env vars must be unset so opencode doesn't
 // try to connect to an existing server (which causes "Session not found" errors).
 func filterAgentRun(preset provider.ProviderPreset, prompt string) (filterSessionResult, error) {
+	return agentSessionRun(preset, "filter", filterAgentsMD(), prompt, "")
+}
+
+// agentSessionRun invokes opencode run --format json for a named auxiliary
+// agent (filter, triage, wizard...). Same contract as filterAgentRun but with
+// a pluggable agent name and AGENTS.md content.
+func agentSessionRun(preset provider.ProviderPreset, agentName, agentsMd, prompt, sessionID string) (filterSessionResult, error) {
 	// Build the command
-	cmdPath, args, env, tmpDir, err := buildFilterRunCommand(preset, prompt, "")
+	cmdPath, args, env, tmpDir, err := buildAgentRunCommand(preset, agentName, agentsMd, prompt, sessionID)
 	if err != nil {
 		return filterSessionResult{}, err
 	}
@@ -36,20 +43,21 @@ func filterAgentRun(preset provider.ProviderPreset, prompt string) (filterSessio
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
-		return filterSessionResult{}, fmt.Errorf("filter: create stdout pipe: %w", err)
+		return filterSessionResult{}, fmt.Errorf("%s: create stdout pipe: %w", agentName, err)
 	}
 
-	slog.Default().Info("filter: running opencode",
+	slog.Default().Info("agent-session: running opencode",
+		"agent", agentName,
 		"command", cmdPath,
 		"args", strings.Join(args, " "))
 
 	if err := cmd.Start(); err != nil {
-		return filterSessionResult{}, fmt.Errorf("filter: start command: %w", err)
+		return filterSessionResult{}, fmt.Errorf("%s: start command: %w", agentName, err)
 	}
 
 	// Parse NDJSON output with timeout
 	var textParts []string
-	var sessionID string
+	parsedSessionID := sessionID
 	scanner := bufio.NewScanner(stdout)
 	done := make(chan struct{})
 	go func() {
@@ -64,8 +72,8 @@ func filterAgentRun(preset provider.ProviderPreset, prompt string) (filterSessio
 			}
 
 			// Extract session ID from any event that has one
-			if sid, ok := event["sessionID"].(string); ok && sid != "" && sessionID == "" {
-				sessionID = sid
+			if sid, ok := event["sessionID"].(string); ok && sid != "" && parsedSessionID == "" {
+				parsedSessionID = sid
 			}
 
 			// Extract text from text events
@@ -92,10 +100,10 @@ func filterAgentRun(preset provider.ProviderPreset, prompt string) (filterSessio
 		// Command completed, wait for scanner to finish
 		<-done
 		if cmdErr != nil && len(textParts) == 0 {
-			return filterSessionResult{}, fmt.Errorf("filter: command failed: %w", cmdErr)
+			return filterSessionResult{}, fmt.Errorf("%s: command failed: %w", agentName, cmdErr)
 		}
 		if cmdErr != nil {
-			slog.Default().Warn("filter: command exited with error but produced output",
+			slog.Default().Warn("agent-session: command exited with error but produced output",
 				"error", cmdErr,
 				"text_parts", len(textParts))
 		}
@@ -104,17 +112,17 @@ func filterAgentRun(preset provider.ProviderPreset, prompt string) (filterSessio
 			cmd.Process.Kill()
 		}
 		<-done
-		return filterSessionResult{}, fmt.Errorf("filter: command timed out after %v", timeout)
+		return filterSessionResult{}, fmt.Errorf("%s: command timed out after %v", agentName, timeout)
 	}
 
 	response := strings.TrimSpace(strings.Join(textParts, "\n"))
 
-	slog.Default().Info("filter: completed",
+	slog.Default().Info("agent-session: completed",
 		"session_id", sessionID,
 		"text_len", len(response))
 
 	return filterSessionResult{
-		SessionID: sessionID,
+		SessionID: parsedSessionID,
 		Text:      response,
 	}, nil
 }
@@ -122,7 +130,13 @@ func filterAgentRun(preset provider.ProviderPreset, prompt string) (filterSessio
 // filterAgentRunResume resumes an existing filter session using opencode run
 // with the --session flag and --format json.
 func filterAgentRunResume(preset provider.ProviderPreset, sessionID, message string) (filterSessionResult, error) {
-	cmdPath, args, env, tmpDir, err := buildFilterRunCommand(preset, message, sessionID)
+	return agentSessionResume(preset, "filter", filterAgentsMD(), sessionID, message)
+}
+
+// agentSessionResume resumes an existing auxiliary-agent session; same contract
+// as filterAgentRunResume but parameterized by agent name and AGENTS.md content.
+func agentSessionResume(preset provider.ProviderPreset, agentName, agentsMd, sessionID, message string) (filterSessionResult, error) {
+	cmdPath, args, env, tmpDir, err := buildAgentRunCommand(preset, agentName, agentsMd, message, sessionID)
 	if err != nil {
 		return filterSessionResult{}, err
 	}
@@ -136,11 +150,11 @@ func filterAgentRunResume(preset provider.ProviderPreset, sessionID, message str
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
-		return filterSessionResult{}, fmt.Errorf("filter: create stdout pipe: %w", err)
+		return filterSessionResult{}, fmt.Errorf("%s: create stdout pipe: %w", agentName, err)
 	}
 
 	if err := cmd.Start(); err != nil {
-		return filterSessionResult{}, fmt.Errorf("filter: start command: %w", err)
+		return filterSessionResult{}, fmt.Errorf("%s: start command: %w", agentName, err)
 	}
 
 	var textParts []string
@@ -177,10 +191,11 @@ func filterAgentRunResume(preset provider.ProviderPreset, sessionID, message str
 	case cmdErr := <-cmdDone:
 		<-done
 		if cmdErr != nil && len(textParts) == 0 {
-			return filterSessionResult{}, fmt.Errorf("filter: resume command failed: %w", cmdErr)
+			return filterSessionResult{}, fmt.Errorf("%s: resume command failed: %w", agentName, cmdErr)
 		}
 		if cmdErr != nil {
-			slog.Default().Warn("filter: resume command exited with error but produced output",
+			slog.Default().Warn("agent-session: resume command exited with error but produced output",
+				"agent", agentName,
 				"error", cmdErr,
 				"session_id", sessionID)
 		}
@@ -189,7 +204,7 @@ func filterAgentRunResume(preset provider.ProviderPreset, sessionID, message str
 			cmd.Process.Kill()
 		}
 		<-done
-		return filterSessionResult{}, fmt.Errorf("filter: resume command timed out after %v", timeout)
+		return filterSessionResult{}, fmt.Errorf("%s: resume command timed out after %v", agentName, timeout)
 	}
 
 	response := strings.TrimSpace(strings.Join(textParts, "\n"))
@@ -204,6 +219,13 @@ func filterAgentRunResume(preset provider.ProviderPreset, sessionID, message str
 // If sessionID is non-empty, adds -s flag for resume mode.
 // Returns (cmdPath, args, env, tmpDir, error) — tmpDir is empty if no temp dir was created.
 func buildFilterRunCommand(preset provider.ProviderPreset, prompt string, sessionID string) (string, []string, []string, string, error) {
+	return buildAgentRunCommand(preset, "filter", filterAgentsMD(), prompt, sessionID)
+}
+
+// buildAgentRunCommand constructs the opencode run command for a named
+// auxiliary agent. Generalization of buildFilterRunCommand; the agent's
+// AGENTS.md and identity file are written into a temp OPENCODE_CONFIG_DIR.
+func buildAgentRunCommand(preset provider.ProviderPreset, agentName, agentsMd, prompt string, sessionID string) (string, []string, []string, string, error) {
 	// Resolve command path
 	cmdPath := preset.Command
 	if p, err := exec.LookPath(preset.Command); err == nil {
@@ -223,39 +245,38 @@ func buildFilterRunCommand(preset provider.ProviderPreset, prompt string, sessio
 	// Agent flag
 	var tmpDir string
 	if preset.AgentFlag != "" {
-		args = append(args, preset.AgentFlag, "filter")
+		args = append(args, preset.AgentFlag, agentName)
 
 		// Create temp workdir with identity files
 		var err error
 		tmpDir, err = os.MkdirTemp("", "ct-filter-*")
 		if err != nil {
-			return "", nil, nil, "", fmt.Errorf("filter: create temp dir: %w", err)
+			return "", nil, nil, "", fmt.Errorf("%s: create temp dir: %w", agentName, err)
 		}
 
 		// Write AGENTS.md
-		agentsMd := filterAgentsMD()
 		if err := os.WriteFile(filepath.Join(tmpDir, "AGENTS.md"), []byte(agentsMd), 0o644); err != nil {
 			os.RemoveAll(tmpDir)
-			return "", nil, nil, "", fmt.Errorf("filter: write AGENTS.md: %w", err)
+			return "", nil, nil, "", fmt.Errorf("%s: write AGENTS.md: %w", agentName, err)
 		}
 
 		// Write CONTEXT.md with the full prompt
 		if err := os.WriteFile(filepath.Join(tmpDir, "CONTEXT.md"), []byte(prompt), 0o644); err != nil {
 			os.RemoveAll(tmpDir)
-			return "", nil, nil, "", fmt.Errorf("filter: write CONTEXT.md: %w", err)
+			return "", nil, nil, "", fmt.Errorf("%s: write CONTEXT.md: %w", agentName, err)
 		}
 
 		// Create identity directory with agent markdown
 		identityDir := filepath.Join(tmpDir, "identity", "agents")
 		if err := os.MkdirAll(identityDir, 0o755); err != nil {
 			os.RemoveAll(tmpDir)
-			return "", nil, nil, "", fmt.Errorf("filter: create identity dir: %w", err)
+			return "", nil, nil, "", fmt.Errorf("%s: create identity dir: %w", agentName, err)
 		}
 		agentFrontmatter := "---\ndescription: Cistern filter agent — analyzes and refines work item specifications\nmode: primary\n---\n\n"
 		agentMdPath := filepath.Join(identityDir, "filter.md")
 		if err := os.WriteFile(agentMdPath, []byte(agentFrontmatter+prompt), 0o644); err != nil {
 			os.RemoveAll(tmpDir)
-			return "", nil, nil, "", fmt.Errorf("filter: write agent markdown: %w", err)
+			return "", nil, nil, "", fmt.Errorf("%s: write agent markdown: %w", agentName, err)
 		}
 	}
 
