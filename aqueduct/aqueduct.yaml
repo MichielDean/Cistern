@@ -9,6 +9,8 @@ cataractae:
       - name: cistern-signaling
       - name: cistern-git
       - name: cistern-diff-reader
+      - name: mp-codebase-design
+      - name: mp-domain-modeling
     timeout_minutes: 20
     on_pass: implement
     on_recirculate: architect
@@ -23,6 +25,9 @@ cataractae:
       - name: cistern-signaling
       - name: cistern-git
       - name: cistern-test-runner
+      - name: mp-tdd
+      - name: mp-implement
+      - name: mp-handoff
     timeout_minutes: 30
     on_pass: review
     on_fail: pooled
@@ -36,6 +41,8 @@ cataractae:
       - name: cistern-signaling
       - name: cistern-git
       - name: cistern-diff-reader
+      - name: mp-code-review
+      - name: mp-codebase-design
     timeout_minutes: 20
     on_pass: qa
     on_fail: implement
@@ -51,6 +58,8 @@ cataractae:
       - name: cistern-git
       - name: cistern-test-runner
       - name: cistern-diff-reader
+      - name: mp-diagnosing-bugs
+      - name: mp-tdd
     timeout_minutes: 20
     on_pass: security-review
     on_fail: implement
@@ -91,6 +100,8 @@ cataractae:
       - name: cistern-signaling
       - name: cistern-github
       - name: cistern-git
+      - name: mp-pr
+      - name: mp-handoff
     timeout_minutes: 60
     on_pass: done
     on_recirculate: implement
