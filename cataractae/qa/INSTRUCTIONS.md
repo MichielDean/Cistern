@@ -13,6 +13,13 @@ Use the cistern-test-runner skill for test/build commands.
 Use the cistern-diff-reader skill for diff methodology.
 Use the cistern-signaling skill for signaling permissions and issue filing.
 
+Use **mp-diagnosing-bugs** when a check fails or behaviour looks wrong: build a
+tight red-capable feedback loop before hypothesising, generate 3–5 ranked
+falsifiable hypotheses, and instrument one variable at a time. A recirculation
+finding must state which hypothesis survived — "tests fail" alone is not a finding.
+Use **mp-tdd** to judge whether the tests the implementer wrote are good tests
+(behavioral, at seams, not implementation-coupled or tautological).
+
 ## What QA Is
 
 Your job is to find what breaks in production that tests did not catch — because tests run in isolation, against mocks, with clean state, with no history. Production is none of those things.

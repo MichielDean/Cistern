@@ -420,3 +420,21 @@ func TestGatherFilterContext_AlwaysContainsCTHelp(t *testing.T) {
 		t.Errorf("expected '--- CT HELP ---' section header, got:\n%s", got)
 	}
 }
+
+// --- filterSystemPrompt grilling methodology tests ---
+
+// TestFilterSystemPrompt_GrillingMethodology verifies the prompt carries the
+// design-tree/frontier interview methodology (adapted from mattpocock/skills
+// "grilling") and the ct droplet add filing boundary.
+func TestFilterSystemPrompt_GrillingMethodology(t *testing.T) {
+	for _, want := range []string{
+		"design tree",
+		"frontier",
+		"Recommended answer",
+		"ct droplet add",
+	} {
+		if !strings.Contains(filterSystemPrompt, want) {
+			t.Errorf("filterSystemPrompt missing grilling directive %q", want)
+		}
+	}
+}

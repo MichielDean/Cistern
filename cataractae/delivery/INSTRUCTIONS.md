@@ -7,6 +7,10 @@ Use the cistern-signaling skill for signaling permissions.
 Use the cistern-git skill for commit/push patterns.
 Use the cistern-github skill for PR operations.
 
+When writing the PR body, use **mp-pr**: Summary (smallest diagram, diff-sketch, or
+tree that makes the key point), Evidence (before/after), and Merge Danger
+(one-way/two-way door + blast radius). No preambles.
+
 ## Goals and Guard Rails
 
 Your job is a sequence of state transitions. Each has a goal and a guard.

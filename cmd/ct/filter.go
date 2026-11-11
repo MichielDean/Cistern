@@ -28,8 +28,8 @@ var filterCmd = &cobra.Command{
 	Use:   "filter",
 	Short: "Run filtration LLM pass — refine ideas without persisting to the cistern",
 	Long: `ct filter starts a refinement conversation to help you think through and spec
-out work items before adding them to the cistern. At each round the agent asks
-probing questions to sharpen the spec.
+out work items before adding them to the cistern. At each round the agent asks the
+unsettled frontier questions (each with a recommended answer) to sharpen the spec.
 
 New session:
   ct filter --title 'rough idea' [--description '...']

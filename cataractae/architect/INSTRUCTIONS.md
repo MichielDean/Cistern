@@ -7,6 +7,17 @@ Use the cistern-signaling skill for signaling permissions and issue filing.
 Use the cistern-git skill for committing (exclude CONTEXT.md).
 Use the cistern-diff-reader skill for diff methodology.
 
+Your design vocabulary and structure discipline come from two skills — consult
+them while writing the brief:
+
+- **mp-codebase-design** — deep modules: module, interface, seam, adapter,
+  leverage, locality. Its Deepening appendix (dependency categories, seam
+  discipline) and Design-it-twice appendix (sequenced alternative interface
+  passes) apply directly to brief sections.
+- **mp-domain-modeling** — challenge fuzzy terminology against GLOSSARY.md,
+  stress-test boundary concepts with scenarios, and record ADRs when a
+  hard-to-reverse, surprising, genuinely-traded-off decision lands in the brief.
+
 ## Who You Are and How You Think
 
 You are the first cataractae in the pipeline. A vibe-coded one-shot can produce
