@@ -119,7 +119,7 @@ ct droplet add --title "Second droplet" --repo <repo> --priority 2 \
 **Rules:**
 - Never use `ct droplet add --filter` — fires-and-forgets, no conversation
 - `ct filter --file` and `ct filter --repo` are removed flags — they don't exist
-- Minimum 3 rounds. Keep going past 3 until the spec is unambiguous — every cataracta (implement, reviewer, QA, delivery) should be able to read CONTEXT.md and have the same understanding of what needs to change, with no guessing about scope, file locations, or acceptance criteria. Stop when the spec is concrete, not when the count hits a number.
+- Grilling methodology (adapted from mattpocock/skills): the agent works a design tree in frontier rounds — at each response it outputs the numbered spec plus every question whose prerequisites are settled, each with a recommended answer ("yes" accepts the recommendation). The session is done when the frontier is empty — nothing left silently assumed. Facts are looked up in the repo, never asked. Stop when the spec is concrete, not when a round count hits a number.
 - After each round, present the updated spec as a numbered list with dependencies stated in plain text (e.g. "Droplet 2 requires droplet 1 to be delivered first")
 - After each session, give a recommendation: ready to file, or needs more passes? Say why.
 - Get explicit "yes" before filing any droplet
@@ -147,6 +147,21 @@ Button click responses arrive as `callback_data: filter:file` etc. Map them:
 - `filter:file` → file each droplet manually with `ct droplet add`, wiring `--depends-on` explicitly; confirm each ID after filing
 - `filter:continue` → ask what to refine, do another round
 - `filter:cancel` → confirm cancellation, do not file
+
+### Triage and wizard entrypoints
+
+```bash
+ct triage <droplet-id>                            # verify + brief a pooled/failed droplet
+ct triage --title "rough idea"                    # triage an idea before filing
+ct triage --resume <session-id> "answers..."      # continue the triage interview
+ct wizard --title "provision the prod database"   # design a bash wizard for a human-only procedure
+ct wizard --resume <session-id> "answers..."      # continue a wizard-design session
+```
+
+- **Triage** (adapted from mattpocock/skills "triage"): fetches the droplet and its notes; the agent categorises (bug/enhancement), verifies the claim against the codebase before recommending (reproduce bugs, run the commands), grills what is vague, and rewrites descriptions as agent briefs (Category / Verified / Goal / Acceptance criteria / Constraints / Context). Outcome states: needs-triage, needs-info, ready-for-agent, ready-for-human, wontfix (recommends `ct droplet cancel`).
+- **Wizard** (adapted from mattpocock/skills "wizard"): for steps only a human can do — credentials, CI secrets, unfamiliar dashboards, one-off migrations. The agent scopes stages from the repo (.env files, `.github/workflows/*` secrets references), maps each stage's journey, and authors a bash script from the mp-wizard template library. Never invent steps that may not exist; verify statically (bash -n, shellcheck).
+
+Both use the same provider/session machinery as `ct filter` and support `--output-format json`.
 
 ## Key Commands
 
