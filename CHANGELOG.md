@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+### Mandate filtration before every droplet filing
+
+The cistern skill previously offered two paths for adding a droplet: "Direct — when requirements are already clear" (bypass filtration) and "Filtered — for non-trivial or exploratory work." The direct bypass let agents file droplets with bare `ct droplet add` and no grilling, which is how under-specified droplets entered the pipeline. The skill now makes filtration the only path: every droplet goes through `ct filter` first (which uses the grilling methodology underneath), and `ct droplet add` follows only once the frontier is empty. The mandate is also encoded in lobsterdog `harness/AGENTS.md` and `harness/AGENTS.md.global`, with promptfoo eval cases in `harness-config.yaml` (category 3: droplet filing requires filtration).
+
+**Key changes:**
+- `skills/cistern/SKILL.md` — removed the "Direct — when requirements are already clear" section; filtration is now the sole filing path; rules rewritten in positive prose ("always run ct filter before any ct droplet add")
+
 ### Install cistern-web.service from the repo unit file (no heredoc drift)
 
 `setup_web_service` in `install.sh` maintained an inline heredoc copy of the unit that drifted from `cistern-web.service` in the repo root — the repo file gained `MemoryMax=512M` (ci-5n337) but the heredoc did not, so reinstalls silently dropped the regression guard. The installer now reads the repo's `cistern-web.service` and substitutes the hardcoded `/home/lobsterdog` paths for the current user's `HOME` and `gobin`, making the repo file the single source of truth.

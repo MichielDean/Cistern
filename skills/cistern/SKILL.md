@@ -70,25 +70,16 @@ implement → review → qa → security-review → docs → delivery
 
 ## Adding a Droplet
 
-**⛔ Always get explicit confirmation before filing any droplet.**
+**Always get explicit confirmation before filing any droplet.**
 
-### Direct — when requirements are already clear:
-```bash
-ct droplet add \
-  --title "Short imperative description" \
-  --repo <repo-name> \
-  --priority 2 \
-  --description "What, why, acceptance criteria"
-```
+### Filtration first — every droplet goes through `ct filter`
 
-### Filtered — for non-trivial or exploratory work:
-
-Filtration is a **thinking tool**, not a filing tool. It refines ideas into clear specs — filing is always done separately with `ct droplet add`.
+Every droplet goes through filtration before filing, regardless of how clear the requirements seem. Filtration is a **thinking tool** that uses the grilling methodology underneath: the filter agent works a design tree in frontier rounds, asking you questions whose prerequisites are settled (each with a recommended answer), and you answer until the frontier is empty. Filing is always done separately with `ct droplet add` after the spec is grilled clear.
 
 **⚠️ Filtration pitfalls:**
-- **Do not set provider API keys before running `ct filter`** — ct filter uses the opencode CLI, which manages its own credentials. Setting API keys in the environment may cause authentication conflicts.
+- **Run `ct filter` with provider API keys unset** — ct filter uses the opencode CLI, which manages its own credentials. Exporting API keys in the environment causes authentication conflicts.
 - **Run `ct filter` from `~/cistern`** — it uses `--allowedTools` to read codebase context. Running from another directory gives the agent no context.
-- **Don't use `--description` for long text** — pass the title only; provide full context in the first interactive turn instead.
+- **Pass the title only** — provide full context in the first interactive turn rather than via `--description`.
 - **`--file` and `--repo` flags are removed** — they no longer exist on `ct filter`
 
 **Troubleshooting `ct filter` failures:**
@@ -102,12 +93,12 @@ cd ~/cistern
 ct filter --title "Rough idea"
 ```
 
-**Step 2 — Resume with answers:**
+**Step 2 — Resume with answers (repeat until the frontier is empty):**
 ```bash
 ct filter --resume <session-id> "answers and context..."
 ```
 
-**Step 3 — When spec is approved, file manually:**
+**Step 3 — When spec is approved and frontier is empty, file manually:**
 ```bash
 # File each droplet explicitly, wiring deps with --depends-on
 ct droplet add --title "First droplet" --repo <repo> --priority 2 \
@@ -117,9 +108,9 @@ ct droplet add --title "Second droplet" --repo <repo> --priority 2 \
 ```
 
 **Rules:**
-- Never use `ct droplet add --filter` — fires-and-forgets, no conversation
-- `ct filter --file` and `ct filter --repo` are removed flags — they don't exist
-- Grilling methodology (adapted from mattpocock/skills): the agent works a design tree in frontier rounds — at each response it outputs the numbered spec plus every question whose prerequisites are settled, each with a recommended answer ("yes" accepts the recommendation). The session is done when the frontier is empty — nothing left silently assumed. Facts are looked up in the repo, never asked. Stop when the spec is concrete, not when a round count hits a number.
+- Always run `ct filter` before any `ct droplet add`, every time, regardless of how clear the requirements seem
+- Use `ct droplet add --filter` only when you want fire-and-forget behavior with no conversation
+- Grilling methodology (adapted from mattpocock/skills): the agent works a design tree in frontier rounds — at each response it outputs the numbered spec plus every question whose prerequisites are settled, each with a recommended answer ("yes" accepts the recommendation). The session is done when the frontier is empty — nothing left silently assumed. Facts are looked up in the repo. Stop when the spec is concrete, not when a round count hits a number.
 - After each round, present the updated spec as a numbered list with dependencies stated in plain text (e.g. "Droplet 2 requires droplet 1 to be delivered first")
 - After each session, give a recommendation: ready to file, or needs more passes? Say why.
 - Get explicit "yes" before filing any droplet
