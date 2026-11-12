@@ -165,7 +165,7 @@ func NewAPICaller(baseURL, model string) *APICaller {
 		baseURL = "http://localhost:11434/v1"
 	}
 	if model == "" {
-		model = "glm-5.1:cloud"
+		model = "glm-5.3-flash:cloud"
 	}
 	return &APICaller{
 		BaseURL:    strings.TrimRight(baseURL, "/"),

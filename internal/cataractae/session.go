@@ -22,7 +22,7 @@ type Session struct {
 	// WorkDir is the directory the agent runs in.
 	WorkDir string
 
-	// Model is the LLM model to use (e.g. "ollama/glm-5.1:cloud", "sonnet").
+	// Model is the LLM model to use (e.g. "ollama/glm-5.3-flash:cloud", "sonnet").
 	// Empty means default.
 	Model string
 

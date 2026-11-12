@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+### Retire glm-5.1:cloud pins (ci-tzrwo)
+
+Replace the retired `ollama/glm-5.1:cloud` default (retired upstream on 2026-09-25) with `ollama/glm-5.3-flash:cloud` in the built-in opencode provider preset and in `ct evaluate`'s model auto-detect fallback. Fresh `ct init` installs and `ct evaluate --pr N` runs without `--model` no longer fail with API 410. A drift-guard test (`TestShippedDefaultsNoRetiredModels`) now scans all non-test Go sources so retired model defaults cannot be reintroduced silently.
+
+**Key changes:**
+- `internal/provider/preset.go` — opencode preset `DefaultModel` set to `ollama/glm-5.3-flash:cloud`
+- `internal/evaluate/evaluate.go` — auto-detect fallback model set to `glm-5.3-flash:cloud`
+- `internal/evaluate/evaluate_test.go` — `TestAPICaller_Defaults` updated to assert the new fallback
+- `cmd/ct/drift_guard_test.go` — new `TestShippedDefaultsNoRetiredModels` blocks retired models in `internal/` and `cmd/` non-test sources
+
 ### Add kotlin-sdk as first external fork-mode repo (ci-ofvhg)
 
 Add modelcontextprotocol/kotlin-sdk as a repo in cistern.yaml with `delivery_mode: fork`, `upstream_remote: https://github.com/modelcontextprotocol/kotlin-sdk`, and `fork: https://github.com/MichielDean/kotlin-sdk`. Uses 1 cataractae (sufficient for samples/docs contributions). Also promotes the fork-mode aqueduct from a commented-out template in `aqueduct.yaml` to a standalone `aqueduct/feature-fork.yaml` workflow file, and adds the `feature-fork` aqueduct definition to the embedded `cistern.yaml` config.

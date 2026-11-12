@@ -232,7 +232,7 @@ func TestAPICaller_Defaults(t *testing.T) {
 	if caller.BaseURL != "http://localhost:11434/v1" {
 		t.Errorf("expected default base URL, got %s", caller.BaseURL)
 	}
-	if caller.Model != "glm-5.1:cloud" {
+	if caller.Model != "glm-5.3-flash:cloud" {
 		t.Errorf("expected default model, got %s", caller.Model)
 	}
 }
