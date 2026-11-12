@@ -170,7 +170,12 @@ install_ct() {
   gobin="$(resolve_gobin)"
   ct_bin="${gobin}/ct"
 
-  if [[ -f "${script_dir}/go.mod" ]]; then
+  # Local mode requires BOTH a go.mod in script_dir AND a cmd/ct directory.
+  # Under curl|bash, BASH_SOURCE points at the piped script (often just '.'),
+  # so script_dir collapses to cwd; any Go project dir would then falsely
+  # trigger local mode and try to build ./cmd/ct from the wrong tree. Requiring
+  # cmd/ct to exist in the same tree rules that out. (ci-fxuo8-nzoar)
+  if [[ -f "${script_dir}/go.mod" && -d "${script_dir}/cmd/ct" ]]; then
     # Local mode: we are running inside a repo checkout. Build from this source
     # tree so the binary always matches the code the user is looking at — the
     # @latest form resolves via the Go module proxy, which lags origin/main.
