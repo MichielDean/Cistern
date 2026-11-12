@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+### Install cistern-web.service from the repo unit file (no heredoc drift)
+
+`setup_web_service` in `install.sh` maintained an inline heredoc copy of the unit that drifted from `cistern-web.service` in the repo root — the repo file gained `MemoryMax=512M` (ci-5n337) but the heredoc did not, so reinstalls silently dropped the regression guard. The installer now reads the repo's `cistern-web.service` and substitutes the hardcoded `/home/lobsterdog` paths for the current user's `HOME` and `gobin`, making the repo file the single source of truth.
+
+**Key changes:**
+- `install.sh` — `setup_web_service` replaced heredoc with `sed` substitution over `${script_dir}/cistern-web.service`
+
 ### Fix web dashboard memory growth + add runtime diagnostics (ci-5n337)
 
 Investigated and cured the cistern-web dashboard OOM (2.6G peak over ~9 days). Two unbounded buffers eliminated, plus runtime evidence tooling added so future leaks leave a trail.
