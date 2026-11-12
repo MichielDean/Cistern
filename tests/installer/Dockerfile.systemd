@@ -65,6 +65,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         git \
         curl \
         python3 \
+        gcc \
+        libc6-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # Strip unnecessary systemd units that conflict with container operation.
@@ -109,6 +111,19 @@ COPY --chmod=0755 tests/installer/fake-gh.sh /usr/local/bin/gh
 # The service loads credentials from /root/.cistern/env via EnvironmentFile.
 COPY --chmod=0644 tests/installer/cistern-castellarius.service \
     /etc/systemd/system/cistern-castellarius.service
+
+# ── Go toolchain + source for local-mode install.sh tests (ci-fxuo8) ──────────
+# install.sh's local mode (script dir contains go.mod) builds ct from the
+# source tree via `go build`, so the runtime image needs the Go toolchain,
+# a CGO-capable compiler (gcc above), the module cache, and the source itself.
+COPY --from=builder /usr/local/go /usr/local/go
+COPY --from=builder /go/pkg/mod /go/pkg/mod
+COPY --from=builder /root/.cache/go-build /root/.cache/go-build
+COPY --from=builder /src /src
+ENV GOPATH=/go \
+    GOMODCACHE=/go/pkg/mod \
+    GOCACHE=/root/.cache/go-build \
+    PATH=/usr/local/go/bin:/go/bin:${PATH}
 
 # ── systemd init ──────────────────────────────────────────────────────────────
 # systemd is PID 1. Tests are run by exec-ing into the container once systemd

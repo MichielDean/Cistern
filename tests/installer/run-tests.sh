@@ -417,6 +417,79 @@ else
     fi
 fi
 
+# ── Scenario 5: Local-mode install builds from source (ci-fxuo8) ──────────────
+# Given: the source tree is present at /src (Dockerfile copies it) with go.mod,
+#        and the Go toolchain + gcc (CGO) are installed in the image
+# When:  install.sh runs in local mode (script dir contains go.mod)
+# Then:  the installed binary:
+#          a) is the go-built binary at ~/go/bin (resolve_gobin), not the
+#             image-baked /usr/local/bin/ct
+#          b) reports the version install.sh injects via git describe
+#          c) is byte-identical (md5) to a fresh `go build` from the same source
+#
+# Note: remote `curl | bash` mode (@latest fallback) is NOT exercised here —
+# the container ships the repo, so no go.mod-less environment exists in this
+# image and the mode would require network access to the Go module proxy.
+# Remote-mode behaviour is covered by code review + shellcheck.
+echo ""
+echo "=== Scenario: Local-mode install matches source ==="
+
+_reset_scenario_state
+
+_install_local_matches_source() {
+    local expected_version
+    expected_version="$(git -C /src describe --tags --always 2>/dev/null || echo 'dev')"
+
+    # When: run install.sh from the source tree (local mode).
+    if ! _install_out=$(bash /src/install.sh 2>&1); then
+        fail "install_local_build_matches_source" "install.sh exited non-zero: ${_install_out}"
+        return 1
+    fi
+
+    # Then: ct resolves to the go-installed binary, not the image-baked one.
+    # Earlier tests invoked ct (image-baked /usr/local/bin/ct), so bash has
+    # hashed that path — clear the hash table before re-resolving.
+    hash -r
+    local ct_path
+    ct_path="$(command -v ct 2>/dev/null || true)"
+    if [ "${ct_path}" != "/go/bin/ct" ]; then
+        fail "install_local_build_matches_source" "expected /go/bin/ct on PATH after local install, got: ${ct_path:-<none>}"
+        return 1
+    fi
+
+    # Then: installed binary reports the injected version.
+    local installed_version
+    installed_version="$(ct version 2>/dev/null | sed 's/^ct //')"
+    if [ "${installed_version}" != "${expected_version}" ]; then
+        fail "install_local_build_matches_source" \
+            "installed ct version '${installed_version}' != source version '${expected_version}'"
+        return 1
+    fi
+
+    # Then: installed binary is byte-identical to a fresh local-source build
+    # (the core acceptance criterion — the binary must come from the local
+    # source, not the module proxy).
+    if ! (cd /src && CGO_ENABLED=1 go build \
+            -o /tmp/ct-ref -ldflags "-X main.version=${expected_version}" ./cmd/ct); then
+        fail "install_local_build_matches_source" "reference go build failed"
+        return 1
+    fi
+    local md5_installed md5_ref
+    md5_installed="$(md5sum /go/bin/ct | awk '{print $1}')"
+    md5_ref="$(md5sum /tmp/ct-ref | awk '{print $1}')"
+    if [ "${md5_installed}" != "${md5_ref}" ]; then
+        fail "install_local_build_matches_source" \
+            "installed ct md5 ${md5_installed} != fresh local-source build md5 ${md5_ref}"
+        return 1
+    fi
+
+    return 0
+}
+
+if _install_local_matches_source; then
+    pass "install_local_build_matches_source"
+fi
+
 # ── Summary ───────────────────────────────────────────────────────────────────
 echo ""
 echo "=== Results: ${PASS_COUNT} passed, ${FAIL_COUNT} failed ==="
