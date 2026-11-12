@@ -5,13 +5,13 @@ import (
 	"encoding/csv"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -2173,19 +2173,40 @@ func TestAPI_SSALimit_ConnectionLimit(t *testing.T) {
 	d, _ := c.Add("myrepo", "Test", "", 1)
 	c.Close()
 
-	original := currentDropletSSEConnections
-	defer func() { currentDropletSSEConnections = original }()
-	atomic.StoreInt64(&currentDropletSSEConnections, maxDropletSSEConnections)
-
 	mux := newDashboardMux(tempCfg(t), db)
-	req := httptest.NewRequest(http.MethodGet, "/api/droplets/"+d.ID+"/events", nil)
-	w := httptest.NewRecorder()
-	mux.ServeHTTP(w, req)
-	if w.Code != http.StatusServiceUnavailable {
-		t.Errorf("SSE at connection limit: status = %d, want 503", w.Code)
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	// Fill the droplet SSE pool with real connections, then assert the next
+	// is rejected with 503.
+	resps := make([]*http.Response, 0, maxDropletSSEConnections)
+	defer func() {
+		for _, r := range resps {
+			r.Body.Close()
+		}
+	}()
+	for i := 0; i < maxDropletSSEConnections; i++ {
+		resp, err := http.Get(server.URL + "/api/droplets/" + d.ID + "/events")
+		if err != nil {
+			t.Fatalf("connection %d: %v", i, err)
+		}
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("connection %d: status = %d, want 200", i, resp.StatusCode)
+		}
+		resps = append(resps, resp)
 	}
+
+	overResp, err := http.Get(server.URL + "/api/droplets/" + d.ID + "/events")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer overResp.Body.Close()
+	if overResp.StatusCode != http.StatusServiceUnavailable {
+		t.Errorf("SSE at connection limit: status = %d, want 503", overResp.StatusCode)
+	}
+	overBody, _ := io.ReadAll(overResp.Body)
 	var body map[string]string
-	json.Unmarshal(w.Body.Bytes(), &body)
+	json.Unmarshal(overBody, &body)
 	if !strings.Contains(body["error"], "too many") {
 		t.Errorf("error = %q, want 'too many SSE connections'", body["error"])
 	}
@@ -2639,9 +2660,6 @@ func TestAPI_LogSources_ReturnsAvailableLogs(t *testing.T) {
 }
 
 func TestAPI_LogSSE_PathTraversalInSource(t *testing.T) {
-	orig := currentLogSSEConnections
-	defer func() { currentLogSSEConnections = orig }()
-	atomic.StoreInt64(&currentLogSSEConnections, 0)
 
 	mux := newDashboardMux(tempCfg(t), tempDB(t))
 	req := httptest.NewRequest(http.MethodGet, "/api/logs/events?source=..%2Fetc%2Fpasswd", nil)
@@ -2719,9 +2737,6 @@ func TestAPI_Logs_InvalidSource_NoUserInputInError(t *testing.T) {
 }
 
 func TestAPI_LogSSE_InitialContext(t *testing.T) {
-	orig := currentLogSSEConnections
-	defer func() { currentLogSSEConnections = orig }()
-	atomic.StoreInt64(&currentLogSSEConnections, 0)
 
 	origHome := os.Getenv("HOME")
 	defer os.Setenv("HOME", origHome)
@@ -2788,9 +2803,6 @@ func TestAPI_LogSSE_InitialContext(t *testing.T) {
 }
 
 func TestAPI_LogSSE_StreamResumesAfterRotation(t *testing.T) {
-	orig := currentLogSSEConnections
-	defer func() { currentLogSSEConnections = orig }()
-	atomic.StoreInt64(&currentLogSSEConnections, 0)
 
 	origHome := os.Getenv("HOME")
 	defer os.Setenv("HOME", origHome)
@@ -2954,9 +2966,6 @@ func TestAPI_Logs_ReturnsAbsoluteLineNumbers(t *testing.T) {
 }
 
 func TestAPI_LogSSE_ScannerError_DoesNotStall(t *testing.T) {
-	orig := currentLogSSEConnections
-	defer func() { currentLogSSEConnections = orig }()
-	atomic.StoreInt64(&currentLogSSEConnections, 0)
 
 	origHome := os.Getenv("HOME")
 	defer os.Setenv("HOME", origHome)
@@ -3055,9 +3064,6 @@ func TestCountLinesUpTo(t *testing.T) {
 }
 
 func TestAPI_LogSSE_LineNumbersInJSON(t *testing.T) {
-	orig := currentLogSSEConnections
-	defer func() { currentLogSSEConnections = orig }()
-	atomic.StoreInt64(&currentLogSSEConnections, 0)
 
 	origHome := os.Getenv("HOME")
 	defer os.Setenv("HOME", origHome)
@@ -3139,9 +3145,6 @@ func TestAPI_LogSSE_LineNumbersInJSON(t *testing.T) {
 }
 
 func TestAPI_LogSSE_TerminatesOnMissingFile(t *testing.T) {
-	orig := currentLogSSEConnections
-	defer func() { currentLogSSEConnections = orig }()
-	atomic.StoreInt64(&currentLogSSEConnections, 0)
 
 	origHome := os.Getenv("HOME")
 	defer os.Setenv("HOME", origHome)
@@ -3180,15 +3183,6 @@ func TestAPI_LogSSE_TerminatesOnMissingFile(t *testing.T) {
 }
 
 func TestAPI_SSE_SeparateConnectionPools(t *testing.T) {
-	origDroplet := currentDropletSSEConnections
-	defer func() { currentDropletSSEConnections = origDroplet }()
-
-	origLog := currentLogSSEConnections
-	defer func() { currentLogSSEConnections = origLog }()
-
-	atomic.StoreInt64(&currentDropletSSEConnections, maxDropletSSEConnections)
-	atomic.StoreInt64(&currentLogSSEConnections, 0)
-
 	db := tempDB(t)
 	c, err := cistern.New(db, "mr")
 	if err != nil {
@@ -3198,12 +3192,36 @@ func TestAPI_SSE_SeparateConnectionPools(t *testing.T) {
 	c.Close()
 
 	mux := newDashboardMux(tempCfg(t), db)
+	server := httptest.NewServer(mux)
+	defer server.Close()
 
-	req := httptest.NewRequest(http.MethodGet, "/api/droplets/"+d.ID+"/events", nil)
-	w := httptest.NewRecorder()
-	mux.ServeHTTP(w, req)
-	if w.Code != http.StatusServiceUnavailable {
-		t.Errorf("droplet SSE at connection limit: status = %d, want 503", w.Code)
+	// Fill the droplet SSE pool with real connections without touching the
+	// log pool. The droplet endpoint must reject while the read-only log API
+	// and the log SSE pool remain available.
+	dropletResps := make([]*http.Response, 0, maxDropletSSEConnections)
+	defer func() {
+		for _, r := range dropletResps {
+			r.Body.Close()
+		}
+	}()
+	for i := 0; i < maxDropletSSEConnections; i++ {
+		resp, err := http.Get(server.URL + "/api/droplets/" + d.ID + "/events")
+		if err != nil {
+			t.Fatalf("droplet connection %d: %v", i, err)
+		}
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("droplet connection %d: status = %d, want 200", i, resp.StatusCode)
+		}
+		dropletResps = append(dropletResps, resp)
+	}
+
+	overResp, err := http.Get(server.URL + "/api/droplets/" + d.ID + "/events")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer overResp.Body.Close()
+	if overResp.StatusCode != http.StatusServiceUnavailable {
+		t.Errorf("droplet SSE at connection limit: status = %d, want 503", overResp.StatusCode)
 	}
 
 	origHome := os.Getenv("HOME")
@@ -3228,10 +3246,6 @@ func TestAPI_SSE_SeparateConnectionPools(t *testing.T) {
 }
 
 func TestAPI_LogSSE_ConnectionLimit(t *testing.T) {
-	orig := currentLogSSEConnections
-	defer func() { currentLogSSEConnections = orig }()
-	atomic.StoreInt64(&currentLogSSEConnections, maxLogSSEConnections)
-
 	origHome := os.Getenv("HOME")
 	defer os.Setenv("HOME", origHome)
 	tmpDir := t.TempDir()
@@ -3239,14 +3253,39 @@ func TestAPI_LogSSE_ConnectionLimit(t *testing.T) {
 
 	cfg := tempCfg(t)
 	mux := newDashboardMux(cfg, tempDB(t))
-	req := httptest.NewRequest(http.MethodGet, "/api/logs/events", nil)
-	w := httptest.NewRecorder()
-	mux.ServeHTTP(w, req)
-	if w.Code != http.StatusServiceUnavailable {
-		t.Errorf("log SSE at connection limit: status = %d, want 503", w.Code)
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	// Fill the log SSE pool with real connections, then assert the next is
+	// rejected with 503.
+	resps := make([]*http.Response, 0, maxLogSSEConnections)
+	defer func() {
+		for _, r := range resps {
+			r.Body.Close()
+		}
+	}()
+	for i := 0; i < maxLogSSEConnections; i++ {
+		resp, err := http.Get(server.URL + "/api/logs/events")
+		if err != nil {
+			t.Fatalf("log connection %d: %v", i, err)
+		}
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("log connection %d: status = %d, want 200", i, resp.StatusCode)
+		}
+		resps = append(resps, resp)
 	}
+
+	overResp, err := http.Get(server.URL + "/api/logs/events")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer overResp.Body.Close()
+	if overResp.StatusCode != http.StatusServiceUnavailable {
+		t.Errorf("log SSE at connection limit: status = %d, want 503", overResp.StatusCode)
+	}
+	overBody, _ := io.ReadAll(overResp.Body)
 	var body map[string]string
-	json.Unmarshal(w.Body.Bytes(), &body)
+	json.Unmarshal(overBody, &body)
 	if !strings.Contains(body["error"], "too many") {
 		t.Errorf("error = %q, want 'too many' keyword", body["error"])
 	}
