@@ -1,0 +1,110 @@
+maxConcurrency: 1
+
+description: "Implementer cataractae eval — proves the implementer honors the brief as a contract and uses TDD"
+
+providers:
+  - id: file://providers/glm_flash.py
+    config:
+      temperature: 0.1
+      reasoning_effort: low
+
+prompts:
+  - |
+    You are operating as the implementer cataractae. Follow your instructions exactly.
+
+    <SystemInstructions>
+    {{system}}
+    </SystemInstructions>
+
+    The droplet, DESIGN_BRIEF.md, and codebase context arrive as:
+
+    <user_message>
+    {{situation}}
+    </user_message>
+
+    Produce your outcome notes describing what you implemented. Format: outcome notes as you would write them for the droplet log.
+
+defaultTest:
+  vars:
+    system: file://../cataractae/implementer/INSTRUCTIONS.md
+  options:
+    rubricPrompt: |
+      You are grading output against a rubric. If the statement in the rubric is true, the output passes.
+      Respond with NOTHING except a single JSON object, no prose before or after, no markdown:
+      {"reason": "<concise explanation>", "pass": <true or false>, "score": <1.0 or 0.0>}
+      <Output>
+      {{ output }}
+      </Output>
+      <Rubric>
+      {{ rubric }}
+      </Rubric>
+      JSON object only.
+    provider:
+      id: file://providers/glm_flash.py
+      config:
+        temperature: 0.1
+        max_tokens: 16000
+        reasoning_effort: low
+
+tests:
+  - description: "brief with API Surface Checklist — implementer addresses each item"
+    vars:
+      situation: |
+        Droplet: "Add a Notifier struct that sends webhooks on droplet stage changes."
+        DESIGN_BRIEF.md API Surface Checklist:
+          - [ ] Notifier.Send returns nil on success, wraps context errors with 'notifier:' prefix,
+                and never returns a bare io.EOF without wrapping it
+          - [ ] Notifier.Send requires no prior initialization — the constructor leaves
+                the client in a fully usable state (no initClient/setXxx pattern)
+        Codebase: Go, existing patterns in internal/castellarius/dispatch.go.
+    assert:
+      - type: llm-rubric
+        value: "The outcome notes confirm each API Surface Checklist item is addressed — either the implementation satisfies it OR an issue was filed explaining why it cannot. The implementer does NOT silently skip a checklist item."
+      - type: llm-rubric
+        value: "The outcome notes mention TDD — tests were written before implementation (red then green), not implementation-first."
+
+  - description: "brief with DRY requirement — implementer extracts the named helper"
+    vars:
+      situation: |
+        Droplet: "Add permission boolean columns to Organization settings."
+        DESIGN_BRIEF.md DRY Requirements:
+          Extract `scanPermFromNullable(rows sql.Rows, col string) (sql.NullString, error)`
+          from the inline pattern at cmd/ct/permission.go lines 45, 52, 59, 66, 73, 80, 87, 94, 101, 108, 115, 122, 129.
+        The inline NullString scan block appears 12 times.
+    assert:
+      - type: llm-rubric
+        value: "The outcome notes confirm the helper `scanPermFromNullable` (or the named helper from the brief) was extracted and the inline pattern no longer appears 12 times. The implementer used Grep to verify, not just claimed it."
+
+  - description: "rewrite droplet — implementer verifies migration compatibility"
+    vars:
+      situation: |
+        Droplet: "Rewrite the llmem CLI in Go. Existing tool is Python, stores memories in SQLite.
+        Users have existing databases with data that must work with the new version."
+        DESIGN_BRIEF.md Migration Surface Analysis:
+          Existing Python databases use sqlite3 with a 'memories' table.
+          The new Go code must open these databases and core operations must work.
+    assert:
+      - type: llm-rubric
+        value: "The outcome notes confirm migration compatibility was verified — the implementer tested against a pre-existing database (not just a fresh t.TempDir database). 'Tests pass on a fresh database' is NOT sufficient for a rewrite."
+
+  - description: "brief with forbidden pattern — implementer avoids it"
+    vars:
+      situation: |
+        Droplet: "Add a new HTTP client for the Jira API."
+        DESIGN_BRIEF.md Forbidden Patterns:
+          - Lazy initialization (initClient pattern) — use eager constructor initialization
+          - SetXxx mutation methods for testing — use constructor injection via config fields
+        Codebase: existing HTTP clients in internal/castellarius/ use constructor injection.
+    assert:
+      - type: llm-rubric
+        value: "The outcome notes confirm the implementation uses eager constructor initialization (no initClient/ensureConnected pattern) and constructor injection for config (no SetXxx mutation methods). The implementer did NOT use the forbidden patterns."
+
+  - description: "brief gaps droplet vs brief — implementer files an issue before implementing"
+    vars:
+      situation: |
+        Droplet: "Add webhook notifications for droplet stage changes. Must work with existing config files from v1.2."
+        DESIGN_BRIEF.md: (no migration compatibility section — the brief omitted it even though the droplet asks for backward compat with v1.2 config files).
+        The droplet asks for backward compatibility; the brief does not address it.
+    assert:
+      - type: llm-rubric
+        value: "The implementer files an issue with `ct droplet issue add` BEFORE implementing (explaining the brief omits the backward-compat requirement the droplet asks for). The implementer does NOT silently implement around the gap."

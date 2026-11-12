@@ -2,6 +2,26 @@
 
 ## Unreleased
 
+### Cataractae eval suite — promptfoo coverage for all 7 specialists
+
+Add promptfoo eval configs for each cataractae specialist (architect, implementer, reviewer, qa, security, docs_writer, delivery), proving each is effective at its specific role via synthetic planted-defect scenarios. Each config feeds the specialist's INSTRUCTIONS.md as the system prompt + a scenario with a planted failure mode the role should catch, and asserts the role catches it (recirculates) or passes cleanly.
+
+**Key changes:**
+- `evals/cistern-architect-promptfooconfig.yaml` — 5 tests: brief contains file:line constraints (not "follow existing patterns"), rewrite includes Migration Surface Analysis, dependency importability verified, vague droplet recirculates, deep-module vocabulary used
+- `evals/cistern-implementer-promptfooconfig.yaml` — 5 tests: brief as contract (API Surface Checklist addressed), DRY helper extracted, rewrite migration compat verified, forbidden patterns avoided, brief gaps trigger issue filing
+- `evals/cistern-reviewer-promptfooconfig.yaml` — 4 tests: planted contract violation (toQueryBuilder returns "FALSE") recirculates, SQL injection recirculates, DRY violation flagged, clean diff passes
+- `evals/cistern-qa-promptfooconfig.yaml` — 5 tests: mock-only tests recirculate (demands httptest.NewServer), "no error" test recirculates (proves nothing), failing test recirculates (automatic), rewrite missing migration compat test recirculates, no smoke test recirculates
+- `evals/cistern-security-promptfooconfig.yaml` — 5 tests: planted auth bypass / SQL injection / hardcoded secret / path traversal all recirculate, clean diff passes
+- `evals/cistern-docs-writer-promptfooconfig.yaml` — 4 tests: rewrite breaking change documented, no user-visible changes passes immediately, API contract change documented, missing migration docs flagged
+- `evals/cistern-delivery-promptfooconfig.yaml` — 5 tests: zero-commit branch passes, failing CI fixes (attempt1), merge conflicts resolved, 2 failed attempts recirculate, infrastructure failure pools
+- `evals/run-all-checks.sh` — registers all 7 new configs in the sequential eval loop; adds deterministic check that all cataractae INSTRUCTIONS.md exist on disk
+- `evals/README.md` — table updated with all 10 configs (3 CLI + 7 cataractae)
+
+**Tuning insights surfaced:**
+- Architect scenarios must include actual codebase file paths (the INSTRUCTIONS demand file:line evidence) — scenarios without codebase access correctly recirculate
+- Verdict language varies (recirculate / reject / block / FAIL) — rubrics accept any non-pass outcome rather than the exact word "Recirculate"
+- Smoke-the-real-thing is impossible in a text eval harness — the QA correctly recirculates demanding a smoke test it cannot run
+
 ### Mandate filtration before every droplet filing
 
 The cistern skill previously offered two paths for adding a droplet: "Direct — when requirements are already clear" (bypass filtration) and "Filtered — for non-trivial or exploratory work." The direct bypass let agents file droplets with bare `ct droplet add` and no grilling, which is how under-specified droplets entered the pipeline. The skill now makes filtration the only path: every droplet goes through `ct filter` first (which uses the grilling methodology underneath), and `ct droplet add` follows only once the frontier is empty. The mandate is also encoded in lobsterdog `harness/AGENTS.md` and `harness/AGENTS.md.global`, with promptfoo eval cases in `harness-config.yaml` (category 3: droplet filing requires filtration).

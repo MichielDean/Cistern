@@ -1,0 +1,110 @@
+maxConcurrency: 1
+
+description: "Reviewer cataractae eval — proves the reviewer catches planted contract violations and recirculates, not passes bad code"
+
+providers:
+  - id: file://providers/glm_flash.py
+    config:
+      temperature: 0.1
+      reasoning_effort: low
+
+prompts:
+  - |
+    You are operating as the reviewer cataractae. Follow your instructions exactly.
+
+    <SystemInstructions>
+    {{system}}
+    </SystemInstructions>
+
+    The droplet, DESIGN_BRIEF.md, and diff arrive as:
+
+    <user_message>
+    {{situation}}
+    </user_message>
+
+    Produce your review. Format: ## Summary / ## Traced Callers / ## Findings / ## Verdict (Pass or Recirculate).
+
+defaultTest:
+  vars:
+    system: file://../cataractae/reviewer/INSTRUCTIONS.md
+  options:
+    rubricPrompt: |
+      You are grading output against a rubric. If the statement in the rubric is true, the output passes.
+      Respond with NOTHING except a single JSON object, no prose before or after, no markdown:
+      {"reason": "<concise explanation>", "pass": <true or false>, "score": <1.0 or 0.0>}
+      <Output>
+      {{ output }}
+      </Output>
+      <Rubric>
+      {{ rubric }}
+      </Rubric>
+      JSON object only.
+    provider:
+      id: file://providers/glm_flash.py
+      config:
+        temperature: 0.1
+        max_tokens: 16000
+        reasoning_effort: low
+
+tests:
+  - description: "planted contract violation — reviewer recirculates, not passes"
+    vars:
+      situation: |
+        Droplet: "Add a toQueryBuilder method to PermissionColumn that returns a real EXISTS subquery."
+        DESIGN_BRIEF.md: "toQueryBuilder must return a real query builder, not a placeholder."
+        Diff (cmd/ct/permission.go):
+          +func (c PermissionColumn) toQueryBuilder() query.Builder {
+          +    return query.Builder("FALSE")
+          +}
+        The method name promises a query builder; the body returns the hardcoded string "FALSE".
+    assert:
+      - type: llm-rubric
+        value: "The reviewer catches that toQueryBuilder returns \"FALSE\" — a hardcoded value where the contract promises a computed query. The verdict is recirculate, reject, or any equivalent non-pass outcome (not Pass). The finding quotes the offending line and explains the contract violation."
+      - type: llm-rubric
+        value: "The review includes a Traced Callers section stating how many functions were traced (zero is acceptable ONLY if stated explicitly, not omitted)."
+
+  - description: "planted SQL injection — reviewer recirculates"
+    vars:
+      situation: |
+        Droplet: "Add a search endpoint that filters droplets by title."
+        Diff (cmd/ct/search.go):
+          +func handleSearch(w http.ResponseWriter, r *http.Request) {
+          +    q := r.URL.Query().Get("q")
+          +    rows, err := db.Query("SELECT * FROM droplets WHERE title LIKE '%" + q + "%'")
+          +}
+        User input 'q' flows directly into a SQL string — injection vector.
+    assert:
+      - type: llm-rubric
+        value: "The reviewer flags the SQL injection (raw string interpolation with user input 'q'). The verdict is recirculate, reject, or any equivalent non-pass outcome. The finding names the line and explains the runtime failure mode (an attacker sends q='; DROP TABLE droplets--')."
+
+  - description: "clean diff — reviewer passes without manufacturing findings"
+    vars:
+      situation: |
+        Droplet: "Add a /healthz endpoint returning {status:'ok'} with HTTP 200."
+        Diff (cmd/ct/health.go):
+          +mux.HandleFunc("/healthz", handleHealthz)
+          +func handleHealthz(w http.ResponseWriter, r *http.Request) {
+          +    w.Header().Set("Content-Type", "application/json")
+          +    w.WriteHeader(http.StatusOK)
+          +    json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+          +}
+        The handler is registered on the mux. No contract violations, no security issues, no structural problems.
+        No callers outside the diff — this is a self-contained endpoint addition.
+    assert:
+      - type: llm-rubric
+        value: "The verdict is Pass. The reviewer found no contract violations in a trivially correct handler that is registered on the mux. The review does NOT manufacture problems — no findings about style, naming preferences, or 'could be cleaner' nits."
+      - type: llm-rubric
+        value: "The review includes a Traced Callers section stating zero traced callers, which is credible for a self-contained diff with no callers outside it (the scenario confirms this explicitly)."
+
+  - description: "planted repeated pattern — reviewer flags DRY violation"
+    vars:
+      situation: |
+        Droplet: "Add permission boolean columns to Organization settings."
+        Diff (cmd/ct/permission.go) — the same NullString scan block appears 12 times:
+          +var val sql.NullString
+          +if err := rows.Scan(&val); err != nil { return err }
+          +if val.Valid { perms = append(perms, val.String) }
+        (repeated at lines 45, 52, 59, 66, 73, 80, 87, 94, 101, 108, 115, 122)
+    assert:
+      - type: llm-rubric
+        value: "The reviewer flags the DRY violation — the same 5-line block appears 12 times and must be extracted into a helper. The finding cites the line numbers and names the helper to extract (e.g. scanPermFromNullable)."

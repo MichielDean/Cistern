@@ -1,0 +1,88 @@
+maxConcurrency: 1
+
+description: "Docs writer cataractae eval — proves docs_writer documents user-visible changes and flags missing migration docs for rewrites"
+
+providers:
+  - id: file://providers/glm_flash.py
+    config:
+      temperature: 0.1
+      reasoning_effort: low
+
+prompts:
+  - |
+    You are operating as the docs_writer cataractae. Follow your instructions exactly.
+
+    <SystemInstructions>
+    {{system}}
+    </SystemInstructions>
+
+    The droplet and diff arrive as:
+
+    <user_message>
+    {{situation}}
+    </user_message>
+
+    Produce your outcome notes. Format: notes as you would write them for the droplet log.
+
+defaultTest:
+  vars:
+    system: file://../cataractae/docs_writer/INSTRUCTIONS.md
+  options:
+    rubricPrompt: |
+      You are grading output against a rubric. If the statement in the rubric is true, the output passes.
+      Respond with NOTHING except a single JSON object, no prose before or after, no markdown:
+      {"reason": "<concise explanation>", "pass": <true or false>, "score": <1.0 or 0.0>}
+      <Output>
+      {{ output }}
+      </Output>
+      <Rubric>
+      {{ rubric }}
+      </Rubric>
+      JSON object only.
+    provider:
+      id: file://providers/glm_flash.py
+      config:
+        temperature: 0.1
+        max_tokens: 16000
+        reasoning_effort: low
+
+tests:
+  - description: "rewrite with breaking CLI change — docs document the migration"
+    vars:
+      situation: |
+        Droplet: "Rewrite the llmem CLI in Go. Existing tool is Python."
+        Diff: changes `llmem dream --dry-run` to `llmem dream --apply` (default dry run), removes `llmem hook` subcommand entirely.
+        This is a rewrite with breaking CLI changes.
+    assert:
+      - type: llm-rubric
+        value: "The outcome notes confirm docs document the breaking changes with before/after examples (old: `llmem dream --dry-run` → new: `llmem dream --apply`). The docs_writer does NOT pass without documenting the migration path for existing users."
+
+  - description: "diff with no user-visible changes — docs_writer passes immediately"
+    vars:
+      situation: |
+        Droplet: "Refactor internal helper functions in the dispatch loop."
+        Diff: changes only unexported functions, no CLI flags, no config, no API, no public types.
+        No user-visible changes.
+    assert:
+      - type: llm-rubric
+        value: "The outcome notes pass immediately with 'No documentation updates required.' — the docs_writer correctly identified no user-visible changes and did not update docs for an internal refactor."
+
+  - description: "diff with API contract change — docs updated"
+    vars:
+      situation: |
+        Droplet: "Add a /api/droplets/search endpoint with pagination."
+        Diff: adds the endpoint with query params page, per_page, q.
+        This is a new public API contract.
+    assert:
+      - type: llm-rubric
+        value: "The outcome notes confirm docs were updated for the new API endpoint (query params, response shape, pagination behavior). The docs_writer documented the user-visible contract, not just the internal implementation."
+
+  - description: "rewrite with no migration docs — docs_writer flags the gap"
+    vars:
+      situation: |
+        Droplet: "Rewrite the config loader in Go. Existing config format was YAML v1; new format is TOML."
+        Diff: adds the TOML loader. Existing users have YAML config files that must be migrated.
+        No docs mention the config format change or migration path.
+    assert:
+      - type: llm-rubric
+        value: "The outcome notes flag the gap — a rewrite with a config format change (YAML → TOML) but no docs cover the migration path for existing users. The docs_writer did NOT pass without documenting how existing config files are handled."
