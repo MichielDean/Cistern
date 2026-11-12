@@ -266,6 +266,62 @@ UNIT
   info "Start it after configuring your repos: systemctl --user start cistern-castellarius"
 }
 
+# --- setup_web_service: install and enable the web dashboard as a user service ---
+setup_web_service() {
+  if ! command -v systemctl &>/dev/null; then
+    return
+  fi
+  if ! systemctl --user status &>/dev/null 2>&1; then
+    return
+  fi
+
+  local gobin
+  gobin="$(resolve_gobin)"
+  local ct_bin="${gobin}/ct"
+  local service_dir="${HOME}/.config/systemd/user"
+  local service_file="${service_dir}/cistern-web.service"
+
+  mkdir -p "${service_dir}"
+
+  # Write service file with resolved paths for this user.
+  cat > "${service_file}" <<UNIT
+[Unit]
+Description=Cistern Web Dashboard — HTTP server on port 5737
+After=network.target
+StartLimitIntervalSec=120
+StartLimitBurst=10
+StartLimitAction=none
+
+[Service]
+Type=simple
+ExecStart=${ct_bin} dashboard --web --addr :5737
+
+# Always restart — covers OOM kills, crashes, and clean exits so the
+# dashboard survives memory pressure and reboots without manual intervention.
+Restart=always
+RestartSec=10
+
+TimeoutStopSec=10
+KillMode=mixed
+KillSignal=SIGTERM
+
+StandardOutput=append:${HOME}/.cistern/web.log
+StandardError=append:${HOME}/.cistern/web.log
+
+Environment=HOME=${HOME}
+Environment=PATH=${gobin}:/usr/local/go/bin:/usr/local/bin:/usr/bin:/bin
+
+[Install]
+WantedBy=default.target
+UNIT
+
+  info "Web dashboard service file written to ${service_file}"
+
+  systemctl --user daemon-reload
+  systemctl --user enable cistern-web
+  info "cistern-web.service enabled ✓"
+}
+
 # --- add_shell_completion: write completion for bash/zsh ---
 add_shell_completion() {
   local gobin ct_bin shell_name
@@ -354,6 +410,8 @@ main() {
   add_shell_completion
   step "Setting up systemd service"
   setup_systemd_service
+  step "Setting up web dashboard service"
+  setup_web_service
   print_success
 }
 

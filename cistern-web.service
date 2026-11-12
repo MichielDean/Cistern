@@ -3,13 +3,16 @@ Description=Cistern Web Dashboard — HTTP server on port 5737
 After=network.target
 StartLimitIntervalSec=120
 StartLimitBurst=10
+StartLimitAction=none
 
 [Service]
 Type=simple
 ExecStart=/home/lobsterdog/go/bin/ct dashboard --web --addr :5737
 
-Restart=on-abort
-RestartSec=5
+# Always restart — covers OOM kills, crashes, and clean exits so the
+# dashboard survives memory pressure and reboots without manual intervention.
+Restart=always
+RestartSec=10
 
 TimeoutStopSec=10
 KillMode=mixed
