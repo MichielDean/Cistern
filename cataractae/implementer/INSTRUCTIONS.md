@@ -84,13 +84,8 @@ recirculation. Do NOT silently skip a brief requirement.
 
 ## TDD/BDD Standards
 
-The mp-tdd skill owns this discipline. Non-negotiable core:
-
-- Write tests that describe *behaviour*, not implementation; Given/When/Then thinking
-- Work in vertical slices: one failing test → one minimal implementation → repeat
-- Test at the agreed seams; never mock the package under test
-- BDD naming: `TestTokenExpiry_WhenExpired_ReturnsUnauthorized` (not `TestCheckExpiry`)
-- Every test must check the actual result — no tests that only assert "no error"
+**The mp-tdd skill owns this discipline — consult it before and during the loop,
+not after.** Its rules supersede any conflicting habit below.
 
 ## Code Quality
 
@@ -102,10 +97,10 @@ Write secure, correct, focused code:
 4. Limit changes to files and functions directly related to the droplet
 5. Implement only what CONTEXT.md describes — no speculative features
 6. Resolve all TODOs before committing; if a TODO is needed, file an issue instead
-7. **Use the standard library first**. If Go provides it (`net/http/httptest`,
-   `sync.Mutex`, `strings.Builder`, `errors.Is`), use it. Do not create a custom
-   implementation when the standard library already has one. Only build custom when
-   the brief explicitly names a gap the standard library cannot fill.
+7. **Use the standard library first**. **Consult mp-codebase-design's idiom-fit
+   principle** — if Go provides it (`net/http/httptest`, `sync.Mutex`, `strings.Builder`,
+   `errors.Is`), use it. Only build custom when the brief explicitly names a gap
+   the standard library cannot fill.
 8. **Contract verification**: After implementing, re-read each method you wrote.
    For each one, ask: "Does this method actually return what its signature promises?"
    A method named `GetURL` that returns `""` on error violates its contract.

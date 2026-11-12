@@ -2,7 +2,22 @@
 
 ## Unreleased
 
-### Cataractae eval suite — promptfoo coverage for all 7 specialists
+### Tune cataractae instructions to defer to Matt Pocock skills where they intersect
+
+The architect, implementer, reviewer, and QA INSTRUCTIONS.md files contained custom methodology that duplicated what the vendored mp-skills already teach more effectively. Trimmed the duplication to short pointers ("Consult mp-codebase-design for the HOW...") and kept only cataractee-specific content (pipeline protocol, signaling, recirculation ownership, brief format, migration surface, quality bar, dimension verification angles).
+
+**Key changes:**
+- `cataractae/architect/INSTRUCTIONS.md` — 385→356 lines (-29): "Investigation Method" section trimmed; pattern evidence, idiom fit, and abstraction boundary methodology deferred to mp-codebase-design; glossary/ADR discipline deferred to mp-domain-modeling. Kept: file:line evidence requirement, abstraction boundary question, repeated pattern DRY threshold, brief format, migration surface, quality bar, signal/recirculation.
+- `cataractae/reviewer/INSTRUCTIONS.md` — 259→204 lines (-55): "Rubric Dimension Checks" section (8 dimension checklists duplicating implementer's guard rails) trimmed to pointer; "Manifestations" deferred to mp-code-review's smell baseline; "Language-Specific Red Flags" deferred to mp-code-review's process. Kept: role framing, contract principle, droplet reality check, how you read code, where context matters, evidence over claims, before finalizing, response format, recirculation ownership.
+- `cataractae/implementer/INSTRUCTIONS.md` — 215→209 lines (-6): "TDD/BDD Standards" restatement trimmed to pointer to mp-tdd; "standard library first" item deferred to mp-codebase-design's idiom-fit. Kept: brief as contract, evaluation guard rails, code quality, protocol, revision cycles, recirculation ownership.
+- `cataractae/qa/INSTRUCTIONS.md` — 258→205 lines (-53): "Test Requirements by Evaluation Dimension" (8 dimension checklists duplicating implementer/reviewer) trimmed to pointer; mp-tdd and mp-diagnosing-bugs referenced for test quality and diagnosis. Kept: contract verification gates, integration test evaluation, test quality, smoke-the-real-thing, recirculation ownership.
+- `cataractae/security/INSTRUCTIONS.md` — 61 lines, no change (all cataractee-specific, no mp-skill overlap)
+- `cataractae/docs_writer/INSTRUCTIONS.md` — 31 lines, no change (all cataractee-specific, no mp-skill overlap)
+- `cataractae/delivery/INSTRUCTIONS.md` — 194 lines, no change (pipeline mechanics + mp-pr/mp-handoff already pointers)
+
+**Principle:** where an mp-skill covers the same ground as custom instructions, the mp-skill is more effective. The custom instructions defer ("Consult mp-...") rather than re-state. Cataractee-specific content (pipeline protocol, signaling, recirculation, brief format, guard rails) stays.
+
+**Eval verification:** all 7 cataractee configs green after tuning (architect 5/5, implementer 5/5, reviewer 4/5 with 1 glm-variance flake on healthz within ≤2, qa 5/5, security 5/5, docs_writer 4/4, delivery 5/5). Full run-all-checks.sh ALL GREEN.
 
 Add promptfoo eval configs for each cataractae specialist (architect, implementer, reviewer, qa, security, docs_writer, delivery), proving each is effective at its specific role via synthetic planted-defect scenarios. Each config feeds the specialist's INSTRUCTIONS.md as the system prompt + a scenario with a planted failure mode the role should catch, and asserts the role catches it (recirculates) or passes cleanly.
 
