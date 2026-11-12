@@ -281,39 +281,26 @@ setup_web_service() {
   local service_dir="${HOME}/.config/systemd/user"
   local service_file="${service_dir}/cistern-web.service"
 
+  # Source the repo's unit file rather than maintaining a duplicate here.
+  # The repo file ships with /home/lobsterdog paths; substitute them for this
+  # user's HOME and gobin so the installer stays portable and the repo file
+  # remains the single source of truth (no drift between the two).
+  local script_dir
+  script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  local repo_unit="${script_dir}/cistern-web.service"
+  if [[ ! -f "${repo_unit}" ]]; then
+    warn "cistern-web.service not found at ${repo_unit} — skipping web service install"
+    return
+  fi
+
   mkdir -p "${service_dir}"
 
-  # Write service file with resolved paths for this user.
-  cat > "${service_file}" <<UNIT
-[Unit]
-Description=Cistern Web Dashboard — HTTP server on port 5737
-After=network.target
-StartLimitIntervalSec=120
-StartLimitBurst=10
-StartLimitAction=none
-
-[Service]
-Type=simple
-ExecStart=${ct_bin} dashboard --web --addr :5737
-
-# Always restart — covers OOM kills, crashes, and clean exits so the
-# dashboard survives memory pressure and reboots without manual intervention.
-Restart=always
-RestartSec=10
-
-TimeoutStopSec=10
-KillMode=mixed
-KillSignal=SIGTERM
-
-StandardOutput=append:${HOME}/.cistern/web.log
-StandardError=append:${HOME}/.cistern/web.log
-
-Environment=HOME=${HOME}
-Environment=PATH=${gobin}:/usr/local/go/bin:/usr/local/bin:/usr/bin:/bin
-
-[Install]
-WantedBy=default.target
-UNIT
+  sed \
+    -e "s|/home/lobsterdog/go/bin/ct|${ct_bin}|g" \
+    -e "s|/home/lobsterdog/go/bin|${gobin}|g" \
+    -e "s|/home/lobsterdog/\.cistern|${HOME}/.cistern|g" \
+    -e "s|HOME=/home/lobsterdog|HOME=${HOME}|g" \
+    "${repo_unit}" > "${service_file}"
 
   info "Web dashboard service file written to ${service_file}"
 
