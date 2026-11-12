@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+### Out-of-band skill deployment via install.sh (fixes 8-month staleness)
+
+The `git_sync` drought hook was the ONLY mechanism deploying `internal/skills/` → `~/.cistern/skills/`. It last ran 2026/03/19 — 8 months ago — Castellarius has been idle since 2026/03/26 but the drought detection never triggered, so every skill update since March went silently stale. Cataractee agents were running on older, shorter skill versions missing the Deepening appendix, Design-it-twice appendix, and other content the "Consult mp-..." pointers in the tuned INSTRUCTIONS.md reference.
+
+**Fix:** `install.sh` now has a `deploy_skills` step (out-of-band, runs on every install/reinstall) that deploys:
+- `internal/skills/*/SKILL.md` → `~/.cistern/skills/*/SKILL.md` (mp-* and cistern-* skills, clean-replace per skill)
+- `skills/*/SKILL.md` → `~/.cistern/skills/*/SKILL.md` (shared skills: cistern/, external-repo-guidelines/)
+- `cataractae/*/` → `~/.cistern/cataractae/` (PERSONA.md + INSTRUCTIONS.md per identity)
+- Regenerates AGENTS.md via `ct cataractae generate` from the deployed cataractae definitions
+
+Also adds `--deploy-only` mode (matching the lobsterdog pattern) so users can re-deploy skills without a full rebuild: `./install.sh --deploy-only` deploys skills + regenerates AGENTS.md and exits.
+
+The `git_sync` drought hook stays as a SECONDARY mechanism for mid-release skill edits between reinstalls. `install.sh` is the primary guarantee that skills match source on every release.
+
+**End-to-end verified:** `install.sh --deploy-only` deployed 75 skills, all 13 skills match source (zero drift), AGENTS.md regenerated with tuned defer pointers. Architect eval 5/5, QA eval 5/5, Reviewer eval 3/4 (1 glm-variance flake on healthz, within ≤2).
+
 ### Tune cataractae instructions to defer to Matt Pocock skills where they intersect
 
 The architect, implementer, reviewer, and QA INSTRUCTIONS.md files contained custom methodology that duplicated what the vendored mp-skills already teach more effectively. Trimmed the duplication to short pointers ("Consult mp-codebase-design for the HOW...") and kept only cataractee-specific content (pipeline protocol, signaling, recirculation ownership, brief format, migration surface, quality bar, dimension verification angles).

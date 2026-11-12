@@ -8,6 +8,11 @@ REPO='github.com/MichielDean/cistern'
 CT_DIR="${HOME}/.cistern"
 MIN_GO_VERSION="1.22"
 
+DEPLOY_ONLY=false
+if [ "${1:-}" = "--deploy-only" ]; then
+  DEPLOY_ONLY=true
+fi
+
 # --- colors (disabled if not a tty) ---
 if [ -t 1 ]; then
   RED='\033[0;31m'
@@ -232,6 +237,76 @@ setup_dirs() {
   mkdir -p "${CT_DIR}/sandboxes" "${CT_DIR}/logs"
 }
 
+# --- deploy_skills: deploy skills + cataractae definitions from the local
+# checkout into ~/.cistern. Out-of-band guarantee that the runtime reads current
+# content regardless of whether the git_sync drought hook ever runs.
+deploy_skills() {
+  local skills_dst="${CT_DIR}/skills"
+  local cataractae_dst="${CT_DIR}/cataractae"
+  mkdir -p "${skills_dst}" "${cataractae_dst}"
+
+  info "Deploying skills and cataractae definitions..."
+
+  # Skills ship in two trees: internal/skills/ (mp-* and cistern-* skills) and
+  # skills/ (shared skills like cistern/ and external-repo-guidelines).
+  # Each skill is a directory containing SKILL.md. Clean-replace each so
+  # removed skills do not linger.
+  local script_dir
+  script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+  for prefix in internal/skills skills; do
+    local src_tree="${script_dir}/${prefix}"
+    if [ ! -d "${src_tree}" ]; then
+      continue
+    fi
+    for skill_dir in "${src_tree}"/*/; do
+      local name
+      name="$(basename "${skill_dir}")"
+      if [ ! -f "${skill_dir}/SKILL.md" ]; then
+        continue
+      fi
+      rm -rf "${skills_dst}/${name}"
+      cp -rf "${skill_dir}" "${skills_dst}/${name}"
+    done
+  done
+
+  # Cataractae definitions (PERSONA.md + INSTRUCTIONS.md per identity) ship in
+  # cataractae/<identity>/. Deploy each so the runtime generates AGENTS.md
+  # from current definitions.
+  local cataractae_src="${script_dir}/cataractae"
+  if [ -d "${cataractae_src}" ]; then
+    for identity_dir in "${cataractae_src}"/*/; do
+      local identity
+      identity="$(basename "${identity_dir}")"
+      if [ ! -f "${identity_dir}/PERSONA.md" ] && [ ! -f "${identity_dir}/INSTRUCTIONS.md" ]; then
+        continue
+      fi
+      rm -rf "${cataractae_dst}/${identity}"
+      cp -rf "${identity_dir}" "${cataractae_dst}/${identity}"
+    done
+  fi
+
+  # Regenerate AGENTS.md from the deployed cataractae definitions + aqueduct config.
+  # ct cataractae generate reads from ~/.cistern/cataractae/ and writes AGENTS.md
+  # into each identity dir. Requires the ct binary and cistern.yaml (both
+  # established by earlier steps).
+  local gobin
+  gobin="$(resolve_gobin)"
+  if command -v "${gobin}/ct" &>/dev/null && [ -f "${CT_DIR}/cistern.yaml" ]; then
+    if "${gobin}/ct" cataractae generate >/dev/null 2>&1; then
+      info "Cataractae AGENTS.md files regenerated ✓"
+    else
+      warn "ct cataractae generate failed — AGENTS.md files may be stale. Run manually: ct cataractae generate"
+    fi
+  else
+    warn "ct binary or cistern.yaml not ready — skipping AGENTS.md regeneration. Run manually: ct cataractae generate"
+  fi
+
+  local count
+  count=$(find "${skills_dst}" -name SKILL.md | wc -l)
+  info "Deployed ${count} skill(s) to ${skills_dst}"
+}
+
 # --- create_config: initialize cistern if not already done ---
 create_config() {
   local cfg="${CT_DIR}/cistern.yaml"
@@ -435,6 +510,13 @@ print_success() {
 }
 
 main() {
+  if $DEPLOY_ONLY; then
+    step "Deploying skills and cataractae definitions"
+    deploy_skills
+    echo "==> Deployment complete (deploy-only mode)."
+    exit 0
+  fi
+
   printf "${BOLD}Cistern Installer${NC}\n\n"
   step "Checking Go"
   check_go
@@ -450,6 +532,8 @@ main() {
   setup_dirs
   step "Initializing config"
   create_config
+  step "Deploying skills and cataractae definitions"
+  deploy_skills
   step "Shell completion"
   add_shell_completion
   step "Setting up systemd service"
