@@ -314,14 +314,14 @@ If this droplet is a rewrite, replacement, or major version change of an existin
 2. **For each scenario, write a specific verification command.** Example:
    - `llmem stats` must succeed on a database created by Python llmem
    - `llmem search "test"` must return results from existing memories
-   - `llmem hook idle ses_xxx` must accept both `--type idle --session-id xxx` and `idle xxx` positional forms
+   - `llmem add --type fact "test"` + `llmem search "test"` must round-trip (session extraction is agent-driven — there is no `llmem hook` subcommand; do not verify one)
    - `llmem dream` must produce output (dry-run or applied)
 
 3. **Dependency verification.** List every dependency from the brief that MUST appear in the project's dependency file (go.mod, package.json, requirements.txt). If a dependency is mentioned in the brief but not in the dependency file, that is a blocking finding. The architect must verify: chosen dependency name → actual import → go.mod/package.json entry. If any are missing, the brief is incomplete.
 
 4. **Breaking change matrix.** Enumerate every CLI flag, config key, and API surface that changed between the old and new version:
    - Old: `llmem dream --dry-run` → New: `llmem dream --apply` (default dry run)
-   - Old: `llmem hook idle session_id` → New: `llmem hook --type idle --session-id session_id`
+   - Old: `llmem hook ...` → REMOVED entirely (CLI: `llmem stats|search|add|consolidate|dream`; session extraction and introspection are AGENT-DRIVEN now, not hook-driven — a brief citing `llmem hook` as a verification command is incomplete/incorrect and must be flagged)
    - For each change: who calls it? Where is it invoked? Does the caller need updating?
 
 If this droplet is NOT a rewrite, write: "N/A — this is new functionality, not a rewrite." A brief that omits this section when the droplet IS a rewrite is incomplete.
