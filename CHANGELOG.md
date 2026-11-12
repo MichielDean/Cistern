@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### Auto-restart cistern-web on OOM kill
+
+The web dashboard service (`cistern-web.service`) used `Restart=on-abort`, which does not cover kernel OOM kills. When the dashboard leaked to 2.6G and the OOM killer sent SIGKILL, systemd marked the unit `failed (oom-kill)` and left it down indefinitely — the Lobsterdog dashboard link to `:5737` went dead until manually restarted. Switch to `Restart=always` (matching `cistern-castellarius`) so the dashboard recovers from OOM, crashes, and reboots without intervention. Also raise `RestartSec` to 10s to back off under memory pressure, and add `StartLimitAction=none` for consistency with the Castellarius unit.
+
+**Key changes:**
+- `cistern-web.service` — `Restart=on-abort` → `Restart=always`, `RestartSec=5` → `RestartSec=10`, added `StartLimitAction=none`
+- `install.sh` — new `setup_web_service` deploys and enables `cistern-web.service` with path substitution (previously the unit was not installed by the installer, only the Castellarius was), so reinstalls now pick up service-file changes
+
 ### Retire glm-5.1:cloud pins (ci-tzrwo)
 
 Replace the retired `ollama/glm-5.1:cloud` default (retired upstream on 2026-09-25) with `ollama/glm-5.3-flash:cloud` in the built-in opencode provider preset and in `ct evaluate`'s model auto-detect fallback. Fresh `ct init` installs and `ct evaluate --pr N` runs without `--model` no longer fail with API 410. A drift-guard test (`TestShippedDefaultsNoRetiredModels`) now scans all non-test Go sources so retired model defaults cannot be reintroduced silently.
