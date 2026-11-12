@@ -145,84 +145,32 @@ Decision rule: "Would I want this in code I maintain?" If not, recirculate. If y
 
 ## Test Requirements by Evaluation Dimension
 
-These are mandatory test checks derived from anti-patterns found during pipeline
-evaluation. For each one, verify the test exists or recirculate with a specific
-finding naming what is missing.
+**The implementer's Evaluation Guard Rails (see implementer/INSTRUCTIONS.md) define
+the per-dimension rules: migration_safety, dry, contract_correctness, coupling,
+idiom_fit, naming_clarity, error_messages, integration_coverage.** The implementer
+was told to follow them; your job is to verify the tests prove they were honored,
+not to re-state the rules.
 
-### migration_safety
+For each dimension, verify the test exists and is real (not a mock, not a
+"no error" assert, not a fresh-database-only test for a rewrite). If the test
+is missing or proves nothing, recirculate with a specific finding naming what is
+missing and what test should exist.
 
-- Verify migrations are numbered files (001_xxx.sql, 002_xxx.sql) and tracked
-  in a schema migrations table
-- Verify ALL SQL identifiers are quoted in migration files — grep for
-  unquoted identifiers
-- Verify DDL and DML are in separate files, DML wrapped in transactions
-- Verify migrations are embedded via embed.FS, not inline string constants
-- If the diff adds DB migrations, verify an E2E schema verification test exists
-  that runs the migrations and verifies the resulting schema
-- **Migration compatibility test**: If this is a rewrite or major version change,
-  verify there is an integration test that opens a pre-existing database (not a
-  fresh t.TempDir database) and confirms the migration succeeds. A test suite
+**Consult mp-tdd** to judge whether the tests the implementer wrote are good
+tests (behavioral, at seams, not implementation-coupled or tautological).
+**Consult mp-diagnosing-bugs** when a check fails or behaviour looks wrong:
+build a tight red-capable feedback loop before hypothesising, generate 3–5
+ranked falsifiable hypotheses, and instrument one variable at a time.
+
+QA-specific verification angles the guard rails don't cover:
+- **Migration compatibility test**: if this is a rewrite, verify an integration
+  test opens a pre-existing database (not a fresh t.TempDir one). A test suite
   that only creates fresh databases does NOT prove migration compatibility.
-  If no such test exists, recirculate with: "Missing migration compatibility test
-  — add a test that creates a database with the previous version's schema/data,
-  then opens it with the new code and verifies core operations work."
-- **Dependency verification**: Verify every dependency the architect brief chose
-  is actually imported in the project's dependency file (go.mod, package.json).
-  If a dependency was chosen but not imported, that is a finding.
-- **Test timeout discipline**: Every test that makes HTTP calls or connects to
+- **Dependency verification**: verify every dependency the architect brief chose
+  is actually imported in the project's dependency file.
+- **Test timeout discipline**: every test that makes HTTP calls or connects to
   external services must use context.WithTimeout with a maximum of 30 seconds.
-  Tests that can hang indefinitely on unavailable services are findings, even if
-  the code has "graceful degradation" — degradation is not graceful if it takes
-  300 seconds.
-
-### dry
-
-- Grep for repeated code blocks of 5+ lines appearing 3+ times. If found,
-  verify a helper function exists and the inline pattern is gone
-- Common case: verify NullString scan blocks are extracted into
-  scanXxxFromRows / fillXxxFromNullable helpers
-
-### contract_correctness
-
-- Verify every exported method has documented preconditions
-- Verify no lazy initialization patterns exist (initClient, ensureConnected) —
-  constructors must leave objects in a fully usable state
-- Verify no SetXxx mutation methods are used for testing — constructor
-  injection via config fields is the required pattern
-
-### coupling
-
-- Verify no shared mutable package-level state (maps, vars) — must be struct
-  fields with constructor injection
-- Verify constructors make defensive copies of map/slice parameters
-
-### idiom_fit
-
-- Verify no package-level mutable vars for config (timeouts, HTTP clients) —
-  must be struct fields
-- Verify operational logging uses slog, not fmt.Printf or fmt.Fprintf(os.Stderr)
-- Verify embedded resources use embed.FS
-
-### naming_clarity
-
-- Verify unexported structs have no PascalCase fields
-  (e.g., HTTPTimeout on type jiraProvider struct is wrong)
-- Verify no names shadow Go builtins (min, max, any)
-
-### error_messages
-
-- Verify no fmt.Fprintf(os.Stderr) for errors — must use slog
-- Verify every error message includes domain context (entity, operation)
-- Verify no errors are silently swallowed — at minimum slog.Debug
-- Verify errors use fmt.Errorf("pkg: context: %w", err) wrapping
-
-### integration_coverage
-
-- If the diff adds DB migrations, verify an E2E schema verification test exists
-- If the diff adds HTTP client code, verify an integration test using
-  httptest.NewServer exists — mocks for HTTP clients are forbidden
-- Verify every new public method on a struct that connects to external services
-  has an integration test
+  Tests that can hang indefinitely are findings.
 
 ### smoke_the_real_thing
 

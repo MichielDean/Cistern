@@ -75,49 +75,21 @@ Do not guess. For each area the requirements touch, find the concrete evidence i
 the codebase. Your brief will be verified by downstream cataractae — if you cite
 a file that doesn't contain the pattern you claim, the brief loses credibility.
 
-### Pattern Evidence
+**Consult mp-codebase-design for the HOW of investigation:** deep-module vocabulary
+(module, interface, seam, adapter, depth, locality), design-for-testability principles
+(accept dependencies, return results, small surface), and the Deepening appendix
+(dependency categories, seam discipline, replace-don't-layer testing). That skill
+owns the investigation methodology — use it rather than re-inventing it here.
 
-For every pattern you prescribe, find at least one file that demonstrates it:
+**Consult mp-domain-modeling for glossary and ADR discipline:** sharpen fuzzy
+terminology against GLOSSARY.md, challenge boundary concepts with scenarios,
+and offer ADRs sparingly (only when a decision is hard-to-reverse, surprising, genuinely-traded-off).
+Record resolved terms and ADRs in the brief as they crystallise.
 
-- **Query patterns**: What ORM/DSL does the codebase use? Find the file that shows
-  EXISTS queries, JOIN projections, or column definitions. Name it with line number.
-- **Naming conventions**: Where do constants live? Find the object or file. Name it.
-  What naming pattern does it use? Quote the specific constant name as evidence.
-- **Error handling**: How does the codebase handle "not found" vs "permission denied"?
-  Find the specific function. Name the file and the pattern.
-- **Collection types**: Where does the codebase use `Set` vs `List`? What is the
-  reason? Find the specific usage. Quote the method signature.
-- **Migration conventions**: Find the most recent migration. What numbering does it
-  use? Does it quote identifiers? Does it separate DDL from DML? Quote the SQL.
-  Migrations MUST be numbered sequentially (001_xxx.sql, 002_xxx.sql) and tracked
-  in a schema migrations table (e.g., _schema_migrations). ALL SQL identifiers must
-  be quoted with the dialect-appropriate quoting ("id", "droplets" for PostgreSQL,
-  `id`, `droplets` for MySQL/SQLite). DDL (CREATE TABLE, ALTER TABLE) and DML
-  (INSERT, UPDATE) must be separated into different migration files — DML files
-  must be wrapped in transactions. Inline migrations in Go code (string constants
-  executed by db.Exec) are FORBIDDEN — use embed.FS with numbered .sql files.
-  Anti-pattern: a migration with both CREATE TABLE and INSERT in one file, or
-  unquoted identifiers like `CREATE TABLE droplets (id TEXT)`.
-- **Standard library vs custom**: Does the codebase use `golang.org/x/time/rate`,
-  `httptest`, `sql.NullString`, or custom implementations? Find the import and
-  quote it. Prefer standard library and well-known packages over custom code unless
-  the codebase already has an established custom pattern.
-
-If you write "the codebase uses Exposed DSL" without naming a file, your brief is
-incomplete. Find the file. Name it. Quote it.
-
-### Idiom Fit Rule
-
-The brief must prescribe the path of least resistance for each pattern. If the
-standard library or a well-known package (golang.org/x/time/rate, sync.Mutex,
-httptest.NewServer) provides what's needed, prescribe that — do not invent a custom
-implementation. Custom implementations are only justified when the standard library
-genuinely lacks the capability AND the brief explicitly names the gap.
-
-A brief that prescribes "create a token bucket rate limiter" when the codebase
-already imports golang.org/x/time/rate is a bad brief. It forces the implementer
-to fight the ecosystem. Prescribe the idiomatic approach first, custom only when
-necessary — and name the file:line that proves the standard approach is insufficient.
+The brief must still cite file:line evidence for every pattern prescribed — that
+is the cataractae-specific evidence requirement, not the investigation methodology.
+"Follow existing patterns" without a file:line is worthless; "SQL identifiers must be
+backtick-quoted — see V135__add_organization_settings.kt" gives a testable standard.
 
 ### Abstraction Boundary Analysis
 

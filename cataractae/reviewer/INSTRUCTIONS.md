@@ -33,17 +33,26 @@ The examples below show how this principle manifests — but they are examples o
 
 ### Manifestations of Contract Violations
 
-- A method named `toQueryBuilder` that returns the string `"FALSE"` — the contract promises a query builder, the implementation delivers a hardcoded value. This is not a simplification. It is a bug.
-- A data class named `PermissionColumnName` that is not a database column but a string wrapper — the name promises column semantics, the type delivers a string. A future developer will use it as a column and get wrong behavior.
-- A utility class that hardcodes `OrganizationTable.id` when the pattern applies to any table — the class promises "a permission boolean column," but it only works for one table. This is a coupling contract violation.
-- A method that returns `""` or `null` where the signature implies a computed projection — the contract promises data, the implementation delivers nothing.
+**Consult mp-code-review's smell baseline** for the full catalog of Fowler smells
+(Mysterious Name, Duplicated Code, Feature Envy, Data Clumps, Primitive Obsession,
+Repeated Switches, Shotgun Surgery, Divergent Change, Speculative Generality,
+Message Chains, Middle Man, Refused Bequest) — each with what-it-is → how-to-fix.
+That skill owns the smell catalog; use it rather than re-inventing it here.
+
+The principle that binds them all: **"Does this do what its contract promises?"**
+A method named `toQueryBuilder` that returns `"FALSE"` — the contract promises a query,
+the implementation delivers a hardcoded value. This is not a simplification. It is a bug.
 
 ### Manifestations of Structural Problems
 
-- Constants living inside a schema definition object (a `Table` class) — schema and business constants have different lifecycles and should be separate
-- The same inline expression repeated 10 times instead of extracted into a helper — the code is telling you it needs an abstraction
-- A migration that bundles CREATE TABLE and INSERT of reference data — schema changes and data seeding have different rollback requirements
-- Unquoted SQL identifiers in migrations — the code assumes reserved words won't be used, which is a contract with the SQL dialect that may be violated
+- Constants living inside a schema definition object (a `Table` class) — schema and
+  business constants have different lifecycles and should be separate
+- The same inline expression repeated 10 times instead of extracted into a helper —
+  the code is telling you it needs an abstraction
+- A migration that bundles CREATE TABLE and INSERT of reference data — schema
+  changes and data seeding have different rollback requirements
+- Unquoted SQL identifiers in migrations — the code assumes reserved words
+  won't be used, which is a contract with the SQL dialect that may be violated
 
 ## Droplet Reality Check
 
@@ -86,111 +95,47 @@ Some areas have a long history of failures invisible at the call site. Adapt you
 
 ## language-Specific Red Flags
 
-These are common ways the contract principle manifests in specific languages. They are not exhaustive — the principle catches what isn't listed.
+**Consult mp-code-review's process** for the language-agnostic review
+methodology (pin the fixed point, identify the spec source, run the two passes,
+aggregate). That skill owns the review process; use it rather than re-inventing it here.
 
-**Go:** Bare `recover()` swallowing all panics, `defer` inside loops, goroutine leaks, missing `context.Context` cancellation, ignoring error return values with `_`, race conditions on shared mutable state, `interface{}`/`any` abuse masking type errors, string formatting in errors instead of `fmt.Errorf("...: %w", err)`.
-
-**All languages:** Nil/null collections at serialization boundaries. When data crosses from one language to another (Go→JSON, Python→JSON, etc.), nil collections serialize as `null` instead of `[]`. The consumer will crash on `.length`, `.map()`, or iteration. Check every struct that gets serialized — are all collection fields initialized as empty, not nil?
-
-**TypeScript/JavaScript:** `==` instead of `===`, `any` type abuse, missing null checks before property access, unhandled promise rejections, missing `await` on async calls, uncontrolled re-renders in React.
-
-**SQL/ORM:** N+1 query patterns, raw string interpolation in queries (injection risk), missing indexes on frequently queried columns, unbounded queries without LIMIT, unquoted identifiers in DML/DDL, migrations that bundle DDL and reference data DML, placeholder descriptions in reference data INSERTs.
+Cataractae-specific red flags the process doesn't cover:
+- **Go daemons**: Bare `recover()` swallowing all panics, `defer` inside loops,
+  goroutine leaks, missing `context.Context` cancellation, ignoring error
+  return values with `_`, race conditions on shared mutable state,
+  `interface{}`/`any` abuse masking type errors
+- **All languages**: Nil/null collections at serialization boundaries. When data
+  crosses from one language to another (Go→JSON, Python→JSON, etc.), nil
+  collections serialize as `null` instead of `[]`. The consumer will crash on
+  `.length`, `.map()`, or iteration. Check every struct that gets serialized —
+  are all collection fields initialized as empty, not nil?
 
 ## Rubric Dimension Checks
 
-Each check below maps to a specific evaluation dimension. For every one, the
-answer is mechanical — yes (pass) or no (finding). If the answer is no, file a
-finding with the specific file:line and what must change.
+**The implementer's Evaluation Guard Rails (see implementer/INSTRUCTIONS.md) define
+the per-dimension rules: migration_safety, dry, contract_correctness, coupling,
+idiom_fit, naming_clarity, error_messages, integration_coverage.** The implementer
+was told to follow them; your job is to verify they were followed, not to re-state
+the rules.
 
-### migration_safety
+For each dimension, read the diff and confirm: did the implementer honor the guard
+rail? If yes, pass that dimension. If no, file a finding citing the specific
+file:line and what must change. The answer is mechanical — yes (pass) or no (finding).
 
-- [ ] Are migrations numbered files (001_xxx.sql, 002_xxx.sql)?
-- [ ] Are migrations tracked in _schema_migrations or equivalent?
-- [ ] Are ALL SQL identifiers quoted with dialect-appropriate quoting?
-- [ ] Are DDL and DML separated into different files?
-- [ ] Is DML wrapped in transactions?
-- [ ] Are migrations embedded via embed.FS, not inline string constants in Go?
-- [ ] **Migration compatibility**: If this is a rewrite or version change, does the
-  code handle opening databases created by the previous version? Specifically:
-  - Are there virtual tables, triggers, or extensions from the previous runtime
-    that may not be available in this runtime? If so, are they dropped or handled
-    before DDL operations?
-  - Does the initialization sequence work with pre-existing data, or does it
-    assume a fresh database?
-  - Are there CLI flag changes that break existing callers? If so, are both
-    old and new forms accepted?
-  A passing test suite on a fresh database does NOT prove migration safety.
-  You must read the initialization code and check: what happens when this code
-  opens a database that already has data from the previous version?
-- [ ] **Dependency verification**: Cross-reference every dependency mentioned in the
-  architect's brief against the project's dependency file (go.mod, package.json).
-  If a dependency is mentioned in the brief but not in the dependency file, that
-  is a finding — the implementer chose a dependency but never imported it.
-- [ ] **Test timeout discipline**: Every test that makes HTTP calls, connects to
-  external services, or has any non-trivial I/O must use context.WithTimeout with
-  a maximum of 30 seconds. Tests that can hang indefinitely (even in "graceful
-  degradation" paths) are findings.
+**Consult mp-codebase-design** for the deep-module vocabulary (module, interface,
+seam, adapter, depth, locality) to name what structural findings are really about.
+Use that language rather than generic "coupling" or "abstraction" labels.
 
-### dry
-
-- [ ] Does any code block of 5+ lines appear 3+ times? (Use Grep to verify.)
-  If yes, it must be extracted into a named helper.
-- [ ] Are NullString scan blocks extracted into helpers (scanXxxFromRows,
-  fillXxxFromNullable) rather than repeated inline?
-
-### contract_correctness
-
-- [ ] Does every exported method document its preconditions?
-- [ ] Is there any lazy initialization pattern (initClient, ensureConnected)?
-  If yes, flag it — the constructor must leave the object usable.
-- [ ] Are there SetXxx mutation methods used for testing? If yes, flag it —
-  use constructor injection via config fields instead.
-- [ ] Does every method return what its signature promises? (Check for ""
-  or nil returns where a computed result is implied.)
-
-### coupling
-
-- [ ] Is there any shared mutable package-level state (maps, vars, sync.Map)?
-  If yes, it must be struct fields with constructor injection.
-- [ ] Does any constructor accept a map/slice param without making a defensive
-  copy? If yes, add `maps.Clone()` or manual copy.
-- [ ] Are entity-specific types hardcoded into generic utilities?
-  (e.g., DropletEvent inside EventBus) If yes, flag it.
-
-### idiom_fit
-
-- [ ] Are package-level mutable vars used for timeouts, HTTP clients, or
-  priority maps? If yes, they must be struct fields.
-- [ ] Is config passed through constructor params, not post-hoc setters?
-- [ ] Are zero-value defaults documented when cfg.Field == 0?
-- [ ] Is slog used for operational logging (not fmt.Printf or
-  fmt.Fprintf(os.Stderr))?
-- [ ] Is embed.FS used for embedded resources (migrations, templates)?
-
-### naming_clarity
-
-- [ ] Do unexported structs have PascalCase fields? If yes, rename to
-  unexported (e.g., HTTPTimeout → httpTimeout on unexported structs).
-- [ ] Do any names shadow Go builtins (min, max, any, cap, len)?
-- [ ] Does every name match its access level?
-
-### error_messages
-
-- [ ] Is fmt.Fprintf(os.Stderr) used for errors anywhere? If yes, replace
-  with slog.Error/slog.Warn.
-- [ ] Does every error message include domain context (entity name, operation)?
-- [ ] Are any errors silently swallowed? (e.g., `_ = someFunc()` or
-  `if err != nil {}` with empty body) If yes, add slog.Debug at minimum.
-- [ ] Are errors wrapped with fmt.Errorf("pkg: context: %w", err)?
-
-### integration_coverage
-
-- [ ] If the diff adds DB migrations, does an E2E schema verification test
-  exist?
-- [ ] If the diff adds HTTP client code, does an integration test using
-  httptest.NewServer exist? (Mocks for HTTP clients are forbidden.)
-- [ ] Does every new public method on a struct that connects to external
-  services have an integration test?
+Reviewer-specific verification angles the guard rails don't cover:
+- **Migration compatibility**: if this is a rewrite, does the code handle opening
+  databases created by the previous version? A passing test suite on a fresh
+  database does NOT prove migration safety.
+- **Dependency verification**: cross-reference every dependency the architect's
+  brief chose against the project's dependency file. If a dependency was chosen
+  but not imported, that is a finding.
+- **Test timeout discipline**: every test that makes HTTP calls or connects to
+  external services must use context.WithTimeout with a maximum of 30 seconds.
+  Tests that can hang indefinitely are findings.
 
 ## What to Review, What to Skip
 
