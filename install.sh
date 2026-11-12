@@ -124,22 +124,79 @@ configure_git() {
   info "GOPRIVATE set ✓"
 }
 
-# --- install_ct: install via go install ---
+# --- assert_ct_version: fail install if installed binary diverges from local source ---
+# Compares the version reported by the installed binary against `git describe`
+# from the local checkout. Only called in local mode, where git ground truth exists.
+assert_ct_version() {
+  local ct_bin="${1}" script_dir="${2}"
+
+  local expected_version
+  # Same expression the local build injects via -ldflags (see install_ct_from_local),
+  # so 'dev' in git-less environments matches by construction while any real
+  # source/binary divergence still fails.
+  expected_version="$(git -C "${script_dir}" describe --tags --always 2>/dev/null || echo 'dev')"
+
+  local installed_version
+  if ! installed_version="$("${ct_bin}" version 2>/dev/null | sed 's/^ct //')"; then
+    fatal "could not read version from installed binary at ${ct_bin}"
+  fi
+
+  if [ "${installed_version}" != "${expected_version}" ]; then
+    fatal "installed ct version '${installed_version}' does not match source version '${expected_version}' — install aborted"
+  fi
+
+  info "ct version matches source (${expected_version}) ✓"
+}
+
+# --- install_ct_from_local: build ct from the source tree the installer lives in ---
+# Builds ./cmd/ct from script_dir, injecting the git-derived version via -ldflags
+# so `ct version` equals `git describe --tags --always` by construction.
+install_ct_from_local() {
+  local script_dir="${1}" ct_bin="${2}"
+
+  local ct_version
+  ct_version="$(git -C "${script_dir}" describe --tags --always 2>/dev/null || echo 'dev')"
+  info "Building ct from local source (${script_dir}) at ${ct_version}..."
+
+  (cd "${script_dir}" && CGO_ENABLED=1 go build -o "${ct_bin}" -ldflags "-X main.version=${ct_version}" ./cmd/ct)
+}
+
+# --- install_ct: build from local checkout when present, otherwise go install @latest ---
 install_ct() {
-  info "Installing ct..."
-  CGO_ENABLED=1 GOPRIVATE="github.com/MichielDean/cistern" go install "${REPO}/cmd/ct@latest"
+  local script_dir
+  script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
   local gobin ct_bin
   gobin="$(resolve_gobin)"
   ct_bin="${gobin}/ct"
 
+  # Local mode requires BOTH a go.mod in script_dir AND a cmd/ct directory.
+  # Under curl|bash, BASH_SOURCE points at the piped script (often just '.'),
+  # so script_dir collapses to cwd; any Go project dir would then falsely
+  # trigger local mode and try to build ./cmd/ct from the wrong tree. Requiring
+  # cmd/ct to exist in the same tree rules that out. (ci-fxuo8-nzoar)
+  if [[ -f "${script_dir}/go.mod" && -d "${script_dir}/cmd/ct" ]]; then
+    # Local mode: we are running inside a repo checkout. Build from this source
+    # tree so the binary always matches the code the user is looking at — the
+    # @latest form resolves via the Go module proxy, which lags origin/main.
+    install_ct_from_local "${script_dir}" "${ct_bin}"
+    assert_ct_version "${ct_bin}" "${script_dir}"
+  else
+    # Remote mode: piped via curl|bash with no repo checkout — fall back to
+    # the Go module proxy. Version assertion is skipped: there is no local
+    # ground truth to compare against.
+    info "No repo checkout detected — installing ct from the Go module proxy (@latest)..."
+    CGO_ENABLED=1 GOPRIVATE="github.com/MichielDean/cistern" go install "${REPO}/cmd/ct@latest"
+    warn "skipping version assertion — remote build has no local git ground truth"
+  fi
+
   if [ ! -x "${ct_bin}" ]; then
     fatal "ct binary not found at ${ct_bin} after install — check your Go setup"
   fi
 
-  local ct_version
-  ct_version="$(${ct_bin} version 2>/dev/null | sed 's/^ct //' || echo 'dev')"
-  info "ct ${ct_version} installed at ${ct_bin}"
+  local installed_version
+  installed_version="$(${ct_bin} version 2>/dev/null | sed 's/^ct //' || echo 'dev')"
+  info "ct ${installed_version} installed at ${ct_bin}"
 }
 
 # --- ensure_path: add Go bin dir to shell profile if not already there ---

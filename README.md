@@ -387,6 +387,15 @@ Requirements:
 
 The Castellarius automatically manages agent credentials. `ct doctor` verifies that the agent CLI is available and authenticated.
 
+### How install.sh builds `ct`
+
+The installer is dual-mode:
+
+- **Local mode** — if the script's directory contains both `go.mod` and `cmd/ct` (i.e., you ran `./install.sh` from a cloned checkout), `ct` is built from that source tree with the version stamped from `git describe --tags --always`. After the build, install.sh asserts that the installed binary's `ct version` matches the source tree and aborts the install if they diverge — you never get a binary that doesn't match the code you're looking at.
+- **Remote mode** — when piped via `curl | bash` (no checkout present), `ct` is installed from the Go module proxy via `go install @latest`.
+
+The remote `@latest` path resolves through proxy.golang.org, which can lag behind `origin/main`; local mode is therefore preferred when you have a clone.
+
 ## Credentials
 
 Cistern uses the opencode CLI for agent sessions. Configure credentials based on your provider:
