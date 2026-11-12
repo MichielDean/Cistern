@@ -16,13 +16,18 @@ import (
 	"io"
 	"io/fs"
 	"log"
+	"log/slog"
 	"net"
 	"net/http"
+	// goprof: net/http/pprof only for its Handler() symbols — its init()
+	// registers on DefaultServeMux, which this server does not use.
+	goprof "net/http/pprof"
 	"net/url"
 	"os"
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strconv"
 	"strings"
@@ -92,11 +97,66 @@ const maxDropletSSEConnections = 64
 // cannot starve dashboard detail views.
 const maxLogSSEConnections = 32
 
-// currentDropletSSEConnections tracks the number of active droplet SSE connections.
-var currentDropletSSEConnections int64
+// maxDashboardSSEConnections limits the number of simultaneous SSE connections
+// for the aggregate dashboard-events stream. Each open connection runs a
+// fetch loop forever, so an unhinted reconnect loop (browser retry, LB probe)
+// would otherwise stack connections without bound — the primary suspect in
+// the 2.6G OOM incident (ci-5n337).
+const maxDashboardSSEConnections = 32
 
-// currentLogSSEConnections tracks the number of active log SSE connections.
-var currentLogSSEConnections int64
+// maxPendingFrameBytes caps the DashboardTUI pending-frame buffer. Terminal
+// output normally arrives between repaint markers (\033[2J\033[H), but a
+// child that stops emitting markers (partial-line updates, a different TUI,
+// terminal noise) would otherwise grow this single long-lived buffer forever
+// in the 24/7 broadcast loop. 1 MiB is ~30× a full 80×24 ANSI frame.
+const maxPendingFrameBytes = 1 << 20
+
+// dashboardDiagInterval is how often RunDashboardWeb logs a one-line memory
+// sample (RSS, heap, goroutines). One line ≈ 100 bytes → <12 KB/day in
+// web.log, which is acceptable given that log's existing growth.
+const dashboardDiagInterval = 15 * time.Minute
+
+// sseConnectionLimiter is a reusable per-endpoint cap on concurrent SSE
+// connections. Instances are constructed in newDashboardMuxInternalWith and
+// closed over by handlers — no package-level mutable state.
+type sseConnectionLimiter struct {
+	max     int64
+	current int64
+}
+
+// newSSEConnectionLimiter creates a limiter capped at max (must be ≥ 1).
+func newSSEConnectionLimiter(max int64) *sseConnectionLimiter {
+	if max < 1 {
+		max = 1
+	}
+	return &sseConnectionLimiter{max: max}
+}
+
+// acquire reserves a slot. It returns false when the limiter is at capacity;
+// in that case no slot is consumed.
+func (l *sseConnectionLimiter) acquire() bool {
+	for {
+		cur := atomic.LoadInt64(&l.current)
+		if cur >= l.max {
+			return false
+		}
+		if atomic.CompareAndSwapInt64(&l.current, cur, cur+1) {
+			return true
+		}
+	}
+}
+
+// release frees a previously acquired slot. Never call it beyond acquire count.
+func (l *sseConnectionLimiter) release() {
+	if atomic.AddInt64(&l.current, -1) < 0 {
+		atomic.StoreInt64(&l.current, 0)
+	}
+}
+
+// currentCount reports the number of currently held slots (for tests/metrics).
+func (l *sseConnectionLimiter) currentCount() int64 {
+	return atomic.LoadInt64(&l.current)
+}
 
 // dashboardDefaultFontFamily is the CSS font-family fallback used when
 // dashboard_font_family is not set in cistern.yaml.
@@ -633,13 +693,25 @@ func (d *DashboardTUI) frameAccumulate(chunk []byte) {
 		idx := bytes.Index(rest, repaintMarker)
 		if idx < 0 {
 			if d.inFrame {
-				d.pending = append(d.pending, rest...)
-				d.scheduleFlush()
+				if len(d.pending) > maxPendingFrameBytes {
+					// The child emitted more than maxPendingFrameBytes of
+					// output between repaint markers. Discard the overgrown
+					// frame rather than letting this long-lived buffer grow
+					// forever in the broadcast loop.
+					slog.Warn("tui-bridge: pending frame exceeded cap; discarding",
+						"bytes", len(d.pending), "cap", maxPendingFrameBytes)
+					d.inFrame = false
+					d.pending = nil
+				} else {
+					d.pending = append(d.pending, rest...)
+					d.scheduleFlush()
+				}
 			}
 			return
 		}
 		if d.inFrame {
-			d.lastFrame = append(d.pending, rest[:idx]...)
+			d.lastFrame = append(bytes.Clone(d.pending), rest[:idx]...)
+			d.pending = d.pending[:0]
 		}
 		d.pending = bytes.Clone(repaintMarker)
 		d.inFrame = true
@@ -673,7 +745,11 @@ func (d *DashboardTUI) flushPendingFrame(gen uint64) {
 		return
 	}
 	if d.inFrame && len(d.pending) > 0 {
-		d.lastFrame = d.pending
+		// Clone instead of aliasing: lastFrame must survive subsequent
+		// appends to pending, and pending must reset so the buffer does not
+		// grow without bound between markers.
+		d.lastFrame = bytes.Clone(d.pending)
+		d.pending = d.pending[:0]
 	}
 	d.flushTimer = nil
 }
@@ -745,14 +821,31 @@ func newDashboardMuxWith(cfgPath, dbPath string, fetcher func(cfg, db string) (*
 	return newDashboardMuxInternalWith(cfgPath, dbPath, nil, fetcher, fastInterval, slowInterval)
 }
 
+// setSSEHeaders writes the standard headers every SSE stream on this server
+// uses. Callers must still Flush the response themselves if they need the
+// headers on the wire before the first event.
+func setSSEHeaders(w http.ResponseWriter) {
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("X-Accel-Buffering", "no")
+}
+
 // makeDashboardEventsHandler returns an http.HandlerFunc for the SSE dashboard events
 // endpoint. Parameterised so tests can inject a custom fetcher and intervals.
+// Concurrent connections are capped at maxDashboardSSEConnections; when the
+// fetcher fails, the last valid DashboardData remains the hash baseline and an
+// `event: error` frame is sent instead of a null-data frame.
 func makeDashboardEventsHandler(cfgPath, dbPath string, fetcher func(string, string) (*DashboardData, error), fastInterval, slowInterval time.Duration) http.HandlerFunc {
+	limiter := newSSEConnectionLimiter(maxDashboardSSEConnections)
 	return func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/event-stream")
-		w.Header().Set("Cache-Control", "no-cache")
-		w.Header().Set("Connection", "keep-alive")
-		w.Header().Set("X-Accel-Buffering", "no")
+		if !limiter.acquire() {
+			writeAPIError(w, http.StatusServiceUnavailable, "too many dashboard SSE connections")
+			return
+		}
+		defer limiter.release()
+
+		setSSEHeaders(w)
 
 		flusher, ok := w.(http.Flusher)
 		if !ok {
@@ -766,9 +859,17 @@ func makeDashboardEventsHandler(cfgPath, dbPath string, fetcher func(string, str
 				flusher.Flush()
 			}
 		}
+		sendError := func(err error) {
+			fmt.Fprintf(w, "event: error\ndata: %s\n\n", sanitizeSSEData(err.Error()))
+			flusher.Flush()
+		}
 
 		// Initial send — establishes the hash baseline for adaptive rate.
-		data, _ := fetcher(cfgPath, dbPath)
+		data, err := fetcher(cfgPath, dbPath)
+		if err != nil {
+			sendError(err)
+			return
+		}
 		sendEvent(data)
 		lastHash := dashboardStateHash(data)
 
@@ -780,21 +881,32 @@ func makeDashboardEventsHandler(cfgPath, dbPath string, fetcher func(string, str
 			case <-r.Context().Done():
 				return
 			case <-ticker.C:
-				data, _ = fetcher(cfgPath, dbPath)
+				next, err := fetcher(cfgPath, dbPath)
+				if err != nil {
+					// Keep lastHash from the last valid fetch so adaptive
+					// backoff is not corrupted by the failure.
+					slog.Warn("dashboard-events: fetch failed; sending error frame",
+						"error", err)
+					sendError(err)
+					continue
+				}
+				data = next
 				newHash := dashboardStateHash(data)
 				sendEvent(data)
 				// Adaptive backoff: slow down when Castellarius is idle.
 				idle := newHash == lastHash && data.FlowingCount == 0
 				lastHash = newHash
-				next := fastInterval
+				nextInterval := fastInterval
 				if idle {
-					next = slowInterval
+					nextInterval = slowInterval
 				}
-				ticker.Reset(next)
+				ticker.Reset(nextInterval)
 			}
 		}
 	}
 }
+
+// ── Dashboard data fetch ──
 
 // newDashboardMuxInternal returns an http.Handler for the web dashboard.
 // tui may be nil; if so the /ws/tui endpoint closes connections immediately.
@@ -1108,7 +1220,6 @@ func newDashboardMuxInternalWith(cfgPath, dbPath string, tui *DashboardTUI, fetc
 	apiMux.HandleFunc("POST /api/droplets/{id}/restart", handleRestartDroplet(dbPath))
 	apiMux.HandleFunc("POST /api/droplets/{id}/approve", handleApproveDroplet(dbPath))
 
-
 	// Notes
 	apiMux.HandleFunc("GET /api/droplets/{id}/notes", handleGetNotes(dbPath))
 	apiMux.HandleFunc("POST /api/droplets/{id}/notes", handleAddNote(dbPath))
@@ -1139,6 +1250,16 @@ func newDashboardMuxInternalWith(cfgPath, dbPath string, tui *DashboardTUI, fetc
 
 	// Doctor
 	apiMux.HandleFunc("GET /api/doctor", handleDoctor(cfgPath))
+
+	// Debug diagnostics (ci-5n337): memory/goroutine evidence endpoints.
+	// NOTE: pprof heap exposes object contents to anyone holding the
+	// dashboard API key. The server binds 127.0.0.1 by default, which is the
+	// existing threat model. Registered on the outer mux (these paths do not
+	// start with /api/) but apiAuthMiddleware below wraps the whole handler,
+	// so they still require the bearer token when an API key is configured.
+	mux.HandleFunc("GET /debug/memstats", handleDebugMemstats())
+	mux.Handle("GET /debug/pprof/heap", goprof.Handler("heap"))
+	mux.Handle("GET /debug/pprof/goroutine", goprof.Handler("goroutine"))
 
 	// Aqueducts
 	apiMux.HandleFunc("GET /api/aqueducts/{name}", handleGetAqueduct(cfgPath, dbPath))
@@ -2322,12 +2443,12 @@ func handleGetStats(dbPath string) http.HandlerFunc {
 func handleCastellariusStatus(cfgPath, dbPath string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		type aqueductStatus struct {
-			Name          string  `json:"name"`
-			Status        string  `json:"status"`
-			DropletID     *string `json:"droplet_id"`
-			DropletTitle  *string `json:"droplet_title"`
-			CurrentStep   *string `json:"current_step"`
-			Elapsed       int64   `json:"elapsed"`
+			Name         string  `json:"name"`
+			Status       string  `json:"status"`
+			DropletID    *string `json:"droplet_id"`
+			DropletTitle *string `json:"droplet_title"`
+			CurrentStep  *string `json:"current_step"`
+			Elapsed      int64   `json:"elapsed"`
 		}
 		type castellariusStatusResp struct {
 			Running             bool             `json:"running"`
@@ -2447,7 +2568,7 @@ func handleGetAqueduct(cfgPath, dbPath string) http.HandlerFunc {
 						for i, s := range wf.Cataractae {
 							wfSteps[i] = workflowStep{
 								Name:     s.Name,
-								Type:      string(s.Type),
+								Type:     string(s.Type),
 								Identity: s.Identity,
 							}
 						}
@@ -2626,6 +2747,101 @@ func sanitizeSSEData(s string) string {
 	return strings.ReplaceAll(s, "\n", "\\n")
 }
 
+// ── Debug diagnostics (ci-5n337) ──
+
+// dashboardMemStats is the JSON payload served by GET /debug/memstats. It gives
+// operators (and soak-test scripts) a one-call view of the process memory
+// state without pulling a full pprof profile.
+type dashboardMemStats struct {
+	RSS          int64  `json:"rss_bytes"`
+	HeapAlloc    uint64 `json:"heap_alloc_bytes"`
+	HeapSys      uint64 `json:"heap_sys_bytes"`
+	Sys          uint64 `json:"sys_bytes"`
+	NumGC        uint32 `json:"num_gc"`
+	NumGoroutine int    `json:"num_goroutine"`
+	FetchedAt    string `json:"fetched_at"`
+}
+
+// handleDebugMemstats serves a JSON memory snapshot. RSS comes from
+// /proc/self/statm (resident pages × page size); if that is unavailable
+// (non-Linux), it falls back to runtime.MemStats.Sys as an approximation.
+func handleDebugMemstats() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		ms := collectDashboardMemStats()
+		w.Header().Set("Content-Type", "application/json")
+		if err := json.NewEncoder(w).Encode(ms); err != nil {
+			slog.Debug("cistern: dashboard: memstats encode failed", "error", err)
+		}
+	}
+}
+
+// collectDashboardMemStats gathers the memstats snapshot in one call. Exposed
+// for the periodic diagnostic logger to share the exact same fields.
+func collectDashboardMemStats() dashboardMemStats {
+	var m runtime.MemStats
+	runtime.ReadMemStats(&m)
+	rss := int64(m.Sys) // fallback approximation
+	if pages, err := residentPages(); err == nil {
+		rss = pages * int64(os.Getpagesize())
+	}
+	return dashboardMemStats{
+		RSS:          rss,
+		HeapAlloc:    m.HeapAlloc,
+		HeapSys:      m.HeapSys,
+		Sys:          m.Sys,
+		NumGC:        m.NumGC,
+		NumGoroutine: runtime.NumGoroutine(),
+		FetchedAt:    time.Now().UTC().Format(time.RFC3339),
+	}
+}
+
+// residentPages reads the resident-set page count from /proc/self/statm
+// (field 1, "resident"). Returns an error outside Linux or if unreadable.
+func residentPages() (int64, error) {
+	data, err := os.ReadFile("/proc/self/statm")
+	if err != nil {
+		return 0, fmt.Errorf("ct: read /proc/self/statm: %w", err)
+	}
+	fields := strings.Fields(string(data))
+	if len(fields) < 2 {
+		return 0, fmt.Errorf("ct: /proc/self/statm: unexpected format %q", strings.TrimSpace(string(data)))
+	}
+	pages, err := strconv.ParseInt(fields[1], 10, 64)
+	if err != nil {
+		return 0, fmt.Errorf("ct: /proc/self/statm: parse resident field: %w", err)
+	}
+	return pages, nil
+}
+
+// startDashboardDiagTicker logs one memory-sample line every
+// dashboardDiagInterval until ctx is cancelled. Started only by
+// RunDashboardWeb so tests (which build the mux directly) never run it.
+func startDashboardDiagTicker(ctx context.Context) {
+	go func() {
+		ticker := time.NewTicker(dashboardDiagInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				ms := collectDashboardMemStats()
+				slog.Default().Info("web-diag: memory sample",
+					"rss_bytes", ms.RSS,
+					"heap_alloc_bytes", ms.HeapAlloc,
+					"sys_bytes", ms.Sys,
+					"num_gc", ms.NumGC,
+					"num_goroutine", ms.NumGoroutine,
+				)
+			}
+		}
+	}()
+}
+
 // countLinesUpTo counts newlines in the file up to (but not including) the
 // given byte offset. Used by the SSE handler to compute line numbers when
 // starting mid-file.
@@ -2747,13 +2963,13 @@ const maxLogSSERetries = 20 // 20 × 500ms = 10 seconds
 
 // handleLogEvents streams new log lines via SSE.
 func handleLogEvents(cfgPath string) http.HandlerFunc {
+	limiter := newSSEConnectionLimiter(maxLogSSEConnections)
 	return func(w http.ResponseWriter, r *http.Request) {
-		if atomic.AddInt64(&currentLogSSEConnections, 1) > maxLogSSEConnections {
-			atomic.AddInt64(&currentLogSSEConnections, -1)
+		if !limiter.acquire() {
 			writeAPIError(w, http.StatusServiceUnavailable, "too many log SSE connections")
 			return
 		}
-		defer atomic.AddInt64(&currentLogSSEConnections, -1)
+		defer limiter.release()
 
 		flusher, ok := w.(http.Flusher)
 		if !ok {
@@ -2771,10 +2987,7 @@ func handleLogEvents(cfgPath string) http.HandlerFunc {
 			return
 		}
 
-		w.Header().Set("Content-Type", "text/event-stream")
-		w.Header().Set("Cache-Control", "no-cache")
-		w.Header().Set("Connection", "keep-alive")
-		w.Header().Set("X-Accel-Buffering", "no")
+		setSSEHeaders(w)
 		flusher.Flush()
 
 		ticker := time.NewTicker(500 * time.Millisecond)
@@ -2901,16 +3114,16 @@ func handleGetLogSources(cfgPath string) http.HandlerFunc {
 // ── Droplet events SSE handler ──
 
 func handleDropletEvents(cfgPath, dbPath string) http.HandlerFunc {
+	limiter := newSSEConnectionLimiter(maxDropletSSEConnections)
 	return func(w http.ResponseWriter, r *http.Request) {
 		id := r.PathValue("id")
 
 		// Limit concurrent SSE connections to prevent resource exhaustion.
-		if atomic.AddInt64(&currentDropletSSEConnections, 1) > maxDropletSSEConnections {
-			atomic.AddInt64(&currentDropletSSEConnections, -1)
+		if !limiter.acquire() {
 			writeAPIError(w, http.StatusServiceUnavailable, "too many SSE connections")
 			return
 		}
-		defer atomic.AddInt64(&currentDropletSSEConnections, -1)
+		defer limiter.release()
 
 		// Validate droplet existence and flusher support before setting SSE headers,
 		// so error responses use clean Content-Type instead of text/event-stream.
@@ -2938,10 +3151,7 @@ func handleDropletEvents(cfgPath, dbPath string) http.HandlerFunc {
 		}
 
 		// All validation passed — now set SSE headers and begin streaming.
-		w.Header().Set("Content-Type", "text/event-stream")
-		w.Header().Set("Cache-Control", "no-cache")
-		w.Header().Set("Connection", "keep-alive")
-		w.Header().Set("X-Accel-Buffering", "no")
+		setSSEHeaders(w)
 
 		b, _ := json.Marshal(d)
 		fmt.Fprintf(w, "data: %s\n\n", b)
@@ -2982,6 +3192,10 @@ func RunDashboardWeb(cfgPath, dbPath, addr string) error {
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+
+	// Periodic memory diagnostics (ci-5n337): one slog line per 15 min so the
+	// 2.6G OOM incident leaves an RSS trail in web.log.
+	startDashboardDiagTicker(ctx)
 
 	fmt.Fprintf(os.Stderr, "Cistern web dashboard listening on http://localhost%s\n", addr)
 

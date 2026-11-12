@@ -5,13 +5,13 @@ import (
 	"encoding/csv"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -2164,6 +2164,51 @@ func TestAPI_InputLimit_AddDependencyDepTooLong(t *testing.T) {
 	}
 }
 
+// fillSSEPoolWithConnections opens max concurrent SSE connections to
+// server+path, registering cleanup that closes the response bodies before
+// shutting the server down. label names the pool in failure messages. The
+// caller must not also register its own server.Close — ordering matters:
+// httptest.Server.Close blocks until live SSE connections are drained.
+func fillSSEPoolWithConnections(t *testing.T, server *httptest.Server, path string, max int, label string) []*http.Response {
+	t.Helper()
+	// Registered first so it runs LAST (t.Cleanup is LIFO): response bodies
+	// must be drained before httptest.Server.Close, which blocks until all
+	// live SSE connections are handled.
+	t.Cleanup(server.Close)
+	resps := make([]*http.Response, 0, max)
+	t.Cleanup(func() {
+		for _, r := range resps {
+			r.Body.Close()
+		}
+	})
+	for i := 0; i < max; i++ {
+		resp, err := http.Get(server.URL + path)
+		if err != nil {
+			t.Fatalf("%s connection %d: %v", label, i, err)
+		}
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("%s connection %d: status = %d, want 200", label, i, resp.StatusCode)
+		}
+		resps = append(resps, resp)
+	}
+	return resps
+}
+
+// assertSSEOverPoolLimit asserts an overflow request against a full SSE pool
+// is rejected with 503 and an error body naming the limit.
+func assertSSEOverPoolLimit(t *testing.T, overResp *http.Response, label string) {
+	t.Helper()
+	if overResp.StatusCode != http.StatusServiceUnavailable {
+		t.Errorf("%s SSE at connection limit: status = %d, want 503", label, overResp.StatusCode)
+	}
+	overBody, _ := io.ReadAll(overResp.Body)
+	var body map[string]string
+	json.Unmarshal(overBody, &body)
+	if !strings.Contains(body["error"], "too many") {
+		t.Errorf("%s SSE at connection limit: error = %q, want 'too many' keyword", label, body["error"])
+	}
+}
+
 func TestAPI_SSALimit_ConnectionLimit(t *testing.T) {
 	db := tempDB(t)
 	c, err := cistern.New(db, "mr")
@@ -2173,22 +2218,19 @@ func TestAPI_SSALimit_ConnectionLimit(t *testing.T) {
 	d, _ := c.Add("myrepo", "Test", "", 1)
 	c.Close()
 
-	original := currentDropletSSEConnections
-	defer func() { currentDropletSSEConnections = original }()
-	atomic.StoreInt64(&currentDropletSSEConnections, maxDropletSSEConnections)
-
 	mux := newDashboardMux(tempCfg(t), db)
-	req := httptest.NewRequest(http.MethodGet, "/api/droplets/"+d.ID+"/events", nil)
-	w := httptest.NewRecorder()
-	mux.ServeHTTP(w, req)
-	if w.Code != http.StatusServiceUnavailable {
-		t.Errorf("SSE at connection limit: status = %d, want 503", w.Code)
+	server := httptest.NewServer(mux)
+
+	// Fill the droplet SSE pool with real connections, then assert the next
+	// is rejected with 503.
+	fillSSEPoolWithConnections(t, server, "/api/droplets/"+d.ID+"/events", maxDropletSSEConnections, "droplet")
+
+	overResp, err := http.Get(server.URL + "/api/droplets/" + d.ID + "/events")
+	if err != nil {
+		t.Fatal(err)
 	}
-	var body map[string]string
-	json.Unmarshal(w.Body.Bytes(), &body)
-	if !strings.Contains(body["error"], "too many") {
-		t.Errorf("error = %q, want 'too many SSE connections'", body["error"])
-	}
+	defer overResp.Body.Close()
+	assertSSEOverPoolLimit(t, overResp, "droplet")
 }
 
 // --- Auth protects all endpoints (including pre-existing ones) ---
@@ -2639,9 +2681,6 @@ func TestAPI_LogSources_ReturnsAvailableLogs(t *testing.T) {
 }
 
 func TestAPI_LogSSE_PathTraversalInSource(t *testing.T) {
-	orig := currentLogSSEConnections
-	defer func() { currentLogSSEConnections = orig }()
-	atomic.StoreInt64(&currentLogSSEConnections, 0)
 
 	mux := newDashboardMux(tempCfg(t), tempDB(t))
 	req := httptest.NewRequest(http.MethodGet, "/api/logs/events?source=..%2Fetc%2Fpasswd", nil)
@@ -2719,9 +2758,6 @@ func TestAPI_Logs_InvalidSource_NoUserInputInError(t *testing.T) {
 }
 
 func TestAPI_LogSSE_InitialContext(t *testing.T) {
-	orig := currentLogSSEConnections
-	defer func() { currentLogSSEConnections = orig }()
-	atomic.StoreInt64(&currentLogSSEConnections, 0)
 
 	origHome := os.Getenv("HOME")
 	defer os.Setenv("HOME", origHome)
@@ -2788,9 +2824,6 @@ func TestAPI_LogSSE_InitialContext(t *testing.T) {
 }
 
 func TestAPI_LogSSE_StreamResumesAfterRotation(t *testing.T) {
-	orig := currentLogSSEConnections
-	defer func() { currentLogSSEConnections = orig }()
-	atomic.StoreInt64(&currentLogSSEConnections, 0)
 
 	origHome := os.Getenv("HOME")
 	defer os.Setenv("HOME", origHome)
@@ -2954,9 +2987,6 @@ func TestAPI_Logs_ReturnsAbsoluteLineNumbers(t *testing.T) {
 }
 
 func TestAPI_LogSSE_ScannerError_DoesNotStall(t *testing.T) {
-	orig := currentLogSSEConnections
-	defer func() { currentLogSSEConnections = orig }()
-	atomic.StoreInt64(&currentLogSSEConnections, 0)
 
 	origHome := os.Getenv("HOME")
 	defer os.Setenv("HOME", origHome)
@@ -3055,9 +3085,6 @@ func TestCountLinesUpTo(t *testing.T) {
 }
 
 func TestAPI_LogSSE_LineNumbersInJSON(t *testing.T) {
-	orig := currentLogSSEConnections
-	defer func() { currentLogSSEConnections = orig }()
-	atomic.StoreInt64(&currentLogSSEConnections, 0)
 
 	origHome := os.Getenv("HOME")
 	defer os.Setenv("HOME", origHome)
@@ -3139,9 +3166,6 @@ func TestAPI_LogSSE_LineNumbersInJSON(t *testing.T) {
 }
 
 func TestAPI_LogSSE_TerminatesOnMissingFile(t *testing.T) {
-	orig := currentLogSSEConnections
-	defer func() { currentLogSSEConnections = orig }()
-	atomic.StoreInt64(&currentLogSSEConnections, 0)
 
 	origHome := os.Getenv("HOME")
 	defer os.Setenv("HOME", origHome)
@@ -3180,15 +3204,6 @@ func TestAPI_LogSSE_TerminatesOnMissingFile(t *testing.T) {
 }
 
 func TestAPI_SSE_SeparateConnectionPools(t *testing.T) {
-	origDroplet := currentDropletSSEConnections
-	defer func() { currentDropletSSEConnections = origDroplet }()
-
-	origLog := currentLogSSEConnections
-	defer func() { currentLogSSEConnections = origLog }()
-
-	atomic.StoreInt64(&currentDropletSSEConnections, maxDropletSSEConnections)
-	atomic.StoreInt64(&currentLogSSEConnections, 0)
-
 	db := tempDB(t)
 	c, err := cistern.New(db, "mr")
 	if err != nil {
@@ -3198,13 +3213,19 @@ func TestAPI_SSE_SeparateConnectionPools(t *testing.T) {
 	c.Close()
 
 	mux := newDashboardMux(tempCfg(t), db)
+	server := httptest.NewServer(mux)
 
-	req := httptest.NewRequest(http.MethodGet, "/api/droplets/"+d.ID+"/events", nil)
-	w := httptest.NewRecorder()
-	mux.ServeHTTP(w, req)
-	if w.Code != http.StatusServiceUnavailable {
-		t.Errorf("droplet SSE at connection limit: status = %d, want 503", w.Code)
+	// Fill the droplet SSE pool with real connections without touching the
+	// log pool. The droplet endpoint must reject while the read-only log API
+	// and the log SSE pool remain available.
+	fillSSEPoolWithConnections(t, server, "/api/droplets/"+d.ID+"/events", maxDropletSSEConnections, "droplet")
+
+	overResp, err := http.Get(server.URL + "/api/droplets/" + d.ID + "/events")
+	if err != nil {
+		t.Fatal(err)
 	}
+	defer overResp.Body.Close()
+	assertSSEOverPoolLimit(t, overResp, "droplet")
 
 	origHome := os.Getenv("HOME")
 	defer os.Setenv("HOME", origHome)
@@ -3228,10 +3249,6 @@ func TestAPI_SSE_SeparateConnectionPools(t *testing.T) {
 }
 
 func TestAPI_LogSSE_ConnectionLimit(t *testing.T) {
-	orig := currentLogSSEConnections
-	defer func() { currentLogSSEConnections = orig }()
-	atomic.StoreInt64(&currentLogSSEConnections, maxLogSSEConnections)
-
 	origHome := os.Getenv("HOME")
 	defer os.Setenv("HOME", origHome)
 	tmpDir := t.TempDir()
@@ -3239,17 +3256,18 @@ func TestAPI_LogSSE_ConnectionLimit(t *testing.T) {
 
 	cfg := tempCfg(t)
 	mux := newDashboardMux(cfg, tempDB(t))
-	req := httptest.NewRequest(http.MethodGet, "/api/logs/events", nil)
-	w := httptest.NewRecorder()
-	mux.ServeHTTP(w, req)
-	if w.Code != http.StatusServiceUnavailable {
-		t.Errorf("log SSE at connection limit: status = %d, want 503", w.Code)
+	server := httptest.NewServer(mux)
+
+	// Fill the log SSE pool with real connections, then assert the next is
+	// rejected with 503.
+	fillSSEPoolWithConnections(t, server, "/api/logs/events", maxLogSSEConnections, "log")
+
+	overResp, err := http.Get(server.URL + "/api/logs/events")
+	if err != nil {
+		t.Fatal(err)
 	}
-	var body map[string]string
-	json.Unmarshal(w.Body.Bytes(), &body)
-	if !strings.Contains(body["error"], "too many") {
-		t.Errorf("error = %q, want 'too many' keyword", body["error"])
-	}
+	defer overResp.Body.Close()
+	assertSSEOverPoolLimit(t, overResp, "log")
 }
 
 // ── Filter session handlers ──

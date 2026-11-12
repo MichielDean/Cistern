@@ -776,13 +776,17 @@ The web dashboard exposes a REST API at `/api/` that mirrors all TUI operations.
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | `GET` | `/api/dashboard` | Full dashboard data (cataractae list, cistern queue, pooled/recent/unassigned items, flow activities, blocked-by map). All array fields are guaranteed `[]` (never JSON `null`) even when empty |
-| `GET` | `/api/dashboard/stream` | SSE stream of dashboard updates (pushed every 2 seconds) |
+| `GET` | `/api/dashboard/events` | SSE stream of dashboard updates (adaptive polling: 2s active, 5s idle). Sends `event: error` frames when a fetch fails (does not emit `data: null`). Max 32 concurrent connections — excess connections get `503` |
 
 ### SSE (Server-Sent Events)
+
+All SSE endpoints cap concurrent connections to prevent resource exhaustion (ci-5n337); excess connections receive `503` and do not consume a slot.
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | `GET` | `/api/droplets/{id}/events` | Real-time droplet updates (SSE stream, max 64 concurrent connections) |
+| `GET` | `/api/dashboard/events` | Real-time dashboard updates (max 32 concurrent connections) |
+| `GET` | `/api/logs/events` | Live log line stream (max 32 concurrent connections) |
 
 ### Filter Sessions
 
@@ -818,8 +822,20 @@ The web dashboard exposes a REST API at `/api/` that mirrors all TUI operations.
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | `GET` | `/api/logs` | Get recent log lines (query params: `?lines=500&source=castellarius`) |
-| `GET` | `/api/logs/events` | SSE stream of new log lines (query param: `?source=castellarius`) |
+| `GET` | `/api/logs/events` | SSE stream of new log lines (query param: `?source=castellarius`). Max 32 concurrent connections |
 | `GET` | `/api/logs/sources` | List available log sources with file size and last-modified time |
+
+### Debug Diagnostics
+
+Runtime memory/goroutine evidence endpoints (added after the ci-5n337 OOM investigation). These are registered outside `/api/` but are still wrapped by the same auth middleware — when `dashboard_api_key` is configured, they require the `Bearer` token just like the API endpoints. pprof heap profiles expose object contents, so they should only be reachable by trusted holders of the API key (the server binds 127.0.0.1 by default).
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/debug/memstats` | JSON memory snapshot: `rss_bytes` (from `/proc/self/statm`; falls back to `sys_bytes` on non-Linux), `heap_alloc_bytes`, `heap_sys_bytes`, `sys_bytes`, `num_gc`, `num_goroutine`, `fetched_at` |
+| `GET` | `/debug/pprof/heap` | pprof heap profile |
+| `GET` | `/debug/pprof/goroutine` | pprof goroutine dump |
+
+Additionally, when running with `ct dashboard --web`, a diagnostic ticker logs one memory sample line (RSS, heap, goroutines) to the dashboard log every 15 minutes, so leaks leave an RSS trail.
 
 ### Input validation
 

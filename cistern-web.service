@@ -14,6 +14,13 @@ ExecStart=/home/lobsterdog/go/bin/ct dashboard --web --addr :5737
 Restart=always
 RestartSec=10
 
+# Regression guard (ci-5n337): the web dashboard OOM'd at 2.6G after ~9d due
+# to unbounded SSE connections + a growing TUI pending frame buffer. Steady
+# state is tens of MB per soak sampling; 512M is 5x headroom for the
+# dashboard + Bubble Tea child. If the process ever exceeds this, systemd
+# kills it instead of letting a leak take down the host.
+MemoryMax=512M
+
 TimeoutStopSec=10
 KillMode=mixed
 KillSignal=SIGTERM
