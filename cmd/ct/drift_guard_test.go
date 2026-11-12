@@ -100,6 +100,36 @@ func TestShippedDefaultsNoRetiredModels(t *testing.T) {
 			}
 		}
 	}
+
+	// Non-test Go sources under internal/ and cmd/ must not pin a retired
+	// model either (production pins and even doc-comment examples count —
+	// comments get copied into new pins).
+	for _, walkRoot := range []string{
+		filepath.Join(root, "internal"),
+		filepath.Join(root, "cmd"),
+	} {
+		err := filepath.WalkDir(walkRoot, func(path string, d os.DirEntry, err error) error {
+			if err != nil {
+				return err
+			}
+			if d.IsDir() || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+				return nil
+			}
+			data, err := os.ReadFile(path)
+			if err != nil {
+				return err
+			}
+			for _, model := range retired {
+				if strings.Contains(string(data), model) {
+					t.Errorf("%s pins retired model %q — every spawn using it fails (see evals/metrics BASELINE)", path, model)
+				}
+			}
+			return nil
+		})
+		if err != nil {
+			t.Fatalf("walking %s: %v", walkRoot, err)
+		}
+	}
 }
 
 // TestCataractaeInstructionsReferenceShippedSkills verifies the stage identity

@@ -105,7 +105,7 @@ var builtins = []ProviderPreset{
 		Subcommand:       "run",
 		Args:             []string{"--dangerously-skip-permissions"},
 		ModelFlag:        "--model",
-		DefaultModel:     "ollama/glm-5.1:cloud",
+		DefaultModel:     "ollama/glm-5.3-flash:cloud",
 		PromptPositional: true,
 		InstructionsFile: "AGENTS.md",
 		AgentFlag:        "--agent",
