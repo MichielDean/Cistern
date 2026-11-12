@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+### Fix web dashboard memory growth + add runtime diagnostics (ci-5n337)
+
+Investigated and cured the cistern-web dashboard OOM (2.6G peak over ~9 days). Two unbounded buffers eliminated, plus runtime evidence tooling added so future leaks leave a trail.
+
+**Key changes:**
+- `cmd/ct/dashboard_web.go` — `/api/dashboard/events` SSE connections capped at 32 (was unlimited; excess connections get `503`). SSE connection counting refactored into a CAS-based `sseConnectionLimiter` struct (no package-level mutable state) reused by log/droplet/dashboard handlers
+- `cmd/ct/dashboard_web.go` — `DashboardTUI` pending-frame buffer capped at 1 MiB: frames exceeding the cap between repaint markers are discarded with a `slog.Warn`; `flushPendingFrame` now clones the pending buffer instead of aliasing it, so `lastFrame` cannot grow without bound in the 24/7 broadcast loop
+- `cmd/ct/dashboard_web.go` — dashboard SSE fetcher failures no longer silently produce `data: null` frames: an `event: error` frame (newline-sanitized) is sent and the hash baseline is preserved for adaptive backoff
+- `cmd/ct/dashboard_web.go` — new diagnostics: `GET /debug/memstats` (JSON: RSS from `/proc/self/statm`, heap, goroutines), `GET /debug/pprof/heap`, `GET /debug/pprof/goroutine`. All wrapped by the dashboard auth middleware (Bearer token required when an API key is configured). A 15-minute diagnostic ticker logs one memory-sample line in `ct dashboard --web` mode
+- `cmd/ct/dashboard_web.go` — `setSSEHeaders` helper extracted (was duplicated across three SSE handlers)
+- `cistern-web.service` — `MemoryMax=512M` regression guard (5× measured steady-state headroom); systemd kills the unit instead of letting a leak take down the host. Restart policy unchanged- `cmd/ct/dashboard_api_test.go` / `cmd/ct/dashboard_web_diag_test.go` — new regression tests: connection-cap rejection, pending-frame bounding (marker-free feed), flush anti-aliasing, fetcher-error `event: error` frames with newline escaping, memstats/heap/goroutine endpoints
+
 ### Auto-restart cistern-web on OOM kill
 
 The web dashboard service (`cistern-web.service`) used `Restart=on-abort`, which does not cover kernel OOM kills. When the dashboard leaked to 2.6G and the OOM killer sent SIGKILL, systemd marked the unit `failed (oom-kill)` and left it down indefinitely — the Lobsterdog dashboard link to `:5737` went dead until manually restarted. Switch to `Restart=always` (matching `cistern-castellarius`) so the dashboard recovers from OOM, crashes, and reboots without intervention. Also raise `RestartSec` to 10s to back off under memory pressure, and add `StartLimitAction=none` for consistency with the Castellarius unit.
