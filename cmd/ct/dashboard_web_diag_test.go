@@ -244,7 +244,9 @@ func TestDashboardEventsSSE_FetcherErrorSendsErrorEvent(t *testing.T) {
 		if calls == 1 {
 			return &DashboardData{FlowingCount: 3}, nil
 		}
-		return nil, fmt.Errorf("db unavailable")
+		// Newlines must be escaped: a raw newline would break SSE framing by
+		// starting multiple data lines/frames.
+		return nil, fmt.Errorf("db unavailable\nsecond line")
 	}
 	handler := makeDashboardEventsHandler("cfg", "db", fetcher, 20*time.Millisecond, time.Hour)
 	ts := httptest.NewServer(handler)
@@ -278,6 +280,11 @@ func TestDashboardEventsSSE_FetcherErrorSendsErrorEvent(t *testing.T) {
 	}
 	if strings.Contains(body, "data: null") {
 		t.Errorf("stream contains 'data: null'; got %q", body)
+	}
+	// The embedded newline must be escaped so the error stays a single SSE
+	// data line — a raw second line would break SSE framing.
+	if strings.Contains(body, "\ndata: second line") {
+		t.Errorf("error newline not escaped: second line emitted as its own data line; got %q", body)
 	}
 }
 

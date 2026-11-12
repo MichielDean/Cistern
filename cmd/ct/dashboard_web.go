@@ -738,10 +738,6 @@ func (d *DashboardTUI) scheduleFlush() {
 // by the flush timer when no second repaint marker has arrived within tuiFrameFlushDelay.
 // gen is the generation at the time the timer was armed; if d.flushGen has advanced
 // the callback is stale and must not overwrite a properly committed lastFrame.
-// flushPendingFrame commits the current pending frame as lastFrame. It is called
-// by the flush timer when no second repaint marker has arrived within tuiFrameFlushDelay.
-// gen is the generation at the time the timer was armed; if d.flushGen has advanced
-// the callback is stale and must not overwrite a properly committed lastFrame.
 func (d *DashboardTUI) flushPendingFrame(gen uint64) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
@@ -864,7 +860,7 @@ func makeDashboardEventsHandler(cfgPath, dbPath string, fetcher func(string, str
 			}
 		}
 		sendError := func(err error) {
-			fmt.Fprintf(w, "event: error\ndata: %s\n\n", err.Error())
+			fmt.Fprintf(w, "event: error\ndata: %s\n\n", sanitizeSSEData(err.Error()))
 			flusher.Flush()
 		}
 
@@ -2777,7 +2773,9 @@ func handleDebugMemstats() http.HandlerFunc {
 		}
 		ms := collectDashboardMemStats()
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(ms) //nolint:errcheck
+		if err := json.NewEncoder(w).Encode(ms); err != nil {
+			slog.Debug("cistern: dashboard: memstats encode failed", "error", err)
+		}
 	}
 }
 
