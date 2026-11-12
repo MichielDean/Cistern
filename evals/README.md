@@ -13,6 +13,13 @@ instructions, or stage-skill wiring must pass this suite before merge.
 | `cistern-filter-promptfooconfig.yaml` | Filtration behavior under the grilling methodology |
 | `cistern-triage-promptfooconfig.yaml` | Triage state-machine decisions incl. verify-before-grill |
 | `cistern-wizard-promptfooconfig.yaml` | Wizard staging discipline (scoped stages, values, secrets) |
+| `cistern-architect-promptfooconfig.yaml` | Architect produces verifiable briefs (file:line constraints, not vague guidance) |
+| `cistern-implementer-promptfooconfig.yaml` | Implementer honors the brief as a contract, uses TDD, files issues for gaps |
+| `cistern-reviewer-promptfooconfig.yaml` | Reviewer catches planted contract violations, recirculates (not passes bad code) |
+| `cistern-qa-promptfooconfig.yaml` | QA catches tests that pass but prove nothing, demands integration tests for state-dependent code |
+| `cistern-security-promptfooconfig.yaml` | Security catches planted auth bypass, injection, secret exposure, path traversal |
+| `cistern-docs-writer-promptfooconfig.yaml` | Docs writer documents user-visible changes, flags missing migration docs for rewrites |
+| `cistern-delivery-promptfooconfig.yaml` | Delivery gates on CI green + MERGED, resolves conflicts, recirculates after 2 failed fix attempts |
 | `sync-eval-data.sh` | Extracts live prompts from Go sources into `eval-data/` (single source of truth) |
 | `eval-data/` | Generated — don't hand-edit |
 | `metrics/metrics.py` | Per-cataractae flow statistics from the cistern events table |

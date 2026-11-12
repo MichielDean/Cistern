@@ -23,6 +23,15 @@ for f in filtration.txt triage.txt wizard.txt; do
 done
 echo "    eval-data extracted: filtration/triage/wizard"
 
+# Verify cataractae INSTRUCTIONS.md exist on disk (read at runtime, not synced)
+for role in architect implementer reviewer qa security docs_writer delivery; do
+    if [ ! -s "$REPO_ROOT/cataractae/$role/INSTRUCTIONS.md" ]; then
+        echo "FAIL: cataractae/$role/INSTRUCTIONS.md missing or empty" >&2
+        exit 1
+    fi
+done
+echo "    cataractae instructions present: architect/implementer/reviewer/qa/security/docs_writer/delivery"
+
 if grep -rn "glm-5.1:cloud" "$REPO_ROOT/cmd/ct/assets/cistern.yaml" "$REPO_ROOT/cistern.yaml" "$REPO_ROOT/aqueduct/aqueduct.yaml" 2>/dev/null; then
     echo "FAIL: retired model glm-5.1:cloud found in shipped configs (retired 2026-09-25 — see session log 15:27)" >&2
     exit 1
@@ -54,7 +63,17 @@ echo "    methodology directives intact (filter/triage/wizard)"
 echo "==> promptfoo evals (sequential)"
 FLAKES_ALLOWED=2
 FAIL_TOTAL=0
-for cfg in cistern-filter-promptfooconfig.yaml cistern-triage-promptfooconfig.yaml cistern-wizard-promptfooconfig.yaml; do
+for cfg in \
+    cistern-filter-promptfooconfig.yaml \
+    cistern-triage-promptfooconfig.yaml \
+    cistern-wizard-promptfooconfig.yaml \
+    cistern-architect-promptfooconfig.yaml \
+    cistern-implementer-promptfooconfig.yaml \
+    cistern-reviewer-promptfooconfig.yaml \
+    cistern-qa-promptfooconfig.yaml \
+    cistern-security-promptfooconfig.yaml \
+    cistern-docs-writer-promptfooconfig.yaml \
+    cistern-delivery-promptfooconfig.yaml; do
     echo "--- $cfg"
     (cd "$DIR" && promptfoo eval -c "$cfg" --no-cache > /tmp/pf-"$cfg".out 2>&1)
     code=$?

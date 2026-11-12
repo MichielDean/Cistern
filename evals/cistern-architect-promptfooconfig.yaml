@@ -1,0 +1,123 @@
+maxConcurrency: 1
+
+description: "Architect cataractae eval — proves the architect produces verifiable briefs (file:line constraints), not vague guidance"
+
+providers:
+  - id: file://providers/glm_flash.py
+    config:
+      temperature: 0.1
+      reasoning_effort: low
+
+prompts:
+  - |
+    You are operating as the architect cataractae. Follow your instructions exactly.
+
+    <SystemInstructions>
+    {{system}}
+    </SystemInstructions>
+
+    The droplet and codebase context arrive as:
+
+    <user_message>
+    {{situation}}
+    </user_message>
+
+    Produce the design brief. Write it as you would write DESIGN_BRIEF.md.
+
+defaultTest:
+  vars:
+    system: file://../cataractae/architect/INSTRUCTIONS.md
+  options:
+    rubricPrompt: |
+      You are grading output against a rubric. If the statement in the rubric is true, the output passes.
+      Respond with NOTHING except a single JSON object, no prose before or after, no markdown:
+      {"reason": "<concise explanation>", "pass": <true or false>, "score": <1.0 or 0.0>}
+      <Output>
+      {{ output }}
+      </Output>
+      <Rubric>
+      {{ rubric }}
+      </Rubric>
+      JSON object only.
+    provider:
+      id: file://providers/glm_flash.py
+      config:
+        temperature: 0.1
+        max_tokens: 16000
+        reasoning_effort: low
+
+tests:
+  - description: "rough idea with codebase — brief contains file:line constraints, not 'follow existing patterns'"
+    vars:
+      situation: |
+        Droplet: "Add a notifications system so the dashboard updates live when a droplet changes stage."
+
+        Codebase (read these files for pattern evidence):
+        - cmd/ct/dashboard_web.go:740 — SSE handler at /api/dashboard/events polls the DB every 2s
+        - internal/castellarius/dispatch.go:42 — existing EventBus type with Publish and Subscribe methods
+        - cmd/ct/dashboard_web.go:1020 — existing WebSocket gateway at /ws/tui
+        - internal/castellarius/dispatch.go:80 — DispatchEvent(ctx, event) is the call site for stage changes
+
+        Produce the design brief for a notifications system that broadcasts droplet stage changes via the existing EventBus to SSE clients.
+    assert:
+      - type: llm-rubric
+        value: "The brief contains at least one constraint that references a SPECIFIC file path with line number (e.g. 'cmd/ct/dashboard_web.go:740') — 'follow existing patterns' or 'match conventions' WITHOUT a file:line is too vague and fails this rubric."
+      - type: llm-rubric
+        value: "The brief includes an API Surface Checklist with at least one checkbox item that has a contract clause (what the method promises to return for every input)."
+      - type: llm-rubric
+        value: "The brief is a contract document, not a suggestion list — it uses mandatory language ('must', 'MUST') for its constraints, not 'should' or 'could'."
+
+  - description: "rewrite droplet with codebase — brief includes Migration Surface Analysis"
+    vars:
+      situation: |
+        Droplet: "Rewrite the llmem CLI in Go. The existing tool is Python, stores memories in SQLite.
+        Users have existing databases with data that must work with the new version."
+        This is a rewrite of an existing tool.
+
+        Codebase (read these for migration surface evidence):
+        - The existing Python tool is at ~/source/llmem/, CLI entry point cli.py:12
+        - Existing SQLite schema: memories table (columns: id, content, type, embedding, created_at), no migrations table
+        - Existing CLI surface: llmem add --type <t> "content", llmem search "q", llmem stats, llmem dream --dry-run
+        - No Go code exists yet — this is a full rewrite
+    assert:
+      - type: llm-rubric
+        value: "The brief includes a 'Migration Surface Analysis' section (or explicitly addresses migration compatibility) because the droplet is a rewrite — a rewrite brief that omits migration compatibility is incomplete."
+      - type: llm-rubric
+        value: "The brief enumerates migration scenarios: what happens when the new Go code opens a database created by the previous Python version (existing data, CLI flag changes, plugin interfaces)."
+
+  - description: "droplet mentions a dependency — brief verifies it is importable"
+    vars:
+      situation: |
+        Droplet: "Use sqlite-vec for vector search in the new Go memory store."
+
+        Codebase context: the new Go memory store will use database/sql from the stdlib.
+        go.mod currently does not include sqlite-vec. The brief must verify sqlite-vec is importable in the Go ecosystem, not just name it.
+    assert:
+      - type: llm-rubric
+        value: "The brief verifies the named dependency (sqlite-vec) is importable in the target ecosystem — it references the import path or confirms integration, not just 'use sqlite-vec' without verification."
+
+  - description: "vague droplet without codebase access — architect recirculates (cannot fabricate file:line evidence)"
+    vars:
+      situation: |
+        Droplet: "Make the dashboard better. Not sure where to start."
+
+        No codebase files are provided. No file paths, no line numbers, no existing patterns to investigate.
+        This is intentionally vague — the architect cannot verify any constraint against a codebase it has not read.
+    assert:
+      - type: llm-rubric
+        value: "The architect recirculates (signal: recirculate) because the One Principle requires every constraint be verifiable with a specific file path or line number, and no codebase was provided to investigate. The architect does NOT fabricate file:line evidence it has not read — recirculating is the correct behavior here."
+
+  - description: "deep-module vocabulary — brief uses module/interface/seam/depth terms"
+    vars:
+      situation: |
+        Droplet: "Add a rate limiter to the dashboard SSE handler so a slow client cannot exhaust goroutines."
+
+        Codebase (read these files):
+        - cmd/ct/dashboard_web.go:740 — SSE handler, no existing rate limiter
+        - cmd/ct/dashboard_web.go:860 — event loop in the same file
+        - internal/castellarius/dispatch.go:42 — EventBus
+
+        The brief must frame the rate limiter as a module with a named interface and seam.
+    assert:
+      - type: llm-rubric
+        value: "The brief uses deep-module design vocabulary: at least one of 'module', 'interface', 'seam', 'adapter', 'depth', 'locality', 'leverage' appears in the brief to name structural decisions. The brief frames the rate limiter as a module with a named interface and seam, not just 'add a rate limiter'."

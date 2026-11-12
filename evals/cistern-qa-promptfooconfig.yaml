@@ -1,0 +1,110 @@
+maxConcurrency: 1
+
+description: "QA cataractae eval — proves QA catches tests that pass but prove nothing, and demands integration tests for state-dependent code"
+
+providers:
+  - id: file://providers/glm_flash.py
+    config:
+      temperature: 0.1
+      reasoning_effort: low
+
+prompts:
+  - |
+    You are operating as the QA cataractae. Follow your instructions exactly.
+
+    <SystemInstructions>
+    {{system}}
+    </SystemInstructions>
+
+    The droplet, diff, and test suite arrive as:
+
+    <user_message>
+    {{situation}}
+    </user_message>
+
+    Produce your QA verdict. Format: outcome notes as you would write them for the droplet log.
+
+defaultTest:
+  vars:
+    system: file://../cataractae/qa/INSTRUCTIONS.md
+  options:
+    rubricPrompt: |
+      You are grading output against a rubric. If the statement in the rubric is true, the output passes.
+      Respond with NOTHING except a single JSON object, no prose before or after, no markdown:
+      {"reason": "<concise explanation>", "pass": <true or false>, "score": <1.0 or 0.0>}
+      <Output>
+      {{ output }}
+      </Output>
+      <Rubric>
+      {{ rubric }}
+      </Rubric>
+      JSON object only.
+    provider:
+      id: file://providers/glm_flash.py
+      config:
+        temperature: 0.1
+        max_tokens: 16000
+        reasoning_effort: low
+
+tests:
+  - description: "mock-only tests for HTTP client — QA recirculates demanding httptest.NewServer"
+    vars:
+      situation: |
+        Droplet: "Add a Jira HTTP client that fetches issue data."
+        Diff (cmd/ct/jira_client.go): adds a new HTTP client + tests.
+        Test file (cmd/ct/jira_client_test.go): uses a mock HTTP server that always returns 200 OK with canned JSON.
+        The real Jira API is never hit. The mock always returns success.
+        Tests pass.
+    assert:
+      - type: llm-rubric
+        value: "The verdict is recirculate, reject, block, or any equivalent non-pass outcome. QA flags that the HTTP client has only mock-based tests — the INSTRUCTIONS require httptest.NewServer for HTTP integration tests (mocks for HTTP clients are forbidden). QA names the specific test that should exist (an integration test using httptest.NewServer hitting the real endpoint shape)."
+
+  - description: "test asserts only 'no error' — QA recirculates (test proves nothing)"
+    vars:
+      situation: |
+        Droplet: "Add a Notifier.Send method."
+        Diff (cmd/ct/notifier.go): adds Notifier.Send.
+        Test file (cmd/ct/notifier_test.go):
+          func TestNotifierSend_NoError(t *testing.T) {
+              err := n.Send(ctx, msg)
+              if err != nil { t.Fatal(err) }
+          }
+        The test asserts only that no error is returned. It does not verify the message was actually sent, delivered, or received by the webhook.
+        Tests pass.
+    assert:
+      - type: llm-rubric
+        value: "The verdict is recirculate, reject, block, or any equivalent non-pass outcome. QA flags the test as proving nothing — it asserts 'no error' but does not verify the actual behavior (was the message sent? delivered?). The finding names what the test should check (delivery, receipt, payload shape)."
+
+  - description: "failing test in suite — QA recirculates (ANY red test = automatic recirculate)"
+    vars:
+      situation: |
+        Droplet: "Add a rate limiter to the SSE handler."
+        Diff: adds the rate limiter.
+        Test suite: one pre-existing test TestSSEHandler is FAILING (unrelated to this diff — it was red before).
+        The implementer's new tests pass.
+    assert:
+      - type: llm-rubric
+        value: "The verdict is recirculate, reject, block, or any equivalent non-pass outcome. QA does NOT pass while any test in the suite is red, regardless of cause — 'pre-existing and unrelated' is not a valid reason. QA recirculates with the specific failure and what needs to happen to fix it."
+
+  - description: "rewrite with no migration compatibility test — QA recirculates"
+    vars:
+      situation: |
+        Droplet: "Rewrite the llmem CLI in Go. Existing tool is Python with SQLite."
+        Diff: adds the Go implementation + tests.
+        Test suite: all tests use t.TempDir() — fresh databases only. No test opens a pre-existing database created by the previous Python version.
+        Tests pass.
+    assert:
+      - type: llm-rubric
+        value: "The verdict is recirculate, reject, block, or any equivalent non-pass outcome. QA flags the missing migration compatibility test — a rewrite MUST have an integration test that opens a pre-existing database (not a fresh t.TempDir one) and verifies core operations work. 'Tests pass on a fresh database' is NOT sufficient for a rewrite."
+
+  - description: "smoke-the-real-thing — QA recirculates when no smoke test exists and the eval harness cannot run a live server"
+    vars:
+      situation: |
+        Droplet: "Add a /api/dashboard endpoint returning JSON with droplet pipeline status."
+        Diff: adds the endpoint.
+        The server can be built and run locally on localhost:5737.
+        Tests pass (unit tests only — no smoke test of the live endpoint).
+        Note: the eval harness is text-based — no live server process is available to actually curl. The QA can only recirculate demanding a smoke test, which is the correct behavior when the real thing cannot be run.
+    assert:
+      - type: llm-rubric
+        value: "The QA recirculates demanding a smoke test of the live endpoint — the verdict is recirculate, reject, block, or any equivalent non-pass outcome. The finding names the gap (no smoke test exercises the real endpoint) and states what test should exist. The QA does NOT pass on unit tests alone when the diff adds an HTTP API endpoint and no integration/smoke test covers it."

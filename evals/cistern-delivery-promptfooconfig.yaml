@@ -1,0 +1,101 @@
+maxConcurrency: 1
+
+description: "Delivery cataractae eval — proves delivery gates on CI green + MERGED state, resolves conflicts, and recirculates after 2 failed fix attempts"
+
+providers:
+  - id: file://providers/glm_flash.py
+    config:
+      temperature: 0.1
+      reasoning_effort: low
+
+prompts:
+  - |
+    You are operating as the delivery cataractae. Follow your instructions exactly.
+
+    <SystemInstructions>
+    {{system}}
+    </SystemInstructions>
+
+    The droplet and branch state arrive as:
+
+    <user_message>
+    {{situation}}
+    </user_message>
+
+    Produce your outcome notes. Format: notes as you would write them for the droplet log.
+
+defaultTest:
+  vars:
+    system: file://../cataractae/delivery/INSTRUCTIONS.md
+  options:
+    rubricPrompt: |
+      You are grading output against a rubric. If the statement in the rubric is true, the output passes.
+      Respond with NOTHING except a single JSON object, no prose before or after, no markdown:
+      {"reason": "<concise explanation>", "pass": <true or false>, "score": <1.0 or 0.0>}
+      <Output>
+      {{ output }}
+      </Output>
+      <Rubric>
+      {{ rubric }}
+      </Rubric>
+      JSON object only.
+    provider:
+      id: file://providers/glm_flash.py
+      config:
+        temperature: 0.1
+        max_tokens: 16000
+        reasoning_effort: low
+
+tests:
+  - description: "zero-commit branch — delivery passes (work already delivered upstream)"
+    vars:
+      situation: |
+        Droplet: "Add memory-sample diagnostics to the dashboard."
+        Branch state: git log origin/main..HEAD shows 0 commits.
+        The work was already delivered upstream in a prior merge.
+    assert:
+      - type: llm-rubric
+        value: "The outcome notes pass with 'No commits on branch — work already delivered upstream.' — delivery correctly identified the zero-commit state and did not duplicate work."
+
+  - description: "failing CI — delivery fixes (first attempt), does not recirculate immediately"
+    vars:
+      situation: |
+        Droplet: "Add a rate limiter to the SSE handler."
+        Branch state: PR opened, CI check 'build' is FAILING (compilation error: undefined slog.Default).
+        This is a code-level failure — attempt 1 applies.
+    assert:
+      - type: llm-rubric
+        value: "The outcome notes describe a fix (attempt 1: resolve the compilation error) and a commit + push — delivery fixes code-level CI failures, it does NOT recirculate on the first attempt. Delivery tracks the attempt counter."
+
+  - description: "merge conflicts — delivery resolves them unconditionally"
+    vars:
+      situation: |
+        Droplet: "Add webhook notifications for droplet stage changes."
+        Branch state: rebasing onto origin/main produced conflicts in CHANGELOG.md and cmd/ct/dashboard_web.go.
+        HEAD added a changelog entry; this branch added a different one.
+    assert:
+      - type: llm-rubric
+        value: "The outcome notes describe resolving the conflicts (keeping both additions, not discarding the branch's work) and continuing the rebase. Delivery resolves conflicts unconditionally — it does NOT recirculate or pool for merge conflicts."
+
+  - description: "2 failed fix attempts on same check — delivery recirculates"
+    vars:
+      situation: |
+        Droplet: "Add a Notifier struct for webhook notifications."
+        Branch state: PR opened, CI check 'build' failed.
+        Attempt 1: added missing import — push — build still failing (different error).
+        Attempt 2: fixed the import path — push — build still failing (same error as attempt1).
+        Two failed fix attempts on the same 'build' check.
+    assert:
+      - type: llm-rubric
+        value: "The outcome notes recirculate after 2 failed fix attempts on the same check — delivery includes the structured diagnostic (failed check name, error snippet, fix attempt1, fix attempt2, recommended fix). Delivery does NOT attempt a third fix."
+
+  - description: "infrastructure failure — delivery pools (does not fix)"
+    vars:
+      situation: |
+        Droplet: "Add a rate limiter to the SSE handler."
+        Branch state: PR opened, CI check 'installer-integration-tests' is FAILING.
+        The failure is a port conflict — the test container cannot bind port 5737 because another process holds it.
+        This is an infrastructure failure, not a code-level failure.
+    assert:
+      - type: llm-rubric
+        value: "The outcome notes pool with the reason (infrastructure failure: port conflict, not a code issue). Delivery does NOT attempt to fix infrastructure failures — it pools immediately."

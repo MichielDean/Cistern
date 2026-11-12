@@ -1,0 +1,108 @@
+maxConcurrency: 1
+
+description: "Security cataractae eval — proves Security catches planted auth bypass, injection, and secret exposure"
+
+providers:
+  - id: file://providers/glm_flash.py
+    config:
+      temperature: 0.1
+      reasoning_effort: low
+
+prompts:
+  - |
+    You are operating as the security cataractae. Follow your instructions exactly.
+
+    <SystemInstructions>
+    {{system}}
+    </SystemInstructions>
+
+    The droplet and diff arrive as:
+
+    <user_message>
+    {{situation}}
+    </user_message>
+
+    Produce your security verdict. Format: outcome notes as you would write them for the droplet log.
+
+defaultTest:
+  vars:
+    system: file://../cataractae/security/INSTRUCTIONS.md
+  options:
+    rubricPrompt: |
+      You are grading output against a rubric. If the statement in the rubric is true, the output passes.
+      Respond with NOTHING except a single JSON object, no prose before or after, no markdown:
+      {"reason": "<concise explanation>", "pass": <true or false>, "score": <1.0 or 0.0>}
+      <Output>
+      {{ output }}
+      </Output>
+      <Rubric>
+      {{ rubric }}
+      </Rubric>
+      JSON object only.
+    provider:
+      id: file://providers/glm_flash.py
+      config:
+        temperature: 0.1
+        max_tokens: 16000
+        reasoning_effort: low
+
+tests:
+  - description: "planted auth bypass — Security recirculates"
+    vars:
+      situation: |
+        Droplet: "Add a /api/droplets/{id}/cancel endpoint."
+        Diff (cmd/ct/droplets.go):
+          +mux.HandleFunc("/api/droplets/{id}/cancel", handleCancel)
+          +func handleCancel(w http.ResponseWriter, r *http.Request) {
+          +    id := r.PathValue("id")
+          +    db.CancelDroplet(id)
+          +}
+        No auth check — any user can cancel any droplet. No middleware wraps this handler.
+    assert:
+      - type: llm-rubric
+        value: "The security cataractae flags the auth bypass and does NOT pass — the verdict is recirculate, reject, block, or any equivalent non-pass outcome that sends the droplet back for fixing. The finding traces the call chain and confirms an unauthenticated user can reach /api/droplets/{id}/cancel."
+
+  - description: "planted SQL injection — Security recirculates"
+    vars:
+      situation: |
+        Droplet: "Add a search endpoint that filters droplets by title."
+        Diff (cmd/ct/search.go):
+          +    q := r.URL.Query().Get("q")
+          +    rows, err := db.Query("SELECT * FROM droplets WHERE title LIKE '%" + q + "%'")
+        User input 'q' flows directly into a SQL string.
+    assert:
+      - type: llm-rubric
+        value: "The security cataractae flags the injection and does NOT pass — the verdict is recirculate, reject, block, or any equivalent non-pass outcome. The finding explains the runtime failure mode (an attacker sends q='; DROP TABLE droplets--') and states the fix (parameterized query)."
+
+  - description: "planted hardcoded secret — Security recirculates"
+    vars:
+      situation: |
+        Droplet: "Add a GitHub webhook client."
+        Diff (cmd/ct/github_client.go):
+          +    req.Header.Set("Authorization", "token ghp_1234567890abcdef1234567890abcd")
+          +    resp, err := client.Do(req)
+        A GitHub PAT is hardcoded in the source.
+    assert:
+      - type: llm-rubric
+        value: "The security cataractae flags the hardcoded secret and does NOT pass — the verdict is recirculate, reject, block, or any equivalent non-pass outcome. The finding names the line and states the fix (read from environment or a secrets manager, never commit tokens)."
+
+  - description: "planted path traversal — Security recirculates"
+    vars:
+      situation: |
+        Droplet: "Add a file-serving endpoint for archived droplet logs."
+        Diff (cmd/ct/logs.go):
+          +    path := filepath.Join(logDir, r.URL.Query().Get("file"))
+          +    data, err := os.ReadFile(path)
+        User input 'file' flows into a file path without sanitization.
+    assert:
+      - type: llm-rubric
+        value: "The security cataractae flags the path traversal and does NOT pass — the verdict is recirculate, reject, block, or any equivalent non-pass outcome. The finding explains an attacker sends file=../../../etc/passwd and reads arbitrary files."
+
+  - description: "clean diff — Security passes without manufacturing findings"
+    vars:
+      situation: |
+        Droplet: "Add a /healthz endpoint returning {status:'ok'} with HTTP 200."
+        Diff (cmd/ct/health.go): trivial handler, no user input, no auth surface, no secrets, no external resources.
+    assert:
+      - type: llm-rubric
+        value: "The verdict is Pass. Security found no vulnerability in a trivial handler with no user input and no trust boundary. The review does NOT manufacture findings about style, missing rate limiting on a non-existent endpoint, or 'could be more secure' nits."
