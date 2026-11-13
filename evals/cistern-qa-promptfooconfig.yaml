@@ -123,4 +123,4 @@ tests:
         the security fix is sound.
     assert:
       - type: llm-rubric
-        value: "The QA verdict addresses QA's domain (test quality, integration coverage, contract of the tested behavior). The QA does NOT attempt to validate Review's or Security's previous findings — it defers those to their owners — and does not pass or fail based on re-judging the security fix."
+        value: "The QA verdict rests on QA's domain: test quality, integration coverage, and the contract of the tested behavior. Verifying that tests cover the prior Review/Security fixes is QA's job and passes. What QA must not do is re-adjudicate whether the fixes themselves are sound — Security owns the injection/secret judgments, Review owns the structural ones. The pass/fail decision must not hinge on re-judging the fix's correctness."

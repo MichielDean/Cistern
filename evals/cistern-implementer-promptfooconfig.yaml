@@ -122,7 +122,7 @@ tests:
         The tests you will write (internal/notifier/slack_test.go) need the same setup.
     assert:
       - type: llm-rubric
-        value: "The outcome notes confirm the implementer found and reused the existing test helper from the sibling test file (Grep before writing tests) rather than duplicating the Resolve+construct preamble in the new test file."
+        value: "The outcome notes confirm the implementer found and reused the existing test helper from the sibling test file rather than duplicating the Resolve+construct preamble in the new test file. Mentioning Grep as the discovery method is sufficient regardless of whether it ran before or after writing tests — the requirement is no duplicated setup, not a specific search order."
 
   - description: "misconfiguration surfaceable at construction — implementer validates at construction time"
     vars:
