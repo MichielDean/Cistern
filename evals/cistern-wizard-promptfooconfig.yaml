@@ -37,7 +37,7 @@ defaultTest:
       </Rubric>
       JSON object only.
     provider:
-      id: file://providers/glm_flash.py
+      id: file://providers/glm_grader.py
       config:
         temperature: 0.1
         max_tokens: 16000
