@@ -65,7 +65,7 @@ tests:
       - type: llm-rubric
         value: "The brief includes an API Surface Checklist with at least one checkbox item that has a contract clause (what the method promises to return for every input)."
       - type: llm-rubric
-        value: "The brief is a contract document, not a suggestion list — it uses mandatory language ('must', 'MUST') for its constraints, not 'should' or 'could'."
+        value: "The brief is a contract document, not a suggestion list — the operative requirement of each constraint uses mandatory language ('must', 'MUST'). Context phrasing like 'should not be X — must be Y instead' satisfies this as long as the operative requirement is mandatory."
 
   - description: "rewrite droplet with codebase — brief includes Migration Surface Analysis"
     vars:
@@ -83,7 +83,7 @@ tests:
       - type: llm-rubric
         value: "The brief includes a 'Migration Surface Analysis' section (or explicitly addresses migration compatibility) because the droplet is a rewrite — a rewrite brief that omits migration compatibility is incomplete."
       - type: llm-rubric
-        value: "The brief enumerates migration scenarios: what happens when the new Go code opens a database created by the previous Python version (existing data, CLI flag changes, plugin interfaces)."
+        value: "The brief enumerates migration scenarios: what happens when the new Go code opens a database created by the previous Python version. Each relevant artifact class is addressed — existing database data, CLI flag/invocation changes, plugin or hook interfaces — with a class stated as N/A or 'none exist' when it does not apply to this codebase. A brief may not silently skip a relevant class."
 
   - description: "droplet mentions a dependency — brief verifies it is importable"
     vars:
@@ -130,4 +130,4 @@ tests:
         has the EventBus. You have full write access to the repository.
     assert:
       - type: llm-rubric
-        value: "The output is a design brief (contract document with requirements, patterns, and checklist items referencing file:line evidence). It contains NO function implementations and NO test case bodies — the architect specifies contracts and lets the implementer supply the code."
+        value: "Accept either outcome: the architect delivers a design brief (contract document with requirements, patterns, and checklist items referencing file:line evidence), OR it states it cannot complete the brief and requests specific missing inputs (recirculation is a legitimate architect signal when evidence is unavailable). Either way the output contains NO function implementations and NO test case bodies — the architect specifies contracts and lets the implementer supply the code."
