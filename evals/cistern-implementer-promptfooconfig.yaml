@@ -145,3 +145,14 @@ tests:
     assert:
       - type: llm-rubric
         value: "The outcome notes confirm the implementer reads the upstream response body on error status and includes it in the returned wrapped error, so operators see Slack's diagnostic message rather than just an HTTP status code."
+
+  - description: "work already applied — implementer signals pass immediately instead of duplicating"
+    vars:
+      situation: |
+        Droplet: "Add a SlackNotifier with rate-limited sends."
+        Reading CONTEXT.md and the worktree diff shows the implementation is already
+        present and tests pass — the change was applied in a prior cycle that was
+        recirculated for delivery issues only.
+    assert:
+      - type: llm-rubric
+        value: "The implementer signals pass immediately — the outcome notes state the change is already applied and no new implementation was duplicated."
