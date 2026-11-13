@@ -1,9 +1,10 @@
-"""Custom promptfoo provider: glm-5.3-flash:cloud via Ollama /v1, reasoning_effort=low.
+"""Custom promptfoo subject provider for the cataractae eval suite.
 
-Non-streaming call, returns only `content` (reasoning stays in the separate
-field — promptfoo's built-in providers concatenate reasoning deltas into the
-output, which pollutes assertions). Retries on empty/error responses: ollama
-under concurrency occasionally returns truncated or empty completions.
+Subject model under test. Configured per-config in YAML (providers.config.model);
+default glm-5.3-flash:cloud. Non-streaming call, returns only `content` (reasoning
+stays in the separate field — promptfoo's built-in providers concatenate reasoning
+deltas into the output, which pollutes assertions). Retries on empty/error
+responses: ollama under concurrency occasionally returns truncated completions.
 """
 import json
 import os
@@ -15,13 +16,17 @@ def call_api(prompt, options, context):
     config = options.get('config', {}) or {}
     api_base = config.get('apiBaseUrl', 'http://localhost:11434/v1')
     body = {
-        'model': os.environ.get('GLM_EVAL_MODEL', 'glm-5.3-flash:cloud'),
+        'model': config.get('model', 'glm-5.3-flash:cloud'),
         'messages': [{'role': 'user', 'content': prompt}],
         'temperature': config.get('temperature', 0.1),
         'max_tokens': config.get('max_tokens', 8000),
         'stream': False,
         'reasoning_effort': config.get('reasoning_effort', 'low'),
     }
+    return _post(api_base, body, config)
+
+
+def _post(api_base, body, config):
     last_err = None
     for attempt in range(3):
         req = urllib.request.Request(
@@ -37,7 +42,7 @@ def call_api(prompt, options, context):
             dbg = os.environ.get('GLM_FLASH_DEBUG_LOG')
             if dbg:
                 with open(dbg, 'a') as f:
-                    f.write(json.dumps({'prompt_head': str(prompt)[:200], 'content': content[:1500], 'tokens': usage}) + '\n')
+                    f.write(json.dumps({'prompt_head': str(body['messages'][-1]['content'])[:200], 'content': content[:1500], 'tokens': usage}) + '\n')
             if content.strip():
                 return {
                     'output': content,

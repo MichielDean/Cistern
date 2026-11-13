@@ -5,6 +5,7 @@ description: "Reviewer cataractae eval — proves the reviewer catches planted c
 providers:
   - id: file://providers/glm_flash.py
     config:
+      model: glm-5.3-flash:cloud
       temperature: 0.1
       reasoning_effort: low
 
@@ -42,6 +43,7 @@ defaultTest:
     provider:
       id: file://providers/glm_grader.py
       config:
+        model: glm-5.3-flash:cloud
         temperature: 0.1
         max_tokens: 16000
         reasoning_effort: low
