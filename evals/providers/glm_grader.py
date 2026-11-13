@@ -1,8 +1,12 @@
 """Custom promptfoo grader provider: model selectable via GLM_EVAL_GRADER env.
 
-Defaults to beam:cloud — selected by judge A/B (2026-11-13): zero rubric
-flakes across 18 graded assertions vs 1/18 for glm-5.3-flash and glm-5.3,
-and a distinct model family from the glm subject (no self-grading bias).
+Defaults to glm-5.3-flash:cloud. Grader A/B (2026-11-13, subject=glm-5.3-flash):
+flash and kimi-k3.1-pro/minimax had identical flake rates on the implementer
+suite (1/18 each, beam/deepseek-v4.1-flash 0/18), but flash aligned best with
+the current rubric statements across triage/wizard/architect (13/13 vs 10-12/13
+for stronger judges — they flagged rubric ambiguity the rubrics don't yet
+pin down). Revisit after rubric statements are disambiguated. Override with
+GLM_EVAL_GRADER.
 Same retry/empty-content handling as glm_flash.py.
 """
 import json
@@ -15,7 +19,7 @@ def call_api(prompt, options, context):
     config = options.get('config', {}) or {}
     api_base = config.get('apiBaseUrl', 'http://localhost:11434/v1')
     body = {
-        'model': os.environ.get('GLM_EVAL_GRADER', 'beam:cloud'),
+        'model': os.environ.get('GLM_EVAL_GRADER', 'glm-5.3-flash:cloud'),
         'messages': [{'role': 'user', 'content': prompt}],
         'temperature': config.get('temperature', 0.1),
         'max_tokens': config.get('max_tokens', 16000),
