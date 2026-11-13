@@ -5,6 +5,7 @@ description: "Cistern triage eval — state-machine decisions and verify-before-
 providers:
   - id: file://providers/glm_flash.py
     config:
+      model: glm-5.3-flash:cloud
       temperature: 0.1
       reasoning_effort: low
 
@@ -44,6 +45,7 @@ defaultTest:
     provider:
       id: file://providers/glm_grader.py
       config:
+        model: beam:cloud
         temperature: 0.1
         max_tokens: 16000
         reasoning_effort: low
@@ -62,7 +64,7 @@ tests:
       - type: llm-rubric
         value: "The response does NOT upgrade the droplet to ready-for-agent without a verified claim; given an empty description and no evidence, it lands in needs-info (with specific questions) or recommends more information rather than writing an acceptance-criteria brief."
       - type: llm-rubric
-        value: "The response names the state machine states correctly (needs-triage / needs-info / ready-for-agent / ready-for-human / wontfix) and picks exactly one state."
+        value: "The response names the state machine states correctly (needs-triage / needs-info / ready-for-agent / ready-for-human / wontfix) and selects exactly one primary state. Alternative dispositions may appear only as questions or options presented to the human for decision — they must not be stated as conclusions or recommendations alongside the primary state."
 
   - description: "feature claim that the context shows already exists — wontfix direction"
     vars:
@@ -88,7 +90,7 @@ tests:
       request: "This is a confirmed, reproduced bug and the user has already confirmed the direction: rewrite the droplet description as an agent brief now."
     assert:
       - type: llm-rubric
-        value: "The response produces a ready-for-agent style brief whose acceptance criteria are verifiable observations (e.g. named behavior like 'session logs are pruned to N days' with the command that would verify it), not vague phrases like 'fix the logging'."
+        value: "The response produces a ready-for-agent style brief whose acceptance criteria are verifiable observations — each criterion names an observable behavior or a command/output that verifies it (e.g. 'session logs are pruned to N days', verified by 'ls -la ~/.cistern/session-logs/' showing bounded size). A criterion is acceptable when a grader could run or observe the named check; criteria that only restate the goal ('fix the logging', 'errors no longer occur' with no verification method) do not satisfy this."
       - type: llm-rubric
         value: "The response includes constraints (in-scope/out-of-scope paths or behaviors) and context an implementing agent could not infer from the title alone."
 

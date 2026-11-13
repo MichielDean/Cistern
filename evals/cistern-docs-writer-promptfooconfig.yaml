@@ -5,6 +5,7 @@ description: "Docs writer cataractae eval — proves docs_writer documents user-
 providers:
   - id: file://providers/glm_flash.py
     config:
+      model: glm-5.3-flash:cloud
       temperature: 0.1
       reasoning_effort: low
 
@@ -42,6 +43,7 @@ defaultTest:
     provider:
       id: file://providers/glm_grader.py
       config:
+        model: beam:cloud
         temperature: 0.1
         max_tokens: 16000
         reasoning_effort: low
@@ -55,7 +57,7 @@ tests:
         This is a rewrite with breaking CLI changes.
     assert:
       - type: llm-rubric
-        value: "The outcome notes confirm docs document the breaking changes with before/after examples (old: `llmem dream --dry-run` → new: `llmem dream --apply`). The docs_writer does NOT pass without documenting the migration path for existing users."
+        value: "The outcome notes confirm the docs_writer drafted the migration documentation with before/after examples (old: `llmem dream --dry-run` → new: `llmem dream --apply`) using the detail carried by the droplet and diff description. Claiming blocked, requesting repo access, or passing without migration guidance is not acceptable; details that could not be verified must be marked as unverified, and that is acceptable."
 
   - description: "diff with no user-visible changes — docs_writer passes immediately"
     vars:

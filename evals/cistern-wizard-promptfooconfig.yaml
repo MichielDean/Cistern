@@ -5,6 +5,7 @@ description: "Cistern wizard eval — staging discipline for human-only procedur
 providers:
   - id: file://providers/glm_flash.py
     config:
+      model: glm-5.3-flash:cloud
       temperature: 0.1
       reasoning_effort: low
 
@@ -39,6 +40,7 @@ defaultTest:
     provider:
       id: file://providers/glm_grader.py
       config:
+        model: beam:cloud
         temperature: 0.1
         max_tokens: 16000
         reasoning_effort: low
@@ -52,7 +54,7 @@ tests:
         password stored in /etc/cistern/db.env (file is root-readable).
     assert:
       - type: llm-rubric
-        value: "The response proposes ordered stages where every captured value names (a) where the human obtains it, (b) where it is written (a named file or secret store), and (c) whether it is secret or public — rather than a bare checklist of URLs."
+        value: "The response proposes ordered stages where every captured value names (a) where the human obtains it or provides it — asking the human directly for the value counts as naming the source, (b) where it is written (a named file or secret store), and (c) whether it is secret or public — rather than a bare checklist of URLs."
       - type: llm-rubric
         value: "The response treats the two credentials as secret values (hidden entry) and does not suggest echoing them to stdout or committing them to a repo."
 
