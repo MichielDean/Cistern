@@ -155,6 +155,8 @@ Every one is mechanical — the answer is either yes or no.
   config through constructor params. Default zero-valued fields and document
   the default: `// Field defaults to 30s if zero.`
 - Log with `slog`; embed resources with `embed.FS`.
+- Blocking I/O methods (network sends, process waits, pollers) accept
+  `context.Context` as their first parameter so callers can cancel on shutdown.
 
 ### Naming Clarity
 

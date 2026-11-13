@@ -5,6 +5,7 @@ description: "Implementer cataractae eval — proves the implementer honors the 
 providers:
   - id: file://providers/glm_flash.py
     config:
+      model: glm-5.3-flash:cloud
       temperature: 0.1
       reasoning_effort: low
 
@@ -42,6 +43,7 @@ defaultTest:
     provider:
       id: file://providers/glm_grader.py
       config:
+        model: glm-5.3-flash:cloud
         temperature: 0.1
         max_tokens: 16000
         reasoning_effort: low
@@ -156,3 +158,15 @@ tests:
     assert:
       - type: llm-rubric
         value: "The implementer signals pass immediately — the outcome notes state the change is already applied and no new implementation was duplicated."
+
+  - description: "serialization boundary — collections serialize as empty, never null"
+    vars:
+      situation: |
+        Droplet: "Add a REST API for the dashboard listing droplets, issues, and notes."
+        DESIGN_BRIEF.md Serialization Requirements:
+          The API consumes Go structs and serves JSON to a TypeScript frontend. Collection
+          fields must serialize as empty arrays (or objects), not null, so the consumer
+          can call .length/.map() safely on an empty result.
+    assert:
+      - type: llm-rubric
+        value: "The outcome notes confirm collection fields are initialized as empty collections (e.g. []T{} in Go) rather than left as nil, and that a test serializes the zero-value struct and asserts no collection field is null in the JSON."
