@@ -114,81 +114,65 @@ Every one is mechanical — the answer is either yes or no.
 
 ### Migration Safety
 
-- Migrations MUST be numbered files: 001_xxx.sql, 002_xxx.sql, etc.
-- Migrations MUST be tracked in _schema_migrations (or equivalent)
-- ALL SQL identifiers MUST be quoted ("droplets", "id" for PostgreSQL;
-  `droplets`, `id` for MySQL/SQLite)
-- DDL and DML MUST be in separate migration files — DML files wrapped in
-  transactions
-- Inline migrations in Go code are FORBIDDEN — use `//go:embed` with
-  `embed.FS` to load numbered .sql files
-
-### DRY
-
-- If the same code block (5+ lines) appears 3+ times, it MUST be extracted
-  into a helper. Common case: NullString scan blocks — extract into
-  `scanDropletFromRows` / `fillDropletFromNullable` helpers
-- After implementing, use Grep to verify the inline pattern no longer appears
-  3+ times. If it does, extract it
-
-### Contract Correctness
-
-- Every exported method MUST document its preconditions in a godoc comment
-- Lazy initialization (initClient, ensureConnected) is FORBIDDEN — the
-  constructor must leave the object in a fully usable state
-- SetXxx mutation methods for testing are FORBIDDEN — use constructor
-  injection via config struct fields instead
-- Every method must return what its signature promises — a method that returns
-  "" on error violates its contract
-
-### Coupling
-
-- Shared mutable package-level state (maps, vars, sync.Map) is FORBIDDEN —
-  use struct fields with constructor injection
-- If a struct field is a map or slice, make a defensive copy in the
-  constructor: `s.myMap = maps.Clone(paramMap)` or manual copy
-- Never hardcode entity-specific types into generic utilities (e.g.,
-  DropletEvent must not be hardcoded into EventBus)
-
-### Idiom Fit
-
-- Package-level mutable vars for timeouts, HTTP clients, priority maps are
-  FORBIDDEN — must be struct fields
-- Use constructor params for config, not post-hoc setters
-- If cfg.Field == 0, default to a sensible value — document this with a
-  comment: `// Field defaults to 30s if zero.`
-- Use `slog` for operational logging, never `fmt.Printf` or `fmt.Fprintf(os.Stderr)`
-- Use `embed.FS` for embedded resources (migrations, templates)
-
-### Naming Clarity
-
-- Unexported structs MUST have unexported fields — no PascalCase on unexported
-  structs. Wrong: `type jiraProvider struct { HTTPTimeout time.Duration }`.
-  Right: `type jiraProvider struct { httpTimeout time.Duration }`
-- Do not shadow Go builtins: `min`, `max`, `any`, `cap`, `len`, `copy`, `new`
-- Names must match access level: unexported struct → unexported field
-
-### Error Messages
-
-- Use `slog.Error`/`slog.Warn` for operational errors — never
-  `fmt.Fprintf(os.Stderr, ...)`
-- Error messages MUST include domain context: which entity, which operation.
-  Wrong: `"query failed"`. Right: `"cistern: fetch droplet d-123: query failed"`
-- Never silently swallow errors — at minimum log at `slog.Debug`
-- Wrap errors with `fmt.Errorf("pkg: context: %w", err)`
+- Ship migrations as numbered files (`001_xxx.sql`, `002_xxx.sql`) loaded with
+  `//go:embed`, tracked in `_schema_migrations`.
+- Quote every SQL identifier (`"droplets"` for PostgreSQL, backticks for
+  MySQL/SQLite).
+- Separate DDL and DML into their own files; wrap DML files in transactions.
 
 ### Integration Coverage
 
-- After writing code with DB migrations, add an E2E schema verification test
-  that runs the migrations and verifies the schema
-- Use `httptest.NewServer` for HTTP integration tests — no mocks for HTTP
-  clients
-- Every new public method on a struct that connects to external services needs
-  an integration test
+- Give state-dependent code a real-behavior test: migrations get an E2E schema
+  verification test; HTTP clients test against `httptest.NewServer`; new public
+  methods on external-service structs get an integration test.
+
+### DRY
+
+- Extract any repeated block (5+ lines) into a named helper. Verify with Grep —
+  the inline pattern appears at most twice after extraction.
+- Reuse helpers. Before writing a test, Grep the package — including other test
+  files and sibling packages — for an existing helper that builds what you need,
+  and call it. Duplicated test preambles are the most common DRY failure.
+
+### Contract Correctness
+
+- Every exported method documents its preconditions in godoc.
+- Constructors return fully usable values: inject everything via config fields,
+  validate arguments on construction, and report misconfiguration at construction
+  time. Fail at construction, not at first use.
+- A method returns exactly what its signature promises — an error return on
+  failure, never `""` or a panic.
+
+### Coupling
+
+- Hold shared state in struct fields set by the constructor; copy map/slice
+  params defensively (`maps.Clone`).
+- Generic utilities stay generic — accept interfaces, never concrete entity types.
+
+### Idiom Fit
+
+- Prefer the standard library. Struct fields over package-level mutable vars;
+  config through constructor params. Default zero-valued fields and document
+  the default: `// Field defaults to 30s if zero.`
+- Log with `slog`; embed resources with `embed.FS`.
+
+### Naming Clarity
+
+- Match names to access level: unexported struct → unexported fields.
+- Name constants in the unit the caller reasons about (bytes → bytes, runes → runes).
+
+### Error Messages
+
+- Wrap errors with context: `fmt.Errorf("pkg: operation entity: %w", err)` —
+  state which entity, which operation. `"cistern: fetch droplet d-123: query failed"`
+  beats `"query failed"`.
+- When an upstream response carries a diagnostic body, capture it into the error —
+  operators debug from the remote's own message.
+- Log operational failures with `slog` and surface swallowed errors at `slog.Debug`.
 
 ### Serialization Boundaries
 
-When data crosses a language boundary (Go → JSON → TypeScript, Python → JSON → JS, etc.), every collection field must produce `[]`/`{}` in the empty case, never `null`. In Go, this means initializing as `[]T{}`/`map[string]T{}`, not leaving nil. In Python, this means `[]`/`{}`, not `None`. After writing any serialization struct, write one test that serializes the zero-value and asserts no field is null.
+When data crosses a language boundary (Go → JSON → TypeScript, Python → JSON → JS, etc.), initialize every collection field as `[]T{}`/`map[string]T{}` (Go) or `[]`/`{}` (Python) so consumers always receive a collection. After writing a serialization struct, serialize the zero-value and assert no field is null.
 
 ## Revision Cycles
 
