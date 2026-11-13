@@ -88,6 +88,7 @@ tests:
         value: "The outcome notes confirm migration compatibility was verified — the implementer tested against a pre-existing database (not just a fresh t.TempDir database). 'Tests pass on a fresh database' is NOT sufficient for a rewrite."
 
   - description: "brief with forbidden pattern — implementer avoids it"
+
     vars:
       situation: |
         Droplet: "Add a new HTTP client for the Jira API."
@@ -108,3 +109,39 @@ tests:
     assert:
       - type: llm-rubric
         value: "The implementer files an issue with `ct droplet issue add` BEFORE implementing (explaining the brief omits the backward-compat requirement the droplet asks for). The implementer does NOT silently implement around the gap."
+
+  - description: "sibling test helper exists — implementer reuses it instead of duplicating preambles"
+    vars:
+      situation: |
+        Droplet: "Add a SlackNotifier implementing the Notifier interface."
+        DESIGN_BRIEF.md DRY Requirements:
+          The package already has a helper `newTestNotifier(t)` in internal/notifier/internal_test.go
+          that builds a configured notifier against an httptest server.
+        The tests you will write (internal/notifier/slack_test.go) need the same setup.
+    assert:
+      - type: llm-rubric
+        value: "The outcome notes confirm the implementer found and reused the existing test helper from the sibling test file (Grep before writing tests) rather than duplicating the Resolve+construct preamble in the new test file."
+
+  - description: "misconfiguration surfaceable at construction — implementer validates at construction time"
+    vars:
+      situation: |
+        Droplet: "Add a SlackNotifier. Webhook URL and rate limit come from config."
+        DESIGN_BRIEF.md Contract Requirements:
+          Constructors leave the object fully usable: validate the webhook URL format and
+          that the rate limit is positive at construction, and report misconfiguration
+          with a wrapped error at that point — not at first Send.
+    assert:
+      - type: llm-rubric
+        value: "The outcome notes confirm the implementer validates configuration at construction time (invalid URL or non-positive rate limit returns a wrapped error from the constructor), and does not defer misconfiguration to first use."
+
+  - description: "upstream diagnostic error body — implementer captures it into the error"
+    vars:
+      situation: |
+        Droplet: "Add a SlackNotifier that posts to Slack's Webhook API."
+        DESIGN_BRIEF.md Error Message Requirements:
+          Non-2xx responses from Slack carry a diagnostic body (e.g. channel_not_found,
+          invalid_payload) that operators debug from. Errors must include the remote's
+          own message, wrapped with the 'notifier:' prefix.
+    assert:
+      - type: llm-rubric
+        value: "The outcome notes confirm the implementer reads the upstream response body on error status and includes it in the returned wrapped error, so operators see Slack's diagnostic message rather than just an HTTP status code."

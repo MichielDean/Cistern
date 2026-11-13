@@ -121,3 +121,13 @@ tests:
     assert:
       - type: llm-rubric
         value: "The brief uses deep-module design vocabulary: at least one of 'module', 'interface', 'seam', 'adapter', 'depth', 'locality', 'leverage' appears in the brief to name structural decisions. The brief frames the rate limiter as a module with a named interface and seam, not just 'add a rate limiter'."
+
+  - description: "architect produces a contract, not code"
+    vars:
+      situation: |
+        Droplet: "Add a rate limiter to the dashboard SSE handler."
+        Codebase: cmd/ct/dashboard_web.go has the SSE handler; internal/castellarius/dispatch.go
+        has the EventBus. You have full write access to the repository.
+    assert:
+      - type: llm-rubric
+        value: "The output is a design brief (contract document with requirements, patterns, and checklist items referencing file:line evidence). It contains NO function implementations and NO test case bodies — the architect specifies contracts and lets the implementer supply the code."

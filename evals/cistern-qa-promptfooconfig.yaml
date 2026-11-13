@@ -108,3 +108,17 @@ tests:
     assert:
       - type: llm-rubric
         value: "The QA recirculates demanding a smoke test of the live endpoint — the verdict is recirculate, reject, block, or any equivalent non-pass outcome. The finding names the gap (no smoke test exercises the real endpoint) and states what test should exist. The QA does NOT pass on unit tests alone when the diff adds an HTTP API endpoint and no integration/smoke test covers it."
+
+  - description: "security feedback already handled elsewhere — QA verifies its own domain only"
+    vars: 
+      situation: |
+        Droplet: "Add token refresh to the API client."
+        Diff: implements token refresh with httptest.NewServer covering refresh, expiry, and
+        concurrent refresh under -race. Review previously flagged an injection risk in query
+        building; Security previously flagged a hardcoded secret. Both were fixed by the
+        implementer in this cycle (the secret moved to config; parameterized query).
+        QA's job is to verify the tests prove the behavior — not to re-adjudicate whether
+        the security fix is sound.
+    assert:
+      - type: llm-rubric
+        value: "The QA verdict addresses QA's domain (test quality, integration coverage, contract of the tested behavior). The QA does NOT attempt to validate Review's or Security's previous findings — it defers those to their owners — and does not pass or fail based on re-judging the security fix."
