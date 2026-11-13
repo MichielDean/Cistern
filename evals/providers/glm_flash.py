@@ -15,7 +15,7 @@ def call_api(prompt, options, context):
     config = options.get('config', {}) or {}
     api_base = config.get('apiBaseUrl', 'http://localhost:11434/v1')
     body = {
-        'model': 'glm-5.3-flash:cloud',
+        'model': os.environ.get('GLM_EVAL_MODEL', 'glm-5.3-flash:cloud'),
         'messages': [{'role': 'user', 'content': prompt}],
         'temperature': config.get('temperature', 0.1),
         'max_tokens': config.get('max_tokens', 8000),
