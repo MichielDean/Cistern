@@ -1,7 +1,8 @@
 """Custom promptfoo grader provider: model selectable via GLM_EVAL_GRADER env.
 
-Defaults to glm-5.3-flash:cloud. Keeps the subject model (providers/glm_flash.py)
-fixed while grading model varies — judge A/B requires that separation.
+Defaults to beam:cloud — selected by judge A/B (2026-11-13): zero rubric
+flakes across 18 graded assertions vs 1/18 for glm-5.3-flash and glm-5.3,
+and a distinct model family from the glm subject (no self-grading bias).
 Same retry/empty-content handling as glm_flash.py.
 """
 import json
@@ -14,7 +15,7 @@ def call_api(prompt, options, context):
     config = options.get('config', {}) or {}
     api_base = config.get('apiBaseUrl', 'http://localhost:11434/v1')
     body = {
-        'model': os.environ.get('GLM_EVAL_GRADER', 'glm-5.3-flash:cloud'),
+        'model': os.environ.get('GLM_EVAL_GRADER', 'beam:cloud'),
         'messages': [{'role': 'user', 'content': prompt}],
         'temperature': config.get('temperature', 0.1),
         'max_tokens': config.get('max_tokens', 16000),
