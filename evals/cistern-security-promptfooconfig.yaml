@@ -40,7 +40,7 @@ defaultTest:
       </Rubric>
       JSON object only.
     provider:
-      id: file://providers/glm_flash.py
+      id: file://providers/glm_grader.py
       config:
         temperature: 0.1
         max_tokens: 16000
@@ -106,3 +106,14 @@ tests:
     assert:
       - type: llm-rubric
         value: "The verdict is Pass. Security found no vulnerability in a trivial handler with no user input and no trust boundary. The review does NOT manufacture findings about style, missing rate limiting on a non-existent endpoint, or 'could be more secure' nits."
+
+  - description: "DRY and test-quality issues, no vulnerability — Security defers to Review and QA lanes"
+    vars:
+      situation: |
+        Droplet: "Add a webhook retry helper."
+        Diff: the retry loop repeats a 6-line block three times instead of using the existing
+        helper; one test asserts only 'no error'. No injection, no auth surface, no secrets,
+        no path traversal, no unsafe deserialization.
+    assert:
+      - type: llm-rubric
+        value: "Security stays in its lane: it does NOT recirculate for the code duplication or weak test — those are Review's and QA's domains. The verdict is Pass (or the finding list contains security-scope findings only)."

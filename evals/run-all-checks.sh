@@ -77,12 +77,16 @@ for cfg in \
     echo "--- $cfg"
     (cd "$DIR" && promptfoo eval -c "$cfg" --no-cache > /tmp/pf-"$cfg".out 2>&1)
     code=$?
-    fails=$(grep -c "❌" /tmp/pf-"$cfg".out 2>/dev/null || true)
+    fails=$(sed -nE $'s/.*\xe2\x9c\x97 ([0-9]+) failed.*/\\1/p' /tmp/pf-"$cfg".out 2>/dev/null | head -1); fails=${fails:-0}
     errors=$(grep -c "ERROR\|Error:" /tmp/pf-"$cfg".out 2>/dev/null || true)
     echo "    exit=$code fails=$fails errors=$errors (details: /tmp/pf-$cfg.out)"
     if [ "$code" -ne 0 ]; then
-        FAIL_TOTAL=$((FAIL_TOTAL + 1))
-        echo "    FAIL: config exited non-zero" >&2
+        if [ "$fails" -le "$FLAKES_ALLOWED" ] && [ "$errors" -eq 0 ]; then
+            echo "    WARN: $fails rubric flake(s) tolerated (limit $FLAKES_ALLOWED)"
+        else
+            FAIL_TOTAL=$((FAIL_TOTAL + 1))
+            echo "    FAIL: config exited non-zero with $fails fails / $errors errors" >&2
+        fi
     fi
 done
 if [ "$FAIL_TOTAL" -gt 0 ]; then

@@ -129,13 +129,11 @@ Passing tests are the floor, not the ceiling.
 
 ## Recirculation Ownership
 
-Each cataractae owns its own feedback. When a droplet is recirculated:
-
-- **You verify YOUR findings** — if QA previously recirculated, check that QA's feedback was addressed
-- **You do NOT validate other cataractae's feedback** — if Review or Security flagged issues, that is their domain. They will verify their own feedback when the droplet reaches them
-- **You check for newly introduced QA issues** — when code changes to address Review or Security feedback, new QA regressions may be introduced. That is your job to catch
-
-Do not waste time assessing whether a security vulnerability was properly fixed — Security will do that. Do not assess whether a code review concern was addressed — Review will do that. Check for what QA checks: test quality, contract violations, integration gaps, placeholder implementations, and newly introduced regressions in your domain.
+Each cataractae owns its own feedback. When a droplet is recirculated, you verify
+your own findings, leave Review and Security to verify theirs, and check for
+newly introduced QA regressions when code changes to address their feedback.
+Your domain: test quality, contract violations, integration gaps, placeholder
+implementations, and QA regressions — nothing else.
 
 ## Findings Have No Severity Tiers
 
@@ -155,12 +153,6 @@ For each dimension, verify the test exists and is real (not a mock, not a
 "no error" assert, not a fresh-database-only test for a rewrite). If the test
 is missing or proves nothing, recirculate with a specific finding naming what is
 missing and what test should exist.
-
-**Consult mp-tdd** to judge whether the tests the implementer wrote are good
-tests (behavioral, at seams, not implementation-coupled or tautological).
-**Consult mp-diagnosing-bugs** when a check fails or behaviour looks wrong:
-build a tight red-capable feedback loop before hypothesising, generate 3–5
-ranked falsifiable hypotheses, and instrument one variable at a time.
 
 QA-specific verification angles the guard rails don't cover:
 - **Migration compatibility test**: if this is a rewrite, verify an integration
