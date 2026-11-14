@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -283,8 +284,12 @@ func buildAgentRunCommand(preset provider.ProviderPreset, agentName, agentsMd, p
 	// Format: always use JSON for parseable output
 	args = append(args, "--format", "json")
 
-	// Skip permissions for non-interactive use
-	args = append(args, "--dangerously-skip-permissions")
+	// Skip permissions for non-interactive use. Avoid duplicate flags —
+	// preset.Args already carries it (e.g. the opencode preset), and
+	// opencode's flag parser rejects a second occurrence.
+	if !slices.Contains(args, "--dangerously-skip-permissions") {
+		args = append(args, "--dangerously-skip-permissions")
+	}
 
 	// Session ID for resume
 	if sessionID != "" {
