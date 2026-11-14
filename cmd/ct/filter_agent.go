@@ -41,6 +41,11 @@ func agentSessionRun(preset provider.ProviderPreset, agentName, agentsMd, prompt
 	cmd := exec.Command(cmdPath, args...)
 	cmd.Env = env
 	cmd.Stderr = os.Stderr // pass stderr through for debugging
+	if tmpDir != "" {
+		// opencode discovers project-local AGENTS.md and .opencode/agents/
+		// relative to the working directory.
+		cmd.Dir = tmpDir
+	}
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
@@ -59,6 +64,9 @@ func agentSessionRun(preset provider.ProviderPreset, agentName, agentsMd, prompt
 	// Parse NDJSON output with timeout
 	var textParts []string
 	parsedSessionID := sessionID
+	// Last raw NDJSON line seen on stdout, surfaced in errors so opencode's
+	// structured error events are not swallowed by a generic exit-status wrap.
+	var lastNDJSON string
 	scanner := bufio.NewScanner(stdout)
 	done := make(chan struct{})
 	go func() {
@@ -67,6 +75,7 @@ func agentSessionRun(preset provider.ProviderPreset, agentName, agentsMd, prompt
 			if line == "" {
 				continue
 			}
+			lastNDJSON = line
 			var event map[string]interface{}
 			if err := json.Unmarshal([]byte(line), &event); err != nil {
 				continue
@@ -101,7 +110,7 @@ func agentSessionRun(preset provider.ProviderPreset, agentName, agentsMd, prompt
 		// Command completed, wait for scanner to finish
 		<-done
 		if cmdErr != nil && len(textParts) == 0 {
-			return filterSessionResult{}, fmt.Errorf("%s: command failed: %w", agentName, cmdErr)
+			return filterSessionResult{}, fmt.Errorf("%s: command failed: %w (last agent output: %s)", agentName, cmdErr, truncateNDJSON(lastNDJSON))
 		}
 		if cmdErr != nil {
 			slog.Default().Warn("agent-session: command exited with error but produced output",
@@ -148,6 +157,9 @@ func agentSessionResume(preset provider.ProviderPreset, agentName, agentsMd, ses
 	cmd := exec.Command(cmdPath, args...)
 	cmd.Env = env
 	cmd.Stderr = os.Stderr
+	if tmpDir != "" {
+		cmd.Dir = tmpDir
+	}
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
@@ -225,7 +237,8 @@ func buildFilterRunCommand(preset provider.ProviderPreset, prompt string, sessio
 
 // buildAgentRunCommand constructs the opencode run command for a named
 // auxiliary agent. Generalization of buildFilterRunCommand; the agent's
-// AGENTS.md and identity file are written into a temp OPENCODE_CONFIG_DIR.
+// AGENTS.md and identity file are written into a temp project directory
+// that the command runs from.
 func buildAgentRunCommand(preset provider.ProviderPreset, agentName, agentsMd, prompt string, sessionID string) (string, []string, []string, string, error) {
 	// Resolve command path
 	cmdPath := preset.Command
@@ -268,7 +281,13 @@ func buildAgentRunCommand(preset provider.ProviderPreset, agentName, agentsMd, p
 		}
 
 		// Create identity directory with agent markdown
-		identityDir := filepath.Join(tmpDir, "identity", "agents")
+		//
+		// opencode V2 discovers project-local agents under `.opencode/agents/`
+		// relative to the working directory (OPENCODE_CONFIG_DIR is not a
+		// supported mechanism and breaks agent discovery). The run command
+		// executes with Dir=tmpDir (see agentSessionRun), where this AGENTS.md
+		// and the agent definition are discovered.
+		identityDir := filepath.Join(tmpDir, ".opencode", "agents")
 		if err := os.MkdirAll(identityDir, 0o755); err != nil {
 			os.RemoveAll(tmpDir)
 			return "", nil, nil, "", fmt.Errorf("%s: create identity dir: %w", agentName, err)
@@ -304,18 +323,27 @@ func buildAgentRunCommand(preset provider.ProviderPreset, agentName, agentsMd, p
 		args = append(args, preset.PromptFlag, prompt)
 	}
 
-	// Build environment — clear OPENCODE_SERVER_* vars that interfere
-	env := os.Environ()
-	env = unsetEnvPrefix(env, "OPENCODE_SERVER_USERNAME=")
-	env = unsetEnvPrefix(env, "OPENCODE_SERVER_PASSWORD=")
-	env = unsetEnvPrefix(env, "OPENCODE_PID=")
-	env = unsetEnvPrefix(env, "OPENCODE=")
-
-	// Set OPENCODE_CONFIG_DIR if using agent flag
-	if preset.AgentFlag != "" && tmpDir != "" {
-		env = append(env, "OPENCODE_CONFIG_DIR="+filepath.Join(tmpDir, "identity"))
-		env = append(env, "OPENCODE_DISABLE_PROJECT_CONFIG=1")
+	// Build environment — whitelist instead of inheriting everything. A fully
+	// inherited environment (including OPENCODE_* and terminal vars) makes a
+	// spawned `opencode run` attach to the parent session's service context,
+	// where project-local agent discovery from Dir=tmpDir silently fails
+	// ("Agent not found"). A minimal curated environment starts a fresh
+	// client-server discovery from the working directory.
+	home, _ := os.UserHomeDir()
+	env := []string{}
+	for _, k := range []string{"USER", "LOGNAME", "SHELL", "TERM", "LANG", "LC_ALL", "TMPDIR", "TMP", "TEMP", "SSH_AUTH_SOCK", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_CACHE_HOME", "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY", "HOME"} {
+		if v, ok := os.LookupEnv(k); ok {
+			env = append(env, k+"="+v)
+		}
 	}
+	if home != "" {
+		env = append(env, "PATH="+home+"/.opencode/bin:"+home+"/.npm-global/bin:"+home+"/.local/bin:"+home+"/go/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin")
+	}
+
+	// The helper command starts with Dir=tmpDir so opencode discovers the
+	// AGENTS.md and the .opencode/agents/<name>.md written above. No env
+	// override is needed or valid for that (OPENCODE_CONFIG_DIR is not a
+	// supported opencode V2 mechanism).
 
 	return cmdPath, args, env, tmpDir, nil
 }
@@ -370,4 +398,12 @@ Finding facts is your job, never the user's: look things up in the repo instead 
 - The user files droplets themselves with ct droplet add; this agent never files
 - Be direct. Skip preamble and postamble. Just the spec.
 `
+}
+
+// truncateNDJSON truncates a raw NDJSON line for error messages.
+func truncateNDJSON(line string) string {
+	if len(line) > 400 {
+		return line[:400] + "..."
+	}
+	return line
 }
