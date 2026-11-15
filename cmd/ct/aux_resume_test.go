@@ -148,7 +148,7 @@ func TestRunAuxAgentRound_CLIContinuity(t *testing.T) {
 	preset := fakeAgentPreset(t)
 
 	// Round 1: new session.
-	r1, err := runAuxAgentRound(preset, "filter", filterAgentsMD(), "", "the spec keyword is KUMQUAT", "")
+	r1, err := runAuxAgentRound(preset, "filter", filterAgentsMD(), "", "", "", "the spec keyword is KUMQUAT", "")
 	if err != nil {
 		t.Fatalf("round 1: %v", err)
 	}
@@ -158,13 +158,13 @@ func TestRunAuxAgentRound_CLIContinuity(t *testing.T) {
 
 	// Resume 1: the prompt must reference the prior round's content from the
 	// DB transcript (not any opencode server session).
-	r2, err := runAuxAgentRound(preset, "filter", filterAgentsMD(), "", "what was the keyword?", r1.CisternID)
+	r2, err := runAuxAgentRound(preset, "filter", filterAgentsMD(), "", "", "", "what was the keyword?", r1.CisternID)
 	if err != nil {
 		t.Fatalf("resume 1: %v", err)
 	}
 
 	// Resume 2: cumulative transcript — prior+prior+new.
-	r3, err := runAuxAgentRound(preset, "filter", filterAgentsMD(), "", "and the description?", r1.CisternID)
+	r3, err := runAuxAgentRound(preset, "filter", filterAgentsMD(), "", "", "", "and the description?", r1.CisternID)
 	if err != nil {
 		t.Fatalf("resume 2: %v", err)
 	}
@@ -219,12 +219,86 @@ func TestRunAuxAgentRound_CLIContinuity(t *testing.T) {
 func TestRunAuxAgentRound_ResumeMissingSessionErrors(t *testing.T) {
 	testCisternDB(t)
 	preset := fakeAgentPreset(t)
-	_, err := runAuxAgentRound(preset, "filter", filterAgentsMD(), "", "hello", "nosuchsession")
+	_, err := runAuxAgentRound(preset, "filter", filterAgentsMD(), "", "", "", "hello", "nosuchsession")
 	if err == nil {
 		t.Fatal("expected error for missing session")
 	}
 	if !strings.Contains(err.Error(), "nosuchsession") || !strings.Contains(err.Error(), "not found") {
 		t.Errorf("error must name the missing session ID, got: %v", err)
+	}
+}
+
+// --- explicit title threading (reviewer issue ci-7utyd-mvsb1) ---
+
+// TestRunAuxAgentRound_PersistsExplicitTitle verifies that a new round
+// persists the caller-supplied title and description on the filter_sessions
+// row. Production prompts start with a context block, never a 'Title: '
+// header, so parsing the assembled prompt must never be the source of the
+// row title again.
+func TestRunAuxAgentRound_PersistsExplicitTitle(t *testing.T) {
+	dbPath := testCisternDB(t)
+	preset := fakeAgentPreset(t)
+
+	r, err := runAuxAgentRound(preset, "filter", filterAgentsMD(), "CONTEXT FIRST", "Rework ingest", "the ingest stage drops errors", "Refactor the ingest loop", "")
+	if err != nil {
+		t.Fatalf("runAuxAgentRound: %v", err)
+	}
+
+	c, err := cistern.New(dbPath, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	session, err := c.GetFilterSession(r.CisternID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if session.Title != "Rework ingest" {
+		t.Errorf("session.Title = %q, want %q (title must come from the explicit param, not prompt parsing)", session.Title, "Rework ingest")
+	}
+	if session.Description != "the ingest stage drops errors" {
+		t.Errorf("session.Description = %q, want %q", session.Description, "the ingest stage drops errors")
+	}
+
+	// Sanity: the assembled prompt still begins with the context block.
+	log := readPromptLog(t, preset)
+	if !strings.HasPrefix(strings.TrimSpace(log), "CONTEXT FIRST") {
+		t.Errorf("prompt must start with the context block:\n%s", log)
+	}
+}
+
+// --- agent-ownership check on resume (reviewer issue ci-7utyd-p6bvq) ---
+
+// TestRunAuxAgentRound_ResumeRejectsForeignAgent verifies that resuming a
+// session with the wrong agent is rejected: ct filter --resume
+// <triage-session-id> must fail instead of replaying a triage transcript
+// through the filter agent.
+func TestRunAuxAgentRound_ResumeRejectsForeignAgent(t *testing.T) {
+	dbPath := testCisternDB(t)
+	preset := fakeAgentPreset(t)
+
+	// Seed a triage-owned session directly.
+	c, err := cistern.New(dbPath, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	triageSession, err := c.CreateAgentSession("triage", "Triage idea", "")
+	c.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = runAuxAgentRound(preset, "filter", filterAgentsMD(), "", "", "", "resume this", triageSession.ID)
+	if err == nil {
+		t.Fatal("expected error when resuming a triage session with the filter agent")
+	}
+	if !strings.Contains(err.Error(), "triage") {
+		t.Errorf("error must name the owning agent %q, got: %v", "triage", err)
+	}
+
+	// The matching agent still resumes fine.
+	if _, err := runAuxAgentRound(preset, "triage", "md", "", "", "", "resume this", triageSession.ID); err != nil {
+		t.Errorf("triage resume of triage session must succeed, got: %v", err)
 	}
 }
 
@@ -238,7 +312,7 @@ func TestRunAuxAgentRound_TriageWizardPersistence(t *testing.T) {
 
 	for _, agent := range []string{"triage", "wizard"} {
 		preset := fakeAgentPreset(t) // fresh fake per agent so the reply counter is per-agent
-		r, err := runAuxAgentRound(preset, agent, "md", "", "persist me", "")
+		r, err := runAuxAgentRound(preset, agent, "md", "", agent+" idea", "", "persist me", "")
 		if err != nil {
 			t.Fatalf("%s: %v", agent, err)
 		}
@@ -293,7 +367,7 @@ func TestDashboardFilterResume_UsesRunAuxAgentRound(t *testing.T) {
 	t.Setenv("PATH", path)
 
 	// Seed a session with one exchange.
-	r1, err := runAuxAgentRound(fake, "filter", filterAgentsMD(), "", "first: ORANGE", "")
+	r1, err := runAuxAgentRound(fake, "filter", filterAgentsMD(), "", "", "", "first: ORANGE", "")
 	if err != nil {
 		t.Fatal(err)
 	}

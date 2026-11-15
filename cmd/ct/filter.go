@@ -55,7 +55,7 @@ Use --output-format json for scriptable output (session_id + text).`,
 			if len(args) == 0 {
 				return fmt.Errorf("feedback argument required: ct filter --resume <id> '<feedback>'")
 			}
-			result, err := runAuxAgentRound(preset, "filter", filterAgentsMD(), "", strings.Join(args, " "), filterResume)
+			result, err := runAuxAgentRound(preset, "filter", filterAgentsMD(), "", "", "", strings.Join(args, " "), filterResume)
 			if err != nil {
 				return err
 			}
@@ -80,17 +80,17 @@ Use --output-format json for scriptable output (session_id + text).`,
 }
 
 // invokeFilterNew starts a new filtration session, persists the round to
-// filter_sessions (agent = 'filter'), and returns the agent's text response
-// with both the per-turn opencode session_id and the cistern session ID.
-// contextBlock is prepended before the system prompt so the LLM sees codebase
-// context first.
+// filter_sessions (agent = 'filter', title/description from the explicit
+// params), and returns the agent's text response with both the per-turn
+// opencode session_id and the cistern session ID. contextBlock is prepended
+// before the system prompt so the LLM sees codebase context first.
 func invokeFilterNew(preset provider.ProviderPreset, title, description, contextBlock string) (filterSessionResult, error) {
 	userPrompt := "Title: " + title
 	if description != "" {
 		userPrompt += "\nDescription: " + description
 	}
 	prompt := buildFilterPrompt(contextBlock, userPrompt)
-	return runAuxAgentRound(preset, "filter", filterAgentsMD(), "", prompt, "")
+	return runAuxAgentRound(preset, "filter", filterAgentsMD(), "", title, description, prompt, "")
 }
 
 // agentJSONEnvelope is the envelope returned by the agent when it produces

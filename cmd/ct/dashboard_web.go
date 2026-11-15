@@ -3552,7 +3552,7 @@ func handleFilterResume(cfgPath, dbPath string) http.HandlerFunc {
 			// "Agent not found" across restarts. `-s` is never emitted.
 			preset := resolveFilterPreset("")
 
-			result, err := runAuxAgentRound(preset, "filter", filterAgentsMD(), "", req.Message, sessionID)
+			result, err := runAuxAgentRound(preset, "filter", filterAgentsMD(), "", "", "", req.Message, sessionID)
 			if err != nil {
 				return err
 			}

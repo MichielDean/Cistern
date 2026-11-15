@@ -55,35 +55,23 @@ func buildResumePrompt(messages []cistern.FilterMessage, newMessage string) stri
 		"=== END PRIOR CONVERSATION ===\n\n" + newMessage
 }
 
-// parseAuxSessionTitle extracts a display title/description from the standard
-// "Title: ...\nDescription: ..." header of an aux-agent's first user message.
-// Returns empty strings when the message does not follow that shape.
-func parseAuxSessionTitle(message string) (string, string) {
-	title := ""
-	description := ""
-	for i, line := range strings.Split(message, "\n") {
-		switch {
-		case i == 0 && strings.HasPrefix(line, "Title: "):
-			title = strings.TrimSpace(strings.TrimPrefix(line, "Title: "))
-		case title != "" && strings.HasPrefix(line, "Description: "):
-			description = strings.TrimSpace(strings.TrimPrefix(line, "Description: "))
-		}
-	}
-	return title, description
-}
-
 // runAuxAgentRound runs one new-or-resume round for an aux agent, persisting
 // the transcript to filter_sessions. cisternID is empty for a new round.
 //
 // New round (cisternID == ""): creates a filter_sessions row with the agent
-// column set to agentName and runs the agent on a fresh opencode session.
+// column set to agentName and the caller-supplied title/description, and runs
+// the agent on a fresh opencode session. Title and description are explicit
+// parameters — prompts start with context or system text, never a "Title: "
+// header, so the row title can never be derived by parsing the prompt.
 //
 // Resume round (cisternID != ""): loads the persisted transcript from the DB
 // and runs a fresh opencode session whose prompt is the transcript plus the
 // new message (buildResumePrompt). Session chaining lives in cistern's DB —
 // never in opencode's server. Returns an error naming the missing session ID
-// when the row does not exist.
-func runAuxAgentRound(preset provider.ProviderPreset, agentName, agentsMd, contextBlock, newMessage, cisternID string) (filterSessionResult, error) {
+// when the row does not exist, and rejects resumes where the session is owned
+// by a different aux agent (title/description are unused on resume; legacy
+// rows without an agent column read as "filter").
+func runAuxAgentRound(preset provider.ProviderPreset, agentName, agentsMd, contextBlock, title, description, newMessage, cisternID string) (filterSessionResult, error) {
 	c, err := cistern.New(resolveDBPath(), "")
 	if err != nil {
 		return filterSessionResult{}, fmt.Errorf("%s: open cistern db: %w", agentName, err)
@@ -97,7 +85,6 @@ func runAuxAgentRound(preset provider.ProviderPreset, agentName, agentsMd, conte
 	var priorMessages []cistern.FilterMessage
 
 	if cisternID == "" {
-		title, description := parseAuxSessionTitle(newMessage)
 		session, err = c.CreateAgentSession(agentName, title, description)
 		if err != nil {
 			return filterSessionResult{}, fmt.Errorf("%s: create session row: %w", agentName, err)
@@ -110,6 +97,9 @@ func runAuxAgentRound(preset provider.ProviderPreset, agentName, agentsMd, conte
 				return filterSessionResult{}, fmt.Errorf("%s: resume %s: not found in cistern db", agentName, cisternID)
 			}
 			return filterSessionResult{}, fmt.Errorf("%s: resume %s: %w", agentName, cisternID, err)
+		}
+		if session.Agent != agentName {
+			return filterSessionResult{}, fmt.Errorf("%s: resume %s: session is owned by agent %q", agentName, cisternID, session.Agent)
 		}
 		var messages []cistern.FilterMessage
 		if session.Messages != "" && session.Messages != "[]" {
@@ -155,14 +145,6 @@ func runAuxAgentRound(preset provider.ProviderPreset, agentName, agentsMd, conte
 		Text:      result.Text,
 		CisternID: session.ID,
 	}, nil
-}
-
-// invokeAgentSessionNew starts a new auxiliary-agent session, persists the
-// transcript to filter_sessions (agent column = agentName), and returns the
-// agent's text response with both the per-turn opencode session_id and the
-// cistern session ID.
-func invokeAgentSessionNew(preset provider.ProviderPreset, agentName, agentsMd, prompt string) (filterSessionResult, error) {
-	return runAuxAgentRound(preset, agentName, agentsMd, "", prompt, "")
 }
 
 // gatherDropletContext fetches a droplet and its notes from the cistern DB and
@@ -239,7 +221,7 @@ Use --output-format json for scriptable output (session_id + text).`,
 			if len(args) == 0 {
 				return fmt.Errorf("feedback argument required: ct triage --resume <id> '<feedback>'")
 			}
-			result, err := runAuxAgentRound(preset, "triage", triageAgentMD(), "", strings.Join(args, " "), triageResume)
+			result, err := runAuxAgentRound(preset, "triage", triageAgentMD(), "", "", "", strings.Join(args, " "), triageResume)
 			if err != nil {
 				return err
 			}
@@ -267,6 +249,12 @@ Use --output-format json for scriptable output (session_id + text).`,
 			return fmt.Errorf("pass a droplet id, or --title for a new idea: ct triage <id> | ct triage --title \"<idea>\"")
 		}
 
+		// Session title: explicit --title when given, otherwise derived from
+		// the triaged droplet. Never parsed from the prompt.
+		title := triageTitle
+		if title == "" && dropletID != "" {
+			title = fmt.Sprintf("Triage: %s", dropletID)
+		}
 		userPrompt := ""
 		if triageTitle != "" {
 			userPrompt = "Title: " + triageTitle
@@ -275,7 +263,7 @@ Use --output-format json for scriptable output (session_id + text).`,
 			}
 		}
 		prompt := buildAgentPrompt(contextBlock, triageSystemPrompt, userPrompt)
-		result, err := invokeAgentSessionNew(preset, "triage", triageAgentMD(), prompt)
+		result, err := runAuxAgentRound(preset, "triage", triageAgentMD(), "", title, triageDescription, prompt, "")
 		if err != nil {
 			return err
 		}
@@ -314,7 +302,7 @@ Use --output-format json for scriptable output (session_id + text).`,
 			if len(args) == 0 {
 				return fmt.Errorf("feedback argument required: ct wizard --resume <id> '<feedback>'")
 			}
-			result, err := runAuxAgentRound(preset, "wizard", wizardAgentMD(), "", strings.Join(args, " "), wizardResume)
+			result, err := runAuxAgentRound(preset, "wizard", wizardAgentMD(), "", "", "", strings.Join(args, " "), wizardResume)
 			if err != nil {
 				return err
 			}
@@ -329,7 +317,7 @@ Use --output-format json for scriptable output (session_id + text).`,
 			userPrompt += "\nDescription: " + wizardDescription
 		}
 		prompt := buildAgentPrompt("", wizardSystemPrompt, userPrompt)
-		result, err := invokeAgentSessionNew(preset, "wizard", wizardAgentMD(), prompt)
+		result, err := runAuxAgentRound(preset, "wizard", wizardAgentMD(), "", wizardTitle, wizardDescription, prompt, "")
 		if err != nil {
 			return err
 		}
