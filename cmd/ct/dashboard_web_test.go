@@ -2091,3 +2091,66 @@ func TestPeekRoute_DuplicateWorkerNames_PicksAliveRepoSession(t *testing.T) {
 		t.Errorf("body = %q, want %q (alive repo's session)", body, "repoB pane output")
 	}
 }
+
+// TestPickAliveSession verifies the direct multi-candidate selection rules:
+// the first session the capturer reports alive wins, none-alive falls back to
+// the first entry (preserving single-worker behavior), and an empty input
+// yields false.
+func TestPickAliveSession(t *testing.T) {
+	repoA := aqueductSessionInfo{sessionID: "repoa-virgo", dropletID: "d-a"}
+	repoB := aqueductSessionInfo{sessionID: "repob-virgo", dropletID: "d-b"}
+	both := []aqueductSessionInfo{repoA, repoB}
+
+	tests := []struct {
+		name        string
+		sessions    []aqueductSessionInfo
+		live        map[string]string
+		wantSession aqueductSessionInfo
+		wantFound   bool
+	}{
+		{
+			name:      "empty sessions returns false",
+			sessions:  nil,
+			wantFound: false,
+		},
+		{
+			name:        "no session alive falls back to first entry",
+			sessions:    both,
+			wantSession: repoA,
+			wantFound:   true,
+		},
+		{
+			name:        "first session alive picked",
+			sessions:    both,
+			live:        map[string]string{"repoa-virgo": "a"},
+			wantSession: repoA,
+			wantFound:   true,
+		},
+		{
+			name:        "second session alive picked when first is dead",
+			sessions:    both,
+			live:        map[string]string{"repob-virgo": "b"},
+			wantSession: repoB,
+			wantFound:   true,
+		},
+		{
+			name:        "both alive picks first",
+			sessions:    both,
+			live:        map[string]string{"repoa-virgo": "a", "repob-virgo": "b"},
+			wantSession: repoA,
+			wantFound:   true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, ok := pickAliveSession(tt.sessions, sessionMapCapturer{live: tt.live})
+			if ok != tt.wantFound {
+				t.Fatalf("found = %v, want %v", ok, tt.wantFound)
+			}
+			if got != tt.wantSession {
+				t.Errorf("picked = %+v, want %+v", got, tt.wantSession)
+			}
+		})
+	}
+}
