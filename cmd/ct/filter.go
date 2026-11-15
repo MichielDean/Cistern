@@ -93,43 +93,6 @@ func invokeFilterNew(preset provider.ProviderPreset, title, description, context
 	return runAuxAgentRound(preset, "filter", filterAgentsMD(), "", title, description, prompt, "")
 }
 
-// agentJSONEnvelope is the envelope returned by the agent when it produces
-// structured JSON output. This is the same format as opencode --format json.
-type agentJSONEnvelope struct {
-	Type      string `json:"type"`
-	Subtype   string `json:"subtype"`
-	IsError   bool   `json:"is_error"`
-	Result    string `json:"result"`
-	SessionID string `json:"session_id"`
-}
-
-// tryParseAgentJSON attempts to parse a JSON envelope from the agent's text output.
-// Returns nil if the text is not valid JSON or does not match the expected structure.
-func tryParseAgentJSON(text string) *agentJSONEnvelope {
-	// The agent may produce NDJSON (one JSON event per line) or a single JSON object.
-	// Try to find a line that looks like a complete/envelope event.
-	for _, line := range strings.Split(text, "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" || line[0] != '{' {
-			continue
-		}
-		var envelope agentJSONEnvelope
-		if err := json.Unmarshal([]byte(line), &envelope); err == nil {
-			if envelope.Type != "" && envelope.Result != "" {
-				return &envelope
-			}
-		}
-	}
-	// Try parsing the entire text as a single JSON envelope
-	var envelope agentJSONEnvelope
-	if err := json.Unmarshal([]byte(strings.TrimSpace(text)), &envelope); err == nil {
-		if envelope.Type != "" {
-			return &envelope
-		}
-	}
-	return nil
-}
-
 // printFilterResult writes the filtration result to stdout. Human format prints
 // the agent's text to stdout and the *cistern* session ID to stderr — that is
 // the ID to pass to --resume. --output-format json emits a JSON object with

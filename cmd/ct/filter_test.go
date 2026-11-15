@@ -332,32 +332,6 @@ func TestBuildFilterRunCommand_EnvUnsets(t *testing.T) {
 	}
 }
 
-// --- tryParseAgentJSON tests ---
-
-// TestTryParseAgentJSON_ValidEnvelope verifies parsing a valid JSON envelope.
-func TestTryParseAgentJSON_ValidEnvelope(t *testing.T) {
-	text := `{"type":"result","subtype":"success","is_error":false,"result":"hello","session_id":"abc123"}`
-	envelope := tryParseAgentJSON(text)
-	if envelope == nil {
-		t.Fatal("expected envelope, got nil")
-	}
-	if envelope.SessionID != "abc123" {
-		t.Errorf("session_id: got %q, want %q", envelope.SessionID, "abc123")
-	}
-	if envelope.Result != "hello" {
-		t.Errorf("result: got %q, want %q", envelope.Result, "hello")
-	}
-}
-
-// TestTryParseAgentJSON_InvalidJSON returns nil for non-JSON text.
-func TestTryParseAgentJSON_InvalidJSON(t *testing.T) {
-	text := "This is just plain text, not JSON."
-	envelope := tryParseAgentJSON(text)
-	if envelope != nil {
-		t.Errorf("expected nil for non-JSON text, got: %+v", envelope)
-	}
-}
-
 // --- unsetEnvPrefix tests ---
 
 // TestUnsetEnvPrefix removes entries with the given prefix.
