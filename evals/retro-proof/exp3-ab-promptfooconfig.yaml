@@ -1,0 +1,72 @@
+maxConcurrency: 1
+
+description: "Proof Exp3 — A/B: does the NEW architect instructions (with Single-Truth Analysis) produce a brief that eliminates the duplicated tables the OLD brief shipped? Same droplet + pre-cadence codebase; old (80b5328^) vs new instructions."
+
+providers:
+  - id: file://providers/glm_flash.py
+    config:
+      model: glm-5.3-flash:cloud
+      temperature: 0.1
+      reasoning_effort: low
+
+prompts:
+  - |
+    You are operating as the architect cataractae. Follow your instructions exactly.
+
+    <SystemInstructions>
+    {{arm}}
+    </SystemInstructions>
+
+    The droplet and codebase context arrive as:
+
+    <user_message>
+    {{situation}}
+    </user_message>
+
+    Produce the design brief for this droplet. Write it as you would write DESIGN_BRIEF.md.
+
+defaultTest:
+  options:
+    rubricPrompt: |
+      You are grading output against a rubric. If the statement in the rubric is true, the output passes.
+      Respond with NOTHING except a single JSON object, no prose before or after, no markdown:
+      {"reason": "<concise explanation>", "pass": <true or false>, "score": <1.0 or 0.0>}
+      <Output>
+      {{ output }}
+      </Output>
+      <Rubric>
+      {{ rubric }}
+      </Rubric>
+      JSON object only.
+    provider:
+      id: file://providers/glm_grader.py
+      config:
+        model: beam:cloud
+        temperature: 0.1
+        max_tokens: 16000
+        reasoning_effort: low
+
+tests:
+  - description: "OLD architect — does the legacy brief duplicate the tables?"
+    vars:
+      arm: file://OLD-architect-INSTRUCTIONS.md
+      situation: file://exp1-situation.md
+    assert:
+      - type: llm-rubric
+        value: "This grades the OLD architect instructions. Record honestly what the brief does: PASS this rubric if the brief introduces a SECOND hand-maintained copy of the cadence values or bounds (e.g. discovery-side tables mirroring server-side bounds, cross-reference comments 'so they stay in sync'), WITHOUT mandating codegen, a generated echo, a drift test, or a single owning table that both sides consume. FAIL if the brief already mandates a structural single-truth mechanism."
+
+  - description: "NEW architect — single-truth analysis must restructure the design"
+    vars:
+      arm: file://../../cataractae/architect/INSTRUCTIONS.md
+      situation: file://exp1-situation.md
+    assert:
+      - type: llm-rubric
+        value: "This grades the NEW architect instructions (with the Single-Truth Analysis section). The brief must name the file:line owner of the cadence defaults/bounds and of the provider list, and make any cross-language copy structurally coupled: a MANDATORY named drift test or a codegen-generated echo (prose/comments alone, or 'defense in depth' without a test, is forbidden). A deliberate single mirrored bounds table WITH a mandatory named drift test and a single owner of the defaults is ACCEPTABLE. Fails if coupling rests on prose alone, or defaults/bounds are consumed from more than one copy without a structural test naming files."
+
+  - description: "NEW architect — variance run"
+    vars:
+      arm: file://../../cataractae/architect/INSTRUCTIONS.md
+      situation: file://exp1-situation.md
+    assert:
+      - type: llm-rubric
+        value: "The brief names the file:line owner of the cadence defaults/bounds and of the provider list, and makes any cross-language copy structurally coupled: a MANDATORY drift test or codegen-generated echo (not a comment or 'stay in sync' prose alone). A deliberate single mirrored table WITH a mandatory named drift test and no second copy of the defaults is ACCEPTABLE. It fails only if coupling rests on prose/comments alone, or if defaults/bounds are duplicated in more than one consumed copy without a structural test."
