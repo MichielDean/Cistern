@@ -124,6 +124,23 @@ tests:
       - type: llm-rubric
         value: "The brief uses deep-module design vocabulary: at least one of 'module', 'interface', 'seam', 'adapter', 'depth', 'locality', 'leverage' appears in the brief to name structural decisions. The brief frames the rate limiter as a module with a named interface and seam, not just 'add a rate limiter'."
 
+  - description: "single-truth hunt — brief carries a Single-Truth Requirements section naming the existing owner"
+    vars:
+      situation: |
+        Droplet: "Add cadence scheduling so each scanned provider is polled on a configurable interval."
+
+        Codebase (read these files for single-truth evidence):
+        - ingest/scan.mjs:28 — ATS_PROVIDERS = ["greenhouse","lever","ashby","workday","icims","bamboohr","paylocity","join"] is the single provider list the scanner family consumes
+        - engine/internal/server/settings.go:120 — settingsSave validates setting keys with per-key bounds
+        - engine/internal/discovery/scheduler.go:55 — a scheduler already reads per-provider settings fresh per cycle
+
+        The scheduler must know which providers to schedule. Write the brief.
+    assert:
+      - type: llm-rubric
+        value: "The brief contains a Single-Truth Analysis or Single-Truth Requirements treatment: it names the EXISTING provider-list owner (ATS_PROVIDERS / ingest/scan.mjs) and mandates consuming, generating, or drift-testing against it — it does NOT introduce a second provider list kept in sync by comments or prose. The rubric accepts either 'extend the existing list' or 'add codegen + drift test'; it fails if the brief hand-enumerates the providers again without pointing at the existing owner."
+      - type: llm-rubric
+        value: "The brief references the specific file location of the existing provider list (e.g. ingest/scan.mjs:28) when discussing the truth ownership — not a vague mention of 'the provider list'."
+
   - description: "architect produces a contract, not code"
     vars:
       situation: |

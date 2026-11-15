@@ -62,6 +62,11 @@ ScaledTest worktree: `~/.cistern/sandboxes/ScaledTest/lobsterdog`
 implement → review → qa → security-review → docs → delivery
 ```
 
+Architectural gate: every droplet's design brief passes through the `arch-review`
+cataractae (between architect and implement) before any code is written — it
+catches duplicated truths, hand-synced copies, and re-implemented semantics at
+design time so structural problems are fixed in the brief, not reworked in code.
+
 | Priority | Meaning |
 |----------|---------|
 | 1 | Critical — maximum scrutiny (security review included) |

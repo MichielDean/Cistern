@@ -1,0 +1,141 @@
+maxConcurrency: 1
+
+description: "Arch-reviewer cataractae eval — proves the arch-reviewer catches single-truth violations in a design brief and recirculates to the architect, not passes them"
+
+providers:
+  - id: file://providers/glm_flash.py
+    config:
+      model: glm-5.3-flash:cloud
+      temperature: 0.1
+      reasoning_effort: low
+
+prompts:
+  - |
+    You are operating as the arch-reviewer cataractae. Follow your instructions exactly.
+
+    <SystemInstructions>
+    {{system}}
+    </SystemInstructions>
+
+    The droplet, DESIGN_BRIEF.md, and codebase context arrive as:
+
+    <user_message>
+    {{situation}}
+    </user_message>
+
+    Produce your design review. Format: ## Summary / ## Traced Sections / ## Findings / ## Verdict (Pass or Recirculate).
+
+defaultTest:
+  vars:
+    system: file://../cataractae/arch-reviewer/INSTRUCTIONS.md
+  options:
+    rubricPrompt: |
+      You are grading output against a rubric. If the statement in the rubric is true, the output passes.
+      Respond with NOTHING except a single JSON object, no prose before or after, no markdown:
+      {"reason": "<concise explanation>", "pass": <true or false>, "score": <1.0 or 0.0>}
+      <Output>
+      {{ output }}
+      </Output>
+      <Rubric>
+      {{ rubric }}
+      </Rubric>
+      JSON object only.
+    provider:
+      id: file://providers/glm_grader.py
+      config:
+        model: beam:cloud
+        temperature: 0.1
+        max_tokens: 16000
+        reasoning_effort: low
+
+tests:
+  - description: "planted duplicated truth — brief adds second provider list, arch-reviewer recirculates"
+    vars:
+      situation: |
+        Droplet: "Add discovery cadence scheduling so scanned providers are polled on configurable intervals."
+
+        Existing codebase:
+        - ingest/scan.mjs:28 — ATS_PROVIDERS = ["greenhouse","lever","ashby","workday","icims","bamboohr","paylocity","join"] (the single provider list, consumed by the scanner family)
+
+        DESIGN_BRIEF.md (proposed):
+        ## Discovery Scheduler
+        - New module ingest/scheduler.mjs declares its own provider list:
+          SCHEDULED_PROVIDERS = ["greenhouse","lever","ashby","workday","icims","bamboohr","paylocity","join"]
+          and iterates SCHEDULED_PROVIDERS per cycle.
+        - Each provider's interval is read fresh per cycle from its platform setting.
+        - Keep SCHEDULED_PROVIDERS in sync with ATS_PROVIDERS manually; add a comment
+          in both files noting they must match.
+    assert:
+      - type: llm-rubric
+        value: "The arch-reviewer catches the duplicated provider list: the brief creates SCHEDULED_PROVIDERS as a second copy of ATS_PROVIDERS (ingest/scan.mjs:28) kept in sync by prose/comments only. The verdict is recirculate or any equivalent non-pass outcome (not Pass). The finding cites both the brief and the existing file location, and states the fix (consume ATS_PROVIDERS, or codegen + drift test)."
+      - type: llm-rubric
+        value: "The review includes a Traced Sections section stating which brief sections were traced against the codebase (explicit zero only if stated, not omitted)."
+
+  - description: "planted duplicated semantics — brief re-implements 'unset is off' per consumer"
+    vars:
+      situation: |
+        Droplet: "Add retry behavior to the notifier's daily digest email."
+
+        Existing codebase:
+        - engine/internal/notifier/notifier.go:40-44 — the notifier owns the unset-semantics interpretation: digest_hour unset means digest disabled, retry_max unset means 3 attempts, retry_backoff_s unset means 30s (typed getters read these fresh per tick)
+
+        DESIGN_BRIEF.md (proposed):
+        ## Digest Retry
+        - The digest sender gets its own retry loop. It reads notifications_retry_max
+          directly from the settings store with GetSetting and treats an unset key as
+          its own default of 3 (declared as a new constant digestDefaultRetryMax = 3
+          in the digest sender file). The same for notifications_retry_backoff_s,
+          defaulting to 30 seconds locally.
+        - The existing notifier retry_max constant stays as-is; the two are unrelated.
+    assert:
+      - type: llm-rubric
+        value: "The arch-reviewer catches the duplicated semantics: the brief has the digest sender re-implement the unset-means-default interpretation (new local defaults digestDefaultRetryMax=3 and 30s) that the notifier already owns, instead of a shared typed getter. The verdict is recirculate or any equivalent non-pass outcome. The finding cites both the brief and the existing owner (notifier unset-semantics location)."
+
+  - description: "clean brief reusing existing single-owner paths — arch-reviewer passes"
+    vars:
+      situation: |
+        Droplet: "Add a daily_apply_cap platform setting that limits how many jobs auto-approval may process per day."
+
+        Existing codebase:
+        - engine/internal/server/settings.go:120 — settingsSave switch validates setting keys; integer keys go through saveIntSetting with bounds
+        - engine/internal/settings/registry.go:60 — settings.GetBool/GetInt/GetString typed getters; unset-means-default lives here once. Key entries carry their default (e.g. registry.go:70), surfaced through per-key typed helpers
+        - engine/internal/autogate/gate.go:40 — the auto-approve loop reads auto_apply_enabled and auto_apply_threshold fresh per tick via the settings getters; no daily cap exists yet
+        - engine/internal/autogate/gate.go:55 — CountApprovalsSince(outcome, sinceRFC3339) already exists and the loop uses an injected clock (gate.go:47)
+
+        DESIGN_BRIEF.md (proposed):
+        ## Daily Cap Setting
+        - Single-Truth Requirements: none created — this droplet adds a setting
+          with no list, table, or enumeration behind it; no value set exists in
+          a second place (checked: grep cadence/provider/state lists untouched).
+        - New key daily_apply_cap validated in settingsSave
+          (engine/internal/server/settings.go:120) through the existing
+          saveIntSetting helper with bounds [0, 900] — the same validation
+          interpretation auto_apply_threshold already uses, no new one.
+        - Semantics: the default 20 is registered once as the daily_apply_cap
+          key entry in the settings registry (engine/internal/settings/registry.go:70)
+          and surfaced through a typed helper settings.GetDailyApplyCap()
+          (engine/internal/settings/registry.go:72) — the one owner of the
+          unset semantics; the gate calls GetDailyApplyCap and never carries
+          a literal default. An explicitly configured 0 disables auto-approval
+          for the tick entirely.
+        - Interaction with existing keys: auto_apply_enabled (existing) owns
+          on/off; daily_apply_cap owns how many per day. The gate reads
+          enabled first, then applies the cap — cap 0 is a zero quota the
+          operator chose; it never flips or reinterprets the enabled flag.
+          auto_apply_threshold (existing) selects candidates by score;
+          threshold semantics unchanged.
+        - Daily counting: the gate reuses the existing CountApprovalsSince
+          helper (engine/internal/autogate/gate.go:55) with the injected clock
+          (engine/internal/autogate/gate.go:47) — no new counting mechanism.
+          Before each approval batch the gate compares approvals counted today
+          against the cap from GetDailyApplyCap and shrinks the batch to
+          (cap - counted_today), skipping the tick entirely when the cap is
+          exhausted. "Counted today" = the UTC calendar day derived from the
+          injected clock (gate.go:47) passed to CountApprovalsSince — the same
+          boundary that helper already consumes, so no second day-boundary
+          interpretation is introduced.
+    assert:
+      - type: llm-rubric
+        value: "The verdict is Pass. The brief reuses the existing saveIntSetting validation path and the settings-registry unset-semantics owner, introduces no second copy of any list or table, and the arch-reviewer confirms this without raising structural findings. Minor brief-quality clarifications listed as non-blocking Observations are acceptable — but the verdict must be Pass, and there must be no invented structural problems (style nits escalated to findings, fabricated missing-ownership claims about things the codebase context already anchors)."
+      - type: llm-rubric
+        value: "The review includes a Traced Sections section credibly tracing the brief's sections against the cited codebase locations (settings.go:120, registry.go:60, gate.go:40)."
