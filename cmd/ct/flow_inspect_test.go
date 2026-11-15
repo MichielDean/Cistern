@@ -234,3 +234,40 @@ func TestBuildInspectOutput_UsesProvidedPathsAndIncludesPooled(t *testing.T) {
 		t.Errorf("droplet status: got %q, want pooled", out.Droplets[0].Status)
 	}
 }
+
+// TestInspect_DuplicateWorkerNames_EachRepoRowGetsOwnDroplet verifies that
+// when two repos define the same worker name ("virgo") and each has an
+// in_progress droplet assigned to it, each repo's cataractae row carries its
+// own repo's droplet — no cross-repo assignment.
+func TestInspect_DuplicateWorkerNames_EachRepoRowGetsOwnDroplet(t *testing.T) {
+	cfgPath := tempCfgTwoReposSameWorkerName(t)
+	dbPath := tempDB(t)
+
+	c, err := cistern.New(dbPath, "ra")
+	if err != nil {
+		t.Fatal(err)
+	}
+	aItem, _ := c.Add("repoa", "RepoA work", "", 1)
+	c.GetReady("repoa")
+	c.Assign(aItem.ID, "virgo", "implement")
+	bItem, _ := c.Add("repob", "RepoB work", "", 1)
+	c.GetReady("repob")
+	c.Assign(bItem.ID, "virgo", "implement")
+	c.Close()
+
+	out, err := buildInspectOutput(cfgPath, dbPath)
+	if err != nil {
+		t.Fatalf("buildInspectOutput: %v", err)
+	}
+
+	wantByRepo := map[string]string{"repoa": aItem.ID, "repob": bItem.ID}
+	for _, ch := range out.Cataractae {
+		if ch.Name != "virgo" {
+			continue
+		}
+		wantID := wantByRepo[ch.Repo]
+		if ch.DropletID == nil || *ch.DropletID != wantID {
+			t.Errorf("cataractae row (repo=%s, name=%s) droplet id = %v, want %q", ch.Repo, ch.Name, ch.DropletID, wantID)
+		}
+	}
+}

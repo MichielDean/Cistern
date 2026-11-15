@@ -429,6 +429,8 @@ ct doctor                      # Full health check
 ct doctor --fix                # Auto-repair common configuration issues
 ```
 
+**Duplicate worker names.** Workers are assigned per repo — two repos may safely use the same worker name (e.g. both define `virgo`) without their droplets colliding on the dashboard or peeking into the wrong tmux session. `ct doctor` prints an informational warning (it does not fail the check) if two repos share a worker name, as a naming hygiene hint.
+
 Config lives at `~/.cistern/cistern.yaml`. Key options:
 
 ```yaml

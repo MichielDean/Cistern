@@ -56,20 +56,20 @@ type FlowActivity struct {
 
 // DashboardData holds all data required to render the dashboard.
 type DashboardData struct {
-	CataractaeCount int                `json:"cataractae_count"`
-	FlowingCount    int                `json:"flowing_count"`
-	QueuedCount     int                `json:"queued_count"`
-	DoneCount       int                `json:"done_count"`
-	Cataractae      []CataractaeInfo   `json:"cataractae"`
-	UnassignedItems []*cistern.Droplet `json:"unassigned_items"` // in_progress with no aqueduct assignment
-	CisternItems    []*cistern.Droplet `json:"cistern_items"`    // flowing + queued
-	PooledItems     []*cistern.Droplet `json:"pooled_items"`     // all pooled droplets
-	RecentItems     []*cistern.Droplet `json:"recent_items"`     // recently closed/pooled
-	BlockedByMap    map[string]string  `json:"blocked_by_map"`   // droplet ID -> first blocking dep ID
-	FlowActivities  []FlowActivity     `json:"flow_activities"`  // live narrative for in-progress droplets
-	PoolReasons     map[string]string  `json:"pool_reasons"`     // droplet ID → pool reason for pooled items
+	CataractaeCount     int                `json:"cataractae_count"`
+	FlowingCount        int                `json:"flowing_count"`
+	QueuedCount         int                `json:"queued_count"`
+	DoneCount           int                `json:"done_count"`
+	Cataractae          []CataractaeInfo   `json:"cataractae"`
+	UnassignedItems     []*cistern.Droplet `json:"unassigned_items"` // in_progress with no aqueduct assignment
+	CisternItems        []*cistern.Droplet `json:"cistern_items"`    // flowing + queued
+	PooledItems         []*cistern.Droplet `json:"pooled_items"`     // all pooled droplets
+	RecentItems         []*cistern.Droplet `json:"recent_items"`     // recently closed/pooled
+	BlockedByMap        map[string]string  `json:"blocked_by_map"`   // droplet ID -> first blocking dep ID
+	FlowActivities      []FlowActivity     `json:"flow_activities"`  // live narrative for in-progress droplets
+	PoolReasons         map[string]string  `json:"pool_reasons"`     // droplet ID → pool reason for pooled items
 	CastellariusRunning bool               `json:"castellarius_running"`
-	FetchedAt       time.Time          `json:"fetched_at"`
+	FetchedAt           time.Time          `json:"fetched_at"`
 }
 
 // fetchDashboardData loads config and queue state into a DashboardData.
@@ -140,28 +140,25 @@ func fetchDashboardData(cfgPath, dbPath string) (*DashboardData, error) {
 		return data, fmt.Errorf("listing droplets: %w", err)
 	}
 
-	// Tally counts and build assignee map.
-	assigneeMap := map[string]*cistern.Droplet{}
+	// Tally counts.
 	for _, item := range allItems {
 		switch item.Status {
 		case "in_progress":
 			data.FlowingCount++
-			if item.Assignee != "" {
-				assigneeMap[item.Assignee] = item
-			}
 		case "open":
 			data.QueuedCount++
 		case "delivered":
 			data.DoneCount++
 		}
 	}
+	assigneeMap := buildAssigneeMap(allItems)
 
 	// Build cataractae infos.
 	cataractae := make([]CataractaeInfo, len(configCataractae))
 	for i, ch := range configCataractae {
 		ci := CataractaeInfo{Name: ch.name, RepoName: ch.repo}
 		ci.Steps = stepNames(allSteps[ch.repo])
-		if item, ok := assigneeMap[ch.name]; ok {
+		if item, ok := lookupAssignee(assigneeMap, ch.repo, ch.name); ok {
 			ci.DropletID = item.ID
 			ci.Title = item.Title
 			ci.Step = item.CurrentCataractae

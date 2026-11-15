@@ -410,15 +410,18 @@ func TestWsFrameRoundtrip_LargePayload(t *testing.T) {
 	}
 }
 
-// TestLookupAqueductSession_Empty returns false when the DB has no in_progress items.
+// TestLookupAqueductSession_Empty returns no sessions when the DB has no in_progress items.
 func TestLookupAqueductSession_Empty(t *testing.T) {
-	_, ok := lookupAqueductSession(tempDB(t), "virgo")
-	if ok {
-		t.Error("expected false for empty DB")
+	sessions := lookupAqueductSession(tempDB(t), "virgo")
+	if len(sessions) != 0 {
+		t.Errorf("expected 0 sessions for empty DB, got %d", len(sessions))
+	}
+	if sessions == nil {
+		t.Error("expected non-nil empty slice")
 	}
 }
 
-// TestLookupAqueductSession_NoMatch returns false when no item is assigned to the named aqueduct.
+// TestLookupAqueductSession_NoMatch returns no sessions when no item is assigned to the named aqueduct.
 func TestLookupAqueductSession_NoMatch(t *testing.T) {
 	db := tempDB(t)
 	c, err := cistern.New(db, "mr")
@@ -430,13 +433,13 @@ func TestLookupAqueductSession_NoMatch(t *testing.T) {
 	c.Assign(item.ID, "other-aqueduct", "implement")
 	c.Close()
 
-	_, ok := lookupAqueductSession(db, "virgo")
-	if ok {
-		t.Error("expected false when no item assigned to 'virgo'")
+	sessions := lookupAqueductSession(db, "virgo")
+	if len(sessions) != 0 {
+		t.Errorf("expected 0 sessions when no item assigned to 'virgo', got %d", len(sessions))
 	}
 }
 
-// TestLookupAqueductSession_Found returns true and correct session info when
+// TestLookupAqueductSession_Found returns the correct session info when
 // an in_progress item is assigned to the named aqueduct.
 func TestLookupAqueductSession_Found(t *testing.T) {
 	db := tempDB(t)
@@ -449,10 +452,11 @@ func TestLookupAqueductSession_Found(t *testing.T) {
 	c.Assign(item.ID, "virgo", "implement")
 	c.Close()
 
-	info, ok := lookupAqueductSession(db, "virgo")
-	if !ok {
-		t.Fatal("expected session to be found")
+	sessions := lookupAqueductSession(db, "virgo")
+	if len(sessions) != 1 {
+		t.Fatalf("expected 1 session, got %d", len(sessions))
 	}
+	info := sessions[0]
 	if info.dropletID != item.ID {
 		t.Errorf("dropletID = %q, want %q", info.dropletID, item.ID)
 	}
@@ -2001,5 +2005,152 @@ func TestDashboardWebMux_EventsSSE_AdaptiveBackoff_PollCountDropsWhenIdle(t *tes
 	halfMax := maxFastPolls / 2                           // 6
 	if n >= halfMax {
 		t.Errorf("SSE fetch count = %d, want < %d (SSE adaptive backoff not working)", n, halfMax)
+	}
+}
+
+// TestLookupAqueductSession_ReturnsAllReposMatchingWorkerName verifies that
+// when two repos both have in_progress droplets assigned to the same worker
+// name, all matching sessions are returned in List order, each with a
+// repo-qualified session ID.
+func TestLookupAqueductSession_ReturnsAllReposMatchingWorkerName(t *testing.T) {
+	db := tempDB(t)
+	c, err := cistern.New(db, "ra")
+	if err != nil {
+		t.Fatal(err)
+	}
+	aItem, _ := c.Add("repoa", "RepoA work", "", 1)
+	c.GetReady("repoa")
+	c.Assign(aItem.ID, "virgo", "implement")
+	bItem, _ := c.Add("repob", "RepoB work", "", 1)
+	c.GetReady("repob")
+	c.Assign(bItem.ID, "virgo", "implement")
+	c.Close()
+
+	sessions := lookupAqueductSession(db, "virgo")
+	if len(sessions) != 2 {
+		t.Fatalf("expected 2 sessions, got %d (%v)", len(sessions), sessions)
+	}
+	// List order: first entry is repoa's droplet.
+	if sessions[0].dropletID != aItem.ID || sessions[0].sessionID != "repoa-virgo" {
+		t.Errorf("sessions[0] = %+v, want dropletID %q sessionID repoa-virgo", sessions[0], aItem.ID)
+	}
+	if sessions[1].dropletID != bItem.ID || sessions[1].sessionID != "repob-virgo" {
+		t.Errorf("sessions[1] = %+v, want dropletID %q sessionID repob-virgo", sessions[1], bItem.ID)
+	}
+}
+
+// sessionMapCapturer is a Capturer whose HasSession reflects a fixed set of
+// live sessions, with per-session content. Used to verify peek picks the
+// repo whose tmux session is actually alive.
+type sessionMapCapturer struct {
+	live map[string]string // sessionID -> content
+}
+
+func (c sessionMapCapturer) HasSession(sessionID string) bool {
+	_, ok := c.live[sessionID]
+	return ok
+}
+
+func (c sessionMapCapturer) Capture(sessionID string, lines int) (string, error) {
+	return c.live[sessionID], nil
+}
+
+// TestPeekRoute_DuplicateWorkerNames_PicksAliveRepoSession verifies the peek
+// route streams the repo whose tmux session is alive when two repos share a
+// worker name (URL only carries the name).
+func TestPeekRoute_DuplicateWorkerNames_PicksAliveRepoSession(t *testing.T) {
+	db := tempDB(t)
+	c, err := cistern.New(db, "ra")
+	if err != nil {
+		t.Fatal(err)
+	}
+	aItem, _ := c.Add("repoa", "RepoA work", "", 1)
+	c.GetReady("repoa")
+	c.Assign(aItem.ID, "virgo", "implement")
+	bItem, _ := c.Add("repob", "RepoB work", "", 1)
+	c.GetReady("repob")
+	c.Assign(bItem.ID, "virgo", "implement")
+	c.Close()
+
+	mux := newDashboardMux(tempCfg(t), db)
+
+	orig := defaultCapturer
+	t.Cleanup(func() { defaultCapturer = orig })
+	defaultCapturer = sessionMapCapturer{live: map[string]string{
+		"repob-virgo": "repoB pane output",
+	}}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/aqueducts/virgo/peek", nil)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", w.Code)
+	}
+	if body := w.Body.String(); body != "repoB pane output" {
+		t.Errorf("body = %q, want %q (alive repo's session)", body, "repoB pane output")
+	}
+}
+
+// TestPickAliveSession verifies the direct multi-candidate selection rules:
+// the first session the capturer reports alive wins, none-alive falls back to
+// the first entry (preserving single-worker behavior), and an empty input
+// yields false.
+func TestPickAliveSession(t *testing.T) {
+	repoA := aqueductSessionInfo{sessionID: "repoa-virgo", dropletID: "d-a"}
+	repoB := aqueductSessionInfo{sessionID: "repob-virgo", dropletID: "d-b"}
+	both := []aqueductSessionInfo{repoA, repoB}
+
+	tests := []struct {
+		name        string
+		sessions    []aqueductSessionInfo
+		live        map[string]string
+		wantSession aqueductSessionInfo
+		wantFound   bool
+	}{
+		{
+			name:      "empty sessions returns false",
+			sessions:  nil,
+			wantFound: false,
+		},
+		{
+			name:        "no session alive falls back to first entry",
+			sessions:    both,
+			wantSession: repoA,
+			wantFound:   true,
+		},
+		{
+			name:        "first session alive picked",
+			sessions:    both,
+			live:        map[string]string{"repoa-virgo": "a"},
+			wantSession: repoA,
+			wantFound:   true,
+		},
+		{
+			name:        "second session alive picked when first is dead",
+			sessions:    both,
+			live:        map[string]string{"repob-virgo": "b"},
+			wantSession: repoB,
+			wantFound:   true,
+		},
+		{
+			name:        "both alive picks first",
+			sessions:    both,
+			live:        map[string]string{"repoa-virgo": "a", "repob-virgo": "b"},
+			wantSession: repoA,
+			wantFound:   true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, ok := pickAliveSession(tt.sessions, sessionMapCapturer{live: tt.live})
+			if ok != tt.wantFound {
+				t.Fatalf("found = %v, want %v", ok, tt.wantFound)
+			}
+			if got != tt.wantSession {
+				t.Errorf("picked = %+v, want %+v", got, tt.wantSession)
+			}
+		})
 	}
 }

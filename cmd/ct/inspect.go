@@ -41,13 +41,13 @@ type cisternInfo struct {
 }
 
 type dropletInfo struct {
-	ID             string    `json:"id"`
-	Title          string    `json:"title"`
-	Status         string    `json:"status"`
-	Stage          string    `json:"stage"`
-	Operator       string    `json:"operator"`
-	UpdatedAt      time.Time `json:"updated_at"`
-	BlockedBy      []string  `json:"blocked_by,omitempty"`
+	ID        string    `json:"id"`
+	Title     string    `json:"title"`
+	Status    string    `json:"status"`
+	Stage     string    `json:"stage"`
+	Operator  string    `json:"operator"`
+	UpdatedAt time.Time `json:"updated_at"`
+	BlockedBy []string  `json:"blocked_by,omitempty"`
 }
 
 type recentEvent struct {
@@ -118,12 +118,11 @@ func buildInspectOutput(cfgPath, dbPath string) (inspectOutput, error) {
 		return out, fmt.Errorf("list items: %w", err)
 	}
 
-	// Build assignee lookup and queue counts.
+	// Build repo-scoped assignee lookup and queue counts.
 	type assignInfo struct {
 		id, title, stage string
 		updatedAt        time.Time
 	}
-	assigneeMap := map[string]assignInfo{}
 
 	queueState := cisternInfo{}
 	for _, item := range allItems {
@@ -140,16 +139,9 @@ func buildInspectOutput(cfgPath, dbPath string) (inspectOutput, error) {
 		case "delivered":
 			queueState.Delivered++
 		}
-		if item.Assignee != "" {
-			assigneeMap[item.Assignee] = assignInfo{
-				id:        item.ID,
-				title:     item.Title,
-				stage:     item.CurrentCataractae,
-				updatedAt: item.UpdatedAt,
-			}
-		}
 	}
 	out.Counts = queueState
+	assigneeMap := buildAssigneeMap(allItems)
 
 	// Build cataractae from config operators.
 	for _, repo := range cfg.Repos {
@@ -158,7 +150,13 @@ func buildInspectOutput(cfgPath, dbPath string) (inspectOutput, error) {
 				Name: name,
 				Repo: repo.Name,
 			}
-			if info, ok := assigneeMap[name]; ok {
+			if item, ok := lookupAssignee(assigneeMap, repo.Name, name); ok {
+				info := assignInfo{
+					id:        item.ID,
+					title:     item.Title,
+					stage:     item.CurrentCataractae,
+					updatedAt: item.UpdatedAt,
+				}
 				session := name + "-" + info.id
 				alive := tmuxSessionAlive(session)
 				elapsed := int(time.Since(info.updatedAt).Seconds())
