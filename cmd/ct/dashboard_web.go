@@ -178,30 +178,50 @@ type aqueductSessionInfo struct {
 	elapsed   time.Duration
 }
 
-// lookupAqueductSession returns session info for the named aqueduct worker, or
-// false if the worker is not currently flowing.
-func lookupAqueductSession(dbPath, name string) (aqueductSessionInfo, bool) {
+// lookupAqueductSession returns session info for every in_progress droplet
+// assigned to the named worker, in List order. Worker names are only unique
+// per repo, so multiple repos can match the same name — the entries are
+// returned with repo-qualified session IDs and the caller picks the one whose
+// tmux session is alive. Returns an empty (non-nil) slice when none.
+func lookupAqueductSession(dbPath, name string) []aqueductSessionInfo {
+	sessions := []aqueductSessionInfo{}
 	c, err := cistern.New(dbPath, "")
 	if err != nil {
-		return aqueductSessionInfo{}, false
+		return sessions
 	}
 	defer c.Close()
 
 	items, err := c.List("", "in_progress")
 	if err != nil {
-		return aqueductSessionInfo{}, false
+		return sessions
 	}
 	for _, item := range items {
-		if item.Assignee == name {
-			return aqueductSessionInfo{
-				sessionID: item.Repo + "-" + name,
-				dropletID: item.ID,
-				title:     item.Title,
-				elapsed:   time.Since(item.UpdatedAt),
-			}, true
+		if item.Assignee != name {
+			continue
+		}
+		sessions = append(sessions, aqueductSessionInfo{
+			sessionID: item.Repo + "-" + name,
+			dropletID: item.ID,
+			title:     item.Title,
+			elapsed:   time.Since(item.UpdatedAt),
+		})
+	}
+	return sessions
+}
+
+// pickAliveSession returns the first session the capturer confirms alive,
+// falling back to the first entry when none are alive (this preserves the
+// single-worker behavior). Returns false when sessions is empty.
+func pickAliveSession(sessions []aqueductSessionInfo, capturer Capturer) (aqueductSessionInfo, bool) {
+	if len(sessions) == 0 {
+		return aqueductSessionInfo{}, false
+	}
+	for _, s := range sessions {
+		if capturer.HasSession(s.sessionID) {
+			return s, true
 		}
 	}
-	return aqueductSessionInfo{}, false
+	return sessions[0], true
 }
 
 // parsePeekLines reads the optional ?lines= query parameter, falling back to
@@ -1003,8 +1023,8 @@ func newDashboardMuxInternalWith(cfgPath, dbPath string, tui *DashboardTUI, fetc
 			return
 		}
 		lines := parsePeekLines(r)
-		sess, ok := lookupAqueductSession(dbPath, name)
 		capturer := defaultCapturer
+		sess, ok := pickAliveSession(lookupAqueductSession(dbPath, name), capturer)
 		if !ok || !capturer.HasSession(sess.sessionID) {
 			w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 			fmt.Fprint(w, "session not active")
@@ -1101,7 +1121,7 @@ func newDashboardMuxInternalWith(cfgPath, dbPath string, tui *DashboardTUI, fetc
 				return
 			case <-ticker.C:
 				next := "session not active"
-				if sess, ok := lookupAqueductSession(dbPath, name); ok && capturer.HasSession(sess.sessionID) {
+				if sess, ok := pickAliveSession(lookupAqueductSession(dbPath, name), capturer); ok && capturer.HasSession(sess.sessionID) {
 					content, err := capturer.Capture(sess.sessionID, lines)
 					if err != nil {
 						continue

@@ -1075,7 +1075,6 @@ func TestRunDoctorExtendedChecks_FailsWhenInstructionsFileMissing(t *testing.T) 
 		}
 	}
 
-
 	cfgPath := filepath.Join(cisternDir, "cistern.yaml")
 	if err := os.WriteFile(cfgPath, []byte(minimalCisternConfigYAML), 0o644); err != nil {
 		t.Fatalf("write config: %v", err)
@@ -1107,7 +1106,6 @@ func TestRunDoctorExtendedChecks_FixRegeneratesInstructionsFile(t *testing.T) {
 
 	// Provide a fake 'opencode' binary so binary checks pass.
 	setupFakeBinAndAPIKey(t, "opencode", "OLLAMA_HOST")
-
 
 	cfgPath := filepath.Join(cisternDir, "cistern.yaml")
 	if err := os.WriteFile(cfgPath, []byte(minimalCisternConfigYAML), 0o644); err != nil {
@@ -1221,7 +1219,6 @@ func TestRunDoctorExtendedChecks_ProviderInstructionsFile(t *testing.T) {
 
 	setupFakeBinAndAPIKey(t, "opencode", "OLLAMA_HOST")
 
-
 	// Config specifying opencode provider (InstructionsFile = AGENTS.md).
 	opencodeConfigYAML := `aqueducts:
   - name: default
@@ -1282,7 +1279,6 @@ func TestRunDoctorExtendedChecks_ProviderInstructionsFile_MissingFails(t *testin
 
 	setupFakeBinAndAPIKey(t, "opencode", "OLLAMA_HOST")
 
-
 	opencodeConfigYAML := `aqueducts:
   - name: default
     cataractae:
@@ -1335,7 +1331,6 @@ func TestRunDoctorExtendedChecks_UnknownProvider_FailsProviderCheck(t *testing.T
 			t.Fatalf("mkdir %s: %v", d, err)
 		}
 	}
-
 
 	unknownProviderConfigYAML := `aqueducts:
   - name: default
@@ -1418,7 +1413,6 @@ func TestRunDoctorExtendedChecks_ProviderBinaryMissing_Fails(t *testing.T) {
 	t.Setenv("PATH", emptyBinDir)
 	t.Setenv("GH_TOKEN", "test-key")
 
-
 	cfgPath := filepath.Join(cisternDir, "cistern.yaml")
 	if err := os.WriteFile(cfgPath, []byte(minimalCisternConfigYAML), 0o644); err != nil {
 		t.Fatalf("write config: %v", err)
@@ -1479,7 +1473,6 @@ func TestRunDoctorExtendedChecks_AgentFileCorrect_Passes(t *testing.T) {
 
 	setupFakeBinAndAPIKey(t, "opencode", "OLLAMA_HOST")
 
-
 	cfgPath := filepath.Join(cisternDir, "cistern.yaml")
 	if err := os.WriteFile(cfgPath, []byte(minimalCisternConfigWithOpencodeYAML), 0o644); err != nil {
 		t.Fatalf("write config: %v", err)
@@ -1521,7 +1514,6 @@ func TestRunDoctorExtendedChecks_LLMCustomWithoutBaseURL_Fails(t *testing.T) {
 
 	setupFakeBinAndAPIKey(t, "opencode", "OLLAMA_HOST")
 
-
 	cfgPath := filepath.Join(cisternDir, "cistern.yaml")
 	// llm.provider=custom but no base_url.
 	if err := os.WriteFile(cfgPath, []byte(minimalCisternConfigWithCustomLLMYAML), 0o644); err != nil {
@@ -1560,7 +1552,6 @@ func TestRunDoctorExtendedChecks_LLMCustomWithBaseURL_Passes(t *testing.T) {
 	}
 
 	setupFakeBinAndAPIKey(t, "opencode", "OLLAMA_HOST")
-
 
 	cfgPath := filepath.Join(cisternDir, "cistern.yaml")
 	// llm.provider=custom with base_url set.
@@ -1603,7 +1594,6 @@ func TestRunDoctorExtendedChecks_ProviderLLMMismatch_Advisory_NoCrash(t *testing
 	}
 
 	setupFakeBinAndAPIKey(t, "opencode", "OLLAMA_HOST")
-
 
 	cfgPath := filepath.Join(cisternDir, "cistern.yaml")
 	if err := os.WriteFile(cfgPath, []byte(minimalCisternConfigWithMismatchYAML), 0o644); err != nil {
@@ -2244,5 +2234,48 @@ func TestRunDoctorExtendedChecks_DefaultWorkflow_InstallerStubs_Passes(t *testin
 			"if the default workflow changed its required skills, update installerStubs above, " +
 			"_install_skill_stubs in tests/installer/run-tests.sh, " +
 			"and the skill lists in run-installer-tests.sh (3 occurrences)")
+	}
+}
+
+// TestCheckDuplicateWorkerNames_WarnsOnCollision verifies one ⚠ line per
+// worker name defined by 2+ repos.
+func TestCheckDuplicateWorkerNames_WarnsOnCollision(t *testing.T) {
+	cfg := &aqueduct.AqueductConfig{
+		Repos: []aqueduct.RepoConfig{
+			{Name: "repoa", Names: []string{"virgo", "marcia"}},
+			{Name: "repob", Names: []string{"virgo"}},
+			{Name: "repoc", Names: []string{"marcia", "jo"}},
+		},
+	}
+
+	var buf bytes.Buffer
+	checkDuplicateWorkerNames(cfg, &buf)
+
+	out := buf.String()
+	if !strings.Contains(out, `repos "repoa" and "repob" both define worker "virgo"`) {
+		t.Errorf("missing virgo collision line, got: %q", out)
+	}
+	if !strings.Contains(out, `repos "repoa" and "repoc" both define worker "marcia"`) {
+		t.Errorf("missing marcia collision line, got: %q", out)
+	}
+	if strings.Contains(out, `"jo"`) {
+		t.Errorf("unique worker 'jo' must not warn, got: %q", out)
+	}
+}
+
+// TestCheckDuplicateWorkerNames_SilentWhenUnique verifies nothing is printed
+// when worker names are unique across repos, or when there are no repos.
+func TestCheckDuplicateWorkerNames_SilentWhenUnique(t *testing.T) {
+	var buf bytes.Buffer
+	checkDuplicateWorkerNames(&aqueduct.AqueductConfig{
+		Repos: []aqueduct.RepoConfig{
+			{Name: "repoa", Names: []string{"virgo", "marcia"}},
+			{Name: "repob", Names: []string{"jo"}},
+		},
+	}, &buf)
+	checkDuplicateWorkerNames(&aqueduct.AqueductConfig{}, &buf)
+
+	if buf.Len() != 0 {
+		t.Errorf("expected no output, got: %q", buf.String())
 	}
 }

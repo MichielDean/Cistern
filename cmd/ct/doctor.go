@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"os/user"
@@ -232,6 +233,7 @@ func fixCisternDB(dbFile string) error {
 // 11. Systemd service health (only on systemd systems)
 // 12. Repo sandbox health
 // 13. Stalled in_progress droplets (warnings only, does not fail the check)
+// 14. Duplicate worker names across repos (warnings only, does not fail the check)
 func runDoctorExtendedChecks(cfg *aqueduct.AqueductConfig, cfgPath, home, dbPath string) bool {
 	ok := true
 	cataractaeDir := filepath.Join(home, ".cistern", "cataractae")
@@ -386,6 +388,9 @@ func runDoctorExtendedChecks(cfg *aqueduct.AqueductConfig, cfgPath, home, dbPath
 
 	// Check 13: Stalled droplets (warnings only — does not affect ok).
 	checkStalledDroplets(dbPath)
+
+	// Check 14: Duplicate worker names across repos (informational — does not affect ok).
+	checkDuplicateWorkerNames(cfg, os.Stdout)
 
 	return ok
 }
@@ -817,6 +822,32 @@ func checkStalledDroplets(dbPath string) {
 		if elapsed > 30*time.Minute {
 			fmt.Printf("\u26A0 %s in_progress for %dm \u2014 may be stalled\n", d.ID, int(elapsed.Minutes()))
 		}
+	}
+}
+
+// checkDuplicateWorkerNames prints an informational warning when two repos
+// define the same worker name. Assignment maps are keyed by (repo, name) so
+// it is correct — but tmux session names and human reasoning collide, so the
+// user should rename. One line per colliding name, in config order. Never
+// affects the ok result.
+func checkDuplicateWorkerNames(cfg *aqueduct.AqueductConfig, w io.Writer) {
+	byName := map[string][]string{} // worker name -> repos defining it
+	var order []string
+	for _, repo := range cfg.Repos {
+		for _, name := range repoWorkerNames(repo) {
+			if _, seen := byName[name]; !seen {
+				order = append(order, name)
+			}
+			byName[name] = append(byName[name], repo.Name)
+		}
+	}
+	for _, name := range order {
+		repos := byName[name]
+		if len(repos) < 2 {
+			continue
+		}
+		fmt.Fprintf(w, "⚠ repos %q and %q both define worker %q — assignments are repo-scoped, but session names and dashboards share the name\n",
+			repos[0], repos[1], name)
 	}
 }
 

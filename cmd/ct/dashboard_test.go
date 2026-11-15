@@ -105,6 +105,113 @@ repos:
 	return cfgPath
 }
 
+// tempCfgTwoReposSameWorkerName writes a cistern.yaml where two repos both
+// define the worker name "virgo" (on distinct aqueducts). Used to cover the
+// bare-name collision scenario.
+func tempCfgTwoReposSameWorkerName(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+
+	cfgContent := `aqueducts:
+  - name: aqua
+    cataractae:
+      - name: implement
+        type: agent
+      - name: review
+        type: agent
+  - name: aqub
+    cataractae:
+      - name: implement
+        type: agent
+      - name: review
+        type: agent
+repos:
+  - name: repoa
+    url: https://example.com/repoa
+    aqueduct: aqua
+    cataractae: 2
+    names:
+      - virgo
+      - marcia
+    prefix: ra
+  - name: repob
+    url: https://example.com/repob
+    aqueduct: aqub
+    cataractae: 2
+    names:
+      - virgo
+      - marcia
+    prefix: rb
+`
+	cfgPath := filepath.Join(dir, "cistern.yaml")
+	if err := os.WriteFile(cfgPath, []byte(cfgContent), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return cfgPath
+}
+
+// TestFetchDashboardData_DuplicateWorkerNames_NoOrphanedNoCrossRepoAssignment
+// verifies that when two repos define the same worker name and each has an
+// in_progress droplet assigned to it, each droplet is bound to its own repo's
+// worker row — nothing renders Orphaned, and CisternItems has no duplicate.
+func TestFetchDashboardData_DuplicateWorkerNames_NoOrphanedNoCrossRepoAssignment(t *testing.T) {
+	cfgPath := tempCfgTwoReposSameWorkerName(t)
+	dbPath := tempDB(t)
+
+	c, err := cistern.New(dbPath, "ra")
+	if err != nil {
+		t.Fatal(err)
+	}
+	aItem, _ := c.Add("repoa", "RepoA work", "", 1)
+	c.GetReady("repoa")
+	c.Assign(aItem.ID, "virgo", "implement")
+	bItem, _ := c.Add("repob", "RepoB work", "", 1)
+	c.GetReady("repob")
+	c.Assign(bItem.ID, "virgo", "implement")
+	c.Close()
+
+	data, err := fetchDashboardData(cfgPath, dbPath)
+	if err != nil {
+		t.Fatalf("fetchDashboardData: %v", err)
+	}
+
+	if len(data.UnassignedItems) != 0 {
+		t.Errorf("UnassignedItems = %d entries, want 0", len(data.UnassignedItems))
+	}
+
+	wantByRepo := map[string]string{"repoa": aItem.ID, "repob": bItem.ID}
+	for _, ci := range data.Cataractae {
+		if ci.Name != "virgo" {
+			continue
+		}
+		wantID := wantByRepo[ci.RepoName]
+		if ci.DropletID != wantID {
+			t.Errorf("cataractae row (repo=%s, name=%s) DropletID = %q, want %q", ci.RepoName, ci.Name, ci.DropletID, wantID)
+		}
+	}
+
+	counts := map[string]int{"repoa": 0, "repob": 0, aItem.ID: 0, bItem.ID: 0}
+	for _, item := range data.CisternItems {
+		if item.ID == aItem.ID {
+			counts["repoa"]++
+		}
+		if item.ID == bItem.ID {
+			counts["repob"]++
+		}
+		delete(counts, item.ID)
+	}
+	if counts["repoa"] != 1 || counts["repob"] != 1 {
+		t.Errorf("each droplet should appear exactly once in CisternItems: repoa=%d repob=%d", counts["repoa"], counts["repob"])
+	}
+	// deleted keys mean CisternItems did not contain those droplets at all.
+	for _, id := range []string{aItem.ID, bItem.ID} {
+		if _, ok := counts[id]; !ok {
+			return
+		}
+	}
+	t.Errorf("droplets %v missing from CisternItems entirely", []string{aItem.ID, bItem.ID})
+}
+
 // --- TestFetchDashboardData_FeedsDataCorrectly ---
 
 func TestFetchDashboardData_FeedsDataCorrectly(t *testing.T) {
@@ -514,7 +621,7 @@ func TestRenderDashboard_ContainsExpectedSections(t *testing.T) {
 			{ID: "ci-xyz99", Status: "delivered", CurrentCataractae: "merge", UpdatedAt: time.Now()},
 		},
 		CastellariusRunning: true,
-		FetchedAt:   time.Date(2026, 3, 14, 15, 7, 42, 0, time.UTC),
+		FetchedAt:           time.Date(2026, 3, 14, 15, 7, 42, 0, time.UTC),
 	}
 
 	out := renderDashboard(data)
@@ -1896,8 +2003,8 @@ func TestFetchDashboardData_AssignedToRemovedAqueduct_AppearsAsUnassigned(t *tes
 func TestDashboardStateHash_ChangesWhenUnassignedItemsChange(t *testing.T) {
 	base := &DashboardData{FlowingCount: 1, CastellariusRunning: true}
 	withOrphan := &DashboardData{
-		FlowingCount: 1,
-		CastellariusRunning:  true,
+		FlowingCount:        1,
+		CastellariusRunning: true,
 		UnassignedItems: []*cistern.Droplet{
 			{ID: "ci-orph1", CurrentCataractae: "implement"},
 		},
