@@ -51,6 +51,7 @@ CREATE TABLE IF NOT EXISTS "filter_sessions" (
     "messages" TEXT DEFAULT '[]',
     "spec_snapshot" TEXT DEFAULT '',
     "llm_session_id" TEXT DEFAULT '',
+    "agent" TEXT NOT NULL DEFAULT 'filter',
     "created_at" DATETIME DEFAULT CURRENT_TIMESTAMP,
     "updated_at" DATETIME DEFAULT CURRENT_TIMESTAMP
 );

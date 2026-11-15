@@ -1693,7 +1693,10 @@ func (c *Client) Restart(id, cataractaeName string) (*Droplet, error) {
 	return droplet, nil
 }
 
-// FilterSession represents a LLM filter/refine conversation session.
+// FilterSession represents a LLM filter/refine conversation session. The
+// Agent field discriminates which auxiliary agent owns the row ("filter",
+// "triage", or "wizard"); rows created before migration 021 default to
+// "filter".
 type FilterSession struct {
 	ID           string    `json:"id"`
 	Title        string    `json:"title"`
@@ -1701,6 +1704,7 @@ type FilterSession struct {
 	Messages     string    `json:"messages"`       // JSON array of {role,content} objects
 	SpecSnapshot string    `json:"spec_snapshot"`  // Current refined spec text
 	LLMSessionID string    `json:"llm_session_id"` // LLM provider conversation session ID
+	Agent        string    `json:"agent"`          // Owning aux agent: "filter" | "triage" | "wizard"
 	CreatedAt    time.Time `json:"created_at"`
 	UpdatedAt    time.Time `json:"updated_at"`
 }
@@ -1713,6 +1717,17 @@ type FilterMessage struct {
 
 // CreateFilterSession creates a new filter session with the given title.
 func (c *Client) CreateFilterSession(title, description string) (*FilterSession, error) {
+	return c.CreateAgentSession("filter", title, description)
+}
+
+// CreateAgentSession creates a new filter_sessions row owned by the given
+// auxiliary agent ("filter", "triage", or "wizard"). The agent column must be
+// non-empty; sessions for non-filter agents are hidden from ListFilterSessions
+// so the dashboard list stays filter-only.
+func (c *Client) CreateAgentSession(agent, title, description string) (*FilterSession, error) {
+	if agent == "" {
+		return nil, fmt.Errorf("cistern: create agent session: agent must be non-empty")
+	}
 	id, err := c.generateID()
 	if err != nil {
 		return nil, fmt.Errorf("cistern: generate id: %w", err)
@@ -1720,18 +1735,19 @@ func (c *Client) CreateFilterSession(title, description string) (*FilterSession,
 	now := time.Now().UTC()
 	messagesJSON := "[]"
 	_, err = c.db.Exec(
-		`INSERT INTO filter_sessions (id, title, description, messages, spec_snapshot, llm_session_id, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, '', '', ?, ?)`,
-		id, title, description, messagesJSON, now, now,
+		`INSERT INTO filter_sessions (id, title, description, messages, spec_snapshot, llm_session_id, agent, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, '', '', ?, ?, ?)`,
+		id, title, description, messagesJSON, agent, now, now,
 	)
 	if err != nil {
-		return nil, fmt.Errorf("cistern: create filter session: %w", err)
+		return nil, fmt.Errorf("cistern: create %s agent session: %w", agent, err)
 	}
 	return &FilterSession{
 		ID:          id,
 		Title:       title,
 		Description: description,
 		Messages:    messagesJSON,
+		Agent:       agent,
 		CreatedAt:   now,
 		UpdatedAt:   now,
 	}, nil
@@ -1740,12 +1756,12 @@ func (c *Client) CreateFilterSession(title, description string) (*FilterSession,
 // GetFilterSession returns a filter session by ID.
 func (c *Client) GetFilterSession(id string) (*FilterSession, error) {
 	row := c.db.QueryRow(
-		`SELECT id, title, description, messages, COALESCE(spec_snapshot,''), COALESCE(llm_session_id,''), created_at, updated_at
+		`SELECT id, title, description, messages, COALESCE(spec_snapshot,''), COALESCE(llm_session_id,''), COALESCE(agent,'filter'), created_at, updated_at
 		 FROM filter_sessions WHERE id = ?`, id,
 	)
 	var s FilterSession
 	var createdAt, updatedAt string
-	if err := row.Scan(&s.ID, &s.Title, &s.Description, &s.Messages, &s.SpecSnapshot, &s.LLMSessionID, &createdAt, &updatedAt); err != nil {
+	if err := row.Scan(&s.ID, &s.Title, &s.Description, &s.Messages, &s.SpecSnapshot, &s.LLMSessionID, &s.Agent, &createdAt, &updatedAt); err != nil {
 		if err == sql.ErrNoRows {
 			return nil, fmt.Errorf("cistern: filter session %s not found", id)
 		}
@@ -1764,11 +1780,13 @@ func (c *Client) GetFilterSession(id string) (*FilterSession, error) {
 	return &s, nil
 }
 
-// ListFilterSessions returns all filter sessions ordered by most recently updated first.
+// ListFilterSessions returns filter sessions (agent = 'filter') ordered by
+// most recently updated first. Sessions owned by other aux agents (triage,
+// wizard) are excluded — the dashboard list is filter-only.
 func (c *Client) ListFilterSessions() ([]FilterSession, error) {
 	rows, err := c.db.Query(
-		`SELECT id, title, description, messages, COALESCE(spec_snapshot,''), COALESCE(llm_session_id,''), created_at, updated_at
-		 FROM filter_sessions ORDER BY updated_at DESC`,
+		`SELECT id, title, description, messages, COALESCE(spec_snapshot,''), COALESCE(llm_session_id,''), COALESCE(agent,'filter'), created_at, updated_at
+		 FROM filter_sessions WHERE agent = 'filter' ORDER BY updated_at DESC`,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("cistern: list filter sessions: %w", err)
@@ -1779,7 +1797,7 @@ func (c *Client) ListFilterSessions() ([]FilterSession, error) {
 	for rows.Next() {
 		var s FilterSession
 		var createdAt, updatedAt string
-		if err := rows.Scan(&s.ID, &s.Title, &s.Description, &s.Messages, &s.SpecSnapshot, &s.LLMSessionID, &createdAt, &updatedAt); err != nil {
+		if err := rows.Scan(&s.ID, &s.Title, &s.Description, &s.Messages, &s.SpecSnapshot, &s.LLMSessionID, &s.Agent, &createdAt, &updatedAt); err != nil {
 			return nil, fmt.Errorf("cistern: scan filter session: %w", err)
 		}
 		if t, err := time.Parse("2006-01-02T15:04:05Z", createdAt); err == nil {

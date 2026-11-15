@@ -186,7 +186,7 @@ func TestBuildAgentPrompt_EmptyContextDropsHeader(t *testing.T) {
 // triage agent name and its AGENTS.md identity is written to the temp dir.
 func TestBuildAgentRunCommand_TriageAgentFlag(t *testing.T) {
 	preset := opencodePresetForAux()
-	_, args, _, tmpDir, err := buildAgentRunCommand(preset, "triage", triageAgentMD(), "Test prompt", "")
+	_, args, _, tmpDir, err := buildAgentRunCommand(preset, "triage", triageAgentMD(), "Test prompt")
 	if err != nil {
 		t.Fatalf("buildAgentRunCommand: %v", err)
 	}
@@ -207,7 +207,7 @@ func TestBuildAgentRunCommand_TriageAgentFlag(t *testing.T) {
 // TestBuildAgentRunCommand_WizardAgentFlag verifies the same for the wizard agent.
 func TestBuildAgentRunCommand_WizardAgentFlag(t *testing.T) {
 	preset := opencodePresetForAux()
-	_, args, _, tmpDir, err := buildAgentRunCommand(preset, "wizard", wizardAgentMD(), "Test prompt", "")
+	_, args, _, tmpDir, err := buildAgentRunCommand(preset, "wizard", wizardAgentMD(), "Test prompt")
 	if err != nil {
 		t.Fatalf("buildAgentRunCommand: %v", err)
 	}

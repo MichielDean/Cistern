@@ -154,8 +154,8 @@ func TestEndToEndSchemaVerification(t *testing.T) {
 
 	var migrationCount int
 	c.db.QueryRow(`SELECT COUNT(*) FROM "_schema_migrations"`).Scan(&migrationCount)
-	if migrationCount != 20 {
-		t.Errorf("expected 20 migration records, got %d", migrationCount)
+	if migrationCount != 21 {
+		t.Errorf("expected 21 migration records, got %d", migrationCount)
 	}
 }
 

@@ -36,7 +36,7 @@ func TestCallFilterAgent_Deprecated_AlwaysErrors(t *testing.T) {
 func TestFilterAgentRun_SignatureExists(t *testing.T) {
 	// This test verifies the function signature exists.
 	_ = filterAgentRun
-	_ = filterAgentRunResume
+	_ = agentSessionRun
 }
 
 // --- invokeFilterNew tests ---
@@ -252,7 +252,7 @@ func TestBuildFilterRunCommand_ContainsFormatJson(t *testing.T) {
 		PromptPositional: true,
 	}
 
-	_, args, _, _, err := buildFilterRunCommand(preset, "Test prompt", "")
+	_, args, _, _, err := buildFilterRunCommand(preset, "Test prompt")
 	if err != nil {
 		t.Fatalf("buildFilterRunCommand: %v", err)
 	}
@@ -283,7 +283,7 @@ func TestBuildFilterRunCommand_ContainsDangerouslySkipPermissions(t *testing.T) 
 		PromptPositional: true,
 	}
 
-	_, args, _, _, err := buildFilterRunCommand(preset, "Test prompt", "")
+	_, args, _, _, err := buildFilterRunCommand(preset, "Test prompt")
 	if err != nil {
 		t.Fatalf("buildFilterRunCommand: %v", err)
 	}
@@ -316,7 +316,7 @@ func TestBuildFilterRunCommand_EnvUnsets(t *testing.T) {
 	t.Setenv("OPENCODE_SERVER_USERNAME", "testuser")
 	t.Setenv("OPENCODE_SERVER_PASSWORD", "testpass")
 
-	_, _, env, _, err := buildFilterRunCommand(preset, "Test prompt", "")
+	_, _, env, _, err := buildFilterRunCommand(preset, "Test prompt")
 	if err != nil {
 		t.Fatalf("buildFilterRunCommand: %v", err)
 	}

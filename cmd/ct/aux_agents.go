@@ -1,7 +1,9 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
+	"log/slog"
 	"strings"
 
 	cobra "github.com/spf13/cobra"
@@ -22,40 +24,145 @@ func buildAgentPrompt(contextBlock, systemPrompt, userPrompt string) string {
 	return contextBlock + "\n\n" + systemPrompt + "\n\n" + userPrompt
 }
 
-// invokeAgentSessionNew starts a new auxiliary-agent session and returns the
-// agent's text response with session_id.
-func invokeAgentSessionNew(preset provider.ProviderPreset, agentName, agentsMd, prompt string) (filterSessionResult, error) {
-	result, err := agentSessionRun(preset, agentName, agentsMd, prompt, "")
-	if err != nil {
-		return filterSessionResult{}, err
-	}
-	if result.SessionID == "" {
-		if envelope := tryParseAgentJSON(result.Text); envelope != nil {
-			result.SessionID = envelope.SessionID
-			if envelope.Result != "" {
-				result.Text = envelope.Result
-			}
+// renderTranscript formats persisted conversation messages as a plain-text
+// transcript. Pure function — shared by CLI, dashboard, and TUI resume paths
+// via buildResumePrompt.
+func renderTranscript(messages []cistern.FilterMessage) string {
+	var sb strings.Builder
+	for _, msg := range messages {
+		if msg.Role == "user" {
+			sb.WriteString("USER: ")
+		} else {
+			sb.WriteString("ASSISTANT: ")
 		}
+		sb.WriteString(msg.Content)
+		sb.WriteString("\n\n")
 	}
-	return result, nil
+	return sb.String()
 }
 
-// invokeAgentSessionResume resumes an auxiliary-agent session with the given
-// message and returns the updated response with session_id.
-func invokeAgentSessionResume(preset provider.ProviderPreset, agentName, agentsMd, sessionID, message string) (filterSessionResult, error) {
-	result, err := agentSessionResume(preset, agentName, agentsMd, sessionID, message)
-	if err != nil {
-		return filterSessionResult{}, err
+// buildResumePrompt renders the persisted transcript plus the new user
+// message as the prompt for a fresh aux-agent session. Pure function, no I/O.
+// For empty messages it returns exactly newMessage; otherwise the PRIOR
+// CONVERSATION block precedes the new message so the agent reliably sees
+// chronology.
+func buildResumePrompt(messages []cistern.FilterMessage, newMessage string) string {
+	if len(messages) == 0 {
+		return newMessage
 	}
-	if result.SessionID == "" {
-		if envelope := tryParseAgentJSON(result.Text); envelope != nil {
-			result.SessionID = envelope.SessionID
-			if envelope.Result != "" {
-				result.Text = envelope.Result
-			}
+	return "=== PRIOR CONVERSATION (transcript) ===\n" +
+		renderTranscript(messages) +
+		"=== END PRIOR CONVERSATION ===\n\n" + newMessage
+}
+
+// parseAuxSessionTitle extracts a display title/description from the standard
+// "Title: ...\nDescription: ..." header of an aux-agent's first user message.
+// Returns empty strings when the message does not follow that shape.
+func parseAuxSessionTitle(message string) (string, string) {
+	title := ""
+	description := ""
+	for i, line := range strings.Split(message, "\n") {
+		switch {
+		case i == 0 && strings.HasPrefix(line, "Title: "):
+			title = strings.TrimSpace(strings.TrimPrefix(line, "Title: "))
+		case title != "" && strings.HasPrefix(line, "Description: "):
+			description = strings.TrimSpace(strings.TrimPrefix(line, "Description: "))
 		}
 	}
-	return result, nil
+	return title, description
+}
+
+// runAuxAgentRound runs one new-or-resume round for an aux agent, persisting
+// the transcript to filter_sessions. cisternID is empty for a new round.
+//
+// New round (cisternID == ""): creates a filter_sessions row with the agent
+// column set to agentName and runs the agent on a fresh opencode session.
+//
+// Resume round (cisternID != ""): loads the persisted transcript from the DB
+// and runs a fresh opencode session whose prompt is the transcript plus the
+// new message (buildResumePrompt). Session chaining lives in cistern's DB —
+// never in opencode's server. Returns an error naming the missing session ID
+// when the row does not exist.
+func runAuxAgentRound(preset provider.ProviderPreset, agentName, agentsMd, contextBlock, newMessage, cisternID string) (filterSessionResult, error) {
+	c, err := cistern.New(resolveDBPath(), "")
+	if err != nil {
+		return filterSessionResult{}, fmt.Errorf("%s: open cistern db: %w", agentName, err)
+	}
+	defer c.Close()
+
+	var prompt string
+	var session *cistern.FilterSession
+	// priorMessages holds the persisted transcript for resume rounds; the
+	// persisted transcript after this round must be prior + new messages.
+	var priorMessages []cistern.FilterMessage
+
+	if cisternID == "" {
+		title, description := parseAuxSessionTitle(newMessage)
+		session, err = c.CreateAgentSession(agentName, title, description)
+		if err != nil {
+			return filterSessionResult{}, fmt.Errorf("%s: create session row: %w", agentName, err)
+		}
+		prompt = buildAgentPrompt(contextBlock, "", newMessage)
+	} else {
+		session, err = c.GetFilterSession(cisternID)
+		if err != nil {
+			if strings.Contains(err.Error(), "not found") {
+				return filterSessionResult{}, fmt.Errorf("%s: resume %s: not found in cistern db", agentName, cisternID)
+			}
+			return filterSessionResult{}, fmt.Errorf("%s: resume %s: %w", agentName, cisternID, err)
+		}
+		var messages []cistern.FilterMessage
+		if session.Messages != "" && session.Messages != "[]" {
+			if err := json.Unmarshal([]byte(session.Messages), &messages); err != nil {
+				// Degraded but functional: proceed with an empty transcript
+				// rather than failing the round, but never silently.
+				slog.Default().Warn("aux-agent: unparsable persisted transcript",
+					"agent", agentName,
+					"session_id", cisternID,
+					"error", err)
+			}
+		}
+		priorMessages = messages
+
+		prompt = buildResumePrompt(messages, buildAgentPrompt(contextBlock, "", newMessage))
+	}
+
+	result, err := agentSessionRun(preset, agentName, agentsMd, prompt)
+	if err != nil {
+		if cisternID == "" {
+			// The round failed before any exchange was recorded; do not leave
+			// an empty row behind.
+			c.DeleteFilterSession(session.ID) //nolint:errcheck
+		}
+		return filterSessionResult{}, err
+	}
+
+	// Persist prior transcript (empty for a new round) plus this round's
+	// exchange, so resume-after-resume keeps full chronology.
+	transcript := append(priorMessages,
+		cistern.FilterMessage{Role: "user", Content: newMessage},
+		cistern.FilterMessage{Role: "assistant", Content: result.Text})
+	msgJSON, err := json.Marshal(transcript)
+	if err != nil {
+		return filterSessionResult{}, fmt.Errorf("%s: marshal transcript: %w", agentName, err)
+	}
+	if err := c.UpdateFilterSessionMessages(session.ID, string(msgJSON), result.Text, result.SessionID); err != nil {
+		return filterSessionResult{}, fmt.Errorf("%s: persist transcript: %w", agentName, err)
+	}
+
+	return filterSessionResult{
+		SessionID: result.SessionID,
+		Text:      result.Text,
+		CisternID: session.ID,
+	}, nil
+}
+
+// invokeAgentSessionNew starts a new auxiliary-agent session, persists the
+// transcript to filter_sessions (agent column = agentName), and returns the
+// agent's text response with both the per-turn opencode session_id and the
+// cistern session ID.
+func invokeAgentSessionNew(preset provider.ProviderPreset, agentName, agentsMd, prompt string) (filterSessionResult, error) {
+	return runAuxAgentRound(preset, agentName, agentsMd, "", prompt, "")
 }
 
 // gatherDropletContext fetches a droplet and its notes from the cistern DB and
@@ -120,8 +227,9 @@ Triage a droplet (fetches its current state and notes):
 Triage session for an idea without a droplet:
   ct triage --title 'what went wrong in the apply phase'
 
-Continue a triage session:
-  ct triage --resume <session-id> 'your feedback here'
+Continue a triage session (resume accepts the cistern session ID printed to
+stderr by the prior round):
+  ct triage --resume <cistern-session-id> 'your feedback here'
 
 Use --output-format json for scriptable output (session_id + text).`,
 	RunE: func(cmd *cobra.Command, args []string) error {
@@ -131,7 +239,7 @@ Use --output-format json for scriptable output (session_id + text).`,
 			if len(args) == 0 {
 				return fmt.Errorf("feedback argument required: ct triage --resume <id> '<feedback>'")
 			}
-			result, err := invokeAgentSessionResume(preset, "triage", triageAgentMD(), triageResume, strings.Join(args, " "))
+			result, err := runAuxAgentRound(preset, "triage", triageAgentMD(), "", strings.Join(args, " "), triageResume)
 			if err != nil {
 				return err
 			}
@@ -194,8 +302,9 @@ stage's journey, and authors a bash script that walks a human through it.
 New session:
   ct wizard --title 'provision the production database'
 
-Continue a wizard-design session:
-  ct wizard --resume <session-id> 'your feedback here'
+Continue a wizard-design session (resume accepts the cistern session ID
+printed to stderr by the prior round):
+  ct wizard --resume <cistern-session-id> 'your feedback here'
 
 Use --output-format json for scriptable output (session_id + text).`,
 	RunE: func(cmd *cobra.Command, args []string) error {
@@ -205,7 +314,7 @@ Use --output-format json for scriptable output (session_id + text).`,
 			if len(args) == 0 {
 				return fmt.Errorf("feedback argument required: ct wizard --resume <id> '<feedback>'")
 			}
-			result, err := invokeAgentSessionResume(preset, "wizard", wizardAgentMD(), wizardResume, strings.Join(args, " "))
+			result, err := runAuxAgentRound(preset, "wizard", wizardAgentMD(), "", strings.Join(args, " "), wizardResume)
 			if err != nil {
 				return err
 			}
@@ -231,13 +340,13 @@ Use --output-format json for scriptable output (session_id + text).`,
 func init() {
 	triageCmd.Flags().StringVar(&triageTitle, "title", "", "rough idea to triage (alternative to a droplet id)")
 	triageCmd.Flags().StringVar(&triageDescription, "description", "", "context for the triage idea")
-	triageCmd.Flags().StringVar(&triageResume, "resume", "", "resume an existing triage session by ID")
+	triageCmd.Flags().StringVar(&triageResume, "resume", "", "resume an existing triage session by cistern session ID")
 	triageCmd.Flags().StringVar(&triageOutputFormat, "output-format", "human", "output format: human or json")
 	rootCmd.AddCommand(triageCmd)
 
 	wizardCmd.Flags().StringVar(&wizardTitle, "title", "", "what the wizard should cover")
 	wizardCmd.Flags().StringVar(&wizardDescription, "description", "", "context for the wizard design")
-	wizardCmd.Flags().StringVar(&wizardResume, "resume", "", "resume an existing wizard-design session by ID")
+	wizardCmd.Flags().StringVar(&wizardResume, "resume", "", "resume an existing wizard-design session by cistern session ID")
 	wizardCmd.Flags().StringVar(&wizardOutputFormat, "output-format", "human", "output format: human or json")
 	rootCmd.AddCommand(wizardCmd)
 }
