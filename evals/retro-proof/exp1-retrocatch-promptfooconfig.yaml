@@ -1,0 +1,68 @@
+maxConcurrency: 1
+
+description: "Proof Exp1 — retro-catch: arch-reviewer reviews the ACTUAL PR #20 design for the discovery cadence settings (commit state ad8eb3403), the design that really shipped hand-synced duplicated tables and which PR #36 later reworked. Expected: Recirculate with single-truth findings."
+
+providers:
+  - id: file://providers/glm_flash.py
+    config:
+      model: glm-5.3-flash:cloud
+      temperature: 0.1
+      reasoning_effort: low
+
+prompts:
+  - |
+    You are operating as the arch-reviewer cataractae. Follow your instructions exactly.
+
+    <SystemInstructions>
+    {{system}}
+    </SystemInstructions>
+
+    The droplet, DESIGN_BRIEF.md, and codebase context arrive as:
+
+    <user_message>
+    {{situation}}
+    </user_message>
+
+    Produce your design review. Format: ## Summary / ## Traced Sections / ## Findings / ## Observations (optional) / ## Verdict (Pass or Recirculate).
+
+defaultTest:
+  vars:
+    system: file://../../cataractae/arch-reviewer/INSTRUCTIONS.md
+  options:
+    rubricPrompt: |
+      You are grading output against a rubric. If the statement in the rubric is true, the output passes.
+      Respond with NOTHING except a single JSON object, no prose before or after, no markdown:
+      {"reason": "<concise explanation>", "pass": <true or false>, "score": <1.0 or 0.0>}
+      <Output>
+      {{ output }}
+      </Output>
+      <Rubric>
+      {{ rubric }}
+      </Rubric>
+      JSON object only.
+    provider:
+      id: file://providers/glm_grader.py
+      config:
+        model: beam:cloud
+        temperature: 0.1
+        max_tokens: 16000
+        reasoning_effort: low
+
+tests:
+  - description: "PR-20 retro design — duplicated bounds/defaults tables must be caught"
+    vars:
+      situation: file://exp1-situation.md
+    assert:
+      - type: llm-rubric
+        value: "The review flags the duplicated bounds tables: the brief has discovery's CADENCE_BOUNDS_MIN mirror the settingsSave per-class bounds ([15,360] / [1440,1440] exact / [120,1440]) as a second copy kept equal by prose ('mirrors', 'stay in sync', 'defense in depth'). The verdict is Recirculate or any equivalent non-pass outcome. The finding cites BOTH sides (the server switch validation side AND the JS table) and names the fix: make one side own the values (generated echo / drift test / registry)."
+      - type: llm-rubric
+        value: "The review flags the duplicated unset/default semantics: unset-or-out-of-bounds treated as 'use the default' is interpreted in at least two places (the store/server side and discovery's own JS default lookups from CADENCE_DEFAULTS_MIN), rather than one owned interpretation. Recirculate or equivalent non-pass outcome."
+      - type: llm-rubric
+        value: "The review includes a Traced Sections section naming which brief sections were traced against the cited codebase files, and the findings reference specific codebase locations such as server.go settingsSave or scan.mjs ATS_PROVIDERS."
+
+  - description: "PR-20 retro design — variance run 2"
+    vars:
+      situation: file://exp1-situation.md
+    assert:
+      - type: llm-rubric
+        value: "The verdict is Recirculate or any equivalent non-pass outcome, with at least one finding about duplicated value sets or duplicated semantics between the Go server validation and the JS discovery tables (the 'mirror'/'defense in depth' tables)."
