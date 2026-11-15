@@ -94,6 +94,31 @@ A brief that says "extract common patterns" is worthless. A brief that says
 "extract `boolPerm(orgId: Long, perm: String): Boolean` from `OrganizationDAO.kt`
 lines 45, 52, 59 …" gives the implementer and reviewer a clear standard.
 
+## Single-Truth Analysis
+
+Before writing the brief, hunt for information the droplet's change would write
+into the codebase a second time. These are the classics:
+
+- **Duplicated value sets**: a list, table, or enumeration (provider lists, kind
+  sets, state machines, allowed values) that already exists in another file or
+  another language. A second copy with only prose keeping it equal is a defect —
+  the brief must extend the existing list, or mandate codegen / a checked-in
+  generated echo plus a drift test.
+- **Duplicated semantics**: "unset is off" style interpretation, per-key defaults,
+  or bounds/validation logic that a new consumer would re-implement instead of
+  calling the one getter or validator that owns the interpretation.
+- **Duplicated tables**: bounds, defaults, or keys written in two places (e.g.
+  server-side validation and a client-side mirror).
+
+Grep for every constant, list, or semantic rule the implementation will touch and
+name where its one truth already lives. The brief's **Single-Truth Requirements**
+section (mandatory when the change touches any of the above; write "none" only
+after checking) states: the existing file:line that owns the truth, what the
+implementation must consume instead of copying, and any codegen or drift test
+that makes the coupling structural rather than aspirational. If you cannot name
+the owner, the change must CREATE the owner — and the brief says so explicitly.
+
+
 ## Brief Format
 
 Write the design brief as `DESIGN_BRIEF.md` in the repository root. The brief
@@ -274,6 +299,9 @@ A brief is complete when:
 5. Every exported method has a documented precondition in its contract clause
 6. Coupling requirements identify any shared mutable state and prescribe struct fields
 7. Migration requirements specify numbering, quoting, DDL/DML separation, and embed.FS
+8. The Single-Truth Requirements section names the existing file:line owner of
+   every duplicated-prone value set, semantic rule, and table the change touches
+   (or states that the change creates the owner)
 
 A brief that fails any of these checks is incomplete. Signal recirculate with a
 note explaining what you cannot determine from the codebase.

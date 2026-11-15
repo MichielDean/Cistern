@@ -32,9 +32,21 @@ aqueducts:
           - name: cistern-git
           - name: cistern-diff-reader
         timeout_minutes: 20
-        on_pass: implement
+        on_pass: arch-review
         on_recirculate: architect
         on_fail: pooled
+        on_pool: pooled
+      - name: arch-review
+        type: agent
+        identity: arch-reviewer
+        context: full_codebase
+        skills:
+          - name: cistern-signaling
+          - name: cistern-diff-reader
+        timeout_minutes: 20
+        on_pass: implement
+        on_fail: architect
+        on_recirculate: architect
         on_pool: pooled
       - name: implement
         type: agent

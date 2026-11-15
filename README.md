@@ -59,7 +59,7 @@ ct dashboard
 Every droplet flows through the same sequence of cataractae, regardless of complexity level:
 
 ```
-All:      implement → review → qa → security-review → docs → delivery → done
+All:      architect → arch-review → implement → review → qa → security-review → docs → delivery → done
 ```
 
 All droplets flow through the same pipeline and auto-merge after delivery.

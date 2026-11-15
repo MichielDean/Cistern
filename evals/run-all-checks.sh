@@ -24,13 +24,22 @@ done
 echo "    eval-data extracted: filtration/triage/wizard"
 
 # Verify cataractae INSTRUCTIONS.md exist on disk (read at runtime, not synced)
-for role in architect implementer reviewer qa security docs_writer delivery; do
+for role in architect arch-reviewer implementer reviewer qa security docs_writer delivery; do
     if [ ! -s "$REPO_ROOT/cataractae/$role/INSTRUCTIONS.md" ]; then
         echo "FAIL: cataractae/$role/INSTRUCTIONS.md missing or empty" >&2
         exit 1
     fi
 done
-echo "    cataractae instructions present: architect/implementer/reviewer/qa/security/docs_writer/delivery"
+echo "    cataractae instructions present: architect/arch-reviewer/implementer/reviewer/qa/security/docs_writer/delivery"
+
+# arch-review must be wired into every shipped chain immediately after architect
+for cfg in "$REPO_ROOT/aqueduct/aqueduct.yaml" "$REPO_ROOT/cmd/ct/assets/cistern.yaml"; do
+    if ! grep -q "identity: arch-reviewer" "$cfg"; then
+        echo "FAIL: $cfg has no arch-review stage (identity: arch-reviewer)" >&2
+        exit 1
+    fi
+done
+echo "    arch-review stage wired in shipped aqueduct configs"
 
 if grep -rn "glm-5.1:cloud" "$REPO_ROOT/cmd/ct/assets/cistern.yaml" "$REPO_ROOT/cistern.yaml" "$REPO_ROOT/aqueduct/aqueduct.yaml" 2>/dev/null; then
     echo "FAIL: retired model glm-5.1:cloud found in shipped configs (retired 2026-09-25 — see session log 15:27)" >&2
@@ -68,6 +77,7 @@ for cfg in \
     cistern-triage-promptfooconfig.yaml \
     cistern-wizard-promptfooconfig.yaml \
     cistern-architect-promptfooconfig.yaml \
+    cistern-arch-reviewer-promptfooconfig.yaml \
     cistern-implementer-promptfooconfig.yaml \
     cistern-reviewer-promptfooconfig.yaml \
     cistern-qa-promptfooconfig.yaml \

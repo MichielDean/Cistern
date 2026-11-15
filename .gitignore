@@ -29,3 +29,4 @@ web/node_modules/
 web/dist/
 *.tsbuildinfo
 cmd/ct/ct
+__pycache__/
