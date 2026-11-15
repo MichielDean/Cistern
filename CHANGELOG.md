@@ -2,6 +2,27 @@
 
 ## Unreleased
 
+### Transcript-based aux-agent resume (breaking change: `--resume` takes a cistern session ID)
+
+Aux-agent resume (filter, triage, wizard, dashboard) no longer uses opencode's
+server-side `run -s <id>` seam, which failed with "Agent not found" across
+server restarts. Every aux-agent invocation is now a fresh opencode session;
+session chaining lives entirely in cistern's DB: each round appends to the
+persisted `filter_sessions.messages` transcript, and resume replays the full
+transcript into the new session's prompt. See ADR 0001
+(`docs/adr/0001-transcript-based-aux-resume.md`).
+
+**Breaking:** `--resume` on `ct filter` (and the dashboard resume endpoint) now
+takes the **cistern session ID** printed to stderr by the prior round — not an
+opencode session ID. Existing opencode session IDs are no longer valid resume
+keys; persisted cistern sessions and their transcripts carry over via migration
+021 (adds an `agent` discriminator column to `filter_sessions`, legacy rows
+default to `'filter'` — no data loss, legacy sessions resume as before).
+
+Also: CLI `ct filter` now persists rounds to `filter_sessions` (previously only
+the dashboard did), so `ct filter` round-1 + repeated `--resume` invocations
+work back-to-back from a fresh process with full transcript continuity.
+
 ### Out-of-band skill deployment via install.sh (fixes 8-month staleness)
 
 The `git_sync` drought hook was the ONLY mechanism deploying `internal/skills/` → `~/.cistern/skills/`. It last ran 2026/03/19 — 8 months ago — Castellarius has been idle since 2026/03/26 but the drought detection never triggered, so every skill update since March went silently stale. Cataractee agents were running on older, shorter skill versions missing the Deepening appendix, Design-it-twice appendix, and other content the "Consult mp-..." pointers in the tuned INSTRUCTIONS.md reference.

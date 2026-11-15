@@ -60,15 +60,28 @@ func (p filterPanel) isFirstUse() bool {
 
 func (p filterPanel) Init() tea.Cmd { return nil }
 
+// resumePromptFromHistory renders the panel's in-memory transcript
+// (filterPanel.history) plus the new user message as the prompt for a fresh
+// agent session (buildResumePrompt). Single representation: entries are
+// converted to []cistern.FilterMessage first.
+func (p filterPanel) resumePromptFromHistory(newMessage string) string {
+	msgs := make([]cistern.FilterMessage, 0, len(p.history))
+	for _, e := range p.history {
+		msgs = append(msgs, cistern.FilterMessage{Role: e.role, Content: e.text})
+	}
+	return buildResumePrompt(msgs, newMessage)
+}
+
 // submitCmd returns a tea.Cmd that calls the filter agent in the background.
 // For a first-use session it parses the prompt (first line = title, rest =
-// description) and invokes invokeFilterNew. For resume sessions it calls
-// invokeFilterResume with the stored sessionID.
+// description) and invokes invokeFilterNew. For resume sessions it rebuilds a
+// FRESH opencode session whose prompt is the in-memory transcript plus the new
+// message via resumePromptFromHistory — opencode server-side resume (-s) is
+// never used.
 //
 // firstUse must be captured by the caller before any history mutation so that
 // the correct routing is used even when history has already been updated.
 func (p filterPanel) submitCmd(prompt string, firstUse bool) tea.Cmd {
-	sessionID := p.sessionID
 	return func() tea.Msg {
 		preset := resolveFilterPreset("")
 		var result filterSessionResult
@@ -87,7 +100,7 @@ func (p filterPanel) submitCmd(prompt string, firstUse bool) tea.Cmd {
 			})
 			result, err = invokeFilterNew(preset, title, desc, contextBlock)
 		} else {
-			result, err = invokeFilterResume(preset, sessionID, prompt)
+			result, err = filterAgentRun(preset, p.resumePromptFromHistory(prompt))
 		}
 		return filterAgentMsg{result: result, err: err}
 	}

@@ -22,15 +22,21 @@ import (
 // Key insight: OPENCODE_SERVER_* env vars must be unset so opencode doesn't
 // try to connect to an existing server (which causes "Session not found" errors).
 func filterAgentRun(preset provider.ProviderPreset, prompt string) (filterSessionResult, error) {
-	return agentSessionRun(preset, "filter", filterAgentsMD(), prompt, "")
+	return agentSessionRun(preset, "filter", filterAgentsMD(), prompt)
 }
 
 // agentSessionRun invokes opencode run --format json for a named auxiliary
 // agent (filter, triage, wizard...). Same contract as filterAgentRun but with
 // a pluggable agent name and AGENTS.md content.
-func agentSessionRun(preset provider.ProviderPreset, agentName, agentsMd, prompt, sessionID string) (filterSessionResult, error) {
+//
+// Every invocation is a FRESH opencode session. Session chaining across rounds
+// lives in cistern's DB (filter_sessions.messages), not opencode's server:
+// resume prompts carry the prior transcript (buildResumePrompt). The `-s`
+// resume flag is deliberately not used — opencode V2 re-resolves project-local
+// agents on resume and fails with "Agent not found".
+func agentSessionRun(preset provider.ProviderPreset, agentName, agentsMd, prompt string) (filterSessionResult, error) {
 	// Build the command
-	cmdPath, args, env, tmpDir, err := buildAgentRunCommand(preset, agentName, agentsMd, prompt, sessionID)
+	cmdPath, args, env, tmpDir, err := buildAgentRunCommand(preset, agentName, agentsMd, prompt)
 	if err != nil {
 		return filterSessionResult{}, err
 	}
@@ -63,7 +69,7 @@ func agentSessionRun(preset provider.ProviderPreset, agentName, agentsMd, prompt
 
 	// Parse NDJSON output with timeout
 	var textParts []string
-	parsedSessionID := sessionID
+	var parsedSessionID string
 	// Last raw NDJSON line seen on stdout, surfaced in errors so opencode's
 	// structured error events are not swallowed by a generic exit-status wrap.
 	var lastNDJSON string
@@ -128,7 +134,7 @@ func agentSessionRun(preset provider.ProviderPreset, agentName, agentsMd, prompt
 	response := strings.TrimSpace(strings.Join(textParts, "\n"))
 
 	slog.Default().Info("agent-session: completed",
-		"session_id", sessionID,
+		"session_id", parsedSessionID,
 		"text_len", len(response))
 
 	return filterSessionResult{
@@ -137,109 +143,19 @@ func agentSessionRun(preset provider.ProviderPreset, agentName, agentsMd, prompt
 	}, nil
 }
 
-// filterAgentRunResume resumes an existing filter session using opencode run
-// with the --session flag and --format json.
-func filterAgentRunResume(preset provider.ProviderPreset, sessionID, message string) (filterSessionResult, error) {
-	return agentSessionResume(preset, "filter", filterAgentsMD(), sessionID, message)
-}
-
-// agentSessionResume resumes an existing auxiliary-agent session; same contract
-// as filterAgentRunResume but parameterized by agent name and AGENTS.md content.
-func agentSessionResume(preset provider.ProviderPreset, agentName, agentsMd, sessionID, message string) (filterSessionResult, error) {
-	cmdPath, args, env, tmpDir, err := buildAgentRunCommand(preset, agentName, agentsMd, message, sessionID)
-	if err != nil {
-		return filterSessionResult{}, err
-	}
-	if tmpDir != "" {
-		defer os.RemoveAll(tmpDir)
-	}
-
-	cmd := exec.Command(cmdPath, args...)
-	cmd.Env = env
-	cmd.Stderr = os.Stderr
-	if tmpDir != "" {
-		cmd.Dir = tmpDir
-	}
-
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		return filterSessionResult{}, fmt.Errorf("%s: create stdout pipe: %w", agentName, err)
-	}
-
-	if err := cmd.Start(); err != nil {
-		return filterSessionResult{}, fmt.Errorf("%s: start command: %w", agentName, err)
-	}
-
-	var textParts []string
-	scanner := bufio.NewScanner(stdout)
-	done := make(chan struct{})
-	go func() {
-		for scanner.Scan() {
-			line := scanner.Text()
-			if line == "" {
-				continue
-			}
-			var event map[string]interface{}
-			if err := json.Unmarshal([]byte(line), &event); err != nil {
-				continue
-			}
-			if eventType, _ := event["type"].(string); eventType == "text" {
-				if part, ok := event["part"].(map[string]interface{}); ok {
-					if text, ok := part["text"].(string); ok && text != "" {
-						textParts = append(textParts, text)
-					}
-				}
-			}
-		}
-		close(done)
-	}()
-
-	cmdDone := make(chan error, 1)
-	go func() {
-		cmdDone <- cmd.Wait()
-	}()
-
-	timeout := filterTimeout()
-	select {
-	case cmdErr := <-cmdDone:
-		<-done
-		if cmdErr != nil && len(textParts) == 0 {
-			return filterSessionResult{}, fmt.Errorf("%s: resume command failed: %w", agentName, cmdErr)
-		}
-		if cmdErr != nil {
-			slog.Default().Warn("agent-session: resume command exited with error but produced output",
-				"agent", agentName,
-				"error", cmdErr,
-				"session_id", sessionID)
-		}
-	case <-time.After(timeout):
-		if cmd.Process != nil {
-			cmd.Process.Kill()
-		}
-		<-done
-		return filterSessionResult{}, fmt.Errorf("%s: resume command timed out after %v", agentName, timeout)
-	}
-
-	response := strings.TrimSpace(strings.Join(textParts, "\n"))
-
-	return filterSessionResult{
-		SessionID: sessionID,
-		Text:      response,
-	}, nil
-}
-
 // buildFilterRunCommand constructs the opencode run command and environment.
-// If sessionID is non-empty, adds -s flag for resume mode.
+// Never emits a resume flag (-s): every run is a fresh opencode session; the
+// transcript chain lives in cistern's DB.
 // Returns (cmdPath, args, env, tmpDir, error) — tmpDir is empty if no temp dir was created.
-func buildFilterRunCommand(preset provider.ProviderPreset, prompt string, sessionID string) (string, []string, []string, string, error) {
-	return buildAgentRunCommand(preset, "filter", filterAgentsMD(), prompt, sessionID)
+func buildFilterRunCommand(preset provider.ProviderPreset, prompt string) (string, []string, []string, string, error) {
+	return buildAgentRunCommand(preset, "filter", filterAgentsMD(), prompt)
 }
 
 // buildAgentRunCommand constructs the opencode run command for a named
 // auxiliary agent. Generalization of buildFilterRunCommand; the agent's
 // AGENTS.md and identity file are written into a temp project directory
 // that the command runs from.
-func buildAgentRunCommand(preset provider.ProviderPreset, agentName, agentsMd, prompt string, sessionID string) (string, []string, []string, string, error) {
+func buildAgentRunCommand(preset provider.ProviderPreset, agentName, agentsMd, prompt string) (string, []string, []string, string, error) {
 	// Resolve command path
 	cmdPath := preset.Command
 	if p, err := exec.LookPath(preset.Command); err == nil {
@@ -292,8 +208,8 @@ func buildAgentRunCommand(preset provider.ProviderPreset, agentName, agentsMd, p
 			os.RemoveAll(tmpDir)
 			return "", nil, nil, "", fmt.Errorf("%s: create identity dir: %w", agentName, err)
 		}
-		agentFrontmatter := "---\ndescription: Cistern filter agent — analyzes and refines work item specifications\nmode: primary\n---\n\n"
-		agentMdPath := filepath.Join(identityDir, "filter.md")
+		agentFrontmatter := "---\ndescription: Cistern " + agentName + " agent\nmode: primary\n---\n\n"
+		agentMdPath := filepath.Join(identityDir, agentName+".md")
 		if err := os.WriteFile(agentMdPath, []byte(agentFrontmatter+prompt), 0o644); err != nil {
 			os.RemoveAll(tmpDir)
 			return "", nil, nil, "", fmt.Errorf("%s: write agent markdown: %w", agentName, err)
@@ -308,11 +224,6 @@ func buildAgentRunCommand(preset provider.ProviderPreset, agentName, agentsMd, p
 	// opencode's flag parser rejects a second occurrence.
 	if !slices.Contains(args, "--dangerously-skip-permissions") {
 		args = append(args, "--dangerously-skip-permissions")
-	}
-
-	// Session ID for resume
-	if sessionID != "" {
-		args = append(args, "-s", sessionID)
 	}
 
 	// Prompt: positional arg for opencode (PromptPositional providers)

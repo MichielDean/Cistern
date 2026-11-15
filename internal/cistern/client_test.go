@@ -2769,6 +2769,77 @@ func TestClient_UpdateFilterSessionMessages_NotFound(t *testing.T) {
 	}
 }
 
+// TestClient_CreateAgentSession_PersistsAgentColumn verifies that the aux
+// agent discriminator (migration 021) is written on create, round-tripped on
+// read, and that non-filter agent sessions are hidden from ListFilterSessions.
+func TestClient_CreateAgentSession_PersistsAgentColumn(t *testing.T) {
+	c := testClient(t)
+
+	triage, err := c.CreateAgentSession("triage", "Triage idea", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if triage.Agent != "triage" {
+		t.Errorf("agent = %q, want %q", triage.Agent, "triage")
+	}
+
+	wizard, err := c.CreateAgentSession("wizard", "Wizard", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if wizard.Agent != "wizard" {
+		t.Errorf("agent = %q, want %q", wizard.Agent, "wizard")
+	}
+
+	// Round-trip through GetFilterSession.
+	got, err := c.GetFilterSession(triage.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Agent != "triage" {
+		t.Errorf("agent round-trip = %q, want %q", got.Agent, "triage")
+	}
+
+	// Non-filter sessions are hidden from the filter list.
+	list, err := c.ListFilterSessions()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list) != 0 {
+		t.Errorf("ListFilterSessions hides triage/wizard rows, got %d rows", len(list))
+	}
+
+	// Empty agent is rejected at construction time.
+	if _, err := c.CreateAgentSession("", "No agent", ""); err == nil {
+		t.Error("expected error for empty agent")
+	}
+}
+
+// TestClient_CreateAgentSession_LegacyRowsDefaultToFilter verifies that rows
+// written before the agent column existed (default 'filter') still round-trip
+// as filter-owned sessions and appear in ListFilterSessions.
+func TestClient_CreateAgentSession_LegacyRowsDefaultToFilter(t *testing.T) {
+	c := testClient(t)
+	s, err := c.CreateFilterSession("Legacy filter session", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := c.GetFilterSession(s.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Agent != "filter" {
+		t.Errorf("legacy agent = %q, want %q", got.Agent, "filter")
+	}
+	list, err := c.ListFilterSessions()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list) != 1 {
+		t.Errorf("len(list) = %d, want 1", len(list))
+	}
+}
+
 func TestClient_DeleteFilterSession(t *testing.T) {
 	c := testClient(t)
 	s, err := c.CreateFilterSession("Delete me", "desc")

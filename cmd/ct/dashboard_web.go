@@ -3496,11 +3496,6 @@ func handleFilterNew(cfgPath, dbPath string) http.HandlerFunc {
 		}
 
 		apiClient(dbPath, w, func(c *cistern.Client) error {
-			session, err := c.CreateFilterSession(req.Title, req.Description)
-			if err != nil {
-				return err
-			}
-
 			preset := resolveFilterPreset("")
 			contextBlock := gatherFilterContext(filterContextConfig{
 				DBPath: dbPath,
@@ -3508,29 +3503,17 @@ func handleFilterNew(cfgPath, dbPath string) http.HandlerFunc {
 				Desc:   req.Description,
 			})
 
-			userPrompt := "Title: " + req.Title
-			if req.Description != "" {
-				userPrompt += "\nDescription: " + req.Description
-			}
-
+			// invokeFilterNew persists the round to filter_sessions
+			// (agent = 'filter') and returns the cistern session ID.
 			result, err := invokeFilterNew(preset, req.Title, req.Description, contextBlock)
 			if err != nil {
-				c.DeleteFilterSession(session.ID) //nolint:errcheck
 				return err
 			}
 
-			var messages []cistern.FilterMessage
-			messages = append(messages, cistern.FilterMessage{Role: "user", Content: userPrompt})
-			messages = append(messages, cistern.FilterMessage{Role: "assistant", Content: result.Text})
-
-			msgJSON, _ := json.Marshal(messages)
-			if err := c.UpdateFilterSessionMessages(session.ID, string(msgJSON), result.Text, result.SessionID); err != nil {
+			session, err := c.GetFilterSession(result.CisternID)
+			if err != nil {
 				return err
 			}
-
-			session.Messages = string(msgJSON)
-			session.SpecSnapshot = result.Text
-			session.LLMSessionID = result.SessionID
 
 			w.Header().Set("Content-Type", "application/json")
 			writeAPIJSON(w, http.StatusCreated, map[string]any{
@@ -3561,43 +3544,16 @@ func handleFilterResume(cfgPath, dbPath string) http.HandlerFunc {
 		}
 
 		apiClient(dbPath, w, func(c *cistern.Client) error {
-			session, err := c.GetFilterSession(sessionID)
-			if err != nil {
-				return err
-			}
-
+			// Resume is transcript-based: the persisted filter_sessions
+			// transcript is replayed into a FRESH opencode session via
+			// buildResumePrompt (inside runAuxAgentRound). The llm_session_id
+			// stored on the row is per-turn provenance and is never used as a
+			// resume key — opencode server-side resume (-s) fails with
+			// "Agent not found" across restarts. `-s` is never emitted.
 			preset := resolveFilterPreset("")
-			var existingMessages []cistern.FilterMessage
-			if session.Messages != "" && session.Messages != "[]" {
-				json.Unmarshal([]byte(session.Messages), &existingMessages) //nolint:errcheck
-			}
 
-			llmSessionID := session.LLMSessionID
-
-			var result filterSessionResult
-			if llmSessionID != "" {
-				result, err = invokeFilterResume(preset, llmSessionID, req.Message)
-				if err != nil {
-					return err
-				}
-			} else {
-				// No LLM session ID — treat as a new session with history context.
-				contextBlock := gatherFilterContext(filterContextConfig{
-					DBPath: dbPath,
-					Title:  session.Title,
-					Desc:   session.Description,
-				})
-				result, err = invokeFilterNew(preset, session.Title, session.Description, contextBlock)
-				if err != nil {
-					return err
-				}
-			}
-
-			existingMessages = append(existingMessages, cistern.FilterMessage{Role: "user", Content: req.Message})
-			existingMessages = append(existingMessages, cistern.FilterMessage{Role: "assistant", Content: result.Text})
-
-			msgJSON, _ := json.Marshal(existingMessages)
-			if err := c.UpdateFilterSessionMessages(sessionID, string(msgJSON), result.Text, result.SessionID); err != nil {
+			result, err := runAuxAgentRound(preset, "filter", filterAgentsMD(), "", "", "", req.Message, sessionID)
+			if err != nil {
 				return err
 			}
 

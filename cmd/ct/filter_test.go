@@ -36,7 +36,7 @@ func TestCallFilterAgent_Deprecated_AlwaysErrors(t *testing.T) {
 func TestFilterAgentRun_SignatureExists(t *testing.T) {
 	// This test verifies the function signature exists.
 	_ = filterAgentRun
-	_ = filterAgentRunResume
+	_ = agentSessionRun
 }
 
 // --- invokeFilterNew tests ---
@@ -252,7 +252,7 @@ func TestBuildFilterRunCommand_ContainsFormatJson(t *testing.T) {
 		PromptPositional: true,
 	}
 
-	_, args, _, _, err := buildFilterRunCommand(preset, "Test prompt", "")
+	_, args, _, _, err := buildFilterRunCommand(preset, "Test prompt")
 	if err != nil {
 		t.Fatalf("buildFilterRunCommand: %v", err)
 	}
@@ -283,7 +283,7 @@ func TestBuildFilterRunCommand_ContainsDangerouslySkipPermissions(t *testing.T) 
 		PromptPositional: true,
 	}
 
-	_, args, _, _, err := buildFilterRunCommand(preset, "Test prompt", "")
+	_, args, _, _, err := buildFilterRunCommand(preset, "Test prompt")
 	if err != nil {
 		t.Fatalf("buildFilterRunCommand: %v", err)
 	}
@@ -316,7 +316,7 @@ func TestBuildFilterRunCommand_EnvUnsets(t *testing.T) {
 	t.Setenv("OPENCODE_SERVER_USERNAME", "testuser")
 	t.Setenv("OPENCODE_SERVER_PASSWORD", "testpass")
 
-	_, _, env, _, err := buildFilterRunCommand(preset, "Test prompt", "")
+	_, _, env, _, err := buildFilterRunCommand(preset, "Test prompt")
 	if err != nil {
 		t.Fatalf("buildFilterRunCommand: %v", err)
 	}
@@ -329,32 +329,6 @@ func TestBuildFilterRunCommand_EnvUnsets(t *testing.T) {
 		if strings.HasPrefix(e, "OPENCODE_SERVER_PASSWORD=") {
 			t.Errorf("env should not contain OPENCODE_SERVER_PASSWORD: %s", e)
 		}
-	}
-}
-
-// --- tryParseAgentJSON tests ---
-
-// TestTryParseAgentJSON_ValidEnvelope verifies parsing a valid JSON envelope.
-func TestTryParseAgentJSON_ValidEnvelope(t *testing.T) {
-	text := `{"type":"result","subtype":"success","is_error":false,"result":"hello","session_id":"abc123"}`
-	envelope := tryParseAgentJSON(text)
-	if envelope == nil {
-		t.Fatal("expected envelope, got nil")
-	}
-	if envelope.SessionID != "abc123" {
-		t.Errorf("session_id: got %q, want %q", envelope.SessionID, "abc123")
-	}
-	if envelope.Result != "hello" {
-		t.Errorf("result: got %q, want %q", envelope.Result, "hello")
-	}
-}
-
-// TestTryParseAgentJSON_InvalidJSON returns nil for non-JSON text.
-func TestTryParseAgentJSON_InvalidJSON(t *testing.T) {
-	text := "This is just plain text, not JSON."
-	envelope := tryParseAgentJSON(text)
-	if envelope != nil {
-		t.Errorf("expected nil for non-JSON text, got: %+v", envelope)
 	}
 }
 
