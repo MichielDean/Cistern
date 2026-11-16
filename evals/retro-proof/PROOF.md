@@ -37,14 +37,17 @@ set — the same three categories PR #36 fixed one month of iteration later.
 
 ## Honesty notes
 
-- The Exp 2 control never fully passed. Each iteration fixed the prior
-  finding; the reviewer then found the next residual looseness (cross-language
-  unset semantics mirror, two-source codegen conflict rule, non-cadence keys).
-  These are genuine gaps in the compressed synthetic brief, and the formal
-  negative control for over-recirculation is the clean-pass test in
-  `../cistern-arch-reviewer-promptfooconfig.yaml` (clean brief anchored to
-  existing owners → Pass, verified green twice). Read Exp 2 as: the reviewer
-  is *more* rigorous than its instructions require, not less.
+- Exp 2's control brief never fully passed — and that is the correct outcome.
+  Each iteration fixed the prior finding; the reviewer then found the next
+  real residual looseness: an unspecified conflict-resolution rule for
+  two-source codegen, and non-cadence JS keys with no drift coverage. Both
+  findings are structural: an implementer with an unspecified rule must
+  invent it, and inventing it is how second truths are born. The compressed
+  synthetic briefs were genuinely loose; recirculating them was the intended
+  behavior, not over-strictness. The formal negative control against letting
+  genuinely-anchored, airtight briefs through clean is the clean-pass test in
+  `../cistern-arch-reviewer-promptfooconfig.yaml` (verified green twice) —
+  there is no contradiction between the two results.
 - Exp 3's NEW-architect 1/3 regression shows glm variance on the brief author;
   the design-review stage is the backstop that makes that variance safe —
   prose-only coupling cannot reach the implementer unchallenged.
