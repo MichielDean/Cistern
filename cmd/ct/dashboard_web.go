@@ -838,7 +838,8 @@ func newDashboardMux(cfgPath, dbPath string) http.Handler {
 // newDashboardMuxWith returns an http.Handler for the web dashboard with custom
 // fetcher and refresh intervals. Exposed for testing.
 func newDashboardMuxWith(cfgPath, dbPath string, fetcher func(cfg, db string) (*DashboardData, error), fastInterval, slowInterval time.Duration) http.Handler {
-	return newDashboardMuxInternalWith(cfgPath, dbPath, nil, fetcher, fastInterval, slowInterval)
+	return newDashboardMuxInternalWith(cfgPath, dbPath, nil, fetcher, fastInterval, slowInterval,
+		newStartedNotificationHub(context.Background(), dbPath))
 }
 
 // setSSEHeaders writes the standard headers every SSE stream on this server
@@ -930,13 +931,25 @@ func makeDashboardEventsHandler(cfgPath, dbPath string, fetcher func(string, str
 
 // newDashboardMuxInternal returns an http.Handler for the web dashboard.
 // tui may be nil; if so the /ws/tui endpoint closes connections immediately.
+// The notification hub runs on a background context for the lifetime of the
+// returned handler.
 func newDashboardMuxInternal(cfgPath, dbPath string, tui *DashboardTUI) http.Handler {
-	return newDashboardMuxInternalWith(cfgPath, dbPath, tui, fetchDashboardData, refreshInterval, idleRefreshInterval)
+	return newDashboardMuxInternalWith(cfgPath, dbPath, tui, fetchDashboardData, refreshInterval, idleRefreshInterval,
+		newStartedNotificationHub(context.Background(), dbPath))
+}
+
+// newStartedNotificationHub constructs and starts a notification hub bound to
+// the given context. Precondition: ctx outlives the returned handler's traffic.
+func newStartedNotificationHub(ctx context.Context, dbPath string) *notificationHub {
+	hub := newNotificationHub(dbPath)
+	hub.Start(ctx)
+	return hub
 }
 
 // newDashboardMuxInternalWith returns an http.Handler for the web dashboard with custom
-// fetcher and refresh intervals. Exposed for testing.
-func newDashboardMuxInternalWith(cfgPath, dbPath string, tui *DashboardTUI, fetcher func(cfg, db string) (*DashboardData, error), fastInterval, slowInterval time.Duration) http.Handler {
+// fetcher and refresh intervals. Exposed for testing. hub may be nil, which
+// disables the notification endpoints.
+func newDashboardMuxInternalWith(cfgPath, dbPath string, tui *DashboardTUI, fetcher func(cfg, db string) (*DashboardData, error), fastInterval, slowInterval time.Duration, hub *notificationHub) http.Handler {
 	// Read dashboard config fresh at server start so a cistern.yaml edit
 	// followed by restarting ct dashboard --web takes effect without recompiling.
 	// This is the supported update path: edit cistern.yaml, restart the server.
@@ -1139,6 +1152,11 @@ func newDashboardMuxInternalWith(cfgPath, dbPath string, tui *DashboardTUI, fetc
 		}
 	})
 
+	// Notification push stream. Auth goes through the outer apiAuthMiddleware
+	// (Bearer header or token query parameter, same as the SSE endpoints);
+	// no in-band auth frame is needed here.
+	mux.HandleFunc("/ws/notifications", makeNotificationsWSHandler(hub, dbPath))
+
 	// WS /ws/tui — attaches to the singleton DashboardTUI and streams raw ANSI
 	// to xterm.js. The child process is NOT per-connection; it is owned by tui
 	// and survives WebSocket disconnects.
@@ -1261,6 +1279,13 @@ func newDashboardMuxInternalWith(cfgPath, dbPath string, tui *DashboardTUI, fetc
 
 	// Stats
 	apiMux.HandleFunc("GET /api/stats", handleGetStats(dbPath))
+
+	// Notifications — persistent feed of qualifying pipeline events. REST
+	// covers history/badges; /ws/notifications (registered on the outer mux
+	// with the other WS endpoints) pushes new notifications in real time.
+	apiMux.HandleFunc("GET /api/notifications", handleNotificationsList(hub, dbPath))
+	apiMux.HandleFunc("POST /api/notifications/read-all", handleNotificationsMarkAllRead(hub, dbPath))
+	apiMux.HandleFunc("POST /api/notifications/{id}/read", handleNotificationMarkRead(hub, dbPath))
 
 	// Castellarius
 	apiMux.HandleFunc("GET /api/castellarius/status", handleCastellariusStatus(cfgPath, dbPath))
@@ -3202,16 +3227,20 @@ func RunDashboardWeb(cfgPath, dbPath, addr string) error {
 	tui := newDashboardTUI(exe, cfgPath, dbPath)
 	tui.Start()
 
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	// Notification hub: promotes qualifying events and pushes them to WS
+	// clients. Cancelled with the signal context on shutdown.
+	hub := newStartedNotificationHub(ctx, dbPath)
+
 	srv := &http.Server{
 		Addr:              addr,
-		Handler:           newDashboardMuxInternal(cfgPath, dbPath, tui),
+		Handler:           newDashboardMuxInternalWith(cfgPath, dbPath, tui, fetchDashboardData, refreshInterval, idleRefreshInterval, hub),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       10 * time.Second,
 		WriteTimeout:      0, // SSE streams are long-lived
 	}
-
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
 
 	// Periodic memory diagnostics (ci-5n337): one slog line per 15 min so the
 	// 2.6G OOM incident leaves an RSS trail in web.log.
