@@ -9,8 +9,8 @@ curl -fsSL https://raw.githubusercontent.com/MichielDean/Cistern/main/install.sh
 Or clone and build manually:
 
 ```bash
-git clone https://github.com/MichielDean/Cistern.git ~/cistern
-cd ~/cistern
+git clone https://github.com/MichielDean/Cistern.git ~/source/cistern
+cd ~/source/cistern
 COMMIT=$(git rev-parse --short HEAD) && PATH="/usr/local/go/bin:$PATH" go build -ldflags "-X main.version=${COMMIT} -X main.commit=${COMMIT}" -o ~/go/bin/ct ./cmd/ct/
 ```
 

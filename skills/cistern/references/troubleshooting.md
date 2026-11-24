@@ -363,7 +363,7 @@ ct castellarius restart
 # or: systemctl --user restart cistern-castellarius
 ```
 
-**Warning:** Never build from `~/cistern` directly if worktrees are in use — it diverges from origin and corrupts worktree state. Always build from a synced worktree.
+**Warning:** Never build from `~/source/cistern` directly if worktrees are in use — it diverges from origin and corrupts worktree state. Always build from a synced worktree.
 
 ## Worktree Corruption
 

@@ -30,7 +30,7 @@ Never say "drop/item/task/ticket/issue" for work units — always **droplet**.
 - **DB:** `~/.cistern/cistern.db`
 - **Log:** `~/.cistern/castellarius.log`
 - **Dashboard:** `http://192.168.0.138:5737` (ttyd)
-- **Build:** `cd ~/cistern && COMMIT=$(git rev-parse --short HEAD) && PATH="/usr/local/go/bin:$PATH" go build -ldflags "-X main.version=${COMMIT} -X main.commit=${COMMIT}" -o ~/go/bin/ct ./cmd/ct/`
+- **Build:** `cd ~/source/cistern && COMMIT=$(git rev-parse --short HEAD) && PATH="/usr/local/go/bin:$PATH" go build -ldflags "-X main.version=${COMMIT} -X main.commit=${COMMIT}" -o ~/go/bin/ct ./cmd/ct/`
 
 ## Repos configured
 
@@ -45,11 +45,11 @@ Never say "drop/item/task/ticket/issue" for work units — always **droplet**.
 
 ## Worktree Rule
 
-**Never edit `~/cistern` directly.** That's the primary clone — touching it corrupts all agent worktrees.
+**Never edit `~/source/cistern` directly.** That's the primary clone — touching it corrupts all agent worktrees.
 
-All manual Cistern work goes in the primary clone at `~/cistern`:
+All manual Cistern work goes in the primary clone at `~/source/cistern`:
 ```bash
-cd ~/cistern
+cd ~/source/cistern
 git checkout -B lobsterdog-work origin/main   # Always sync before starting
 ```
 ScaledTest worktree: `~/.cistern/sandboxes/ScaledTest/lobsterdog`
@@ -83,7 +83,7 @@ Every droplet goes through filtration before filing, regardless of how clear the
 
 **⚠️ Filtration pitfalls:**
 - **Run `ct filter` with provider API keys unset** — ct filter uses the opencode CLI, which manages its own credentials. Exporting API keys in the environment causes authentication conflicts.
-- **Run `ct filter` from `~/cistern`** — it uses `--allowedTools` to read codebase context. Running from another directory gives the agent no context.
+- **Run `ct filter` from `~/source/cistern`** — it uses `--allowedTools` to read codebase context. Running from another directory gives the agent no context.
 - **Pass the title only** — provide full context in the first interactive turn rather than via `--description`.
 - **`--file` and `--repo` flags are removed** — they no longer exist on `ct filter`
 
@@ -92,9 +92,9 @@ Every droplet goes through filtration before filing, regardless of how clear the
 - **Empty response**: The `opencode run --format json` command must produce NDJSON output on stdout. If stderr shows errors but stdout is empty, check that `--dangerously-skip-permissions` is included and the model is valid
 - **Timeout (10 min default)**: Increase with `CT_FILTER_TIMEOUT` env var (in seconds): `CT_FILTER_TIMEOUT=600 ct filter --title "..."`
 
-**Step 1 — Start (from ~/cistern, no provider API keys exported):**
+**Step 1 — Start (from ~/source/cistern, no provider API keys exported):**
 ```bash
-cd ~/cistern
+cd ~/source/cistern
 ct filter --title "Rough idea"
 ```
 
@@ -209,4 +209,4 @@ Run `ct doctor` first — it checks daemon status and common config issues autom
 | Droplet stuck | `ct droplet show <id>` — check notes; `ct droplet restart <id>` |
 | Logs | `journalctl --user -u cistern-castellarius -f` or `cat ~/.cistern/castellarius.log` |
 | Dashboard stale after rebuild | `systemctl --user restart cistern-web.service` |
-| Binary out of date | Rebuild: `cd ~/cistern && COMMIT=$(git rev-parse --short HEAD) && PATH="/usr/local/go/bin:$PATH" go build -ldflags "-X main.version=${COMMIT} -X main.commit=${COMMIT}" -o ~/go/bin/ct ./cmd/ct/` |
+| Binary out of date | Rebuild: `cd ~/source/cistern && COMMIT=$(git rev-parse --short HEAD) && PATH="/usr/local/go/bin:$PATH" go build -ldflags "-X main.version=${COMMIT} -X main.commit=${COMMIT}" -o ~/go/bin/ct ./cmd/ct/` |
