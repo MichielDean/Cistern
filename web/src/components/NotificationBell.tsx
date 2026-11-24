@@ -12,7 +12,7 @@ const EVENT_COLORS: Record<string, string> = {
 };
 
 function timeAgo(iso: string): string {
-  const seconds = Math.floor((Date.now() - new Date(iso).getTime()) / 1000);
+  const seconds = Math.max(0, Math.floor((Date.now() - new Date(iso).getTime()) / 1000));
   if (seconds < 60) return `${seconds}s ago`;
   if (seconds < 3600) return `${Math.floor(seconds / 60)}m ago`;
   if (seconds < 86400) return `${Math.floor(seconds / 3600)}h ago`;
@@ -38,9 +38,17 @@ export function NotificationBell({
   onMarkAllRead,
 }: NotificationBellProps) {
   const [open, setOpen] = useState(false);
+  const [, setTimeTick] = useState(0);
   const panelRef = useRef<HTMLDivElement>(null);
   const buttonRef = useRef<HTMLButtonElement>(null);
   const navigate = useNavigate();
+
+  // Keep the relative "x ago" timestamps honest while the panel is open.
+  useEffect(() => {
+    if (!open) return;
+    const timer = setInterval(() => setTimeTick((t) => t + 1), 30_000);
+    return () => clearInterval(timer);
+  }, [open]);
 
   // Close on outside click.
   useEffect(() => {

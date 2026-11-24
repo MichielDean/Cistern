@@ -7,15 +7,15 @@ import {
   type Notification,
   type NotificationWSFrame,
 } from '../api/notifications';
-
 const WS_RECONNECT_BASE_MS = 1000;
 const WS_RECONNECT_MAX_MS = 30000;
 
 // useNotifications keeps the notification feed live: history list, unread
 // badge count, and real-time pushes over /ws/notifications. Missed
 // notifications are replayed on reconnect through the REST list endpoint, so
-// no per-device delivery state is required.
-export function useNotifications(enabled = true) {
+// no per-device delivery state is required. Rendering is always active — the
+// hook is mounted once at the app shell.
+export function useNotifications() {
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [unreadCount, setUnreadCount] = useState(0);
   const [connected, setConnected] = useState(false);
@@ -23,9 +23,8 @@ export function useNotifications(enabled = true) {
   const reconnectTimer = useRef<ReturnType<typeof setTimeout>>();
   const retryCountRef = useRef(0);
   const mountedRef = useRef(true);
-  const enabledRef = useRef(enabled);
 
-  useEffect(() => { enabledRef.current = enabled; }, [enabled]);
+  useEffect(() => { mountedRef.current = true; }, []);
 
   const refresh = useCallback(async () => {
     try {
@@ -42,8 +41,15 @@ export function useNotifications(enabled = true) {
     try {
       const updated = await markNotificationRead(id);
       if (!mountedRef.current) return;
-      setNotifications((prev) => prev.map((n) => (n.id === id ? updated : n)));
-      setUnreadCount((prev) => Math.max(0, prev - 1));
+      setNotifications((prev) => {
+        const wasUnread = prev.find((p) => p.id === id && p.read_at == null) != null;
+        if (updated.read_at && wasUnread) {
+          // Decrement only when this client actually observed the unread
+          // state — a raced mark from another tab must not drift the badge.
+          setUnreadCount((c) => Math.max(0, c - 1));
+        }
+        return prev.map((n) => (n.id === id ? updated : n));
+      });
     } catch (err) {
       console.warn('Failed to mark notification read:', err);
     }
@@ -62,7 +68,6 @@ export function useNotifications(enabled = true) {
   }, []);
 
   const connect = useCallback(() => {
-    if (!enabledRef.current) return;
     if (wsRef.current) {
       wsRef.current.close();
     }
@@ -121,7 +126,7 @@ export function useNotifications(enabled = true) {
     // Safety net for dropped push frames: resync the badge when the tab
     // becomes visible again.
     const onVisible = () => {
-      if (document.visibilityState === 'visible' && enabledRef.current) void refresh();
+      if (document.visibilityState === 'visible') void refresh();
     };
     document.addEventListener('visibilitychange', onVisible);
 

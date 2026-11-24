@@ -4,6 +4,8 @@ import (
 	"database/sql"
 	"fmt"
 	"log/slog"
+	"sort"
+	"strings"
 	"time"
 )
 
@@ -20,10 +22,27 @@ var NotificationEventTypes = map[string]bool{
 	EventRecirculate:    true,
 }
 
-// notificationQualifiedEventTypesSQL is the SQL IN-list matching
-// NotificationEventTypes. Keep the two in sync: the list limits the scan
-// window so the promotion query stays cheap.
-const notificationQualifiedEventTypesSQL = `'stall', 'circuit_breaker', 'no_route', 'recovery', 'delivered', 'recirculate'`
+// notificationEventTypesSQL is generated once at package init from
+// NotificationEventTypes so the map is the single source of truth for the
+// qualifying scan — a new event type added to the map participates in the
+// SQL IN-list automatically.
+var notificationEventTypesSQL = notificationEventTypesInList()
+
+// notificationEventTypesInList renders the map keys as a SQL IN-list
+// literal. Keys are fixed identifiers composed solely of [a-z_], so simple
+// single-quote wrapping is safe.
+func notificationEventTypesInList() string {
+	keys := make([]string, 0, len(NotificationEventTypes))
+	for k := range NotificationEventTypes {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	quoted := make([]string, 0, len(keys))
+	for _, k := range keys {
+		quoted = append(quoted, "'"+k+"'")
+	}
+	return strings.Join(quoted, ", ")
+}
 
 // Notification is one persistent dashboard notification. It wraps a single
 // qualifying (droplet_id, event_type) row from the events table.
@@ -81,9 +100,15 @@ func (c *Client) SyncNotifications() ([]Notification, error) {
 	return c.syncNotifications()
 }
 
-// syncNotifications gathers the qualifying events first and closes the query
-// before writing: the client caps sql.DB at one connection, so interleaving a
-// read iterator with writes deadlocks.
+// syncNotifications promotes events into notifications. It first reads the
+// promotion high-water mark (MAX(event_row_id)) so each sync only scans
+// events newer than everything already promoted — cost stays proportional to
+// new events, not pipeline history. Rows are gathered and the query closed
+// before any write: the client caps sql.DB at one connection, so interleaving
+// a read iterator with writes deadlocks. On an insert error the function
+// returns immediately, and because inserts happen in ascending rowid order
+// the inserted rows form a contiguous prefix — retrying from the high-water
+// mark re-promotes exactly the un-inserted tail.
 func (c *Client) syncNotifications() ([]Notification, error) {
 	type qualifyingEvent struct {
 		rowid     int64
@@ -92,12 +117,16 @@ func (c *Client) syncNotifications() ([]Notification, error) {
 		payload   string
 		title     string
 	}
+	var highWater int64
+	if err := c.db.QueryRow(`SELECT COALESCE(MAX(event_row_id), 0) FROM notifications`).Scan(&highWater); err != nil {
+		return nil, fmt.Errorf("cistern: notification high-water mark: %w", err)
+	}
 	rows, err := c.db.Query(`
 		SELECT e.rowid, e.droplet_id, e.event_type, e.payload, COALESCE(d.title, '')
 		FROM events e
 		LEFT JOIN droplets d ON d.id = e.droplet_id
-		WHERE e.event_type IN (` + notificationQualifiedEventTypesSQL + `)
-		ORDER BY e.rowid ASC`)
+		WHERE e.rowid > ? AND e.event_type IN (`+notificationEventTypesSQL+`)
+		ORDER BY e.rowid ASC`, highWater)
 	if err != nil {
 		return nil, fmt.Errorf("cistern: query qualifying events: %w", err)
 	}

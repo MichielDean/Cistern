@@ -167,6 +167,8 @@ const (
 	wsOpcodeText   = 0x1
 	wsOpcodeBinary = 0x2
 	wsOpcodeClose  = 0x8
+	wsOpcodePing   = 0x9
+	wsOpcodePong   = 0xA
 )
 
 // aqueductSessionInfo holds the tmux session name and droplet context for an
@@ -839,7 +841,7 @@ func newDashboardMux(cfgPath, dbPath string) http.Handler {
 // fetcher and refresh intervals. Exposed for testing.
 func newDashboardMuxWith(cfgPath, dbPath string, fetcher func(cfg, db string) (*DashboardData, error), fastInterval, slowInterval time.Duration) http.Handler {
 	return newDashboardMuxInternalWith(cfgPath, dbPath, nil, fetcher, fastInterval, slowInterval,
-		newStartedNotificationHub(context.Background(), dbPath))
+		nil)
 }
 
 // setSSEHeaders writes the standard headers every SSE stream on this server
@@ -931,11 +933,13 @@ func makeDashboardEventsHandler(cfgPath, dbPath string, fetcher func(string, str
 
 // newDashboardMuxInternal returns an http.Handler for the web dashboard.
 // tui may be nil; if so the /ws/tui endpoint closes connections immediately.
-// The notification hub runs on a background context for the lifetime of the
-// returned handler.
+// hub is nil here, which disables the notification endpoints — test
+// constructors must not own long-lived background loops (no hub lifecycle
+// belongs to a handler constructor). Production (RunDashboardWeb) and
+// notification tests build their own hub and pass it explicitly.
 func newDashboardMuxInternal(cfgPath, dbPath string, tui *DashboardTUI) http.Handler {
 	return newDashboardMuxInternalWith(cfgPath, dbPath, tui, fetchDashboardData, refreshInterval, idleRefreshInterval,
-		newStartedNotificationHub(context.Background(), dbPath))
+		nil)
 }
 
 // newStartedNotificationHub constructs and starts a notification hub bound to
@@ -946,9 +950,18 @@ func newStartedNotificationHub(ctx context.Context, dbPath string) *notification
 	return hub
 }
 
+// newDashboardMuxWithHub returns an http.Handler with an explicit hub. Tests
+// that exercise notifications build a hub themselves and cancel ctx in their
+// cleanup; production passes RunDashboardWeb's signal-bound hub.
+func newDashboardMuxWithHub(cfgPath, dbPath string, hub *notificationHub) http.Handler {
+	return newDashboardMuxInternalWith(cfgPath, dbPath, nil, fetchDashboardData, refreshInterval, idleRefreshInterval,
+		hub)
+}
+
 // newDashboardMuxInternalWith returns an http.Handler for the web dashboard with custom
-// fetcher and refresh intervals. Exposed for testing. hub may be nil, which
-// disables the notification endpoints.
+// fetcher and refresh intervals. Exposed for testing. hub may be nil; a nil
+// hub disables the notification endpoints entirely — no notification routes
+// are registered.
 func newDashboardMuxInternalWith(cfgPath, dbPath string, tui *DashboardTUI, fetcher func(cfg, db string) (*DashboardData, error), fastInterval, slowInterval time.Duration, hub *notificationHub) http.Handler {
 	// Read dashboard config fresh at server start so a cistern.yaml edit
 	// followed by restarting ct dashboard --web takes effect without recompiling.
@@ -1155,7 +1168,9 @@ func newDashboardMuxInternalWith(cfgPath, dbPath string, tui *DashboardTUI, fetc
 	// Notification push stream. Auth goes through the outer apiAuthMiddleware
 	// (Bearer header or token query parameter, same as the SSE endpoints);
 	// no in-band auth frame is needed here.
-	mux.HandleFunc("/ws/notifications", makeNotificationsWSHandler(hub, dbPath))
+	if hub != nil {
+		mux.HandleFunc("/ws/notifications", makeNotificationsWSHandler(hub, dbPath))
+	}
 
 	// WS /ws/tui — attaches to the singleton DashboardTUI and streams raw ANSI
 	// to xterm.js. The child process is NOT per-connection; it is owned by tui
@@ -1283,9 +1298,13 @@ func newDashboardMuxInternalWith(cfgPath, dbPath string, tui *DashboardTUI, fetc
 	// Notifications — persistent feed of qualifying pipeline events. REST
 	// covers history/badges; /ws/notifications (registered on the outer mux
 	// with the other WS endpoints) pushes new notifications in real time.
-	apiMux.HandleFunc("GET /api/notifications", handleNotificationsList(hub, dbPath))
-	apiMux.HandleFunc("POST /api/notifications/read-all", handleNotificationsMarkAllRead(hub, dbPath))
-	apiMux.HandleFunc("POST /api/notifications/{id}/read", handleNotificationMarkRead(hub, dbPath))
+	// Routes register only when a hub is wired up; a nil hub keeps these
+	// endpoints out of the mux so the documented disable contract holds.
+	if hub != nil {
+		apiMux.HandleFunc("GET /api/notifications", handleNotificationsList(dbPath))
+		apiMux.HandleFunc("POST /api/notifications/read-all", handleNotificationsMarkAllRead(hub, dbPath))
+		apiMux.HandleFunc("POST /api/notifications/{id}/read", handleNotificationMarkRead(hub, dbPath))
+	}
 
 	// Castellarius
 	apiMux.HandleFunc("GET /api/castellarius/status", handleCastellariusStatus(cfgPath, dbPath))

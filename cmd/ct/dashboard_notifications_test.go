@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
@@ -15,6 +16,23 @@ import (
 
 	"github.com/MichielDean/cistern/internal/cistern"
 )
+
+// notificationTestMux builds a mux with an explicit hub owned by the test:
+// the loop runs on a cancellable context (no leaked background goroutine)
+// with a fast interval so broadcast assertions do not wait on wall-clock
+// production timing.
+func notificationTestMux(t *testing.T, dbPath string, cfgPath string) http.Handler {
+	t.Helper()
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	if cfgPath == "" {
+		cfgPath = tempCfg(t)
+	}
+	hub := newNotificationHub(dbPath)
+	hub.interval = 100 * time.Millisecond
+	hub.Start(ctx)
+	return newDashboardMuxWithHub(cfgPath, dbPath, hub)
+}
 
 // seedNotification creates a droplet + a qualifying event in the test db and
 // promotes it, so REST/WS handlers have data to serve.
@@ -48,7 +66,7 @@ func TestNotificationsREST_ListAndMark(t *testing.T) {
 	dbPath := tempDB(t)
 	seeded := seedNotification(t, dbPath, "repo-a", "REST check")
 
-	mux := newDashboardMux(tempCfg(t), dbPath)
+	mux := notificationTestMux(t, dbPath, "")
 	srv := httptest.NewServer(mux)
 	defer srv.Close()
 
@@ -172,19 +190,13 @@ func TestNotificationsWS_GreetingAndBroadcast(t *testing.T) {
 	dbPath := tempDB(t)
 	seedNotification(t, dbPath, "repo-a", "WS greeting check")
 
-	mux := newDashboardMux(tempCfg(t), dbPath)
+	mux := notificationTestMux(t, dbPath, "")
 	srv := httptest.NewServer(mux)
 	defer srv.Close()
 
 	addr := strings.TrimPrefix(srv.URL, "http://")
-	conn, err := net.Dial("tcp", addr)
-	if err != nil {
-		t.Fatal(err)
-	}
+	conn, br := handshakedWS(t, addr, "/ws/notifications")
 	defer conn.Close()
-	key := "dGhlIHNhbXBsZSBub25jZQ=="
-	fmt.Fprintf(conn, "GET /ws/notifications HTTP/1.1\r\nHost: %s\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: %s\r\nSec-WebSocket-Version: 13\r\n\r\n", addr, key)
-	br := bufio.NewReader(conn)
 	resp, err := http.ReadResponse(br, nil)
 	if err != nil {
 		t.Fatalf("handshake: %v", err)
@@ -224,7 +236,7 @@ func TestNotificationsWS_GreetingAndBroadcast(t *testing.T) {
 	}
 	c2.Close()
 
-	conn.SetReadDeadline(time.Now().Add(2*notificationSyncInterval + 2*time.Second))
+	conn.SetReadDeadline(time.Now().Add(3 * time.Second))
 	for {
 		opcode, payload, err = readServerFrame(br)
 		if err != nil {
@@ -234,8 +246,9 @@ func TestNotificationsWS_GreetingAndBroadcast(t *testing.T) {
 		if err := json.Unmarshal(payload, &frame); err != nil {
 			t.Fatalf("decode ws frame: %v", err)
 		}
+		// unread_count frames trail each sync that promotes rows; skip them.
 		if frame.Type == "unread_count" {
-			continue // mark-read refresh broadcast; keep waiting
+			continue
 		}
 		if frame.Type != "notification" {
 			t.Fatalf("unexpected frame type %q", frame.Type)
@@ -248,4 +261,143 @@ func TestNotificationsWS_GreetingAndBroadcast(t *testing.T) {
 		}
 		break
 	}
+}
+
+// TestNotificationsWS_AuthRequired pins the authenticated-mux claim: with an
+// API key configured, both the REST list and the WS stream reject requests
+// without a valid token, and pass with the correct one.
+func TestNotificationsWS_AuthRequired(t *testing.T) {
+	dbPath := tempDB(t)
+	seedNotification(t, dbPath, "repo-a", "auth check")
+
+	mux := notificationTestMux(t, dbPath, tempCfgWithAPIKey(t, "test-secret"))
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	// REST without token is 401.
+	resp, err := http.Get(srv.URL + "/api/notifications")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Errorf("expected 401 without token, got %d", resp.StatusCode)
+	}
+
+	// REST with a bad token is 401.
+	resp, err = http.Get(srv.URL + "/api/notifications?token=wrong")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Errorf("expected 401 for bad token, got %d", resp.StatusCode)
+	}
+
+	// REST with the correct token is 200.
+	resp, err = http.Get(srv.URL + "/api/notifications?token=test-secret")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("expected 200 with valid token, got %d", resp.StatusCode)
+	}
+
+	// WS with a bad token is rejected before upgrade.
+	addr := strings.TrimPrefix(srv.URL, "http://")
+	conn, br := handshakedWS(t, addr, "/ws/notifications?token=wrong")
+	defer conn.Close()
+	resp2, err := http.ReadResponse(br, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp2.StatusCode != http.StatusUnauthorized {
+		t.Errorf("expected 401 on WS bad token, got %d", resp2.StatusCode)
+	}
+
+	// WS with the correct token upgrades and receives the greeting frame.
+	conn2, br2 := handshakedWS(t, addr, "/ws/notifications?token=test-secret")
+	defer conn2.Close()
+	resp3, err := http.ReadResponse(br2, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp3.StatusCode != http.StatusSwitchingProtocols {
+		t.Fatalf("expected 101 with valid token, got %d", resp3.StatusCode)
+	}
+	opcode, payload, err := readServerFrame(br2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if opcode != 0x1 {
+		t.Fatalf("expected text frame, got %#x", opcode)
+	}
+	var greeting notificationWSFrame
+	if err := json.Unmarshal(payload, &greeting); err != nil {
+		t.Fatal(err)
+	}
+	if greeting.Type != "unread_count" || greeting.Count != 1 {
+		t.Errorf("expected unread_count 1 greeting, got %+v", greeting)
+	}
+}
+
+// TestNotificationsWS_PingPong verifies the RFC 6455 §5.5.3 contract: a
+// client ping receives a pong in response.
+func TestNotificationsWS_PingPong(t *testing.T) {
+	dbPath := tempDB(t)
+	seedNotification(t, dbPath, "repo-a", "ping check")
+
+	mux := notificationTestMux(t, dbPath, "")
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	addr := strings.TrimPrefix(srv.URL, "http://")
+	conn, br := handshakedWS(t, addr, "/ws/notifications")
+	defer conn.Close()
+	resp, err := http.ReadResponse(br, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode != http.StatusSwitchingProtocols {
+		t.Fatalf("expected 101, got %d", resp.StatusCode)
+	}
+
+	// Drain the greeting, then send a masked ping.
+	if _, _, err := readServerFrame(br); err != nil {
+		t.Fatal(err)
+	}
+	ping := maskedTextFrame([]byte("keepalive"))
+	ping[0] = 0x89 // ping opcode
+	if _, err := conn.Write(ping); err != nil {
+		t.Fatal(err)
+	}
+	conn.SetReadDeadline(time.Now().Add(3 * time.Second))
+	opcode, payload, err := readServerFrame(br)
+	if err != nil {
+		t.Fatalf("waiting for pong: %v", err)
+	}
+	if opcode != 0xA {
+		t.Fatalf("expected pong (0xA), got %#x", opcode)
+	}
+	if string(payload) != "keepalive" {
+		t.Errorf("pong must echo the ping payload, got %q", string(payload))
+	}
+}
+
+// handshakedWS dials addr and sends a WebSocket upgrade for path. The
+// caller finishes the handshake with http.ReadResponse and verifies the
+// expected status itself, so rejection responses are as testable as
+// successful upgrades.
+func handshakedWS(t *testing.T, addr, path string) (net.Conn, *bufio.Reader) {
+	t.Helper()
+	conn, err := net.Dial("tcp", addr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := fmt.Sprintf("GET %s HTTP/1.1\r\nHost: %s\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\n\r\n", path, addr)
+	if _, err := io.WriteString(conn, req); err != nil {
+		t.Fatal(err)
+	}
+	return conn, bufio.NewReader(conn)
 }

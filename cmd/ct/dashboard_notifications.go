@@ -8,14 +8,17 @@ package main
 //     qualifying event rows (stall, circuit_breaker, no_route, recovery,
 //     delivered, recirculate) into the notifications table via
 //     cistern.Client.SyncNotifications and broadcasts each promoted
-//     notification to every connected WebSocket subscriber.
+//     notification to every connected WebSocket subscriber. Even when a sync
+//     errors, already-promoted rows broadcast first: promotion is idempotent
+//     so no later tick can re-emit them.
 //   - /ws/notifications pushes {"type":"notification",...} frames; on connect
 //     the client first receives the current unread count. Reconnecting
 //     clients replay missed notifications through the REST list endpoint,
 //     so no per-device delivery acknowledgement is needed.
 //   - REST endpoints provide the history list, unread count, single-read and
-//     mark-all-read actions. Marking read also broadcasts a fresh unread
-//     count so other connected clients stay accurate.
+//     mark-all-read actions. Marking read requests an unread-count refresh
+//     which the hub serializes through its own loop, so counts always
+//     reflect the latest committed state and arrive in order.
 
 import (
 	"context"
@@ -25,6 +28,7 @@ import (
 	"net/http"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/MichielDean/cistern/internal/cistern"
@@ -48,14 +52,21 @@ type notificationWSFrame struct {
 }
 
 // notificationHub fans notifications out to WebSocket subscribers. All
-// mutable state lives in struct fields guarded by mu — no package-level
-// variables.
+// mutable state lives in struct fields guarded by mu or by an atomic flag —
+// no package-level variables.
 type notificationHub struct {
 	dbPath   string
 	interval time.Duration
 
 	mu      sync.Mutex
 	clients map[chan []byte]struct{}
+
+	// unreadDirty marks that at least one mark-read action committed and the
+	// next loop tick must broadcast a fresh unread count. Funneling the
+	// broadcast through the loop serializes counts, so clients can never
+	// receive a stale count after a newer one (the bug concurrent
+	// BroadcastUnreadCount goroutines would cause).
+	unreadDirty atomic.Bool
 }
 
 // newNotificationHub constructs a stopped hub. Precondition: dbPath is the
@@ -88,8 +99,12 @@ func (h *notificationHub) Subscribe() chan []byte {
 }
 
 // Unsubscribe removes a previously returned subscriber channel and closes it,
-// which also terminates the handler loop reading from it.
+// which also terminates the handler loop reading from it. Unsubscribing an
+// unknown or already-removed channel is a no-op.
 func (h *notificationHub) Unsubscribe(ch chan []byte) {
+	if ch == nil {
+		return
+	}
 	h.mu.Lock()
 	if _, ok := h.clients[ch]; ok {
 		delete(h.clients, ch)
@@ -98,25 +113,52 @@ func (h *notificationHub) Unsubscribe(ch chan []byte) {
 	h.mu.Unlock()
 }
 
+// requestUnreadRefresh marks the unread count dirty; the next loop tick
+// broadcasts the fresh count. Cheap and safe for any number of concurrent
+// callers.
+func (h *notificationHub) requestUnreadRefresh() {
+	if h == nil {
+		return
+	}
+	h.unreadDirty.Store(true)
+}
+
 func (h *notificationHub) loop(ctx context.Context) {
 	ticker := time.NewTicker(h.interval)
 	defer ticker.Stop()
 	for {
+		if ctx.Err() != nil {
+			return
+		}
+		err := h.syncOnce()
+		if err != nil {
+			slog.Warn("notification sync failed", "error", err)
+		}
+		if h.unread_dirtySwap() {
+			h.broadcastUnreadCountFromDB()
+		}
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			syncErr := h.syncOnce()
-			if syncErr != nil {
-				slog.Warn("notification sync failed", "error", syncErr)
-			}
 		}
 	}
 }
 
+// unread_dirtySwap reports and clears the dirty flag.
+func (h *notificationHub) unread_dirtySwap() bool {
+	if !h.unreadDirty.Load() {
+		return false
+	}
+	h.unreadDirty.Store(false)
+	return true
+}
+
 // syncOnce promotes new qualifying events and broadcasts each created
-// notification. Errors are returned for the loop to log; a failed sync is
-// retried on the next tick because promotion is idempotent.
+// notification. Even when an insert or read fails partway, every promoted
+// notification is broadcast: they are committed, and idempotency means no
+// later tick can re-emit them. The returned error lets the loop log; the
+// next tick picks up exactly the un-inserted tail (see syncNotifications).
 func (h *notificationHub) syncOnce() error {
 	c, err := cistern.New(h.dbPath, "")
 	if err != nil {
@@ -125,25 +167,34 @@ func (h *notificationHub) syncOnce() error {
 	defer c.Close()
 
 	created, err := c.SyncNotifications()
-	if err != nil {
-		return err
-	}
 	for _, n := range created {
 		payload, err := json.Marshal(notificationWSFrame{Type: "notification", Notification: &n})
 		if err != nil {
-			return fmt.Errorf("marshal notification %d: %w", n.ID, err)
+			// Unreachable for a fixed-struct marshal; continue broadcasting
+			// the rest rather than abandoning the batch.
+			slog.Warn("notification broadcast marshal failed", "id", n.ID, "error", err)
+			continue
 		}
 		h.broadcast(payload)
 	}
+	if err != nil {
+		return err
+	}
 	if len(created) > 0 {
-		h.broadcastUnreadCount(c)
+		count, err := c.UnreadNotificationCount()
+		if err != nil {
+			slog.Warn("notification unread broadcast: count failed", "error", err)
+			return nil
+		}
+		h.broadcastUnreadCount(count)
 	}
 	return nil
 }
 
-// BroadcastUnreadCount refreshes every connected client's unread badge after
-// a mark-read action. This method owns the db connection lifecycle.
-func (h *notificationHub) BroadcastUnreadCount() {
+// broadcastUnreadCountFromDB opens a connection, reads the current unread
+// count and broadcasts it. Called only from the hub loop, so counts are
+// serialized against each other.
+func (h *notificationHub) broadcastUnreadCountFromDB() {
 	if h == nil {
 		return
 	}
@@ -153,15 +204,15 @@ func (h *notificationHub) BroadcastUnreadCount() {
 		return
 	}
 	defer c.Close()
-	h.broadcastUnreadCount(c)
-}
-
-func (h *notificationHub) broadcastUnreadCount(c *cistern.Client) {
 	count, err := c.UnreadNotificationCount()
 	if err != nil {
 		slog.Warn("notification unread broadcast: count failed", "error", err)
 		return
 	}
+	h.broadcastUnreadCount(count)
+}
+
+func (h *notificationHub) broadcastUnreadCount(count int64) {
 	payload, err := json.Marshal(notificationWSFrame{Type: "unread_count", Count: count})
 	if err != nil {
 		slog.Warn("notification unread broadcast: marshal failed", "error", err)
@@ -187,7 +238,8 @@ func (h *notificationHub) broadcast(payload []byte) {
 // makeNotificationsWSHandler returns the GET /ws/notifications handler.
 // Authentication is enforced by the outer mux middleware (Bearer header or
 // token query parameter, see apiAuthMiddleware), exactly like the dashboard
-// SSE endpoints.
+// SSE endpoints. The handler dereferences the hub without nil checks — the
+// caller registers this route only when a hub is wired up.
 func makeNotificationsWSHandler(hub *notificationHub, dbPath string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		conn, brw, err := wsUpgrade(w, r)
@@ -198,18 +250,21 @@ func makeNotificationsWSHandler(hub *notificationHub, dbPath string) http.Handle
 
 		// Greeting: current unread count so a fresh connection renders the
 		// badge without a companion REST round-trip.
-		var greeting []byte
-		if c, err := cistern.New(dbPath, ""); err == nil {
-			if count, err := c.UnreadNotificationCount(); err == nil {
-				greeting, _ = json.Marshal(notificationWSFrame{Type: "unread_count", Count: count})
+		if c, err := cistern.New(dbPath, ""); err != nil {
+			slog.Warn("notification greeting: open db failed", "error", err)
+		} else {
+			if count, err := c.UnreadNotificationCount(); err != nil {
+				slog.Warn("notification greeting: count failed", "error", err)
+			} else if payload, err := json.Marshal(notificationWSFrame{Type: "unread_count", Count: count}); err != nil {
+				slog.Warn("notification greeting: marshal failed", "error", err)
+			} else {
+				conn.SetWriteDeadline(time.Now().Add(wsWriteTimeout)) //nolint:errcheck
+				if wsSendText(brw.Writer, string(payload)) != nil {
+					c.Close()
+					return
+				}
 			}
 			c.Close()
-		}
-		if greeting != nil {
-			conn.SetWriteDeadline(time.Now().Add(wsWriteTimeout)) //nolint:errcheck
-			if wsSendText(brw.Writer, string(greeting)) != nil {
-				return
-			}
 		}
 
 		sub := hub.Subscribe()
@@ -219,25 +274,31 @@ func makeNotificationsWSHandler(hub *notificationHub, dbPath string) http.Handle
 		defer cancel()
 
 		// Reader goroutine: detects close frames and silently-partitioned
-		// clients. The notification client sends no application frames, so
-		// only transport liveness matters — use wsTuiReadTimeout.
+		// clients. Pings are answered with pongs (RFC 6455 §5.5.3) — some
+		// clients and intermediaries tear down connections that never receive
+		// a pong.
 		go func() {
 			defer cancel()
 			buf := make([]byte, wsMaxClientPayload)
 			conn.SetReadDeadline(time.Now().Add(wsTuiReadTimeout)) //nolint:errcheck
 			for {
-				opcode, _, nb, err := wsReadClientFrame(brw.Reader, buf)
+				opcode, payload, nb, err := wsReadClientFrame(brw.Reader, buf)
 				buf = nb
 				if err != nil {
 					return
 				}
 				conn.SetReadDeadline(time.Now().Add(wsTuiReadTimeout)) //nolint:errcheck
-				if opcode == wsOpcodeClose {
+				switch opcode {
+				case wsOpcodeClose:
 					return
+				case wsOpcodePing:
+					conn.SetWriteDeadline(time.Now().Add(wsWriteTimeout)) //nolint:errcheck
+					if wsSendFrame(brw.Writer, wsOpcodePong, payload) != nil {
+						return
+					}
 				}
-				// Pings and app frames are ignored; browsers rely on pongs,
-				// but a stalled pinger is indistinguishable from a dead peer.
-				// The 5-minute read deadline reaps both.
+				// Application frames are ignored; the notification client
+				// sends none.
 			}
 		}()
 
@@ -263,7 +324,7 @@ type notificationListResponse struct {
 
 // handleNotificationsList serves GET /api/notifications with optional
 // unread=1 filtering and an explicit limit (default 50, max maxPerPage).
-func handleNotificationsList(hub *notificationHub, dbPath string) http.HandlerFunc {
+func handleNotificationsList(dbPath string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		onlyUnread := r.URL.Query().Get("unread") == "1"
 		limit := notificationHistoryLimit
@@ -298,6 +359,8 @@ func handleNotificationsList(hub *notificationHub, dbPath string) http.HandlerFu
 
 // handleNotificationMarkRead serves POST /api/notifications/{id}/read.
 // Marking a read notification again is a success; an unknown id is a 404.
+// The unread-count refresh flows through the hub loop, not a per-request
+// goroutine, so concurrent marks can never broadcast counts out of order.
 func handleNotificationMarkRead(hub *notificationHub, dbPath string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
@@ -311,7 +374,7 @@ func handleNotificationMarkRead(hub *notificationHub, dbPath string) http.Handle
 				return err
 			}
 			writeAPIJSON(w, http.StatusOK, n)
-			go hub.BroadcastUnreadCount()
+			hub.requestUnreadRefresh()
 			return nil
 		})
 	}
@@ -327,7 +390,7 @@ func handleNotificationsMarkAllRead(hub *notificationHub, dbPath string) http.Ha
 				return err
 			}
 			writeAPIJSON(w, http.StatusOK, map[string]int64{"marked": marked})
-			go hub.BroadcastUnreadCount()
+			hub.requestUnreadRefresh()
 			return nil
 		})
 	}
