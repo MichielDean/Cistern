@@ -1,4 +1,5 @@
 export { Sidebar } from './Sidebar';
+export { NotificationBell } from './NotificationBell';
 export { Header } from './Header';
 export { StatusBadge } from './StatusBadge';
 export { AqueductArch } from './AqueductArch';

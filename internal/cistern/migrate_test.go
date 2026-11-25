@@ -144,7 +144,7 @@ func TestEndToEndSchemaVerification(t *testing.T) {
 		}
 	}
 
-	for _, table := range []string{"cataractae_notes", "events", "droplet_dependencies", "droplet_issues", "filter_sessions"} {
+	for _, table := range []string{"cataractae_notes", "events", "droplet_dependencies", "droplet_issues", "filter_sessions", "notifications"} {
 		var count int
 		c.db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?`, table).Scan(&count)
 		if count != 1 {
@@ -152,10 +152,34 @@ func TestEndToEndSchemaVerification(t *testing.T) {
 		}
 	}
 
+	// Notifications columns (E2E schema verification for migration 022).
+	notifColumns := map[string]bool{}
+	rows, err2 := c.db.Query(`PRAGMA table_info("notifications")`)
+	if err2 != nil {
+		t.Fatalf("pragma table_info notifications: %v", err2)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var cid int
+		var name, ctype string
+		var notNull int
+		var dfltValue any
+		var pk int
+		if err := rows.Scan(&cid, &name, &ctype, &notNull, &dfltValue, &pk); err != nil {
+			t.Fatalf("scan notification column: %v", err)
+		}
+		notifColumns[name] = true
+	}
+	for _, expected := range []string{"id", "event_row_id", "droplet_id", "event_type", "title", "detail", "created_at", "read_at"} {
+		if !notifColumns[expected] {
+			t.Errorf("missing column %q on notifications table. Found: %v", expected, notifColumns)
+		}
+	}
+
 	var migrationCount int
 	c.db.QueryRow(`SELECT COUNT(*) FROM "_schema_migrations"`).Scan(&migrationCount)
-	if migrationCount != 21 {
-		t.Errorf("expected 21 migration records, got %d", migrationCount)
+	if migrationCount != 22 {
+		t.Errorf("expected 22 migration records, got %d", migrationCount)
 	}
 }
 

@@ -1,5 +1,7 @@
 import { useState, useEffect } from 'react';
 import type { DashboardData } from '../api/types';
+import { useNotifications } from '../hooks/useNotifications';
+import { NotificationBell } from './NotificationBell';
 
 interface HeaderProps {
   data: DashboardData | null;
@@ -10,6 +12,13 @@ interface HeaderProps {
 export function Header({ data, connected, onMenuClick }: HeaderProps) {
   const [justConnected, setJustConnected] = useState(false);
   const [prevConnected, setPrevConnected] = useState(connected);
+  const {
+    notifications,
+    unreadCount,
+    connected: notificationsConnected,
+    markRead,
+    markAllRead,
+  } = useNotifications();
 
   useEffect(() => {
     if (connected && !prevConnected) {
@@ -44,6 +53,13 @@ export function Header({ data, connected, onMenuClick }: HeaderProps) {
         </div>
       )}
       <div className="flex items-center gap-2">
+        <NotificationBell
+          notifications={notifications}
+          unreadCount={unreadCount}
+          connected={notificationsConnected}
+          onMarkRead={markRead}
+          onMarkAllRead={markAllRead}
+        />
         <div className={`w-2 h-2 rounded-full ${connected ? 'bg-cistern-green' : 'bg-cistern-red'}`} />
         <span className="text-xs text-cistern-muted hidden sm:inline">
           {justConnected ? 'Connected' : connected ? 'Live' : 'Reconnecting...'}
