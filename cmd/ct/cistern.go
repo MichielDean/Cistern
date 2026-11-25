@@ -1,7 +1,6 @@
 package main
 
 import (
-	"encoding/csv"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -470,7 +469,9 @@ var dropletExportCmd = &cobra.Command{
 			return err
 		}
 
-		if exportFormat == "json" {
+		switch exportFormat {
+		// JSON output.
+		case "json":
 			if items == nil {
 				items = []*cistern.Droplet{}
 			}
@@ -480,30 +481,11 @@ var dropletExportCmd = &cobra.Command{
 			}
 			fmt.Println(string(out))
 			return nil
-		}
 
 		// CSV output.
-		w := csv.NewWriter(os.Stdout)
-		_ = w.Write([]string{"id", "repo", "title", "description", "priority", "status", "assignee", "current_cataractae", "outcome", "assigned_aqueduct", "last_reviewed_commit", "created_at", "updated_at"})
-		for _, item := range items {
-			_ = w.Write([]string{
-				item.ID,
-				item.Repo,
-				item.Title,
-				item.Description,
-				strconv.Itoa(item.Priority),
-				item.Status,
-				item.Assignee,
-				item.CurrentCataractae,
-				item.Outcome,
-				item.AssignedAqueduct,
-				item.LastReviewedCommit,
-				item.CreatedAt.Format(time.RFC3339),
-				item.UpdatedAt.Format(time.RFC3339),
-			})
+		default:
+			return writeDropletsCSV(os.Stdout, items)
 		}
-		w.Flush()
-		return w.Error()
 	},
 }
 

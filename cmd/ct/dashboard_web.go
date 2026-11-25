@@ -1011,6 +1011,69 @@ func newDashboardMuxInternalWith(cfgPath, dbPath string, tui *DashboardTUI, fetc
 
 	mux.HandleFunc("/api/dashboard/events", makeDashboardEventsHandler(cfgPath, dbPath, fetcher, fastInterval, slowInterval))
 
+	// GET /api/droplets/export — export droplets as CSV (default) or JSON.
+	// Accepts the same filters as `ct droplet export`: q, status, priority.
+	mux.HandleFunc("/api/droplets/export", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		format := r.URL.Query().Get("format")
+		if format == "" {
+			format = "csv" // csv is the default encoding for the export endpoint
+		}
+		if format != "json" && format != "csv" {
+			http.Error(w, "format must be json or csv", http.StatusBadRequest)
+			return
+		}
+		q := r.URL.Query().Get("q")
+		status := r.URL.Query().Get("status")
+		priority := 0
+		if p := r.URL.Query().Get("priority"); p != "" {
+			n, err := strconv.Atoi(p)
+			if err != nil {
+				http.Error(w, "priority must be an integer", http.StatusBadRequest)
+				return
+			}
+			priority = n
+		}
+		repo := r.URL.Query().Get("repo")
+
+		c, err := cistern.New(dbPath, "")
+		if err != nil {
+			http.Error(w, fmt.Sprintf("database error: %v", err), http.StatusInternalServerError)
+			return
+		}
+		defer c.Close()
+		items, err := c.Search(q, status, priority)
+		if err != nil {
+			http.Error(w, fmt.Sprintf("search error: %v", err), http.StatusInternalServerError)
+			return
+		}
+		if repo != "" {
+			filtered := make([]*cistern.Droplet, 0, len(items))
+			for _, item := range items {
+				if item.Repo == repo {
+					filtered = append(filtered, item)
+				}
+			}
+			items = filtered
+		}
+
+		switch format {
+		case "json":
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(items) //nolint:errcheck
+		default:
+			w.Header().Set("Content-Type", "text/csv; charset=utf-8")
+			w.Header().Set("Content-Disposition", `attachment; filename="droplets.csv"`)
+			if err := writeDropletsCSV(w, items); err != nil {
+				http.Error(w, fmt.Sprintf("csv error: %v", err), http.StatusInternalServerError)
+				return
+			}
+		}
+	})
+
 	// GET /api/aqueducts/{name}/peek — snapshot of current tmux pane output.
 	mux.HandleFunc("/api/aqueducts/{name}/peek", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
