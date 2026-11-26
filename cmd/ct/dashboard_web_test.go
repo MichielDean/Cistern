@@ -2164,7 +2164,7 @@ func TestPickAliveSession(t *testing.T) {
 func TestSharedDashboardFeed_SingleFetcherPerTick(t *testing.T) {
 	const fast = 20 * time.Millisecond
 	var calls atomic.Int64
-	feed := newSharedDashboardFeed(func(cfg, db string) (*DashboardData, error) {
+	feed := newSharedDashboardFeed(func() (*DashboardData, error) {
 		calls.Add(1)
 		return &DashboardData{}, nil
 	}, fast, fast) // fast for slow: no idle backoff inside this test's window
@@ -2225,7 +2225,7 @@ func TestSharedDashboardFeed_SingleFetcherPerTick(t *testing.T) {
 func TestSharedDashboardFeed_SlowClientDoesNotBlockFeed(t *testing.T) {
 	const fast = 15 * time.Millisecond
 	var calls atomic.Int64
-	feed := newSharedDashboardFeed(func(cfg, db string) (*DashboardData, error) {
+	feed := newSharedDashboardFeed(func() (*DashboardData, error) {
 		calls.Add(1)
 		return &DashboardData{FlowingCount: int(calls.Load())}, nil
 	}, fast, time.Hour)
@@ -2273,7 +2273,7 @@ func TestSharedDashboardFeed_SlowClientDoesNotBlockFeed(t *testing.T) {
 // watcher goroutine exits, and the channel was closed exactly once.
 func TestSharedDashboardFeed_CancelRemovesSubscriber(t *testing.T) {
 	var calls atomic.Int64
-	feed := newSharedDashboardFeed(func(cfg, db string) (*DashboardData, error) {
+	feed := newSharedDashboardFeed(func() (*DashboardData, error) {
 		calls.Add(1)
 		return &DashboardData{}, nil
 	}, time.Hour, time.Hour)
@@ -2358,7 +2358,7 @@ func TestSharedDashboardFeed_IdleBackoffSlowsTicker(t *testing.T) {
 
 	// Feed-level: an idle stream settles onto the slow interval.
 	var calls atomic.Int64
-	feed := newSharedDashboardFeed(func(cfg, db string) (*DashboardData, error) {
+	feed := newSharedDashboardFeed(func() (*DashboardData, error) {
 		calls.Add(1)
 		return &DashboardData{}, nil // constant state, FlowingCount 0
 	}, fast, slow)
@@ -2383,8 +2383,10 @@ func TestDashboardEventsSSE_UsesSharedFeed(t *testing.T) {
 		calls.Add(1)
 		return &DashboardData{}, nil
 	}
-	ts := httptest.NewServer(newDashboardMuxWith("cfg", "db", fetcher, fast, time.Hour))
+	feedCtx, cancelFeed := context.WithCancel(context.Background())
+	ts := httptest.NewServer(newDashboardMuxWith("cfg", "db", fetcher, fast, time.Hour, feedCtx))
 	defer ts.Close()
+	defer cancelFeed()
 
 	resp1, err := http.Get(ts.URL + "/api/dashboard/events")
 	if err != nil {
@@ -2397,7 +2399,7 @@ func TestDashboardEventsSSE_UsesSharedFeed(t *testing.T) {
 	}
 	defer resp2.Body.Close()
 
-	time.Sleep(6 * fast + 100*time.Millisecond)
+	time.Sleep(6*fast + 100*time.Millisecond)
 	// Both bodies must still be SSE streams with a data frame.
 	discard := make(chan struct{})
 	_ = discard

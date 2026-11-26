@@ -856,9 +856,20 @@ func newDashboardMux(cfgPath, dbPath string) http.Handler {
 }
 
 // newDashboardMuxWith returns an http.Handler for the web dashboard with custom
-// fetcher and refresh intervals. Exposed for testing.
-func newDashboardMuxWith(cfgPath, dbPath string, fetcher func(cfg, db string) (*DashboardData, error), fastInterval, slowInterval time.Duration) http.Handler {
-	return newDashboardMuxInternalWith(cfgPath, dbPath, nil, fetcher, fastInterval, slowInterval)
+// fetcher and refresh intervals. Exposed for testing. The optional trailing
+// argument is the shared SSE feed's lifetime context; omitting it means
+// context.Background (feed runs until process exit).
+func newDashboardMuxWith(cfgPath, dbPath string, fetcher func(cfg, db string) (*DashboardData, error), fastInterval, slowInterval time.Duration, feedCtx ...context.Context) http.Handler {
+	return newDashboardMuxInternalWith(pickFeedCtx(feedCtx), cfgPath, dbPath, nil, fetcher, fastInterval, slowInterval)
+}
+
+// pickFeedCtx resolves a trailing optional context parameter: the first
+// non-nil element, else context.Background.
+func pickFeedCtx(feedCtx []context.Context) context.Context {
+	if len(feedCtx) > 0 && feedCtx[0] != nil {
+		return feedCtx[0]
+	}
+	return context.Background()
 }
 
 // setSSEHeaders writes the standard headers every SSE stream on this server
@@ -876,17 +887,18 @@ func setSSEHeaders(w http.ResponseWriter) {
 // Concurrent connections are capped at maxDashboardSSEConnections; when the
 // fetcher fails, the last valid DashboardData remains the hash baseline and an
 // `event: error` frame is sent instead of a null-data frame.
-func makeDashboardEventsHandler(cfgPath, dbPath string, fetcher func(string, string) (*DashboardData, error), fastInterval, slowInterval time.Duration) http.HandlerFunc {
+func makeDashboardEventsHandler(feedCtx context.Context, cfgPath, dbPath string, fetcher func(string, string) (*DashboardData, error), fastInterval, slowInterval time.Duration) http.HandlerFunc {
 	limiter := newSSEConnectionLimiter(maxDashboardSSEConnections)
 	// One shared feed serves every connected SSE client (ci-y7pvo): the
 	// per-connection fetch loop this replaced ran fetchDashboardData — each
 	// call a fresh cgo SQLite open/read/close — once per client per tick, so
 	// work scaled with connected clients instead of data. Now it scales once
-	// per tick. The feed lives for the process's life of this endpoint.
-	feed := newSharedDashboardFeed(func(cfg, db string) (*DashboardData, error) {
+	// per tick. The feed lives for the lifetime of feedCtx: server shutdown
+	// in production, test teardown in tests.
+	feed := newSharedDashboardFeed(func() (*DashboardData, error) {
 		return fetcher(cfgPath, dbPath)
 	}, fastInterval, slowInterval)
-	feed.Start(context.Background())
+	feed.Start(feedCtx)
 	return func(w http.ResponseWriter, r *http.Request) {
 		if !limiter.acquire() {
 			writeAPIError(w, http.StatusServiceUnavailable, "too many dashboard SSE connections")
@@ -989,11 +1001,15 @@ type feedSubscriber struct {
 //
 // Construction injects everything: the wire site closes cfgPath/dbPath into
 // the fetcher closure (newDashboardMuxWith adapters in tests, RunDashboardWeb
-// in production). The feed never touches os.Getenv, cistern.New, or the
-// filesystem. No package-level mutable state: subscribers, ticker state, and
-// the cached snapshot live in struct fields.
+// in production) and supplies the feed's lifetime context, so the run loop
+// terminates when that context is cancelled. The feed never touches
+// os.Getenv, cistern.New, or the filesystem. No package-level mutable state:
+// subscribers, ticker state, and the cached snapshot live in struct fields.
 type sharedDashboardFeed struct {
-	fetcher func(cfg, db string) (*DashboardData, error)
+	// fetcher takes no arguments: it is fully constructed (the wire site
+	// closes cfgPath/dbPath into its closure), so run never invents
+	// placeholder parameters.
+	fetcher func() (*DashboardData, error)
 	fast    time.Duration
 	slow    time.Duration
 
@@ -1002,8 +1018,6 @@ type sharedDashboardFeed struct {
 	nextSubID int64
 	cache     *DashboardData
 
-	ctx     context.Context
-	cancel  func()
 	started bool
 }
 
@@ -1011,9 +1025,9 @@ type sharedDashboardFeed struct {
 // init). A nil fetcher yields a feed whose every tick reports a fetch error.
 // Zero intervals fall back to the shipped refreshInterval/idleRefreshInterval
 // defaults.
-func newSharedDashboardFeed(fetcher func(cfg, db string) (*DashboardData, error), fast, slow time.Duration) *sharedDashboardFeed {
+func newSharedDashboardFeed(fetcher func() (*DashboardData, error), fast, slow time.Duration) *sharedDashboardFeed {
 	if fetcher == nil {
-		fetcher = func(cfg, db string) (*DashboardData, error) {
+		fetcher = func() (*DashboardData, error) {
 			return nil, fmt.Errorf("ct: dashboard: shared feed: no fetcher configured")
 		}
 	}
@@ -1040,8 +1054,9 @@ func (f *sharedDashboardFeed) cachedData() *DashboardData {
 }
 
 // Start launches the single run loop under ctx. Idempotent: later Starts are
-// no-ops. The feed runs for the lifetime of the HTTP server (context.Background
-// at the wire site); there is one feed per dashboard-events endpoint.
+// no-ops. The caller owns ctx's lifetime — cancelling it (server shutdown in
+// production, explicit cancel in tests) stops the run loop and closes every
+// subscriber channel. There is one feed per dashboard-events endpoint.
 func (f *sharedDashboardFeed) Start(ctx context.Context) {
 	f.mu.Lock()
 	if f.started {
@@ -1049,8 +1064,6 @@ func (f *sharedDashboardFeed) Start(ctx context.Context) {
 		return
 	}
 	f.started = true
-	ctx, cancel := context.WithCancel(ctx)
-	f.ctx, f.cancel = ctx, cancel
 	f.mu.Unlock()
 	go f.run(ctx)
 }
@@ -1066,11 +1079,13 @@ func dashboardTickInterval(lastHash, newHash string, flowingCount int, fast, slo
 	return fast
 }
 
-// subscribe registers a new subscriber. The returned channel receives the
-// newest cached snapshot immediately (when one exists) and one frame per
-// subsequent tick — the SSE wire contract's initial data frame. cancel
-// unregisters, stops the ctx watchdog, and closes the channel exactly once
-// (idempotent); the feed also closes the channel when its own context ends.
+// subscribe registers a new subscriber. The channel receives no initial
+// frame from the feed — the SSE handler owns the wire contract's one initial
+// data frame (its cached-or-fetch baseline), and every subsequent tick
+// broadcasts one frame to the channel. Registering twice never duplicates the
+// baseline. cancel unregisters, stops the ctx watchdog, and closes the
+// channel exactly once (idempotent); the feed also closes the channel when
+// its own context ends.
 func (f *sharedDashboardFeed) subscribe(ctx context.Context) (<-chan feedMessage, func()) {
 	s := &feedSubscriber{ch: make(chan feedMessage, feedSubscriberChanSize)}
 	var once sync.Once
@@ -1092,13 +1107,6 @@ func (f *sharedDashboardFeed) subscribe(ctx context.Context) (<-chan feedMessage
 	s.id = f.nextSubID
 	f.nextSubID++
 	f.subs[s.id] = s
-	if f.cache != nil {
-		// Initial snapshot for the new subscriber; non-blocking by contract.
-		select {
-		case s.ch <- feedMessage{data: f.cache}:
-		default:
-		}
-	}
 	f.mu.Unlock()
 
 	// A subscriber whose request ends without cancel() must still be
@@ -1140,7 +1148,7 @@ func (f *sharedDashboardFeed) run(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			data, err := f.fetcher("", "")
+			data, err := f.fetcher()
 			if err != nil {
 				f.broadcast(feedMessage{err: err})
 				continue // keep prevData's hash baseline and the current interval
@@ -1175,13 +1183,16 @@ func (f *sharedDashboardFeed) broadcast(msg feedMessage) {
 
 // newDashboardMuxInternal returns an http.Handler for the web dashboard.
 // tui may be nil; if so the /ws/tui endpoint closes connections immediately.
-func newDashboardMuxInternal(cfgPath, dbPath string, tui *DashboardTUI) http.Handler {
-	return newDashboardMuxInternalWith(cfgPath, dbPath, tui, fetchDashboardData, refreshInterval, idleRefreshInterval)
+// The optional trailing argument is the shared SSE feed's lifetime context.
+func newDashboardMuxInternal(cfgPath, dbPath string, tui *DashboardTUI, feedCtx ...context.Context) http.Handler {
+	return newDashboardMuxInternalWith(pickFeedCtx(feedCtx), cfgPath, dbPath, tui, fetchDashboardData, refreshInterval, idleRefreshInterval)
 }
 
 // newDashboardMuxInternalWith returns an http.Handler for the web dashboard with custom
-// fetcher and refresh intervals. Exposed for testing.
-func newDashboardMuxInternalWith(cfgPath, dbPath string, tui *DashboardTUI, fetcher func(cfg, db string) (*DashboardData, error), fastInterval, slowInterval time.Duration) http.Handler {
+// fetcher and refresh intervals. Exposed for testing. feedCtx bounds the
+// shared SSE feed's lifetime (server shutdown in production; per-test cancel
+// in tests, so no fetch loop is leaked after the test).
+func newDashboardMuxInternalWith(feedCtx context.Context, cfgPath, dbPath string, tui *DashboardTUI, fetcher func(cfg, db string) (*DashboardData, error), fastInterval, slowInterval time.Duration) http.Handler {
 	// Read dashboard config fresh at server start so a cistern.yaml edit
 	// followed by restarting ct dashboard --web takes effect without recompiling.
 	// This is the supported update path: edit cistern.yaml, restart the server.
@@ -1254,7 +1265,7 @@ func newDashboardMuxInternalWith(cfgPath, dbPath string, tui *DashboardTUI, fetc
 		json.NewEncoder(w).Encode(data) //nolint:errcheck
 	})
 
-	mux.HandleFunc("/api/dashboard/events", makeDashboardEventsHandler(cfgPath, dbPath, fetcher, fastInterval, slowInterval))
+	mux.HandleFunc("/api/dashboard/events", makeDashboardEventsHandler(feedCtx, cfgPath, dbPath, fetcher, fastInterval, slowInterval))
 
 	// GET /api/droplets/export — export droplets as CSV (default) or JSON.
 	// Accepts the same filters as `ct droplet export`: q, status, priority.
@@ -3237,11 +3248,15 @@ func defaultDiagPprofDir() string {
 	return filepath.Join(home, ".cistern", "web-pprof")
 }
 
-// captureDiagPprofSnapshot writes post-mortem evidence under dir: heap.pb
-// (binary heap profile) and goroutine.txt (debug=1 goroutine dump), the same
-// views as the live /debug/pprof/* endpoints. The snapshot dir survives the
-// MemoryMax restart that typically follows a threshold crossing, which live
-// curl captures do not (ci-y7pvo). Best-effort: the caller logs failures.
+// captureDiagPprofSnapshot writes post-mortem evidence under dir: a binary
+// heap profile (heap-<timestamp>.pb) and a debug=1 goroutine dump
+// (goroutine-<timestamp>.txt), the same views as the live /debug/pprof/*
+// endpoints. Filenames carry a UTC timestamp so successive threshold
+// crossings each keep their own snapshot — the before/after pprof diffs the
+// root-cause analysis relies on would be destroyed by overwriting a fixed
+// name (ci-y7pvo). The snapshot dir survives the MemoryMax restart that
+// typically follows a threshold crossing, which live curl captures do not.
+// Best-effort: the caller logs failures.
 func captureDiagPprofSnapshot(dir string) error {
 	if dir == "" {
 		return fmt.Errorf("ct: dashboard: pprof snapshot: no snapshot directory configured")
@@ -3249,17 +3264,19 @@ func captureDiagPprofSnapshot(dir string) error {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return fmt.Errorf("ct: dashboard: pprof snapshot: mkdir %s: %w", dir, err)
 	}
-	heapFile, err := os.Create(filepath.Join(dir, "heap.pb"))
+	// Nanosecond precision: two crossings within one second keep both sets.
+	stamp := time.Now().UTC().Format("20060102T150405.000000000")
+	heapFile, err := os.Create(filepath.Join(dir, "heap-"+stamp+".pb"))
 	if err != nil {
-		return fmt.Errorf("ct: dashboard: pprof snapshot: create heap.pb: %w", err)
+		return fmt.Errorf("ct: dashboard: pprof snapshot: create heap-%s.pb: %w", stamp, err)
 	}
 	defer heapFile.Close()
 	if err := pprof.Lookup("heap").WriteTo(heapFile, 0); err != nil {
 		return fmt.Errorf("ct: dashboard: pprof snapshot: write heap profile: %w", err)
 	}
-	goroutineFile, err := os.Create(filepath.Join(dir, "goroutine.txt"))
+	goroutineFile, err := os.Create(filepath.Join(dir, "goroutine-"+stamp+".txt"))
 	if err != nil {
-		return fmt.Errorf("ct: dashboard: pprof snapshot: create goroutine.txt: %w", err)
+		return fmt.Errorf("ct: dashboard: pprof snapshot: create goroutine-%s.txt: %w", stamp, err)
 	}
 	defer goroutineFile.Close()
 	if err := pprof.Lookup("goroutine").WriteTo(goroutineFile, 1); err != nil {
@@ -3328,7 +3345,9 @@ type rssAlertTracker struct {
 	above     bool
 	record    func(payload string) error
 	// pprof snapshot capture (ci-y7pvo). When snapshotDir is non-empty, a
-	// threshold crossing writes heap.pb + goroutine.txt there via snapshot
+	// threshold crossing writes heap-<timestamp>.pb + goroutine-<timestamp>.txt
+	// there via snapshot (timestamped, so crossings never overwrite each
+	// other's evidence).
 	// and names the dir in the event payload; a capture failure logs a Warn
 	// and leaves alerting unaffected. snapshot is nil when unset.
 	snapshotDir string
@@ -3344,7 +3363,8 @@ func newRSSAlertTracker(threshold int64, record func(payload string) error) *rss
 }
 
 // newRSSAlertTrackerWithSnapshot is newRSSAlertTracker plus pprof snapshot
-// capture on crossing: heap.pb + goroutine.txt under snapshotDir (ci-y7pvo).
+// capture on crossing: heap-<timestamp>.pb + goroutine-<timestamp>.txt under
+// snapshotDir, a fresh set per crossing (ci-y7pvo).
 func newRSSAlertTrackerWithSnapshot(threshold int64, record func(payload string) error, snapshotDir string, snapshot func(dir string) error) *rssAlertTracker {
 	if threshold <= 0 {
 		threshold = defaultDiagRSSThreshold
@@ -3814,16 +3834,18 @@ func RunDashboardWeb(cfgPath, dbPath, addr string) error {
 	tui := newDashboardTUI(exe, cfgPath, dbPath)
 	tui.Start()
 
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	// The shared SSE feed's lifetime is bounded by this signal context: when
+	// Shutdown begins, the feed's run loop stops and its goroutine exits.
 	srv := &http.Server{
 		Addr:              addr,
-		Handler:           newDashboardMuxInternal(cfgPath, dbPath, tui),
+		Handler:           newDashboardMuxInternal(cfgPath, dbPath, tui, ctx),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       10 * time.Second,
 		WriteTimeout:      0, // SSE streams are long-lived
 	}
-
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
 
 	// Periodic memory diagnostics (ci-5n337): one slog line per 15 min so the
 	// 2.6G OOM incident leaves an RSS trail in web.log, plus a WARN + mem_warn

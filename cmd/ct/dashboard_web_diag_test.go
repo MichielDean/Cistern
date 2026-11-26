@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -256,7 +257,7 @@ func TestDashboardEventsSSE_FetcherErrorSendsErrorEvent(t *testing.T) {
 		// starting multiple data lines/frames.
 		return nil, fmt.Errorf("db unavailable\nsecond line")
 	}
-	handler := makeDashboardEventsHandler("cfg", "db", fetcher, 20*time.Millisecond, time.Hour)
+	handler := makeDashboardEventsHandler(context.Background(), "cfg", "db", fetcher, 20*time.Millisecond, time.Hour)
 	ts := httptest.NewServer(handler)
 	defer ts.Close()
 
@@ -630,19 +631,24 @@ func TestDiagMemStats_CapturesChildAndCgroupRSS(t *testing.T) {
 // ── mem_warn pprof snapshot capture (ci-y7pvo) ──
 
 // A threshold crossing must leave evidence that survives the restart:
-// heap.pb + goroutine.txt under the snapshot dir, and the event payload
-// naming the directory.
+// a heap-<timestamp>.pb + goroutine-<timestamp>.txt pair under the snapshot
+// dir, and the event payload naming the directory.
 func TestRSSAlertWritesPprofSnapshotOnThreshold(t *testing.T) {
-	t.Run("crossing writes heap.pb and goroutine.txt and payload includes dir", func(t *testing.T) {
+	t.Run("crossing writes timestamped heap.pb and goroutine.txt and payload includes dir", func(t *testing.T) {
 		dir := filepath.Join(t.TempDir(), "web-pprof")
 		tracker := newRSSAlertTrackerWithSnapshot(1000, func(string) error { return nil }, dir, captureDiagPprofSnapshot)
 
-		runDiagTick(tracker, func() dashboardMemStats { return dashboardMemStats{RSS: 2000, HeapAlloc: 1, Sys: 1, NumGC: 1, NumGoroutine: 1, FetchedAt: "x"} })
+		runDiagTick(tracker, func() dashboardMemStats {
+			return dashboardMemStats{RSS: 2000, HeapAlloc: 1, Sys: 1, NumGC: 1, NumGoroutine: 1, FetchedAt: "x"}
+		})
 
-		for _, name := range []string{"heap.pb", "goroutine.txt"} {
-			if _, err := os.Stat(filepath.Join(dir, name)); err != nil {
-				t.Errorf("%s: %v", name, err)
-			}
+		heaps, err := filepath.Glob(filepath.Join(dir, "heap-*.pb"))
+		if err != nil || len(heaps) != 1 {
+			t.Fatalf("glob heap-*.pb: %v, matches %v — want exactly one timestamped heap profile", err, heaps)
+		}
+		goroutines, err := filepath.Glob(filepath.Join(dir, "goroutine-*.txt"))
+		if err != nil || len(goroutines) != 1 {
+			t.Fatalf("glob goroutine-*.txt: %v, matches %v — want exactly one timestamped goroutine dump", err, goroutines)
 		}
 
 		// Payload carries the snapshot dir: wire record through a capture.
@@ -651,6 +657,33 @@ func TestRSSAlertWritesPprofSnapshotOnThreshold(t *testing.T) {
 		runDiagTick(tracker2, func() dashboardMemStats { return dashboardMemStats{RSS: 2000, FetchedAt: "x"} })
 		if !strings.Contains(payload, dir) {
 			t.Errorf("payload %q must contain the pprof dir %q", payload, dir)
+		}
+	})
+
+	t.Run("two crossings keep two snapshot sets — no overwriting earlier evidence", func(t *testing.T) {
+		// Fixed filenames would replace the first crossing's snapshots when a
+		// later crossing fires — destroying the before/after pprof diff the
+		// root-cause analysis depends on.
+		dir := filepath.Join(t.TempDir(), "web-pprof")
+		tracker := newRSSAlertTrackerWithSnapshot(1000, func(string) error { return nil }, dir, captureDiagPprofSnapshot)
+		sample := func() dashboardMemStats { return dashboardMemStats{RSS: 2000, FetchedAt: "x"} }
+		runDiagTick(tracker, sample)                                                                          // crossing 1
+		runDiagTick(tracker, func() dashboardMemStats { return dashboardMemStats{RSS: 100, FetchedAt: "x"} }) // back under
+		runDiagTick(tracker, sample)                                                                          // crossing 2
+
+		heaps, err := filepath.Glob(filepath.Join(dir, "heap-*.pb"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(heaps) != 2 {
+			t.Errorf("heap snapshots after two crossings = %d (%v), want 2 for the before/after diff", len(heaps), heaps)
+		}
+		goroutines, err := filepath.Glob(filepath.Join(dir, "goroutine-*.txt"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(goroutines) != 2 {
+			t.Errorf("goroutine snapshots after two crossings = %d (%v), want 2", len(goroutines), goroutines)
 		}
 	})
 
