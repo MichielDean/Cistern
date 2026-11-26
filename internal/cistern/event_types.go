@@ -3,6 +3,7 @@ package cistern
 import (
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 )
 
@@ -282,12 +283,19 @@ func displayInfoMemWarn(m map[string]any) string {
 	if m == nil {
 		return ""
 	}
+	fmtBytes := func(v any) string {
+		n, ok := v.(float64)
+		if !ok {
+			return fmt.Sprintf("%v", v)
+		}
+		return strconv.FormatInt(int64(n), 10)
+	}
 	var parts []string
 	if rss, ok := m["rss_bytes"]; ok {
-		parts = append(parts, fmt.Sprintf("rss: %v", rss))
+		parts = append(parts, "rss: "+fmtBytes(rss))
 	}
 	if threshold, ok := m["threshold_bytes"]; ok {
-		parts = append(parts, fmt.Sprintf("threshold: %v", threshold))
+		parts = append(parts, "threshold: "+fmtBytes(threshold))
 	}
 	return strings.Join(parts, ", ")
 }
