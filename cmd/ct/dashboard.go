@@ -727,15 +727,12 @@ func runDashboardWith(cfgPath, dbPath string, inputCh <-chan byte, out io.Writer
 			data, _ = fetch(cfgPath, dbPath)
 			newHash := dashboardStateHash(data)
 
-			// Adaptive backoff: slow down when Castellarius is idle.
-			idle := newHash == prevHash && data.FlowingCount == 0
+			// Adaptive backoff: slow down when Castellarius is idle. Shared
+			// implementation: dashboardTickInterval in dashboard_web.go
+			// (single source shared with sharedDashboardFeed, ci-y7pvo).
+			next := dashboardTickInterval(prevHash, newHash, data.FlowingCount, fastInterval, slowInterval)
 			prevHash = newHash
 			fmt.Fprint(out, clearScreen+renderDashboard(data))
-
-			next := fastInterval
-			if idle {
-				next = slowInterval
-			}
 			ticker.Reset(next)
 
 		case b, ok := <-inputCh:

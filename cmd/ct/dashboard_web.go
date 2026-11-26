@@ -878,6 +878,15 @@ func setSSEHeaders(w http.ResponseWriter) {
 // `event: error` frame is sent instead of a null-data frame.
 func makeDashboardEventsHandler(cfgPath, dbPath string, fetcher func(string, string) (*DashboardData, error), fastInterval, slowInterval time.Duration) http.HandlerFunc {
 	limiter := newSSEConnectionLimiter(maxDashboardSSEConnections)
+	// One shared feed serves every connected SSE client (ci-y7pvo): the
+	// per-connection fetch loop this replaced ran fetchDashboardData — each
+	// call a fresh cgo SQLite open/read/close — once per client per tick, so
+	// work scaled with connected clients instead of data. Now it scales once
+	// per tick. The feed lives for the process's life of this endpoint.
+	feed := newSharedDashboardFeed(func(cfg, db string) (*DashboardData, error) {
+		return fetcher(cfgPath, dbPath)
+	}, fastInterval, slowInterval)
+	feed.Start(context.Background())
 	return func(w http.ResponseWriter, r *http.Request) {
 		if !limiter.acquire() {
 			writeAPIError(w, http.StatusServiceUnavailable, "too many dashboard SSE connections")
@@ -904,44 +913,260 @@ func makeDashboardEventsHandler(cfgPath, dbPath string, fetcher func(string, str
 			flusher.Flush()
 		}
 
-		// Initial send — establishes the hash baseline for adaptive rate.
-		data, err := fetcher(cfgPath, dbPath)
-		if err != nil {
-			sendError(err)
-			return
+		// Subscribe instead of fetching per tick: the feed carries the
+		// ongoing traffic. Keep the wire contract's synchronous baseline:
+		// the feed's newest cached snapshot, else one initial fetch for this
+		// connection's lifetime (bounded by the SSE cap — never per tick, so
+		// the per-tick DB churn ci-y7pvo targets stays gone).
+		frames, cancel := feed.subscribe(r.Context())
+		defer cancel()
+		cached := feed.cachedData()
+		if cached == nil {
+			data, fetchErr := fetcher(cfgPath, dbPath)
+			if fetchErr != nil {
+				slog.Warn("dashboard-events: initial fetch failed; sending error frame",
+					"error", fetchErr)
+				sendError(fetchErr)
+				return
+			}
+			sendEvent(data)
+		} else {
+			sendEvent(cached)
 		}
-		sendEvent(data)
-		lastHash := dashboardStateHash(data)
-
-		ticker := time.NewTicker(fastInterval)
-		defer ticker.Stop()
 
 		for {
 			select {
 			case <-r.Context().Done():
 				return
-			case <-ticker.C:
-				next, err := fetcher(cfgPath, dbPath)
-				if err != nil {
-					// Keep lastHash from the last valid fetch so adaptive
-					// backoff is not corrupted by the failure.
+			case msg, ok := <-frames:
+				if !ok {
+					return
+				}
+				if msg.err != nil {
+					// The fetcher failure stays inside the feed's hash
+					// baseline, so adaptive backoff is not corrupted;
+					// clients get the `event: error` frame.
 					slog.Warn("dashboard-events: fetch failed; sending error frame",
-						"error", err)
-					sendError(err)
+						"error", msg.err)
+					sendError(msg.err)
 					continue
 				}
-				data = next
-				newHash := dashboardStateHash(data)
-				sendEvent(data)
-				// Adaptive backoff: slow down when Castellarius is idle.
-				idle := newHash == lastHash && data.FlowingCount == 0
-				lastHash = newHash
-				nextInterval := fastInterval
-				if idle {
-					nextInterval = slowInterval
-				}
-				ticker.Reset(nextInterval)
+				sendEvent(msg.data)
 			}
+		}
+	}
+}
+
+// ── shared dashboard feed (ci-y7pvo) ──
+
+// feedSubscriberChanSize is each subscriber's send-channel depth. Excess
+// frames are dropped for slow subscribers so one lagging SSE client cannot
+// stall the shared feed loop (mirrors tuiClientChanSize/broadcast semantics).
+const feedSubscriberChanSize = 8
+
+// feedMessage is one broadcast unit on a subscriber channel: exactly one of
+// data/err is set. An err frame keeps the receiver's last valid hash baseline
+// intact — it maps to the SSE `event: error` frame.
+type feedMessage struct {
+	data *DashboardData
+	err  error
+}
+
+// feedSubscriber is one consumer of the shared feed. cancel owns the single
+// close of ch (unregister → close) so a broadcast (which runs under the feed
+// mutex) can never race a close.
+type feedSubscriber struct {
+	id     int64
+	ch     chan feedMessage
+	cancel func()
+}
+
+// sharedDashboardFeed fans one fetch cycle per interval out to every
+// subscriber. It replaces the per-connection fetch loops that ran
+// fetchDashboardData (a fresh cgo SQLite open/read/close) once per client per
+// tick — work that scaled with connected clients instead of data, and the OOM
+// mechanism that survived the ci-5n337 SSE caps.
+//
+// Construction injects everything: the wire site closes cfgPath/dbPath into
+// the fetcher closure (newDashboardMuxWith adapters in tests, RunDashboardWeb
+// in production). The feed never touches os.Getenv, cistern.New, or the
+// filesystem. No package-level mutable state: subscribers, ticker state, and
+// the cached snapshot live in struct fields.
+type sharedDashboardFeed struct {
+	fetcher func(cfg, db string) (*DashboardData, error)
+	fast    time.Duration
+	slow    time.Duration
+
+	mu        sync.Mutex
+	subs      map[int64]*feedSubscriber
+	nextSubID int64
+	cache     *DashboardData
+
+	ctx     context.Context
+	cancel  func()
+	started bool
+}
+
+// newSharedDashboardFeed creates a fully usable feed (panics never, no lazy
+// init). A nil fetcher yields a feed whose every tick reports a fetch error.
+// Zero intervals fall back to the shipped refreshInterval/idleRefreshInterval
+// defaults.
+func newSharedDashboardFeed(fetcher func(cfg, db string) (*DashboardData, error), fast, slow time.Duration) *sharedDashboardFeed {
+	if fetcher == nil {
+		fetcher = func(cfg, db string) (*DashboardData, error) {
+			return nil, fmt.Errorf("ct: dashboard: shared feed: no fetcher configured")
+		}
+	}
+	if fast <= 0 {
+		fast = refreshInterval
+	}
+	if slow <= 0 {
+		slow = idleRefreshInterval
+	}
+	return &sharedDashboardFeed{
+		fetcher: fetcher,
+		fast:    fast,
+		slow:    slow,
+		subs:    map[int64]*feedSubscriber{},
+	}
+}
+
+// cachedData returns the feed's newest successful snapshot, or nil before
+// the first tick completes.
+func (f *sharedDashboardFeed) cachedData() *DashboardData {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.cache
+}
+
+// Start launches the single run loop under ctx. Idempotent: later Starts are
+// no-ops. The feed runs for the lifetime of the HTTP server (context.Background
+// at the wire site); there is one feed per dashboard-events endpoint.
+func (f *sharedDashboardFeed) Start(ctx context.Context) {
+	f.mu.Lock()
+	if f.started {
+		f.mu.Unlock()
+		return
+	}
+	f.started = true
+	ctx, cancel := context.WithCancel(ctx)
+	f.ctx, f.cancel = ctx, cancel
+	f.mu.Unlock()
+	go f.run(ctx)
+}
+
+// dashboardTickInterval returns the fast tick unless the data is idle
+// (unchanged hash and no flowing droplets), in which case the slow tick
+// applies. Shared by the web SSE feed and the TUI polling loop so the
+// adaptive-backoff logic has exactly one implementation.
+func dashboardTickInterval(lastHash, newHash string, flowingCount int, fast, slow time.Duration) time.Duration {
+	if newHash == lastHash && flowingCount == 0 {
+		return slow
+	}
+	return fast
+}
+
+// subscribe registers a new subscriber. The returned channel receives the
+// newest cached snapshot immediately (when one exists) and one frame per
+// subsequent tick — the SSE wire contract's initial data frame. cancel
+// unregisters, stops the ctx watchdog, and closes the channel exactly once
+// (idempotent); the feed also closes the channel when its own context ends.
+func (f *sharedDashboardFeed) subscribe(ctx context.Context) (<-chan feedMessage, func()) {
+	s := &feedSubscriber{ch: make(chan feedMessage, feedSubscriberChanSize)}
+	var once sync.Once
+	watchDone := make(chan struct{})
+	s.cancel = func() {
+		once.Do(func() {
+			// Remove under the feed lock BEFORE closing: broadcasts send
+			// under the same lock, so this ordering makes send-on-closed
+			// impossible.
+			f.mu.Lock()
+			delete(f.subs, s.id)
+			f.mu.Unlock()
+			close(watchDone)
+			close(s.ch)
+		})
+	}
+
+	f.mu.Lock()
+	s.id = f.nextSubID
+	f.nextSubID++
+	f.subs[s.id] = s
+	if f.cache != nil {
+		// Initial snapshot for the new subscriber; non-blocking by contract.
+		select {
+		case s.ch <- feedMessage{data: f.cache}:
+		default:
+		}
+	}
+	f.mu.Unlock()
+
+	// A subscriber whose request ends without cancel() must still be
+	// unregistered: watch its ctx and self-cancel.
+	go func() {
+		select {
+		case <-ctx.Done():
+			s.cancel()
+		case <-watchDone:
+		}
+	}()
+	return s.ch, s.cancel
+}
+
+// run is the single fetch loop: one fetch per tick, broadcast to all
+// subscribers, adaptive backoff on idle. Fetch failures broadcast an error
+// frame and keep the last hash baseline (wire contract: `event: error`, no
+// data:null, adaptive rate uncorrupted).
+func (f *sharedDashboardFeed) run(ctx context.Context) {
+	// Shutdown closes every subscriber channel exactly once, via each
+	// subscriber's own cancel (register-removal then close).
+	defer func() {
+		f.mu.Lock()
+		cancels := make([]func(), 0, len(f.subs))
+		for _, s := range f.subs {
+			cancels = append(cancels, s.cancel)
+		}
+		f.mu.Unlock()
+		for _, c := range cancels {
+			c()
+		}
+	}()
+
+	ticker := time.NewTicker(f.fast)
+	defer ticker.Stop()
+	prevHash := ""
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			data, err := f.fetcher("", "")
+			if err != nil {
+				f.broadcast(feedMessage{err: err})
+				continue // keep prevData's hash baseline and the current interval
+			}
+			f.mu.Lock()
+			f.cache = data
+			f.mu.Unlock()
+			f.broadcast(feedMessage{data: data})
+			newHash := dashboardStateHash(data)
+			// Adaptive backoff: slow down when Castellarius is idle.
+			ticker.Reset(dashboardTickInterval(prevHash, newHash, data.FlowingCount, f.fast, f.slow))
+			prevHash = newHash
+		}
+	}
+}
+
+// broadcast sends msg to every registered subscriber with drop semantics —
+// non-blocking sends under the feed lock, so a slow subscriber loses frames
+// instead of stalling the feed.
+func (f *sharedDashboardFeed) broadcast(msg feedMessage) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for _, s := range f.subs {
+		select {
+		case s.ch <- msg:
+		default: // slow subscriber: drop the frame
 		}
 	}
 }

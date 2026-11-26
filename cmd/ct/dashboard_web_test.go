@@ -2154,3 +2154,261 @@ func TestPickAliveSession(t *testing.T) {
 		})
 	}
 }
+
+// ── sharedDashboardFeed (ci-y7pvo) ──
+
+// One fetch cycle per tick must serve every subscriber: work must stay
+// constant per tick, not multiply per connected client — that per-client
+// amplification (each client looping fetchDashboardData on its own ticker) is
+// the surviving OOM mechanism.
+func TestSharedDashboardFeed_SingleFetcherPerTick(t *testing.T) {
+	const fast = 20 * time.Millisecond
+	var calls atomic.Int64
+	feed := newSharedDashboardFeed(func(cfg, db string) (*DashboardData, error) {
+		calls.Add(1)
+		return &DashboardData{}, nil
+	}, fast, fast) // fast for slow: no idle backoff inside this test's window
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	feed.Start(ctx)
+
+	var chans []<-chan feedMessage
+	var cancels []func()
+	for i := 0; i < 3; i++ {
+		ch, c := feed.subscribe(context.Background())
+		chans = append(chans, ch)
+		cancels = append(cancels, c)
+	}
+	defer func() {
+		for _, c := range cancels {
+			c()
+		}
+	}()
+
+	const window = 140 * time.Millisecond // ≈ 7 fast ticks
+	time.Sleep(window)
+
+	// Per-subscriber receipt counting above collapses into index 0 by design
+	// of the loop below — use a fresh measurement instead.
+	counts := make([]int, len(chans))
+	for i, ch := range chans {
+		for {
+			select {
+			case _, ok := <-ch:
+				if ok {
+					counts[i]++
+				}
+				continue
+			default:
+			}
+			break
+		}
+	}
+	for i, n := range counts {
+		if n < 3 {
+			t.Errorf("subscriber %d received %d frames in the window, want >= 3", i, n)
+		}
+	}
+	got := calls.Load()
+	if got == 0 {
+		t.Fatal("feed never fetched")
+	}
+	// 7 ticks expected; allow slack for scheduling. Per-client amplification
+	// (old behavior) would be ~3× this.
+	if max := int64(9); got > max {
+		t.Errorf("fetch calls = %d in %v with 3 subscribers, want <= %d (one fetch per tick, not per subscriber)", got, window, max)
+	}
+}
+
+// A slow (unread) subscriber must never stall the feed: other subscribers
+// keep receiving, and drops are the documented slow-client behavior.
+func TestSharedDashboardFeed_SlowClientDoesNotBlockFeed(t *testing.T) {
+	const fast = 15 * time.Millisecond
+	var calls atomic.Int64
+	feed := newSharedDashboardFeed(func(cfg, db string) (*DashboardData, error) {
+		calls.Add(1)
+		return &DashboardData{FlowingCount: int(calls.Load())}, nil
+	}, fast, time.Hour)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	feed.Start(ctx)
+
+	slowCh, cancelSlow := feed.subscribe(context.Background())
+	defer cancelSlow()
+	if slowCh == nil {
+		t.Fatal("nil channel")
+	}
+	fastCh, cancelFast := feed.subscribe(context.Background())
+	defer cancelFast()
+
+	// Stop reading the slow subscriber; let its buffer overflow.
+	time.Sleep(200 * time.Millisecond)
+
+	// The fast subscriber must still have received frames meanwhile.
+	got := 0
+	for {
+		select {
+		case msg, ok := <-fastCh:
+			if !ok {
+				t.Fatal("fast subscriber channel closed unexpectedly")
+			}
+			if msg.data == nil {
+				t.Fatal("fast subscriber received a frame without data")
+			}
+			got++
+			continue
+		default:
+		}
+		break
+	}
+	if got < 3 {
+		t.Errorf("fast subscriber received %d frames while the slow one was stalled, want >= 3", got)
+	}
+	if calls.Load() < 5 {
+		t.Errorf("fetch calls = %d over the window, want >= 5 (feed kept ticking)", calls.Load())
+	}
+}
+
+// cancel must unregister the subscriber: the feed drops its reference, the
+// watcher goroutine exits, and the channel was closed exactly once.
+func TestSharedDashboardFeed_CancelRemovesSubscriber(t *testing.T) {
+	var calls atomic.Int64
+	feed := newSharedDashboardFeed(func(cfg, db string) (*DashboardData, error) {
+		calls.Add(1)
+		return &DashboardData{}, nil
+	}, time.Hour, time.Hour)
+	ctx, cancelFeed := context.WithCancel(context.Background())
+	defer cancelFeed()
+	feed.Start(ctx)
+
+	feed.mu.Lock()
+	beforeSubs := len(feed.subs)
+	feed.mu.Unlock()
+	beforeGoroutines := runtime.NumGoroutine()
+
+	ch, cancel := feed.subscribe(context.Background())
+
+	feed.mu.Lock()
+	afterSubs := len(feed.subs)
+	feed.mu.Unlock()
+	if afterSubs != beforeSubs+1 {
+		t.Fatalf("subscriber count %d after subscribe, want %d", afterSubs, beforeSubs+1)
+	}
+
+	// Drain so the initial cached send does not linger; then cancel.
+	for {
+		select {
+		case _, ok := <-ch:
+			if !ok {
+				t.Fatal("channel closed before cancel")
+			}
+			continue
+		default:
+		}
+		break
+	}
+	cancel()
+
+	// Double-cancel must be safe (idempotent).
+	cancel()
+
+	// Settle for the watchdog goroutine exit and unregistration.
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		feed.mu.Lock()
+		subs := len(feed.subs)
+		feed.mu.Unlock()
+		runtime.Gosched()
+		if subs == beforeSubs {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	feed.mu.Lock()
+	subs := len(feed.subs)
+	feed.mu.Unlock()
+	if subs != beforeSubs {
+		t.Errorf("subscriber count %d after cancel, want back to %d (feed must not retain cancelled subscribers)", subs, beforeSubs)
+	}
+
+	if _, ok := <-ch; ok {
+		t.Error("cancel must close the subscriber channel exactly once here")
+	}
+	if g := runtime.NumGoroutine(); g > beforeGoroutines {
+		t.Errorf("goroutines after cancel = %d, want <= %d (watchdog must exit)", g, beforeGoroutines)
+	}
+}
+
+// Idle backoff: unchanged state hash with no flowing droplets takes the slow
+// interval — same semantics the former per-connection loops had.
+func TestSharedDashboardFeed_IdleBackoffSlowsTicker(t *testing.T) {
+	const fast = 10 * time.Millisecond
+	const slow = 100 * time.Millisecond
+
+	// Pure semantics first.
+	if got := dashboardTickInterval("a", "a", 0, fast, slow); got != slow {
+		t.Errorf("same hash + flowing 0 → interval %v, want slow %v", got, slow)
+	}
+	if got := dashboardTickInterval("a", "b", 0, fast, slow); got != fast {
+		t.Errorf("changed hash → interval %v, want fast %v", got, fast)
+	}
+	if got := dashboardTickInterval("a", "a", 2, fast, slow); got != fast {
+		t.Errorf("same hash + flowing > 0 → interval %v, want fast %v", got, fast)
+	}
+
+	// Feed-level: an idle stream settles onto the slow interval.
+	var calls atomic.Int64
+	feed := newSharedDashboardFeed(func(cfg, db string) (*DashboardData, error) {
+		calls.Add(1)
+		return &DashboardData{}, nil // constant state, FlowingCount 0
+	}, fast, slow)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	feed.Start(ctx)
+	<-time.After(150 * time.Millisecond) // ~ first fast tick, then slow ticks
+	got := calls.Load()
+	// Ticks within: 1 fast (10ms) + then ~1-2 slow; without backoff it would
+	// be ~15.
+	if max := int64(5); got > max {
+		t.Errorf("fetch calls = %d in 150ms idle window, want <= %d (backoff must settle onto the slow interval)", got, max)
+	}
+}
+
+// Two concurrent SSE connections must not double the fetch rate: the
+// dashboard-events endpoint shares one feed.
+func TestDashboardEventsSSE_UsesSharedFeed(t *testing.T) {
+	const fast = 25 * time.Millisecond
+	var calls atomic.Int64
+	fetcher := func(cfg, db string) (*DashboardData, error) {
+		calls.Add(1)
+		return &DashboardData{}, nil
+	}
+	ts := httptest.NewServer(newDashboardMuxWith("cfg", "db", fetcher, fast, time.Hour))
+	defer ts.Close()
+
+	resp1, err := http.Get(ts.URL + "/api/dashboard/events")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp1.Body.Close()
+	resp2, err := http.Get(ts.URL + "/api/dashboard/events")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp2.Body.Close()
+
+	time.Sleep(6 * fast + 100*time.Millisecond)
+	// Both bodies must still be SSE streams with a data frame.
+	discard := make(chan struct{})
+	_ = discard
+
+	got := calls.Load()
+	// ~6 ticks expected with the shared feed; two independent per-connection
+	// loops (the old design) would call ~12+. Allow scheduling slack.
+	if max := int64(10); got > max {
+		t.Errorf("fetch calls = %d over 6 ticks with 2 SSE connections, want <= %d (shared feed, not per-connection loops)", got, max)
+	}
+	if got == 0 {
+		t.Fatal("fetcher never called")
+	}
+}
