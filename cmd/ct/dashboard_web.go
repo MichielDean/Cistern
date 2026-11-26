@@ -19,6 +19,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+
 	// goprof: net/http/pprof only for its Handler() symbols — its init()
 	// registers on DefaultServeMux, which this server does not use.
 	goprof "net/http/pprof"
@@ -28,6 +29,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime"
+	"runtime/pprof"
 	"slices"
 	"strconv"
 	"strings"
@@ -2861,6 +2863,8 @@ type dashboardMemStats struct {
 	NumGC        uint32 `json:"num_gc"`
 	NumGoroutine int    `json:"num_goroutine"`
 	FetchedAt    string `json:"fetched_at"`
+	CgroupRSS    int64  `json:"cgroup_rss_bytes"` // whole cgroup: self + children (ci-y7pvo)
+	ChildRSS     int64  `json:"child_rss_bytes"`  // cgroup processes other than this one (ci-y7pvo)
 }
 
 // handleDebugMemstats serves a JSON memory snapshot. RSS comes from
@@ -2883,13 +2887,21 @@ func handleDebugMemstats() http.HandlerFunc {
 // collectDashboardMemStats gathers the memstats snapshot in one call. Exposed
 // for the periodic diagnostic logger to share the exact same fields.
 func collectDashboardMemStats() dashboardMemStats {
+	return collectDashboardMemStatsProcs(cgroupProcSamples)
+}
+
+// collectDashboardMemStatsProcs is collectDashboardMemStats with an injected
+// cgroup proc reader. The reader failure degrades to self-only RSS: cgroup
+// and child fields stay zero and the rest of the sample is untouched (no
+// error spam — the fields are advisory).
+func collectDashboardMemStatsProcs(procs func() ([]procSample, error)) dashboardMemStats {
 	var m runtime.MemStats
 	runtime.ReadMemStats(&m)
 	rss := int64(m.Sys) // fallback approximation
-	if pages, err := residentPages(); err == nil {
-		rss = pages * int64(os.Getpagesize())
+	if pages, err := statmRSS(int64(os.Getpid())); err == nil {
+		rss = pages
 	}
-	return dashboardMemStats{
+	ms := dashboardMemStats{
 		RSS:          rss,
 		HeapAlloc:    m.HeapAlloc,
 		HeapSys:      m.HeapSys,
@@ -2898,24 +2910,137 @@ func collectDashboardMemStats() dashboardMemStats {
 		NumGoroutine: runtime.NumGoroutine(),
 		FetchedAt:    time.Now().UTC().Format(time.RFC3339),
 	}
+	samples, err := procs()
+	if err != nil {
+		slog.Debug("web-diag: cgroup proc list unavailable; self-only RSS",
+			"error", err)
+		return ms
+	}
+	for _, s := range samples {
+		ms.CgroupRSS += s.rss
+		if !s.self {
+			ms.ChildRSS += s.rss
+		}
+	}
+	return ms
 }
 
-// residentPages reads the resident-set page count from /proc/self/statm
-// (field 1, "resident"). Returns an error outside Linux or if unreadable.
-func residentPages() (int64, error) {
-	data, err := os.ReadFile("/proc/self/statm")
+// procSample is one process's resident-set size as seen by the diag sampler.
+// self marks this process; child RSS is the sum of the non-self samples.
+type procSample struct {
+	pid  int64
+	rss  int64
+	self bool
+}
+
+// cgroupProcSamples reads RSS for every process in this unit's cgroup
+// (ci-y7pvo): /proc/self/cgroup locates the cgroup v2 path, cgroup.procs
+// lists the pids, and each /proc/<pid>/statm gives the resident bytes.
+// Children of cistern-web.service (e.g. the Bubble Tea dashboard TUI child)
+// count toward MemoryMax but are invisible to self-RSS sampling — they are
+// captured here. Returns an error where the cgroup cannot be determined
+// (non-Linux, cgroup v1 without a matching path, or sandboxed reads).
+func cgroupProcSamples() ([]procSample, error) {
+	cgPath, err := selfCgroupPath()
 	if err != nil {
-		return 0, fmt.Errorf("ct: read /proc/self/statm: %w", err)
+		return nil, err
+	}
+	procsFile := filepath.Join("/sys/fs/cgroup", cgPath, "cgroup.procs")
+	data, err := os.ReadFile(procsFile)
+	if err != nil {
+		return nil, fmt.Errorf("ct: read %s: %w", procsFile, err)
+	}
+	selfPID := int64(os.Getpid())
+	var samples []procSample
+	for _, field := range strings.Fields(string(data)) {
+		pid, err := strconv.ParseInt(field, 10, 64)
+		if err != nil {
+			return nil, fmt.Errorf("ct: %s: parse pid %q: %w", procsFile, field, err)
+		}
+		rss, err := statmRSS(pid)
+		if err != nil {
+			continue // process exited between listing and read; skip it
+		}
+		samples = append(samples, procSample{pid: pid, rss: rss, self: pid == selfPID})
+	}
+	return samples, nil
+}
+
+// selfCgroupPath returns this process's cgroup v2 relative path from
+// /proc/self/cgroup (the "0::<path>" line).
+func selfCgroupPath() (string, error) {
+	data, err := os.ReadFile("/proc/self/cgroup")
+	if err != nil {
+		return "", fmt.Errorf("ct: read /proc/self/cgroup: %w", err)
+	}
+	for _, line := range strings.Split(strings.TrimSpace(string(data)), "\n") {
+		// cgroup v2 unified hierarchy lines are exactly "0::<path>".
+		if rest, ok := strings.CutPrefix(line, "0::"); ok && strings.TrimSpace(rest) != "" {
+			return strings.TrimSpace(rest), nil
+		}
+	}
+	return "", fmt.Errorf("ct: /proc/self/cgroup: no v2 unified-hierarchy entry in %q", strings.TrimSpace(string(data)))
+}
+
+// statmRSS reads the resident-set size in bytes from /proc/<pid>/statm
+// (field 1, "resident", scaled by the page size). Returns an error outside
+// Linux or if the process is unreadable.
+func statmRSS(pid int64) (int64, error) {
+	data, err := os.ReadFile(fmt.Sprintf("/proc/%d/statm", pid))
+	if err != nil {
+		return 0, fmt.Errorf("ct: read /proc/%d/statm: %w", pid, err)
 	}
 	fields := strings.Fields(string(data))
 	if len(fields) < 2 {
-		return 0, fmt.Errorf("ct: /proc/self/statm: unexpected format %q", strings.TrimSpace(string(data)))
+		return 0, fmt.Errorf("ct: /proc/%d/statm: unexpected format %q", pid, strings.TrimSpace(string(data)))
 	}
 	pages, err := strconv.ParseInt(fields[1], 10, 64)
 	if err != nil {
-		return 0, fmt.Errorf("ct: /proc/self/statm: parse resident field: %w", err)
+		return 0, fmt.Errorf("ct: /proc/%d/statm: parse resident field: %w", pid, err)
 	}
-	return pages, nil
+	return pages * int64(os.Getpagesize()), nil
+}
+
+// defaultDiagPprofDir names where mem_warn threshold crossings leave pprof
+// evidence (ci-y7pvo). Empty string means the home directory could not be
+// resolved; the crossing still alerts, snapshot capture just fails.
+func defaultDiagPprofDir() string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(home, ".cistern", "web-pprof")
+}
+
+// captureDiagPprofSnapshot writes post-mortem evidence under dir: heap.pb
+// (binary heap profile) and goroutine.txt (debug=1 goroutine dump), the same
+// views as the live /debug/pprof/* endpoints. The snapshot dir survives the
+// MemoryMax restart that typically follows a threshold crossing, which live
+// curl captures do not (ci-y7pvo). Best-effort: the caller logs failures.
+func captureDiagPprofSnapshot(dir string) error {
+	if dir == "" {
+		return fmt.Errorf("ct: dashboard: pprof snapshot: no snapshot directory configured")
+	}
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return fmt.Errorf("ct: dashboard: pprof snapshot: mkdir %s: %w", dir, err)
+	}
+	heapFile, err := os.Create(filepath.Join(dir, "heap.pb"))
+	if err != nil {
+		return fmt.Errorf("ct: dashboard: pprof snapshot: create heap.pb: %w", err)
+	}
+	defer heapFile.Close()
+	if err := pprof.Lookup("heap").WriteTo(heapFile, 0); err != nil {
+		return fmt.Errorf("ct: dashboard: pprof snapshot: write heap profile: %w", err)
+	}
+	goroutineFile, err := os.Create(filepath.Join(dir, "goroutine.txt"))
+	if err != nil {
+		return fmt.Errorf("ct: dashboard: pprof snapshot: create goroutine.txt: %w", err)
+	}
+	defer goroutineFile.Close()
+	if err := pprof.Lookup("goroutine").WriteTo(goroutineFile, 1); err != nil {
+		return fmt.Errorf("ct: dashboard: pprof snapshot: write goroutine dump: %w", err)
+	}
+	return nil
 }
 
 // parseByteSize converts a human byte-size string to an exact byte count.
@@ -2977,6 +3102,12 @@ type rssAlertTracker struct {
 	threshold int64
 	above     bool
 	record    func(payload string) error
+	// pprof snapshot capture (ci-y7pvo). When snapshotDir is non-empty, a
+	// threshold crossing writes heap.pb + goroutine.txt there via snapshot
+	// and names the dir in the event payload; a capture failure logs a Warn
+	// and leaves alerting unaffected. snapshot is nil when unset.
+	snapshotDir string
+	snapshot    func(dir string) error
 }
 
 // newRSSAlertTracker creates a tracker alerting at threshold with record as
@@ -2984,10 +3115,16 @@ type rssAlertTracker struct {
 // defaultDiagRSSThreshold (256 MiB) so a bad resolution cannot silently
 // disable alerting. Usable immediately.
 func newRSSAlertTracker(threshold int64, record func(payload string) error) *rssAlertTracker {
+	return newRSSAlertTrackerWithSnapshot(threshold, record, "", nil)
+}
+
+// newRSSAlertTrackerWithSnapshot is newRSSAlertTracker plus pprof snapshot
+// capture on crossing: heap.pb + goroutine.txt under snapshotDir (ci-y7pvo).
+func newRSSAlertTrackerWithSnapshot(threshold int64, record func(payload string) error, snapshotDir string, snapshot func(dir string) error) *rssAlertTracker {
 	if threshold <= 0 {
 		threshold = defaultDiagRSSThreshold
 	}
-	return &rssAlertTracker{threshold: threshold, record: record}
+	return &rssAlertTracker{threshold: threshold, record: record, snapshotDir: snapshotDir, snapshot: snapshot}
 }
 
 // evaluate reports whether rss crosses the threshold for this sample. It is
@@ -3008,16 +3145,22 @@ func (t *rssAlertTracker) evaluate(rss int64) (alert bool, aboveNow bool) {
 // above-state so the next successful crossing still records an event — a
 // transient write failure must not permanently mute alerting.
 func (t *rssAlertTracker) recordAlert(ms dashboardMemStats) {
-	payload, err := json.Marshal(map[string]int64{
+	payload := map[string]interface{}{
 		"rss_bytes":       ms.RSS,
 		"threshold_bytes": t.threshold,
-	})
+	}
+	// Snapshot dir goes in the payload so post-mortem artifacts are
+	// discoverable straight from the events row (ci-y7pvo).
+	if t.snapshotDir != "" {
+		payload["pprof_dir"] = t.snapshotDir
+	}
+	raw, err := json.Marshal(payload)
 	if err != nil {
 		slog.Warn("web-diag: rss threshold alert payload build failed", "error", err)
 		t.above = false // keep alerting alive even if serialization is somehow broken
 		return
 	}
-	if err := t.record(string(payload)); err != nil {
+	if err := t.record(string(raw)); err != nil {
 		err = fmt.Errorf("ct: dashboard: rss alert record: %w", err)
 		slog.Warn("web-diag: rss threshold alert event record failed", "error", err)
 		t.above = false // revert the crossing: the next tick may still alert and record
@@ -3033,6 +3176,8 @@ func runDiagTick(tracker *rssAlertTracker, collect func() dashboardMemStats) {
 	ms := collect()
 	slog.Default().Info("web-diag: memory sample",
 		"rss_bytes", ms.RSS,
+		"cgroup_rss_bytes", ms.CgroupRSS,
+		"child_rss_bytes", ms.ChildRSS,
 		"heap_alloc_bytes", ms.HeapAlloc,
 		"sys_bytes", ms.Sys,
 		"num_gc", ms.NumGC,
@@ -3043,6 +3188,16 @@ func runDiagTick(tracker *rssAlertTracker, collect func() dashboardMemStats) {
 			"rss_bytes", ms.RSS,
 			"threshold_bytes", tracker.threshold,
 		)
+		// Leave pprof evidence before recording the event: the crossing
+		// typically precedes a MemoryMax restart that wipes live state
+		// (ci-y7pvo). Capture failure is advisory — alerting continues.
+		if tracker.snapshot != nil {
+			if err := tracker.snapshot(tracker.snapshotDir); err != nil {
+				slog.Warn("web-diag: pprof snapshot capture failed", "dir", tracker.snapshotDir, "error", err)
+			} else {
+				slog.Warn("web-diag: pprof snapshots written", "dir", tracker.snapshotDir)
+			}
+		}
 		tracker.recordAlert(ms)
 	}
 }
@@ -3068,12 +3223,12 @@ func startDashboardDiagTicker(ctx context.Context, dbPath string, getenv func(st
 		client = nil
 	}
 
-	tracker := newRSSAlertTracker(threshold, func(payload string) error {
+	tracker := newRSSAlertTrackerWithSnapshot(threshold, func(payload string) error {
 		if client == nil {
 			return fmt.Errorf("ct: dashboard: rss alert record: events db unavailable")
 		}
 		return client.RecordEvent(diagEventDropletID, cistern.EventMemWarn, payload)
-	})
+	}, defaultDiagPprofDir(), captureDiagPprofSnapshot)
 
 	go func() {
 		ticker := time.NewTicker(dashboardDiagInterval)

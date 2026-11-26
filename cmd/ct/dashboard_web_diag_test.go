@@ -582,6 +582,96 @@ func TestRunDiagTick_RecordEventFailureDoesNotChangeState(t *testing.T) {
 // derivation: if either cistern-web.service MemoryMax or
 // defaultDiagRSSThreshold changes independently, this test fails and forces
 // the pair to be reconciled intentionally.
+// ── diag sampler cgroup/child RSS (ci-y7pvo) ──
+
+// The sampler must see the whole systemd cgroup: the Bubble Tea child spawned
+// by /ws/tui counts against MemoryMax=512M in cistern-web.service but is
+// invisible to self-RSS sampling. A fake proc reader provides pids+RSS for
+// several processes, including this one.
+func TestDiagMemStats_CapturesChildAndCgroupRSS(t *testing.T) {
+	selfRSS := int64(55 << 20)
+	childRSS := int64(21 << 20)
+	procs := func() ([]procSample, error) {
+		return []procSample{
+			{pid: 1847, rss: selfRSS, self: true},
+			{pid: 1875, rss: childRSS},
+		}, nil
+	}
+
+	ms := collectDashboardMemStatsProcs(procs)
+
+	if ms.CgroupRSS != selfRSS+childRSS {
+		t.Errorf("cgroup_rss_bytes = %d, want %d (self + child summed)", ms.CgroupRSS, selfRSS+childRSS)
+	}
+	if ms.ChildRSS != childRSS {
+		t.Errorf("child_rss_bytes = %d, want %d (non-self processes only)", ms.ChildRSS, childRSS)
+	}
+	// Existing self-RSS field stays self-only: byte-compatible consumers rely on it.
+	if ms.RSS == 0 {
+		t.Error("rss_bytes must remain populated")
+	}
+	if ms.FetchedAt == "" {
+		t.Error("fetched_at must be set")
+	}
+
+	// Cgroup read failure falls back to self-only RSS with the existing field
+	// set — no error path may kill sampling.
+	ms = collectDashboardMemStatsProcs(func() ([]procSample, error) {
+		return nil, fmt.Errorf("ct: test: cgroup unreadable")
+	})
+	if ms.CgroupRSS != 0 || ms.ChildRSS != 0 {
+		t.Errorf("cgroup read failure: cgroup=%d child=%d, want 0/0", ms.CgroupRSS, ms.ChildRSS)
+	}
+	if ms.FetchedAt == "" || ms.NumGoroutine <= 0 {
+		t.Error("cgroup read failure must leave the rest of the sample intact")
+	}
+}
+
+// ── mem_warn pprof snapshot capture (ci-y7pvo) ──
+
+// A threshold crossing must leave evidence that survives the restart:
+// heap.pb + goroutine.txt under the snapshot dir, and the event payload
+// naming the directory.
+func TestRSSAlertWritesPprofSnapshotOnThreshold(t *testing.T) {
+	t.Run("crossing writes heap.pb and goroutine.txt and payload includes dir", func(t *testing.T) {
+		dir := filepath.Join(t.TempDir(), "web-pprof")
+		tracker := newRSSAlertTrackerWithSnapshot(1000, func(string) error { return nil }, dir, captureDiagPprofSnapshot)
+
+		runDiagTick(tracker, func() dashboardMemStats { return dashboardMemStats{RSS: 2000, HeapAlloc: 1, Sys: 1, NumGC: 1, NumGoroutine: 1, FetchedAt: "x"} })
+
+		for _, name := range []string{"heap.pb", "goroutine.txt"} {
+			if _, err := os.Stat(filepath.Join(dir, name)); err != nil {
+				t.Errorf("%s: %v", name, err)
+			}
+		}
+
+		// Payload carries the snapshot dir: wire record through a capture.
+		var payload string
+		tracker2 := newRSSAlertTrackerWithSnapshot(1000, func(p string) error { payload = p; return nil }, dir, captureDiagPprofSnapshot)
+		runDiagTick(tracker2, func() dashboardMemStats { return dashboardMemStats{RSS: 2000, FetchedAt: "x"} })
+		if !strings.Contains(payload, dir) {
+			t.Errorf("payload %q must contain the pprof dir %q", payload, dir)
+		}
+	})
+
+	t.Run("missing dir logs a warn and does not kill the ticker", func(t *testing.T) {
+		// A directory that cannot be created (procfs is non-writable).
+		dir := "/proc/nonexistent/web-pprof"
+		calls := 0
+		tracker := newRSSAlertTrackerWithSnapshot(1000, func(string) error { calls++; return nil }, dir, captureDiagPprofSnapshot)
+
+		runDiagTick(tracker, func() dashboardMemStats { return dashboardMemStats{RSS: 2000, FetchedAt: "x"} })
+		runDiagTick(tracker, func() dashboardMemStats { return dashboardMemStats{RSS: 2000, FetchedAt: "x"} })
+
+		if calls != 1 {
+			t.Errorf("record calls = %d, want 1 (snapshot failure must not block or mute alerting)", calls)
+		}
+		if !tracker.above {
+			t.Error("tracker must stay above after a successful record despite the snapshot failure")
+		}
+	})
+}
+
 func TestDefaultDiagRSSThresholdMatchesMemoryMax(t *testing.T) {
 	data, err := os.ReadFile(filepath.Join(repoRoot(t), "cistern-web.service"))
 	if err != nil {
