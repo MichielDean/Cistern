@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+### Web-diag RSS threshold alerting (ci-ii5cz)
+
+The `ct dashboard --web` diagnostic ticker now alerts when the process RSS crosses a threshold instead of only logging samples. The default threshold is 256 MiB — half of the `MemoryMax=512M` cap in `cistern-web.service` — so a future memory regression becomes visible (WARN log + an events row) well before systemd kills the process. Alerting is visibility-only: it never restarts, touches, or tunes the service. The threshold is edge-triggered: one crossing produces exactly one alert, with additional alerts only after the RSS drops back below the threshold and crosses again. A transient event-write failure reverts the crossing state so the next successful sample still records an alert.
+
+**Operator-facing behavior:**
+- `CISTERN_WEB_DIAG_RSS_THRESHOLD` env var — overrides the threshold in size syntax (`256M`, `512M`, `1G`) or raw bytes (`268435456`). Read once when the diag ticker starts. An unparseable or non-positive value falls back to the 256M default with a WARN (fail-closed), so a typo muting alerting is logged loudly. The default is pinned to `cistern-web.service`'s `MemoryMax` by a drift-guard test.
+- `mem_warn` events row — written with an `rss_bytes` / `threshold_bytes` payload (plain integer byte counts, no scientific notation) under the sentinel droplet id `web-process` (the events table has no foreign key, so a process-level sentinel is valid and lists fine via `ct droplet log web-process`).
+- WARN log line — includes RSS and threshold in human byte units at each crossing.
+
+**Key changes:**
+- `cmd/ct/dashboard_web.go` — `defaultDiagRSSThreshold` (256 MiB), `resolveDiagRSSThreshold` (env override, fail-closed), `parseByteSize` size-string parser, edge-triggered `rssAlertTracker` with transient-failure revert, `recordAlert` mem_warn writer; diag ticker now resolves the threshold and evaluates each sample
+- `internal/cistern/event_types.go` — new `EventMemWarn` (`mem_warn`) type, added to `ValidEventTypes`; `DisplayInfo` renders it with an `rss: <n>, threshold: <n>` detail line
+- `cmd/ct/dashboard_web_diag_test.go` — parse/error cases, default/override/invalid resolution, edge-trigger matrix, `TestDefaultDiagRSSThresholdMatchesMemoryMax` drift guard vs the unit file's `MemoryMax=512M`, and a real-SQLite threshold-crossing test asserting the `mem_warn` row persists
+- `internal/cistern/client_test.go` — `mem_warn` in the valid-event-types coverage
+
+
 ### Transcript-based aux-agent resume (breaking change: `--resume` takes a cistern session ID)
 
 Aux-agent resume (filter, triage, wizard, dashboard) no longer uses opencode's

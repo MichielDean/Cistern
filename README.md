@@ -846,7 +846,7 @@ Runtime memory/goroutine evidence endpoints (added after the ci-5n337 OOM invest
 | `GET` | `/debug/pprof/heap` | pprof heap profile |
 | `GET` | `/debug/pprof/goroutine` | pprof goroutine dump |
 
-Additionally, when running with `ct dashboard --web`, a diagnostic ticker logs one memory sample line (RSS, heap, goroutines) to the dashboard log every 15 minutes, so leaks leave an RSS trail.
+Additionally, when running with `ct dashboard --web`, a diagnostic ticker logs one memory sample line (RSS, heap, goroutines) to the dashboard log every 15 minutes, so leaks leave an RSS trail. When RSS reaches the alert threshold — 256 MiB by default, half of `cistern-web.service`'s `MemoryMax=512M` — the ticker also logs a WARN and records a `mem_warn` events row (payload: `rss_bytes`, `threshold_bytes`) under the sentinel droplet id `web-process`, visible via `ct droplet log web-process`. Alerting is edge-triggered (one alert per crossing) and visibility-only: it never restarts the service. Set `CISTERN_WEB_DIAG_RSS_THRESHOLD` (e.g. `512M` or raw bytes) to override the threshold; an unparseable value falls back to the 256M default with a WARN.
 
 ### Input validation
 
@@ -930,7 +930,7 @@ ct droplet tail <id> --lines 50                             Show last 50 events 
 ct droplet tail <id> --format json                          Output events as NDJSON (one JSON object per line)
 
 # Log — chronological activity timeline for a droplet
-ct droplet log <id>                                         Show activity log (creation, dispatch, pass, recirculate, delivered, restart, approve, edit, pool, cancel, exit_no_outcome, stall, recovery, circuit_breaker, loop_recovery, auto_promote, no_route; agent notes shown separately)
+ct droplet log <id>                                         Show activity log (creation, dispatch, pass, recirculate, delivered, restart, approve, edit, pool, cancel, exit_no_outcome, stall, recovery, circuit_breaker, loop_recovery, auto_promote, no_route, mem_warn; agent notes shown separately)
 ct droplet log <id> --format json                           Output as NDJSON (one JSON object per line)
 
 # History — alias for ct droplet log
