@@ -1036,12 +1036,9 @@ func newDashboardMuxInternalWith(cfgPath, dbPath string, tui *DashboardTUI, fetc
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
-		format := r.URL.Query().Get("format")
-		if format == "" {
-			format = "csv" // csv is the default encoding for the export endpoint
-		}
-		if format != "json" && format != "csv" {
-			http.Error(w, "format must be json or csv", http.StatusBadRequest)
+		format, err := dropletsExportFormat(r.URL.Query().Get("format"))
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
 		q := r.URL.Query().Get("q")
