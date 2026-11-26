@@ -2312,16 +2312,29 @@ func TestSharedDashboardFeed_CancelRemovesSubscriber(t *testing.T) {
 	// Double-cancel must be safe (idempotent).
 	cancel()
 
-	// Settle for the watchdog goroutine exit and unregistration.
+	// Settle for the watchdog goroutine exit and unregistration: both
+	// conditions must hold (subs removed AND goroutine exited) before we
+	// sample goroutines — subscriber removal is synchronous via cancel,
+	// goroutine exit is asynchronous.
 	deadline := time.Now().Add(time.Second)
-	for time.Now().Before(deadline) {
+	for {
 		feed.mu.Lock()
 		subs := len(feed.subs)
 		feed.mu.Unlock()
-		runtime.Gosched()
-		if subs == beforeSubs {
+		goroutines := runtime.NumGoroutine()
+		if subs == beforeSubs && goroutines <= beforeGoroutines {
 			break
 		}
+		if time.Now().After(deadline) {
+			if subs != beforeSubs {
+				t.Errorf("subscriber count %d after cancel, want back to %d (feed must not retain cancelled subscribers)", subs, beforeSubs)
+			}
+			if goroutines > beforeGoroutines {
+				t.Errorf("goroutines after cancel = %d, want <= %d (watchdog must exit)", goroutines, beforeGoroutines)
+			}
+			break
+		}
+		runtime.Gosched()
 		time.Sleep(10 * time.Millisecond)
 	}
 	feed.mu.Lock()
