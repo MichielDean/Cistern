@@ -38,13 +38,14 @@ func writeDropletsCSV(w io.Writer, items []*cistern.Droplet) error {
 
 // csvEscapeCell guards against CSV formula injection: spreadsheet apps treat a
 // leading =, +, - or @ as a formula, so such cells are prefixed with a single
-// quote to force text interpretation.
+// quote to force text interpretation. Leading tab and carriage-return characters
+// get the same treatment so injection-via-whitespace is also covered.
 func csvEscapeCell(cell string) string {
 	if cell == "" {
 		return ""
 	}
 	switch cell[0] {
-	case '=', '+', '-', '@':
+	case '=', '+', '-', '@', '\t', '\r':
 		return "'" + cell
 	}
 	return cell

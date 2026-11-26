@@ -2462,7 +2462,7 @@ func TestAPI_Doctor_Sanitized500Error(t *testing.T) {
 	}
 }
 
-func TestAPI_CsvSanitizeCell(t *testing.T) {
+func TestAPI_CsvEscapeCell(t *testing.T) {
 	tests := []struct {
 		input string
 		want  string
@@ -2471,14 +2471,16 @@ func TestAPI_CsvSanitizeCell(t *testing.T) {
 		{"+formula", "'+formula"},
 		{"-formula", "'-formula"},
 		{"@formula", "'@formula"},
+		{"\ttabbed", "'\ttabbed"},
+		{"\rreturn", "'\rreturn"},
 		{"normal", "normal"},
 		{"", ""},
 		{"hello world", "hello world"},
 	}
 	for _, tt := range tests {
-		got := csvSanitizeCell(tt.input)
+		got := csvEscapeCell(tt.input)
 		if got != tt.want {
-			t.Errorf("csvSanitizeCell(%q) = %q, want %q", tt.input, got, tt.want)
+			t.Errorf("csvEscapeCell(%q) = %q, want %q", tt.input, got, tt.want)
 		}
 	}
 }
