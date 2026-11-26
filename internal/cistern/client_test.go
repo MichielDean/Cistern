@@ -2426,6 +2426,7 @@ func TestDisplayInfo_MapsEventTypesToHumanReadableLabels(t *testing.T) {
 		{"loop_recovery", `{"from":"impl","to":"impl"}`, "loop_recovery", "from: impl"},
 		{"auto_promote", `{"cataractae":"impl","routed_to":"review"}`, "auto_promote", "routed to: review"},
 		{"no_route", `{"cataractae":"impl"}`, "no_route", "by: impl"},
+		{"mem_warn", `{"rss_bytes":536870912,"threshold_bytes":268435456}`, "rss_threshold", "rss: 536870912"},
 	}
 
 	for _, tt := range tests {
@@ -3143,6 +3144,7 @@ func TestValidEventTypes_ContainsAllConstants(t *testing.T) {
 		EventExitNoOutcome, EventStall, EventRecovery,
 		EventCircuitBreaker, EventLoopRecovery,
 		EventAutoPromote, EventNoRoute,
+		EventMemWarn,
 	}
 	for _, e := range expected {
 		if !ValidEventTypes[e] {
