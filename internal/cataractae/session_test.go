@@ -134,6 +134,67 @@ func TestResolveIdentityPath_FallbackSandbox(t *testing.T) {
 	}
 }
 
+func TestWriteAgentMarkdown_MirrorsToWorktree(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+
+	// The fallback identity root resolves relative to the process working
+	// directory — run against a temp cwd so the test never writes repo files.
+	tempCwd := t.TempDir()
+	prevCwd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(tempCwd); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(prevCwd) })
+
+	s := &Session{
+		ID:       "test-repo-worker",
+		WorkDir:  t.TempDir(),
+		Identity: "reviewer",
+	}
+	agentPath, err := s.writeAgentMarkdown("# reviewer prompt")
+	if err != nil {
+		t.Fatalf("writeAgentMarkdown: %v", err)
+	}
+	if _, err := os.Stat(agentPath); err != nil {
+		t.Fatalf("identity agent markdown missing: %v", err)
+	}
+
+	workAgentPath := filepath.Join(s.WorkDir, ".opencode", "agents", "reviewer.md")
+	data, err := os.ReadFile(workAgentPath)
+	if err != nil {
+		t.Fatalf("worktree agent markdown missing: %v", err)
+	}
+	if !strings.Contains(string(data), "reviewer prompt") {
+		t.Error("worktree agent markdown should mirror the prompt content")
+	}
+}
+
+func TestWriteAgentMarkdown_EmptyWorkDir(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+
+	tempCwd := t.TempDir()
+	prevCwd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(tempCwd); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(prevCwd) })
+
+	s := &Session{ID: "test-repo-worker", Identity: "reviewer"}
+	agentPath, err := s.writeAgentMarkdown("# reviewer prompt")
+	if err != nil {
+		t.Fatalf("writeAgentMarkdown with empty WorkDir: %v", err)
+	}
+	if _, err := os.Stat(agentPath); err != nil {
+		t.Fatalf("identity agent markdown missing: %v", err)
+	}
+}
+
 // buildTestBin compiles the Go package at importPath into a temp directory
 // and returns the absolute path to the resulting binary.
 func buildTestBin(t *testing.T, name, importPath string) string {
