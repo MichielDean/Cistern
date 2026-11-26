@@ -214,8 +214,8 @@ func (p placeholderPanel) Title() string { return p.title }
 
 func (p placeholderPanel) KeyHelp() string { return "" }
 
-func (p placeholderPanel) OverlayActive() bool                              { return false }
-func (p placeholderPanel) SelectedDroplet() *cistern.Droplet                { return nil }
+func (p placeholderPanel) OverlayActive() bool                               { return false }
+func (p placeholderPanel) SelectedDroplet() *cistern.Droplet                 { return nil }
 func (p placeholderPanel) PaletteActions(_ *cistern.Droplet) []PaletteAction { return nil }
 
 // ── cockpitModel ─────────────────────────────────────────────────────────────

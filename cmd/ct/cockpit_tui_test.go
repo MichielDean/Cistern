@@ -1664,20 +1664,20 @@ func TestDropletsPanel_PaletteActions_Run_EmitsCorrectMsg(t *testing.T) {
 		wantDropID string
 	}
 	want := map[string]wantMsg{
-		"new droplet":      {actionCreateDroplet, ""},
-		"pass":             {actionPass, dropletID},
-		"recirculate":      {actionRecirculate, dropletID},
-		"close":            {actionClose, dropletID},
-		"cancel":           {actionCancel, dropletID},
-		"pool":             {actionPool, dropletID},
-		"restart":          {actionRestart, dropletID},
-		"add note":         {actionAddNote, dropletID},
-		"edit metadata":    {actionEditMeta, dropletID},
-		"add dependency":   {actionAddDep, dropletID},
+		"new droplet":       {actionCreateDroplet, ""},
+		"pass":              {actionPass, dropletID},
+		"recirculate":       {actionRecirculate, dropletID},
+		"close":             {actionClose, dropletID},
+		"cancel":            {actionCancel, dropletID},
+		"pool":              {actionPool, dropletID},
+		"restart":           {actionRestart, dropletID},
+		"add note":          {actionAddNote, dropletID},
+		"edit metadata":     {actionEditMeta, dropletID},
+		"add dependency":    {actionAddDep, dropletID},
 		"remove dependency": {actionRemoveDep, dropletID},
-		"file issue":       {actionFileIssue, dropletID},
-		"resolve issue":    {actionResolveIssue, dropletID},
-		"reject issue":     {actionRejectIssue, dropletID},
+		"file issue":        {actionFileIssue, dropletID},
+		"resolve issue":     {actionResolveIssue, dropletID},
+		"reject issue":      {actionRejectIssue, dropletID},
 	}
 
 	if len(actions) != len(want) {

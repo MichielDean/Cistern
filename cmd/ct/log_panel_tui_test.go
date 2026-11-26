@@ -432,7 +432,9 @@ func TestLogPanel_Update_EndKey_JumpsToBottom(t *testing.T) {
 // the content bottom, so 'k' is immediately responsive (ci-owymw-dtgjp).
 //
 // Given: a logPanel with 10 lines of content, height=10 (visible=6, bottom=4)
-//        and scrollY already at the bottom (4)
+//
+//	and scrollY already at the bottom (4)
+//
 // When:  'j' is pressed 5 more times
 // Then:  scrollY stays at 4 (no overshoot past the bottom)
 func TestLogPanel_Update_DownKey_AtBottom_DoesNotOvershoot(t *testing.T) {

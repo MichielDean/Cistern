@@ -34,7 +34,7 @@ var defaultCapturer Capturer = tmuxCapturer{}
 
 // --- Messages ---
 
-type peekTickMsg    time.Time
+type peekTickMsg time.Time
 type peekContentMsg string
 
 // peekInterval is the polling rate for live pane updates.
@@ -49,15 +49,15 @@ const defaultPeekLines = 0
 // peekModel is a Bubble Tea model for the read-only peek TUI panel.
 // It polls the tmux pane every peekInterval and renders the output.
 type peekModel struct {
-	capturer    Capturer
-	session     string
-	lines       int    // number of pane lines to capture
-	content string // current pane content
-	scrollY int    // scroll offset (0 = top)
-	pinned      bool   // when true scroll position is locked
-	width       int
-	height      int
-	header      string // e.g. "[ci-0vm8f] My title — flowing 2m 14s"
+	capturer Capturer
+	session  string
+	lines    int    // number of pane lines to capture
+	content  string // current pane content
+	scrollY  int    // scroll offset (0 = top)
+	pinned   bool   // when true scroll position is locked
+	width    int
+	height   int
+	header   string // e.g. "[ci-0vm8f] My title — flowing 2m 14s"
 }
 
 // newPeekModel constructs a peekModel ready for use.

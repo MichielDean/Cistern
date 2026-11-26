@@ -991,10 +991,10 @@ var dropletRecirculateCmd = &cobra.Command{
 // --- cistern peek ---
 
 var (
-	peekLines     int
-	peekRaw       bool
-	peekFollow    bool
-	peekSnapshot  bool
+	peekLines    int
+	peekRaw      bool
+	peekFollow   bool
+	peekSnapshot bool
 )
 
 // tmuxHasSession reports whether the named tmux session exists.

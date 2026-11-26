@@ -213,10 +213,10 @@ func TestPrintDropletListTerminal(t *testing.T) {
 		return &cistern.Droplet{
 			ID:                id,
 			Title:             title,
- 			Status:            status,
- 			CurrentCataractae: cataractae,
- 			UpdatedAt:         time.Now(),
- 		}
+			Status:            status,
+			CurrentCataractae: cataractae,
+			UpdatedAt:         time.Now(),
+		}
 	}
 
 	t.Run("empty lists print only header", func(t *testing.T) {

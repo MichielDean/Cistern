@@ -207,11 +207,22 @@ func runSkillsList(cmd *cobra.Command, args []string) error {
 // skillsWorkflow is shared across skills subcommands to optionally override the workflow path.
 var skillsWorkflow string
 
-// resolveWorkflows returns resolved workflows. If --workflow is set, only that
-// path is parsed; otherwise all workflows are resolved from the config's Aqueducts list.
+// resolveWorkflows returns resolved workflows. If --workflow is set (skills
+// subcommand: skillsWorkflow; cataractae subcommand: cataractaeGenerateWorkflow),
+// only that path is parsed; otherwise one workflow per distinct aqueduct
+// referenced by the configured repos is resolved from the config's Aqueducts
+// list. Cataractae tooling must cover every identity any repo can spawn —
+// identities that only appear in a secondary aqueduct (e.g. the fork-mode
+// delivery agent) would otherwise never get their AGENTS.md /
+// PIPELINE_POSITION.md generated, and the doctor would flag them as missing
+// while a real droplet could still route through them.
 func resolveWorkflows() ([]*aqueduct.Workflow, error) {
-	if skillsWorkflow != "" {
-		wf, err := aqueduct.ParseWorkflow(skillsWorkflow)
+	override := skillsWorkflow
+	if override == "" {
+		override = cataractaeGenerateWorkflow
+	}
+	if override != "" {
+		wf, err := aqueduct.ParseWorkflow(override)
 		if err != nil {
 			return nil, fmt.Errorf("parse workflow: %w", err)
 		}
@@ -224,8 +235,13 @@ func resolveWorkflows() ([]*aqueduct.Workflow, error) {
 		return nil, fmt.Errorf("loading config: %w", err)
 	}
 
+	seen := map[string]bool{}
 	var workflows []*aqueduct.Workflow
 	for _, repo := range cfg.Repos {
+		if seen[repo.Aqueduct] {
+			continue
+		}
+		seen[repo.Aqueduct] = true
 		wf, err := cfg.ResolveAqueductForRepo(repo)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "warning: resolve aqueduct for repo %s: %v\n", repo.Name, err)
