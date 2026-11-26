@@ -10,14 +10,15 @@ description: Git conventions for Cistern aqueduct cataractae. Use for all git op
 Each droplet has an isolated worktree at `~/.cistern/sandboxes/<repo>/<droplet-id>/`.
 The Castellarius creates and cleans up worktrees. Agents never run `git worktree add/remove`.
 
-## Staging — always exclude CONTEXT.md and InstructionsFile
-
-CONTEXT.md is written by the Castellarius on every dispatch. The provider's
-InstructionsFile (AGENTS.md) is also overwritten by the
-Castellarius with the cataractae prompt. Never commit either file.
+## Staging — always exclude CONTEXT.md, InstructionsFile, and agent mirrors
+#
+# CONTEXT.md is written by the Castellarius on every dispatch. The provider's
+# InstructionsFile (AGENTS.md) is also overwritten by the
+# Castellarius with the cataractae prompt. .opencode/ holds the per-worktree
+# agent mirrors written at spawn. Never commit those files.
 
 ```bash
-git add -A -- ':!CONTEXT.md' ':!<InstructionsFile>'
+git add -A -- ':!CONTEXT.md' ':!<InstructionsFile>' ':!.opencode'
 git status --short   # verify no CONTEXT.md, no InstructionsFile, no binaries
 ```
 
@@ -28,7 +29,7 @@ active preset (determined by `provider.ProviderPreset.InstrFile()`).
 
 ```bash
 BEFORE=$(git rev-parse HEAD)
-git add -A -- ':!CONTEXT.md' ':!<InstructionsFile>'
+git add -A -- ':!CONTEXT.md' ':!<InstructionsFile>' ':!.opencode'
 git commit -m "<droplet-id>: <description>"
 AFTER=$(git rev-parse HEAD)
 if [ "$BEFORE" = "$AFTER" ]; then

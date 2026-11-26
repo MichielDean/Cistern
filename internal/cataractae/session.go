@@ -633,6 +633,29 @@ func (s *Session) writeAgentMarkdown(prompt string) (string, error) {
 	if err := os.WriteFile(agentPath, []byte(content), 0o644); err != nil {
 		return "", fmt.Errorf("write agent markdown %s: %w", agentPath, err)
 	}
+
+	// The identityDir/agents location only works when opencode boots fresh with
+	// OPENCODE_CONFIG_DIR set. When an existing shared opencode server handles
+	// the run, its registry was loaded without the cataractae config dir and
+	// `opencode run --agent <identity>` fails with "Agent not found" (opencode
+	// v2.4.x resolves named agents from the global agents dir and the project
+	// .opencode/agents only). Mirroring the file into the worktree's
+	// .opencode/agents/ registers the agent with any server, because the run
+	// executes with the worktree as its working directory.
+	if s.WorkDir != "" {
+		workAgentsDir := filepath.Join(s.WorkDir, ".opencode", "agents")
+		if err := os.MkdirAll(workAgentsDir, 0o755); err != nil {
+			return "", fmt.Errorf("mkdir worktree agents dir %s: %w", workAgentsDir, err)
+		}
+		workAgentPath := filepath.Join(workAgentsDir, s.Identity+".md")
+		if err := os.WriteFile(workAgentPath, []byte(content), 0o644); err != nil {
+			return "", fmt.Errorf("write worktree agent markdown %s: %w", workAgentPath, err)
+		}
+		slog.Default().Info("spawn: wrote agent markdown to worktree",
+			"session", s.ID,
+			"agent", s.Identity,
+			"path", workAgentPath)
+	}
 	return agentPath, nil
 }
 
