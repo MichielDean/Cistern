@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+### Shared SSE feed + pprof snapshots (ci-y7pvo)
+
+Fixes the recurring `cistern-web` OOM kills that survived the ci-5n337 caps: every `/api/dashboard/events` SSE connection used to run its own dashboard-fetch loop, so a fleet of connected (and restarting) clients multiplied fetch work and memory. All clients are now served by one `sharedDashboardFeed` — a single background fetch cycle per tick that broadcasts the newest cached snapshot to every subscriber, with a single initial frame per connection (from the cache, or a fresh fetch on a cold start) and a lifetime bounded by the server shutdown context.
+
+**Operator-facing behavior:**
+- `/debug/memstats` gained `cgroup_rss_bytes` (whole cgroup RSS: self + children) and `child_rss_bytes` (cgroup processes other than this one) on Linux, so the sample trail shows the real systemd-cgroup footprint, not just the Go process.
+- At each RSS threshold crossing (256 MiB default) the server writes a pprof heap profile (`heap-<timestamp>.pb`) and a debug-2 goroutine dump (`goroutine-<timestamp>.txt`) under `~/.cistern/web-pprof/` — one pair per crossing, so evidence survives the OOM restart. Files are 0700, served by no endpoint. Capture failure is logged in the WARN line; the mem_warn payload includes `pprof_dir`.
+- No client-facing SSE protocol change: `ct dashboard --web` clients see the same initial-frame-then-tick stream as before.
+
+**Key changes:**
+- `cmd/ct/dashboard_web.go` — `sharedDashboardFeed` (single fetcher per tick, bounded subscriber channels, drop-on-full, single-close via `sync.Once`, ctx-bounded lifetime wired from `RunDashboardWeb`'s signal context), SSE events handler rewritten to consume the feed cache, `captureDiagPprofSnapshot` + snapshot-dir-backed RSS alert tracker; memstats sampling extended with cgroup/statm reads of child processes
+- `cmd/ct/dashboard_web_test.go` / `cmd/ct/dashboard_web_diag_test.go` — behavioral tests at the SSE/HTTP seam: single fetch cycle with N subscribers, cancel-on-disconnect removes subscribers, single initial frame, feed lifetime ends with ctx, pprof snapshot writes and two-crossing retention
+
 ### Web-diag RSS threshold alerting (ci-ii5cz)
 
 The `ct dashboard --web` diagnostic ticker now alerts when the process RSS crosses a threshold instead of only logging samples. The default threshold is 256 MiB — half of the `MemoryMax=512M` cap in `cistern-web.service` — so a future memory regression becomes visible (WARN log + an events row) well before systemd kills the process. Alerting is visibility-only: it never restarts, touches, or tunes the service. The threshold is edge-triggered: one crossing produces exactly one alert, with additional alerts only after the RSS drops back below the threshold and crosses again. A transient event-write failure reverts the crossing state so the next successful sample still records an alert.
