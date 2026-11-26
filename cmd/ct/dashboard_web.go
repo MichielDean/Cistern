@@ -19,6 +19,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+
 	// goprof: net/http/pprof only for its Handler() symbols — its init()
 	// registers on DefaultServeMux, which this server does not use.
 	goprof "net/http/pprof"
@@ -28,6 +29,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime"
+	"runtime/pprof"
 	"slices"
 	"strconv"
 	"strings"
@@ -854,9 +856,20 @@ func newDashboardMux(cfgPath, dbPath string) http.Handler {
 }
 
 // newDashboardMuxWith returns an http.Handler for the web dashboard with custom
-// fetcher and refresh intervals. Exposed for testing.
-func newDashboardMuxWith(cfgPath, dbPath string, fetcher func(cfg, db string) (*DashboardData, error), fastInterval, slowInterval time.Duration) http.Handler {
-	return newDashboardMuxInternalWith(cfgPath, dbPath, nil, fetcher, fastInterval, slowInterval)
+// fetcher and refresh intervals. Exposed for testing. The optional trailing
+// argument is the shared SSE feed's lifetime context; omitting it means
+// context.Background (feed runs until process exit).
+func newDashboardMuxWith(cfgPath, dbPath string, fetcher func(cfg, db string) (*DashboardData, error), fastInterval, slowInterval time.Duration, feedCtx ...context.Context) http.Handler {
+	return newDashboardMuxInternalWith(pickFeedCtx(feedCtx), cfgPath, dbPath, nil, fetcher, fastInterval, slowInterval)
+}
+
+// pickFeedCtx resolves a trailing optional context parameter: the first
+// non-nil element, else context.Background.
+func pickFeedCtx(feedCtx []context.Context) context.Context {
+	if len(feedCtx) > 0 && feedCtx[0] != nil {
+		return feedCtx[0]
+	}
+	return context.Background()
 }
 
 // setSSEHeaders writes the standard headers every SSE stream on this server
@@ -874,8 +887,18 @@ func setSSEHeaders(w http.ResponseWriter) {
 // Concurrent connections are capped at maxDashboardSSEConnections; when the
 // fetcher fails, the last valid DashboardData remains the hash baseline and an
 // `event: error` frame is sent instead of a null-data frame.
-func makeDashboardEventsHandler(cfgPath, dbPath string, fetcher func(string, string) (*DashboardData, error), fastInterval, slowInterval time.Duration) http.HandlerFunc {
+func makeDashboardEventsHandler(feedCtx context.Context, cfgPath, dbPath string, fetcher func(string, string) (*DashboardData, error), fastInterval, slowInterval time.Duration) http.HandlerFunc {
 	limiter := newSSEConnectionLimiter(maxDashboardSSEConnections)
+	// One shared feed serves every connected SSE client (ci-y7pvo): the
+	// per-connection fetch loop this replaced ran fetchDashboardData — each
+	// call a fresh cgo SQLite open/read/close — once per client per tick, so
+	// work scaled with connected clients instead of data. Now it scales once
+	// per tick. The feed lives for the lifetime of feedCtx: server shutdown
+	// in production, test teardown in tests.
+	feed := newSharedDashboardFeed(func() (*DashboardData, error) {
+		return fetcher(cfgPath, dbPath)
+	}, fastInterval, slowInterval)
+	feed.Start(feedCtx)
 	return func(w http.ResponseWriter, r *http.Request) {
 		if !limiter.acquire() {
 			writeAPIError(w, http.StatusServiceUnavailable, "too many dashboard SSE connections")
@@ -902,44 +925,256 @@ func makeDashboardEventsHandler(cfgPath, dbPath string, fetcher func(string, str
 			flusher.Flush()
 		}
 
-		// Initial send — establishes the hash baseline for adaptive rate.
-		data, err := fetcher(cfgPath, dbPath)
-		if err != nil {
-			sendError(err)
-			return
+		// Subscribe instead of fetching per tick: the feed carries the
+		// ongoing traffic. Keep the wire contract's synchronous baseline:
+		// the feed's newest cached snapshot, else one initial fetch for this
+		// connection's lifetime (bounded by the SSE cap — never per tick, so
+		// the per-tick DB churn ci-y7pvo targets stays gone).
+		frames, cancel := feed.subscribe(r.Context())
+		defer cancel()
+		cached := feed.cachedData()
+		if cached == nil {
+			data, fetchErr := fetcher(cfgPath, dbPath)
+			if fetchErr != nil {
+				slog.Warn("dashboard-events: initial fetch failed; sending error frame",
+					"error", fetchErr)
+				sendError(fetchErr)
+				return
+			}
+			sendEvent(data)
+		} else {
+			sendEvent(cached)
 		}
-		sendEvent(data)
-		lastHash := dashboardStateHash(data)
-
-		ticker := time.NewTicker(fastInterval)
-		defer ticker.Stop()
 
 		for {
 			select {
 			case <-r.Context().Done():
 				return
-			case <-ticker.C:
-				next, err := fetcher(cfgPath, dbPath)
-				if err != nil {
-					// Keep lastHash from the last valid fetch so adaptive
-					// backoff is not corrupted by the failure.
+			case msg, ok := <-frames:
+				if !ok {
+					return
+				}
+				if msg.err != nil {
+					// The fetcher failure stays inside the feed's hash
+					// baseline, so adaptive backoff is not corrupted;
+					// clients get the `event: error` frame.
 					slog.Warn("dashboard-events: fetch failed; sending error frame",
-						"error", err)
-					sendError(err)
+						"error", msg.err)
+					sendError(msg.err)
 					continue
 				}
-				data = next
-				newHash := dashboardStateHash(data)
-				sendEvent(data)
-				// Adaptive backoff: slow down when Castellarius is idle.
-				idle := newHash == lastHash && data.FlowingCount == 0
-				lastHash = newHash
-				nextInterval := fastInterval
-				if idle {
-					nextInterval = slowInterval
-				}
-				ticker.Reset(nextInterval)
+				sendEvent(msg.data)
 			}
+		}
+	}
+}
+
+// ── shared dashboard feed (ci-y7pvo) ──
+
+// feedSubscriberChanSize is each subscriber's send-channel depth. Excess
+// frames are dropped for slow subscribers so one lagging SSE client cannot
+// stall the shared feed loop (mirrors tuiClientChanSize/broadcast semantics).
+const feedSubscriberChanSize = 8
+
+// feedMessage is one broadcast unit on a subscriber channel: exactly one of
+// data/err is set. An err frame keeps the receiver's last valid hash baseline
+// intact — it maps to the SSE `event: error` frame.
+type feedMessage struct {
+	data *DashboardData
+	err  error
+}
+
+// feedSubscriber is one consumer of the shared feed. cancel owns the single
+// close of ch (unregister → close) so a broadcast (which runs under the feed
+// mutex) can never race a close.
+type feedSubscriber struct {
+	id     int64
+	ch     chan feedMessage
+	cancel func()
+}
+
+// sharedDashboardFeed fans one fetch cycle per interval out to every
+// subscriber. It replaces the per-connection fetch loops that ran
+// fetchDashboardData (a fresh cgo SQLite open/read/close) once per client per
+// tick — work that scaled with connected clients instead of data, and the OOM
+// mechanism that survived the ci-5n337 SSE caps.
+//
+// Construction injects everything: the wire site closes cfgPath/dbPath into
+// the fetcher closure (newDashboardMuxWith adapters in tests, RunDashboardWeb
+// in production) and supplies the feed's lifetime context, so the run loop
+// terminates when that context is cancelled. The feed never touches
+// os.Getenv, cistern.New, or the filesystem. No package-level mutable state:
+// subscribers, ticker state, and the cached snapshot live in struct fields.
+type sharedDashboardFeed struct {
+	// fetcher takes no arguments: it is fully constructed (the wire site
+	// closes cfgPath/dbPath into its closure), so run never invents
+	// placeholder parameters.
+	fetcher func() (*DashboardData, error)
+	fast    time.Duration
+	slow    time.Duration
+
+	mu        sync.Mutex
+	subs      map[int64]*feedSubscriber
+	nextSubID int64
+	cache     *DashboardData
+
+	started bool
+}
+
+// newSharedDashboardFeed creates a fully usable feed (panics never, no lazy
+// init). A nil fetcher yields a feed whose every tick reports a fetch error.
+// Zero intervals fall back to the shipped refreshInterval/idleRefreshInterval
+// defaults.
+func newSharedDashboardFeed(fetcher func() (*DashboardData, error), fast, slow time.Duration) *sharedDashboardFeed {
+	if fetcher == nil {
+		fetcher = func() (*DashboardData, error) {
+			return nil, fmt.Errorf("ct: dashboard: shared feed: no fetcher configured")
+		}
+	}
+	if fast <= 0 {
+		fast = refreshInterval
+	}
+	if slow <= 0 {
+		slow = idleRefreshInterval
+	}
+	return &sharedDashboardFeed{
+		fetcher: fetcher,
+		fast:    fast,
+		slow:    slow,
+		subs:    map[int64]*feedSubscriber{},
+	}
+}
+
+// cachedData returns the feed's newest successful snapshot, or nil before
+// the first tick completes.
+func (f *sharedDashboardFeed) cachedData() *DashboardData {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.cache
+}
+
+// Start launches the single run loop under ctx. Idempotent: later Starts are
+// no-ops. The caller owns ctx's lifetime — cancelling it (server shutdown in
+// production, explicit cancel in tests) stops the run loop and closes every
+// subscriber channel. There is one feed per dashboard-events endpoint.
+func (f *sharedDashboardFeed) Start(ctx context.Context) {
+	f.mu.Lock()
+	if f.started {
+		f.mu.Unlock()
+		return
+	}
+	f.started = true
+	f.mu.Unlock()
+	go f.run(ctx)
+}
+
+// dashboardTickInterval returns the fast tick unless the data is idle
+// (unchanged hash and no flowing droplets), in which case the slow tick
+// applies. Shared by the web SSE feed and the TUI polling loop so the
+// adaptive-backoff logic has exactly one implementation.
+func dashboardTickInterval(lastHash, newHash string, flowingCount int, fast, slow time.Duration) time.Duration {
+	if newHash == lastHash && flowingCount == 0 {
+		return slow
+	}
+	return fast
+}
+
+// subscribe registers a new subscriber. The channel receives no initial
+// frame from the feed — the SSE handler owns the wire contract's one initial
+// data frame (its cached-or-fetch baseline), and every subsequent tick
+// broadcasts one frame to the channel. Registering twice never duplicates the
+// baseline. cancel unregisters, stops the ctx watchdog, and closes the
+// channel exactly once (idempotent); the feed also closes the channel when
+// its own context ends.
+func (f *sharedDashboardFeed) subscribe(ctx context.Context) (<-chan feedMessage, func()) {
+	s := &feedSubscriber{ch: make(chan feedMessage, feedSubscriberChanSize)}
+	var once sync.Once
+	watchDone := make(chan struct{})
+	s.cancel = func() {
+		once.Do(func() {
+			// Remove under the feed lock BEFORE closing: broadcasts send
+			// under the same lock, so this ordering makes send-on-closed
+			// impossible.
+			f.mu.Lock()
+			delete(f.subs, s.id)
+			f.mu.Unlock()
+			close(watchDone)
+			close(s.ch)
+		})
+	}
+
+	f.mu.Lock()
+	s.id = f.nextSubID
+	f.nextSubID++
+	f.subs[s.id] = s
+	f.mu.Unlock()
+
+	// A subscriber whose request ends without cancel() must still be
+	// unregistered: watch its ctx and self-cancel.
+	go func() {
+		select {
+		case <-ctx.Done():
+			s.cancel()
+		case <-watchDone:
+		}
+	}()
+	return s.ch, s.cancel
+}
+
+// run is the single fetch loop: one fetch per tick, broadcast to all
+// subscribers, adaptive backoff on idle. Fetch failures broadcast an error
+// frame and keep the last hash baseline (wire contract: `event: error`, no
+// data:null, adaptive rate uncorrupted).
+func (f *sharedDashboardFeed) run(ctx context.Context) {
+	// Shutdown closes every subscriber channel exactly once, via each
+	// subscriber's own cancel (register-removal then close).
+	defer func() {
+		f.mu.Lock()
+		cancels := make([]func(), 0, len(f.subs))
+		for _, s := range f.subs {
+			cancels = append(cancels, s.cancel)
+		}
+		f.mu.Unlock()
+		for _, c := range cancels {
+			c()
+		}
+	}()
+
+	ticker := time.NewTicker(f.fast)
+	defer ticker.Stop()
+	prevHash := ""
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			data, err := f.fetcher()
+			if err != nil {
+				f.broadcast(feedMessage{err: err})
+				continue // keep prevData's hash baseline and the current interval
+			}
+			f.mu.Lock()
+			f.cache = data
+			f.mu.Unlock()
+			f.broadcast(feedMessage{data: data})
+			newHash := dashboardStateHash(data)
+			// Adaptive backoff: slow down when Castellarius is idle.
+			ticker.Reset(dashboardTickInterval(prevHash, newHash, data.FlowingCount, f.fast, f.slow))
+			prevHash = newHash
+		}
+	}
+}
+
+// broadcast sends msg to every registered subscriber with drop semantics —
+// non-blocking sends under the feed lock, so a slow subscriber loses frames
+// instead of stalling the feed.
+func (f *sharedDashboardFeed) broadcast(msg feedMessage) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for _, s := range f.subs {
+		select {
+		case s.ch <- msg:
+		default: // slow subscriber: drop the frame
 		}
 	}
 }
@@ -948,13 +1183,16 @@ func makeDashboardEventsHandler(cfgPath, dbPath string, fetcher func(string, str
 
 // newDashboardMuxInternal returns an http.Handler for the web dashboard.
 // tui may be nil; if so the /ws/tui endpoint closes connections immediately.
-func newDashboardMuxInternal(cfgPath, dbPath string, tui *DashboardTUI) http.Handler {
-	return newDashboardMuxInternalWith(cfgPath, dbPath, tui, fetchDashboardData, refreshInterval, idleRefreshInterval)
+// The optional trailing argument is the shared SSE feed's lifetime context.
+func newDashboardMuxInternal(cfgPath, dbPath string, tui *DashboardTUI, feedCtx ...context.Context) http.Handler {
+	return newDashboardMuxInternalWith(pickFeedCtx(feedCtx), cfgPath, dbPath, tui, fetchDashboardData, refreshInterval, idleRefreshInterval)
 }
 
 // newDashboardMuxInternalWith returns an http.Handler for the web dashboard with custom
-// fetcher and refresh intervals. Exposed for testing.
-func newDashboardMuxInternalWith(cfgPath, dbPath string, tui *DashboardTUI, fetcher func(cfg, db string) (*DashboardData, error), fastInterval, slowInterval time.Duration) http.Handler {
+// fetcher and refresh intervals. Exposed for testing. feedCtx bounds the
+// shared SSE feed's lifetime (server shutdown in production; per-test cancel
+// in tests, so no fetch loop is leaked after the test).
+func newDashboardMuxInternalWith(feedCtx context.Context, cfgPath, dbPath string, tui *DashboardTUI, fetcher func(cfg, db string) (*DashboardData, error), fastInterval, slowInterval time.Duration) http.Handler {
 	// Read dashboard config fresh at server start so a cistern.yaml edit
 	// followed by restarting ct dashboard --web takes effect without recompiling.
 	// This is the supported update path: edit cistern.yaml, restart the server.
@@ -1027,7 +1265,7 @@ func newDashboardMuxInternalWith(cfgPath, dbPath string, tui *DashboardTUI, fetc
 		json.NewEncoder(w).Encode(data) //nolint:errcheck
 	})
 
-	mux.HandleFunc("/api/dashboard/events", makeDashboardEventsHandler(cfgPath, dbPath, fetcher, fastInterval, slowInterval))
+	mux.HandleFunc("/api/dashboard/events", makeDashboardEventsHandler(feedCtx, cfgPath, dbPath, fetcher, fastInterval, slowInterval))
 
 	// GET /api/droplets/export — export droplets as CSV (default) or JSON.
 	// Accepts the same filters as `ct droplet export`: q, status, priority.
@@ -2861,6 +3099,8 @@ type dashboardMemStats struct {
 	NumGC        uint32 `json:"num_gc"`
 	NumGoroutine int    `json:"num_goroutine"`
 	FetchedAt    string `json:"fetched_at"`
+	CgroupRSS    int64  `json:"cgroup_rss_bytes"` // whole cgroup: self + children (ci-y7pvo)
+	ChildRSS     int64  `json:"child_rss_bytes"`  // cgroup processes other than this one (ci-y7pvo)
 }
 
 // handleDebugMemstats serves a JSON memory snapshot. RSS comes from
@@ -2883,13 +3123,21 @@ func handleDebugMemstats() http.HandlerFunc {
 // collectDashboardMemStats gathers the memstats snapshot in one call. Exposed
 // for the periodic diagnostic logger to share the exact same fields.
 func collectDashboardMemStats() dashboardMemStats {
+	return collectDashboardMemStatsProcs(cgroupProcSamples)
+}
+
+// collectDashboardMemStatsProcs is collectDashboardMemStats with an injected
+// cgroup proc reader. The reader failure degrades to self-only RSS: cgroup
+// and child fields stay zero and the rest of the sample is untouched (no
+// error spam — the fields are advisory).
+func collectDashboardMemStatsProcs(procs func() ([]procSample, error)) dashboardMemStats {
 	var m runtime.MemStats
 	runtime.ReadMemStats(&m)
 	rss := int64(m.Sys) // fallback approximation
-	if pages, err := residentPages(); err == nil {
-		rss = pages * int64(os.Getpagesize())
+	if pages, err := statmRSS(int64(os.Getpid())); err == nil {
+		rss = pages
 	}
-	return dashboardMemStats{
+	ms := dashboardMemStats{
 		RSS:          rss,
 		HeapAlloc:    m.HeapAlloc,
 		HeapSys:      m.HeapSys,
@@ -2898,24 +3146,143 @@ func collectDashboardMemStats() dashboardMemStats {
 		NumGoroutine: runtime.NumGoroutine(),
 		FetchedAt:    time.Now().UTC().Format(time.RFC3339),
 	}
+	samples, err := procs()
+	if err != nil {
+		slog.Debug("web-diag: cgroup proc list unavailable; self-only RSS",
+			"error", err)
+		return ms
+	}
+	for _, s := range samples {
+		ms.CgroupRSS += s.rss
+		if !s.self {
+			ms.ChildRSS += s.rss
+		}
+	}
+	return ms
 }
 
-// residentPages reads the resident-set page count from /proc/self/statm
-// (field 1, "resident"). Returns an error outside Linux or if unreadable.
-func residentPages() (int64, error) {
-	data, err := os.ReadFile("/proc/self/statm")
+// procSample is one process's resident-set size as seen by the diag sampler.
+// self marks this process; child RSS is the sum of the non-self samples.
+type procSample struct {
+	pid  int64
+	rss  int64
+	self bool
+}
+
+// cgroupProcSamples reads RSS for every process in this unit's cgroup
+// (ci-y7pvo): /proc/self/cgroup locates the cgroup v2 path, cgroup.procs
+// lists the pids, and each /proc/<pid>/statm gives the resident bytes.
+// Children of cistern-web.service (e.g. the Bubble Tea dashboard TUI child)
+// count toward MemoryMax but are invisible to self-RSS sampling — they are
+// captured here. Returns an error where the cgroup cannot be determined
+// (non-Linux, cgroup v1 without a matching path, or sandboxed reads).
+func cgroupProcSamples() ([]procSample, error) {
+	cgPath, err := selfCgroupPath()
 	if err != nil {
-		return 0, fmt.Errorf("ct: read /proc/self/statm: %w", err)
+		return nil, err
+	}
+	procsFile := filepath.Join("/sys/fs/cgroup", cgPath, "cgroup.procs")
+	data, err := os.ReadFile(procsFile)
+	if err != nil {
+		return nil, fmt.Errorf("ct: read %s: %w", procsFile, err)
+	}
+	selfPID := int64(os.Getpid())
+	var samples []procSample
+	for _, field := range strings.Fields(string(data)) {
+		pid, err := strconv.ParseInt(field, 10, 64)
+		if err != nil {
+			return nil, fmt.Errorf("ct: %s: parse pid %q: %w", procsFile, field, err)
+		}
+		rss, err := statmRSS(pid)
+		if err != nil {
+			continue // process exited between listing and read; skip it
+		}
+		samples = append(samples, procSample{pid: pid, rss: rss, self: pid == selfPID})
+	}
+	return samples, nil
+}
+
+// selfCgroupPath returns this process's cgroup v2 relative path from
+// /proc/self/cgroup (the "0::<path>" line).
+func selfCgroupPath() (string, error) {
+	data, err := os.ReadFile("/proc/self/cgroup")
+	if err != nil {
+		return "", fmt.Errorf("ct: read /proc/self/cgroup: %w", err)
+	}
+	for _, line := range strings.Split(strings.TrimSpace(string(data)), "\n") {
+		// cgroup v2 unified hierarchy lines are exactly "0::<path>".
+		if rest, ok := strings.CutPrefix(line, "0::"); ok && strings.TrimSpace(rest) != "" {
+			return strings.TrimSpace(rest), nil
+		}
+	}
+	return "", fmt.Errorf("ct: /proc/self/cgroup: no v2 unified-hierarchy entry in %q", strings.TrimSpace(string(data)))
+}
+
+// statmRSS reads the resident-set size in bytes from /proc/<pid>/statm
+// (field 1, "resident", scaled by the page size). Returns an error outside
+// Linux or if the process is unreadable.
+func statmRSS(pid int64) (int64, error) {
+	data, err := os.ReadFile(fmt.Sprintf("/proc/%d/statm", pid))
+	if err != nil {
+		return 0, fmt.Errorf("ct: read /proc/%d/statm: %w", pid, err)
 	}
 	fields := strings.Fields(string(data))
 	if len(fields) < 2 {
-		return 0, fmt.Errorf("ct: /proc/self/statm: unexpected format %q", strings.TrimSpace(string(data)))
+		return 0, fmt.Errorf("ct: /proc/%d/statm: unexpected format %q", pid, strings.TrimSpace(string(data)))
 	}
 	pages, err := strconv.ParseInt(fields[1], 10, 64)
 	if err != nil {
-		return 0, fmt.Errorf("ct: /proc/self/statm: parse resident field: %w", err)
+		return 0, fmt.Errorf("ct: /proc/%d/statm: parse resident field: %w", pid, err)
 	}
-	return pages, nil
+	return pages * int64(os.Getpagesize()), nil
+}
+
+// defaultDiagPprofDir names where mem_warn threshold crossings leave pprof
+// evidence (ci-y7pvo). Empty string means the home directory could not be
+// resolved; the crossing still alerts, snapshot capture just fails.
+func defaultDiagPprofDir() string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(home, ".cistern", "web-pprof")
+}
+
+// captureDiagPprofSnapshot writes post-mortem evidence under dir: a binary
+// heap profile (heap-<timestamp>.pb) and a debug=1 goroutine dump
+// (goroutine-<timestamp>.txt), the same views as the live /debug/pprof/*
+// endpoints. Filenames carry a UTC timestamp so successive threshold
+// crossings each keep their own snapshot — the before/after pprof diffs the
+// root-cause analysis relies on would be destroyed by overwriting a fixed
+// name (ci-y7pvo). The snapshot dir survives the MemoryMax restart that
+// typically follows a threshold crossing, which live curl captures do not.
+// Best-effort: the caller logs failures.
+func captureDiagPprofSnapshot(dir string) error {
+	if dir == "" {
+		return fmt.Errorf("ct: dashboard: pprof snapshot: no snapshot directory configured")
+	}
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return fmt.Errorf("ct: dashboard: pprof snapshot: mkdir %s: %w", dir, err)
+	}
+	// Nanosecond precision: two crossings within one second keep both sets.
+	stamp := time.Now().UTC().Format("20060102T150405.000000000")
+	heapFile, err := os.Create(filepath.Join(dir, "heap-"+stamp+".pb"))
+	if err != nil {
+		return fmt.Errorf("ct: dashboard: pprof snapshot: create heap-%s.pb: %w", stamp, err)
+	}
+	defer heapFile.Close()
+	if err := pprof.Lookup("heap").WriteTo(heapFile, 0); err != nil {
+		return fmt.Errorf("ct: dashboard: pprof snapshot: write heap profile: %w", err)
+	}
+	goroutineFile, err := os.Create(filepath.Join(dir, "goroutine-"+stamp+".txt"))
+	if err != nil {
+		return fmt.Errorf("ct: dashboard: pprof snapshot: create goroutine-%s.txt: %w", stamp, err)
+	}
+	defer goroutineFile.Close()
+	if err := pprof.Lookup("goroutine").WriteTo(goroutineFile, 1); err != nil {
+		return fmt.Errorf("ct: dashboard: pprof snapshot: write goroutine dump: %w", err)
+	}
+	return nil
 }
 
 // parseByteSize converts a human byte-size string to an exact byte count.
@@ -2977,6 +3344,14 @@ type rssAlertTracker struct {
 	threshold int64
 	above     bool
 	record    func(payload string) error
+	// pprof snapshot capture (ci-y7pvo). When snapshotDir is non-empty, a
+	// threshold crossing writes heap-<timestamp>.pb + goroutine-<timestamp>.txt
+	// there via snapshot (timestamped, so crossings never overwrite each
+	// other's evidence).
+	// and names the dir in the event payload; a capture failure logs a Warn
+	// and leaves alerting unaffected. snapshot is nil when unset.
+	snapshotDir string
+	snapshot    func(dir string) error
 }
 
 // newRSSAlertTracker creates a tracker alerting at threshold with record as
@@ -2984,10 +3359,17 @@ type rssAlertTracker struct {
 // defaultDiagRSSThreshold (256 MiB) so a bad resolution cannot silently
 // disable alerting. Usable immediately.
 func newRSSAlertTracker(threshold int64, record func(payload string) error) *rssAlertTracker {
+	return newRSSAlertTrackerWithSnapshot(threshold, record, "", nil)
+}
+
+// newRSSAlertTrackerWithSnapshot is newRSSAlertTracker plus pprof snapshot
+// capture on crossing: heap-<timestamp>.pb + goroutine-<timestamp>.txt under
+// snapshotDir, a fresh set per crossing (ci-y7pvo).
+func newRSSAlertTrackerWithSnapshot(threshold int64, record func(payload string) error, snapshotDir string, snapshot func(dir string) error) *rssAlertTracker {
 	if threshold <= 0 {
 		threshold = defaultDiagRSSThreshold
 	}
-	return &rssAlertTracker{threshold: threshold, record: record}
+	return &rssAlertTracker{threshold: threshold, record: record, snapshotDir: snapshotDir, snapshot: snapshot}
 }
 
 // evaluate reports whether rss crosses the threshold for this sample. It is
@@ -3008,16 +3390,22 @@ func (t *rssAlertTracker) evaluate(rss int64) (alert bool, aboveNow bool) {
 // above-state so the next successful crossing still records an event — a
 // transient write failure must not permanently mute alerting.
 func (t *rssAlertTracker) recordAlert(ms dashboardMemStats) {
-	payload, err := json.Marshal(map[string]int64{
+	payload := map[string]interface{}{
 		"rss_bytes":       ms.RSS,
 		"threshold_bytes": t.threshold,
-	})
+	}
+	// Snapshot dir goes in the payload so post-mortem artifacts are
+	// discoverable straight from the events row (ci-y7pvo).
+	if t.snapshotDir != "" {
+		payload["pprof_dir"] = t.snapshotDir
+	}
+	raw, err := json.Marshal(payload)
 	if err != nil {
 		slog.Warn("web-diag: rss threshold alert payload build failed", "error", err)
 		t.above = false // keep alerting alive even if serialization is somehow broken
 		return
 	}
-	if err := t.record(string(payload)); err != nil {
+	if err := t.record(string(raw)); err != nil {
 		err = fmt.Errorf("ct: dashboard: rss alert record: %w", err)
 		slog.Warn("web-diag: rss threshold alert event record failed", "error", err)
 		t.above = false // revert the crossing: the next tick may still alert and record
@@ -3033,6 +3421,8 @@ func runDiagTick(tracker *rssAlertTracker, collect func() dashboardMemStats) {
 	ms := collect()
 	slog.Default().Info("web-diag: memory sample",
 		"rss_bytes", ms.RSS,
+		"cgroup_rss_bytes", ms.CgroupRSS,
+		"child_rss_bytes", ms.ChildRSS,
 		"heap_alloc_bytes", ms.HeapAlloc,
 		"sys_bytes", ms.Sys,
 		"num_gc", ms.NumGC,
@@ -3043,6 +3433,16 @@ func runDiagTick(tracker *rssAlertTracker, collect func() dashboardMemStats) {
 			"rss_bytes", ms.RSS,
 			"threshold_bytes", tracker.threshold,
 		)
+		// Leave pprof evidence before recording the event: the crossing
+		// typically precedes a MemoryMax restart that wipes live state
+		// (ci-y7pvo). Capture failure is advisory — alerting continues.
+		if tracker.snapshot != nil {
+			if err := tracker.snapshot(tracker.snapshotDir); err != nil {
+				slog.Warn("web-diag: pprof snapshot capture failed", "dir", tracker.snapshotDir, "error", err)
+			} else {
+				slog.Warn("web-diag: pprof snapshots written", "dir", tracker.snapshotDir)
+			}
+		}
 		tracker.recordAlert(ms)
 	}
 }
@@ -3068,12 +3468,12 @@ func startDashboardDiagTicker(ctx context.Context, dbPath string, getenv func(st
 		client = nil
 	}
 
-	tracker := newRSSAlertTracker(threshold, func(payload string) error {
+	tracker := newRSSAlertTrackerWithSnapshot(threshold, func(payload string) error {
 		if client == nil {
 			return fmt.Errorf("ct: dashboard: rss alert record: events db unavailable")
 		}
 		return client.RecordEvent(diagEventDropletID, cistern.EventMemWarn, payload)
-	})
+	}, defaultDiagPprofDir(), captureDiagPprofSnapshot)
 
 	go func() {
 		ticker := time.NewTicker(dashboardDiagInterval)
@@ -3434,16 +3834,18 @@ func RunDashboardWeb(cfgPath, dbPath, addr string) error {
 	tui := newDashboardTUI(exe, cfgPath, dbPath)
 	tui.Start()
 
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	// The shared SSE feed's lifetime is bounded by this signal context: when
+	// Shutdown begins, the feed's run loop stops and its goroutine exits.
 	srv := &http.Server{
 		Addr:              addr,
-		Handler:           newDashboardMuxInternal(cfgPath, dbPath, tui),
+		Handler:           newDashboardMuxInternal(cfgPath, dbPath, tui, ctx),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       10 * time.Second,
 		WriteTimeout:      0, // SSE streams are long-lived
 	}
-
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
 
 	// Periodic memory diagnostics (ci-5n337): one slog line per 15 min so the
 	// 2.6G OOM incident leaves an RSS trail in web.log, plus a WARN + mem_warn
