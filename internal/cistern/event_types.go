@@ -24,9 +24,10 @@ const (
 	EventLoopRecovery   = "loop_recovery"
 	EventAutoPromote    = "auto_promote"
 	EventNoRoute        = "no_route"
+	EventMemWarn        = "mem_warn"
 )
 
-	var ValidEventTypes = map[string]bool{
+var ValidEventTypes = map[string]bool{
 	EventCreate:         true,
 	EventDispatch:       true,
 	EventPass:           true,
@@ -44,6 +45,7 @@ const (
 	EventLoopRecovery:   true,
 	EventAutoPromote:    true,
 	EventNoRoute:        true,
+	EventMemWarn:        true,
 }
 
 func parsePayload(payload string) map[string]any {
@@ -98,6 +100,8 @@ func DisplayInfo(eventType, payload string) (eventLabel, detail string) {
 		return "auto_promote", displayInfoAutoPromote(m)
 	case EventNoRoute:
 		return "no_route", displayInfoCataractae(m)
+	case EventMemWarn:
+		return "rss_threshold", displayInfoMemWarn(m)
 	default:
 		return eventType, payload
 	}
@@ -270,6 +274,20 @@ func displayInfoAutoPromote(m map[string]any) string {
 	}
 	if routedTo, ok := m["routed_to"]; ok && routedTo != "" {
 		parts = append(parts, fmt.Sprintf("routed to: %v", routedTo))
+	}
+	return strings.Join(parts, ", ")
+}
+
+func displayInfoMemWarn(m map[string]any) string {
+	if m == nil {
+		return ""
+	}
+	var parts []string
+	if rss, ok := m["rss_bytes"]; ok {
+		parts = append(parts, fmt.Sprintf("rss: %v", rss))
+	}
+	if threshold, ok := m["threshold_bytes"]; ok {
+		parts = append(parts, fmt.Sprintf("threshold: %v", threshold))
 	}
 	return strings.Join(parts, ", ")
 }

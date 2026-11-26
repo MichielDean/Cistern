@@ -2,15 +2,23 @@ package main
 
 import (
 	"bytes"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"testing"
 	"time"
+
+	_ "github.com/mattn/go-sqlite3"
+
+	"github.com/MichielDean/cistern/internal/cistern"
 )
 
 // ── sseConnectionLimiter ──
@@ -366,5 +374,230 @@ func TestDebugHeapProfile(t *testing.T) {
 			n = 8
 		}
 		t.Errorf("heap profile should be gzip-prefixed pprof data, got %x", w.Body.Bytes()[:n])
+	}
+}
+
+// ── web-diag RSS threshold alerting (ci-ii5cz) ──
+
+func TestParseByteSize(t *testing.T) {
+	cases := []struct {
+		name    string
+		in      string
+		want    int64
+		wantErr bool
+	}{
+		{"megabytes", "512M", 512 << 20, false},
+		{"gigabytes", "1G", 1 << 30, false},
+		{"plain bytes", "536870912", 536870912, false},
+		{"lowercase megabytes", "256m", 256 << 20, false},
+		{"lowercase gigabytes", "2g", 2 << 30, false},
+		{"empty string", "", 0, true},
+		{"non-numeric", "abc", 0, true},
+		{"zero", "0", 0, true},
+		{"zero with unit", "0M", 0, true},
+		{"negative", "-5", 0, true},
+		{"unknown suffix", "10B", 0, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := parseByteSize(tc.in)
+			if tc.wantErr {
+				if err == nil {
+					t.Fatalf("parseByteSize(%q) = %d, want error", tc.in, got)
+				}
+				if !strings.HasPrefix(err.Error(), "ct: parseByteSize") {
+					t.Errorf("error %q must start with \"ct: parseByteSize\"", err)
+				}
+				if got != 0 {
+					t.Errorf("parseByteSize(%q) error case returned %d, want 0", tc.in, got)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("parseByteSize(%q): %v", tc.in, err)
+			}
+			if got != tc.want {
+				t.Errorf("parseByteSize(%q) = %d, want %d", tc.in, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestRSSAlertTracker_EvaluateDefaultThreshold(t *testing.T) {
+	tr := newRSSAlertTracker(defaultDiagRSSThreshold, func(string) error { return nil })
+	if tr.threshold != 268435456 {
+		t.Fatalf("defaultDiagRSSThreshold = %d, want 268435456 (256 MiB)", tr.threshold)
+	}
+	alert, _ := tr.evaluate(268435456)
+	if !alert {
+		t.Error("rss exactly at threshold must alert (crossing is >=)")
+	}
+}
+
+func TestRSSAlertTracker_Crossing(t *testing.T) {
+	const threshold = int64(100)
+	cases := []struct {
+		name     string
+		rss      int64
+		primeRSS int64
+		primed   bool
+		want     bool
+	}{
+		{"below threshold", 50, 0, false, false},
+		{"above while already above (no re-alert)", 150, 150, true, false},
+		{"crossing from below", 150, 50, true, true},
+		{"at exact threshold from below", 100, 50, true, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			tr := newRSSAlertTracker(threshold, func(string) error { return nil })
+			if tc.primed {
+				tr.evaluate(tc.primeRSS)
+			}
+			got, _ := tr.evaluate(tc.rss)
+			if got != tc.want {
+				t.Errorf("evaluate(%d) alert = %v, want %v", tc.rss, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestResolveDiagRSSThreshold(t *testing.T) {
+	defaultVal := int64(268435456)
+
+	if v, err := resolveDiagRSSThreshold(func(string) string { return "" }); err != nil || v != defaultVal {
+		t.Errorf("unset env = (%d, %v), want (%d, nil)", v, err, defaultVal)
+	}
+	if v, err := resolveDiagRSSThreshold(func(string) string { return " " }); err != nil || v != defaultVal {
+		t.Errorf("whitespace env = (%d, %v), want (%d, nil)", v, err, defaultVal)
+	}
+	if v, err := resolveDiagRSSThreshold(func(string) string { return "128M" }); err != nil || v != 134217728 {
+		t.Errorf("\"128M\" = (%d, %v), want (134217728, nil)", v, err)
+	}
+	for _, bad := range []string{"abc", "  abc ", "0"} {
+		v, err := resolveDiagRSSThreshold(func(string) string { return bad })
+		if err == nil {
+			t.Errorf("invalid env %q: want error, got nil", bad)
+		}
+		if v != defaultVal {
+			t.Errorf("invalid env %q: value = %d, want default %d (caller Warns and still constructs a working tracker)", bad, v, defaultVal)
+		}
+	}
+}
+
+func TestRunDiagTick_ThresholdCrossingPersistsEventsRow(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "test.db")
+	client, err := cistern.New(dbPath, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+
+	tracker := newRSSAlertTracker(1000, func(payload string) error {
+		return client.RecordEvent(diagEventDropletID, cistern.EventMemWarn, payload)
+	})
+
+	rssSeq := []int64{500, 1000, 1500}
+	for i, rss := range rssSeq {
+		runDiagTick(tracker, func() dashboardMemStats {
+			return dashboardMemStats{RSS: rss, HeapAlloc: 1, HeapSys: 1, Sys: 1, NumGC: 1, NumGoroutine: 1, FetchedAt: "x"}
+		})
+		client2, err := cistern.New(dbPath, "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		events, err := client2.ListRecentEvents(100)
+		client2.Close()
+		if err != nil {
+			t.Fatal(err)
+		}
+		var count int
+		for _, e := range events {
+			if e.Event == cistern.EventMemWarn && e.Droplet == diagEventDropletID {
+				count++
+			}
+		}
+		want := 0
+		if i >= 1 {
+			want = 1
+		}
+		if count != want {
+			t.Fatalf("after tick %d (rss=%d): mem_warn rows = %d, want %d (edge-triggered)", i+1, rss, count, want)
+		}
+	}
+
+	// Payload must exist and carry rss_bytes.
+	db, err := sql.Open("sqlite3", dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	var payload string
+	if err := db.QueryRow(`SELECT payload FROM events WHERE event_type = ? LIMIT 1`, cistern.EventMemWarn).Scan(&payload); err != nil {
+		t.Fatalf("read mem_warn payload: %v", err)
+	}
+	if !strings.Contains(payload, "rss_bytes") {
+		t.Errorf("payload %q must contain rss_bytes", payload)
+	}
+}
+
+func TestRunDiagTick_RecordEventFailureDoesNotChangeState(t *testing.T) {
+	var calls int
+	fail := true
+	tracker := newRSSAlertTracker(100, func(payload string) error {
+		calls++
+		if fail {
+			return fmt.Errorf("ct: test: record failure")
+		}
+		return nil
+	})
+	collect := func(rss int64) func() dashboardMemStats {
+		return func() dashboardMemStats { return dashboardMemStats{RSS: rss} }
+	}
+
+	// First tick crosses with a failing recorder: warns, must not mute future alerts.
+	runDiagTick(tracker, collect(150))
+	if tracker.above {
+		t.Error("a failed record must revert the crossing so the next tick can still alert")
+	}
+
+	// Second tick with a working recorder: crossing records successfully.
+	fail = false
+	runDiagTick(tracker, collect(150))
+	if calls != 2 {
+		t.Errorf("record calls = %d, want 2 (transient failure must not permanently mute alerting)", calls)
+	}
+	if !tracker.above {
+		t.Error("after a successful crossing record the tracker must be above")
+	}
+
+	// Third tick stays above: still exactly one successful record (edge-trigger).
+	runDiagTick(tracker, collect(160))
+	if calls != 2 {
+		t.Errorf("record calls = %d, want 2 (level-triggered logging would add a third)", calls)
+	}
+}
+
+// TestDefaultDiagRSSThresholdMatchesMemoryMax pins the "half of MemoryMax"
+// derivation: if either cistern-web.service MemoryMax or
+// defaultDiagRSSThreshold changes independently, this test fails and forces
+// the pair to be reconciled intentionally.
+func TestDefaultDiagRSSThresholdMatchesMemoryMax(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join(repoRoot(t), "cistern-web.service"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	re := regexp.MustCompile(`(?m)^MemoryMax=(\S+)\s*$`)
+	m := re.FindStringSubmatch(string(data))
+	if m == nil {
+		t.Fatalf("MemoryMax not found in cistern-web.service:\n%s", data)
+	}
+	memMax, err := parseByteSize(m[1])
+	if err != nil {
+		t.Fatalf("parse MemoryMax %q: %v", m[1], err)
+	}
+	if defaultDiagRSSThreshold != memMax/2 {
+		t.Errorf("defaultDiagRSSThreshold = %d, want MemoryMax/2 = %d (half of %s from cistern-web.service)",
+			defaultDiagRSSThreshold, memMax/2, m[1])
 	}
 }

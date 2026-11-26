@@ -3143,6 +3143,7 @@ func TestValidEventTypes_ContainsAllConstants(t *testing.T) {
 		EventExitNoOutcome, EventStall, EventRecovery,
 		EventCircuitBreaker, EventLoopRecovery,
 		EventAutoPromote, EventNoRoute,
+		EventMemWarn,
 	}
 	for _, e := range expected {
 		if !ValidEventTypes[e] {

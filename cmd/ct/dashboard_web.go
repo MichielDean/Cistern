@@ -116,6 +116,24 @@ const maxPendingFrameBytes = 1 << 20
 // web.log, which is acceptable given that log's existing growth.
 const dashboardDiagInterval = 15 * time.Minute
 
+// defaultDiagRSSThreshold is the process-RSS level (256 MiB) at which the
+// web-diag sampler records a WARN + mem_warn events row. It is half of the
+// 512M memory cap in cistern-web.service (MemoryMax=512M) — a visibility
+// margin before systemd kills the process. Kept consistent with that file by
+// TestDefaultDiagRSSThresholdMatchesMemoryMax (drift guard); overridable at
+// runtime via diagRSSThresholdEnv.
+const defaultDiagRSSThreshold int64 = 256 << 20
+
+// diagRSSThresholdEnv is the environment variable that overrides
+// defaultDiagRSSThreshold for the web-diag sampler. Read once at ticker
+// start; an unparseable value falls back to the default with a Warn.
+const diagRSSThresholdEnv = "CISTERN_WEB_DIAG_RSS_THRESHOLD"
+
+// diagEventDropletID is the sentinel droplet id used for process-level mem_warn
+// events rows (events.droplet_id is NOT NULL but has no foreign key, so a
+// nonexistent sentinel id is valid and lists fine).
+const diagEventDropletID = "web-process"
+
 // sseConnectionLimiter is a reusable per-endpoint cap on concurrent SSE
 // connections. Instances are constructed in newDashboardMuxInternalWith and
 // closed over by handlers — no package-level mutable state.
@@ -2900,26 +2918,177 @@ func residentPages() (int64, error) {
 	return pages, nil
 }
 
+// parseByteSize converts a human byte-size string to an exact byte count.
+// Accepted forms: a plain decimal byte count ("536870912") or a decimal value
+// with an M/G suffix, case-insensitive, treated as powers of 1024
+// ("512M" → 512 MiB, matching MemoryMax notation in cistern-web.service).
+// Empty, zero, negative, non-numeric, or unknown-suffix values are errors.
+// Generic on purpose: the env-var name lives only in resolveDiagRSSThreshold.
+func parseByteSize(s string) (int64, error) {
+	v := strings.TrimSpace(s)
+	if v == "" {
+		return 0, fmt.Errorf("ct: parseByteSize: empty value")
+	}
+	var factor int64
+	switch last := v[len(v)-1]; last {
+	case 'm', 'M':
+		factor = 1 << 20
+		v = v[:len(v)-1]
+	case 'g', 'G':
+		factor = 1 << 30
+		v = v[:len(v)-1]
+	default:
+		if last < '0' || last > '9' {
+			return 0, fmt.Errorf("ct: parseByteSize: unknown suffix in %q", s)
+		}
+		factor = 1
+	}
+	n, err := strconv.ParseInt(strings.TrimSpace(v), 10, 64)
+	if err != nil {
+		return 0, fmt.Errorf("ct: parseByteSize: parse %q: %w", s, err)
+	}
+	if n <= 0 {
+		return 0, fmt.Errorf("ct: parseByteSize: %q must be a positive size", s)
+	}
+	return n * factor, nil
+}
+
+// resolveDiagRSSThreshold determines the effective web-diag RSS threshold.
+// An absent or whitespace-only env var returns the default (268435456, nil).
+// A present, parseable value returns the parsed bytes. A present but
+// unparseable value returns the default together with the parse error so the
+// caller can Warn while still constructing a working tracker.
+func resolveDiagRSSThreshold(getenv func(string) string) (int64, error) {
+	if raw := getenv(diagRSSThresholdEnv); strings.TrimSpace(raw) != "" {
+		parsed, err := parseByteSize(raw)
+		if err != nil {
+			return defaultDiagRSSThreshold, fmt.Errorf("ct: dashboard: resolve %s: %w", diagRSSThresholdEnv, err)
+		}
+		return parsed, nil
+	}
+	return defaultDiagRSSThreshold, nil
+}
+
+// rssAlertTracker is the web-diag sampler's edge-triggered RSS-threshold
+// alerting state. Entity-specific to the dashboard web process (not reused
+// elsewhere); all state lives in this instance — no package-level mutable
+// state.
+type rssAlertTracker struct {
+	threshold int64
+	above     bool
+	record    func(payload string) error
+}
+
+// newRSSAlertTracker creates a tracker alerting at threshold with record as
+// its event-write seam. A non-positive threshold is normalized to
+// defaultDiagRSSThreshold (256 MiB) so a bad resolution cannot silently
+// disable alerting. Usable immediately.
+func newRSSAlertTracker(threshold int64, record func(payload string) error) *rssAlertTracker {
+	if threshold <= 0 {
+		threshold = defaultDiagRSSThreshold
+	}
+	return &rssAlertTracker{threshold: threshold, record: record}
+}
+
+// evaluate reports whether rss crosses the threshold for this sample. It is
+// pure with respect to external state: `alert` is true only when rss is at or
+// above threshold and the previous evaluate reported below (first-ever
+// crossing included), so one crossing yields exactly one alert. It updates
+// the tracker's above-state; it never touches the DB or log.
+func (t *rssAlertTracker) evaluate(rss int64) (alert bool, aboveNow bool) {
+	aboveNow = rss >= t.threshold
+	alert = aboveNow && !t.above
+	t.above = aboveNow
+	return alert, aboveNow
+}
+
+// recordAlert builds the mem_warn events payload from the sample and writes
+// it via the tracker's record seam. On error it logs a Warn (advisory path:
+// a failed insert must never kill the ticker) and reverts the tracker's
+// above-state so the next successful crossing still records an event — a
+// transient write failure must not permanently mute alerting.
+func (t *rssAlertTracker) recordAlert(ms dashboardMemStats) {
+	payload, err := json.Marshal(map[string]int64{
+		"rss_bytes":       ms.RSS,
+		"threshold_bytes": t.threshold,
+	})
+	if err != nil {
+		slog.Warn("web-diag: rss threshold alert payload build failed", "error", err)
+		t.above = false // keep alerting alive even if serialization is somehow broken
+		return
+	}
+	if err := t.record(string(payload)); err != nil {
+		err = fmt.Errorf("ct: dashboard: rss alert record: %w", err)
+		slog.Warn("web-diag: rss threshold alert event record failed", "error", err)
+		t.above = false // revert the crossing: the next tick may still alert and record
+	}
+}
+
+// runDiagTick performs one diagnostic tick: sample, log the one-line memory
+// sample exactly as before, and evaluate the RSS threshold — on crossing, a
+// WARN is logged and the alert event is recorded via the tracker. Split into
+// a pure function (injected collector) so tests exercise it without a wall
+// clock and without touching /proc.
+func runDiagTick(tracker *rssAlertTracker, collect func() dashboardMemStats) {
+	ms := collect()
+	slog.Default().Info("web-diag: memory sample",
+		"rss_bytes", ms.RSS,
+		"heap_alloc_bytes", ms.HeapAlloc,
+		"sys_bytes", ms.Sys,
+		"num_gc", ms.NumGC,
+		"num_goroutine", ms.NumGoroutine,
+	)
+	if alert, _ := tracker.evaluate(ms.RSS); alert {
+		slog.Warn("web-diag: rss threshold crossed",
+			"rss_bytes", ms.RSS,
+			"threshold_bytes", tracker.threshold,
+		)
+		tracker.recordAlert(ms)
+	}
+}
+
 // startDashboardDiagTicker logs one memory-sample line every
-// dashboardDiagInterval until ctx is cancelled. Started only by
-// RunDashboardWeb so tests (which build the mux directly) never run it.
-func startDashboardDiagTicker(ctx context.Context) {
+// dashboardDiagInterval until ctx is cancelled, alerting when RSS crosses the
+// configured threshold (WARN + a mem_warn events row). Started only by
+// RunDashboardWeb so tests (which build the mux directly) never run it. The
+// threshold is resolved once from getenv at start; the events client is
+// opened eagerly at start and closed on ctx cancellation.
+func startDashboardDiagTicker(ctx context.Context, dbPath string, getenv func(string) string) {
+	threshold, err := resolveDiagRSSThreshold(getenv)
+	if err != nil {
+		slog.Warn("web-diag: rss threshold override unparseable, using default",
+			"env", diagRSSThresholdEnv,
+			"error", err,
+		)
+	}
+
+	client, err := cistern.New(dbPath, "")
+	if err != nil {
+		slog.Warn("web-diag: rss alerting disabled, opening events db failed", "error", err)
+		client = nil
+	}
+
+	tracker := newRSSAlertTracker(threshold, func(payload string) error {
+		if client == nil {
+			return fmt.Errorf("ct: dashboard: rss alert record: events db unavailable")
+		}
+		return client.RecordEvent(diagEventDropletID, cistern.EventMemWarn, payload)
+	})
+
 	go func() {
 		ticker := time.NewTicker(dashboardDiagInterval)
 		defer ticker.Stop()
+		defer func() {
+			if client != nil {
+				client.Close()
+			}
+		}()
 		for {
 			select {
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
-				ms := collectDashboardMemStats()
-				slog.Default().Info("web-diag: memory sample",
-					"rss_bytes", ms.RSS,
-					"heap_alloc_bytes", ms.HeapAlloc,
-					"sys_bytes", ms.Sys,
-					"num_gc", ms.NumGC,
-					"num_goroutine", ms.NumGoroutine,
-				)
+				runDiagTick(tracker, collectDashboardMemStats)
 			}
 		}
 	}()
@@ -3277,8 +3446,9 @@ func RunDashboardWeb(cfgPath, dbPath, addr string) error {
 	defer stop()
 
 	// Periodic memory diagnostics (ci-5n337): one slog line per 15 min so the
-	// 2.6G OOM incident leaves an RSS trail in web.log.
-	startDashboardDiagTicker(ctx)
+	// 2.6G OOM incident leaves an RSS trail in web.log, plus a WARN + mem_warn
+	// events row when RSS crosses the threshold (ci-ii5cz).
+	startDashboardDiagTicker(ctx, dbPath, os.Getenv)
 
 	fmt.Fprintf(os.Stderr, "Cistern web dashboard listening on http://localhost%s\n", addr)
 
