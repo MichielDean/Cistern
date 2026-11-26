@@ -13,9 +13,9 @@ import (
 )
 
 var (
-	importProvider    string
-	importRepo       string
-	importPriority   int
+	importProvider string
+	importRepo     string
+	importPriority int
 )
 
 var importCmd = &cobra.Command{

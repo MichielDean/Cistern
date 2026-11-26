@@ -62,7 +62,7 @@ PRs since a date. Results are automatically stored for trend analysis.`,
 }
 
 var (
-	evalBenchPRs       string
+	evalBenchPRs         string
 	evalBenchMergedSince string
 )
 
@@ -99,9 +99,9 @@ implementation should target (default: current directory).`,
 }
 
 var (
-	evalDryRunItem       string
-	evalDryRunTitle      string
-	evalDryRunDesc       string
+	evalDryRunItem        string
+	evalDryRunTitle       string
+	evalDryRunDesc        string
 	evalDryRunCodebaseDir string
 )
 
@@ -413,9 +413,9 @@ func writeDryRunResult(r *evaluate.DryRunResult, item dryRunWorkItem) error {
 		output := map[string]any{
 			"item":               item,
 			"architect_brief":    r.ArchitectBrief,
-			"cistern_code_v1":   r.CisternCodeV1,
+			"cistern_code_v1":    r.CisternCodeV1,
 			"review_findings":    r.ReviewFindings,
-			"cistern_code_v2":   r.CisternCodeV2,
+			"cistern_code_v2":    r.CisternCodeV2,
 			"qa_findings":        r.QAFindings,
 			"cistern_code_final": r.CisternCodeFinal,
 			"vibe_code":          r.VibeCode,

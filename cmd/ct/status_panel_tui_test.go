@@ -438,9 +438,9 @@ func TestStatusPanel_Update_EndKey_SetsScrollYToBottom(t *testing.T) {
 func TestStatusPanel_View_ScrollClamped_WhenScrollYExceedsContent(t *testing.T) {
 	p := newStatusPanel("", "")
 	p.data = &DashboardData{
-		FlowingCount: 1,
-		CastellariusRunning:  true,
-		FetchedAt:    time.Now(),
+		FlowingCount:        1,
+		CastellariusRunning: true,
+		FetchedAt:           time.Now(),
 	}
 	p.height = 5       // short viewport to stress clamping
 	p.scrollY = 999999 // far beyond any real content

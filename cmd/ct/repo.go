@@ -247,8 +247,6 @@ func preCloneSandboxes(repo aqueduct.RepoConfig) error {
 	return nil
 }
 
-
-
 func writeConfig(path string, cfg *aqueduct.AqueductConfig) error {
 	data, err := yaml.Marshal(cfg)
 	if err != nil {

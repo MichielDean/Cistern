@@ -166,16 +166,20 @@ var cataractaeGenerateCmd = &cobra.Command{
 }
 
 func runCataractaeGenerate(cmd *cobra.Command, args []string) error {
-	w, err := resolveWorkflow()
+	wfs, err := resolveWorkflows()
 	if err != nil {
 		return err
 	}
 
 	cataractaeDir := defaultCataractaeDir()
 	instrFile := resolveInstructionsFile()
-	written, err := aqueduct.GenerateCataractaeFiles(w, cataractaeDir, instrFile)
-	if err != nil {
-		return err
+	var written []string
+	for _, w := range wfs {
+		files, err := aqueduct.GenerateCataractaeFiles(w, cataractaeDir, instrFile)
+		if err != nil {
+			return err
+		}
+		written = append(written, files...)
 	}
 
 	if len(written) == 0 {
@@ -183,10 +187,14 @@ func runCataractaeGenerate(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
+	roleSet := map[string]bool{}
 	for _, path := range written {
 		fmt.Printf("wrote %s\n", path)
+		if filepath.Base(path) == instrFile {
+			roleSet[filepath.Dir(path)] = true
+		}
 	}
-	fmt.Printf("\n%d role(s) generated in %s\n", len(written), cataractaeDir)
+	fmt.Printf("\n%d role(s) generated in %s\n", len(roleSet), cataractaeDir)
 	return nil
 }
 
@@ -335,7 +343,7 @@ var cataractaeStatusCmd = &cobra.Command{
 			active[stepKey{item.Repo, item.CurrentCataractae}] = item
 		}
 
-			for _, repo := range cfg.Repos {
+		for _, repo := range cfg.Repos {
 			wf, err := cfg.ResolveAqueductForRepo(repo)
 			if err != nil {
 				fmt.Printf("%s  (workflow could not be loaded: %v)\n\n", repo.Name, err)
@@ -372,22 +380,11 @@ var cataractaeStatusCmd = &cobra.Command{
 // If --workflow was passed, it is parsed directly; otherwise the config's
 // Aqueducts list is used to resolve the repo's aqueduct.
 func resolveWorkflow() (*aqueduct.Workflow, error) {
-	if cataractaeGenerateWorkflow != "" {
-		wf, err := aqueduct.ParseWorkflow(cataractaeGenerateWorkflow)
-		if err != nil {
-			return nil, fmt.Errorf("parse workflow: %w", err)
-		}
-		return wf, nil
-	}
-	cfgPath := resolveConfigPath()
-	cfg, err := aqueduct.ParseAqueductConfig(cfgPath)
+	wfs, err := resolveWorkflows()
 	if err != nil {
-		return nil, fmt.Errorf("loading config: %w (use --workflow to specify an aqueduct file directly)", err)
+		return nil, err
 	}
-	if len(cfg.Repos) == 0 {
-		return nil, fmt.Errorf("no repos configured")
-	}
-	return cfg.ResolveAqueductForRepo(cfg.Repos[0])
+	return wfs[0], nil
 }
 
 // defaultCataractaeDir returns the cataractae directory under ~/.cistern.
