@@ -10,7 +10,6 @@ import (
 	"embed"
 	"encoding/base64"
 	"encoding/binary"
-	"encoding/csv"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -1542,7 +1541,6 @@ func newDashboardMuxInternalWith(feedCtx context.Context, cfgPath, dbPath string
 	// Droplet CRUD
 	apiMux.HandleFunc("GET /api/droplets", handleGetDroplets(dbPath))
 	apiMux.HandleFunc("GET /api/droplets/search", handleSearchDroplets(dbPath))
-	apiMux.HandleFunc("GET /api/droplets/export", handleExportDroplets(dbPath))
 	apiMux.HandleFunc("POST /api/droplets", handleCreateDroplet(dbPath))
 	apiMux.HandleFunc("GET /api/droplets/{id}", handleGetDroplet(dbPath))
 	apiMux.HandleFunc("PATCH /api/droplets/{id}", handleEditDroplet(dbPath))
@@ -1644,20 +1642,6 @@ func newDashboardMuxInternalWith(feedCtx context.Context, cfgPath, dbPath string
 }
 
 // ── API handler helpers ──
-
-// csvSanitizeCell prevents CSV formula injection by prefixing cells that
-// start with dangerous characters (=, +, -, @, tab, carriage return) with
-// a single-quote prefix, which Excel and Sheets interpret as a literal string.
-func csvSanitizeCell(s string) string {
-	if len(s) == 0 {
-		return s
-	}
-	switch s[0] {
-	case '=', '+', '-', '@', '\t', '\r':
-		return "'" + s
-	}
-	return s
-}
 
 // apiClient opens a cistern.Client for the given dbPath and calls f.
 // It writes the error response if the client cannot be opened or f returns an error.
@@ -2150,70 +2134,6 @@ func handleRenameDroplet(dbPath string) http.HandlerFunc {
 			}
 			writeAPIJSON(w, http.StatusOK, d)
 			return nil
-		})
-	}
-}
-
-func handleExportDroplets(dbPath string) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		format := r.URL.Query().Get("format")
-		if format == "" {
-			format = "json"
-		}
-		repo := r.URL.Query().Get("repo")
-		query := r.URL.Query().Get("query")
-		status := r.URL.Query().Get("status")
-		priority, _ := strconv.Atoi(r.URL.Query().Get("priority"))
-		apiClient(dbPath, w, func(c *cistern.Client) error {
-			var items []*cistern.Droplet
-			var err error
-			if repo != "" && query == "" && status == "" && priority == 0 {
-				items, err = c.List(repo, "")
-			} else if repo != "" {
-				items, err = c.Search(query, status, priority)
-				if err != nil {
-					return err
-				}
-				filtered := make([]*cistern.Droplet, 0, len(items))
-				for _, d := range items {
-					if strings.EqualFold(d.Repo, repo) {
-						filtered = append(filtered, d)
-					}
-				}
-				items = filtered
-			} else {
-				items, err = c.Search(query, status, priority)
-			}
-			if err != nil {
-				return err
-			}
-			if items == nil {
-				items = []*cistern.Droplet{}
-			}
-			switch format {
-			case "csv":
-				w.Header().Set("Content-Type", "text/csv")
-				cw := csv.NewWriter(w)
-				if err := cw.Write([]string{"id", "repo", "title", "description", "priority", "status", "assignee", "current_cataractae", "outcome", "created_at", "updated_at"}); err != nil {
-					return err
-				}
-				for _, item := range items {
-					if err := cw.Write([]string{
-						csvSanitizeCell(item.ID), csvSanitizeCell(item.Repo), csvSanitizeCell(item.Title), csvSanitizeCell(item.Description),
-						strconv.Itoa(item.Priority),
-						csvSanitizeCell(item.Status), csvSanitizeCell(item.Assignee), csvSanitizeCell(item.CurrentCataractae), csvSanitizeCell(item.Outcome),
-						item.CreatedAt.Format(time.RFC3339), item.UpdatedAt.Format(time.RFC3339),
-					}); err != nil {
-						return err
-					}
-				}
-				cw.Flush()
-				return cw.Error()
-			default:
-				w.Header().Set("Content-Type", "application/json")
-				json.NewEncoder(w).Encode(items) //nolint:errcheck
-				return nil
-			}
 		})
 	}
 }
